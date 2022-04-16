@@ -1,7 +1,9 @@
 import datetime
 import logging
 from app.lib.datahub.remote_data.akshare import handler as akshare_handler
-from app.model.stock import FinanceMarket, StockIndex
+from app.lib.datahub.remote_data.data_retriever import
+from app.lib.datahub.util import metadata
+from app.model.stock import FinanceMarket, StockIndex, IndividualStock
 
 logger = logging.getLogger()
 
@@ -19,6 +21,7 @@ class ChinaAStock(object):
     def check_local_data_existence(self):
         self.check_market_data_existence()
         self.check_trade_calendar_integrity()
+        self.check_stock_index_integrity()
 
     def check_market_data_existence(self):
         self.market = FinanceMarket.objects(name="A股").first()
@@ -52,11 +55,11 @@ class ChinaAStock(object):
 
     def check_stock_index_integrity(self):
         local_index_list = StockIndex.objects(market=self.market)
-        remote_stock_list = akshare_handler.get_zh_stock_index_list()
+        remote_index_list = akshare_handler.get_zh_stock_index_list()
         if local_index_list:
             logger.info(f'Stock Market {self.market.name} - '
                         f'Checking local index data integrity')
-            for remote_index_item in remote_stock_list.iterrows():
+            for remote_index_item in remote_index_list.iterrows():
                 code = remote_index_item['代码']
                 name = remote_index_item['名称']
                 query = local_index_list.objects(code=code).first()
@@ -65,11 +68,36 @@ class ChinaAStock(object):
                 else:
                     logger.info(f'Stock Market {self.market.name} - '
                                 f'Local data for {code}-{name} not found, initializing...')
+                    new_stock_index = StockIndex()
+                    new_stock_index.code = code
+                    new_stock_index.name = name
+                    new_stock_index.save()
         else:
             logger.info(f'Stock Market {self.market.name} - Local index data not found, initializing...')
+            for remote_index_item in remote_index_list.iterrows():
+                code = remote_index_item['代码']
+                name = remote_index_item['名称']
+                new_stock_index = StockIndex()
+                new_stock_index.code = code
+                new_stock_index.name = name
+                new_stock_index.save()
 
     def create_new_stock_index(self, code, name):
         new_stock_index = StockIndex()
         new_stock_index.code = code
         new_stock_index.name = name
         new_stock_index.market = self.market
+
+    def check_individual_stock_integrity(self):
+        local_stock_list = IndividualStock.objects(market=self.market)
+        remote_stock_list = None
+        if local_stock_list:
+            pass
+        else:
+            logger.info(f'Stock Market {self.market.name} - Local index data not found, initializing...')
+
+    @staticmethod
+    def update_metadata(data, df, column):
+        max_date = max(df[column])
+        data.meta_data.last_update = datetime.datetime.now()
+        data.meta_data.date_of_most_recent_daily_quote = max_data

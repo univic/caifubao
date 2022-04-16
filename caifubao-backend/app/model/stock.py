@@ -1,6 +1,7 @@
 from mongoengine import StringField, EmbeddedDocumentListField, DateTimeField, ReferenceField, ListField, \
     EmbeddedDocument, BooleanField, FloatField, IntField
 from app.lib.database import db
+from app.model.meta_data import MetaData
 
 
 class StockExchange(db.Document):
@@ -54,6 +55,7 @@ class BasicStock(db.Document):
     meta = {'allow_inheritance': True}
     code = StringField()
     name = StringField()
+    meta_data = EmbeddedDocument(MetaData)
     exchange = ReferenceField(StockExchange)
     market = ReferenceField(FinanceMarket)
     daily_quote = EmbeddedDocumentListField('DailyQuote')
