@@ -17,15 +17,16 @@ class ChinaAStock(object):
         self.check_local_data_existence()
 
     def check_local_data_existence(self):
+        self.check_market_data_existence()
+        self.check_trade_calendar_integrity()
+
+    def check_market_data_existence(self):
         self.market = FinanceMarket.objects(name="A股").first()
         # check the existence of basic market data
         if not self.market:
             logger.info(f'Local market data for {self.market_name} not found, initializing')
             new_market = FinanceMarket()
             new_market.name = "A股"
-            trade_calendar = akshare_handler.get_a_stock_trade_date_hist()
-            trade_calendar = list(trade_calendar['trade_date'])
-            new_market.trade_calendar = trade_calendar
             new_market.save()
         else:
             logger.info(f'Checking Market Data Integrity for {self.market.name}')
