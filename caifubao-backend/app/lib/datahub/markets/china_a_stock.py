@@ -1,9 +1,10 @@
 import datetime
 import logging
 from app.lib.datahub.remote_data.akshare import handler as akshare_handler
-from app.lib.datahub.remote_data.data_retriever import
+from app.lib.datahub.remote_data.data_retriever import DataRetriever
 from app.lib.datahub.util import metadata
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock
+
 
 logger = logging.getLogger()
 
@@ -81,6 +82,13 @@ class ChinaAStock(object):
                 new_stock_index.code = code
                 new_stock_index.name = name
                 new_stock_index.save()
+                data_retrieve_kwarg = {
+                    'code': code
+                }
+                self.data_retriver.create_data_retrieve_task('GET STOCK INDEX QUOTE',
+                                                             'akshare',
+                                                             '',
+                                                             kw_dict=data_retrieve_kwarg)
 
     def create_new_stock_index(self, code, name):
         new_stock_index = StockIndex()
