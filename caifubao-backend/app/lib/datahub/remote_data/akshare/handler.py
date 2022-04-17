@@ -1,6 +1,6 @@
 import datetime
 import logging
-from app.model.stock import Stock
+from app.model.stock import StockIndex
 from app.model.stock import DailyQuote
 from app.model.data_retrive import DataRetriveTask
 import app.lib.datahub.remote_data.akshare.interface as interface
@@ -31,12 +31,12 @@ def get_zh_stock_index_list():
     return index_list
 
 
-def update_stock_index_quote(code):
+def get_full_stock_index_quote(code):
     status = {
         'code': 'GOOD',
         'message': None,
     }
-    stock_index = Stock.objects(code=code, type=0).first()
+    stock_index = StockIndex.objects(code=code, type=0).first()
     if stock_index:
         quote_df = interface.stock_zh_index_daily(code)
         daily_quote_list = []
@@ -52,7 +52,7 @@ def update_stock_index_quote(code):
         stock_index.save()
     else:
         status = {
-            'code': 'FAILED',
+            'code': 'FAIL',
             'message': 'INDEX CODE CAN NOT BE FOUND IN LOCAL DB',
         }
     return status

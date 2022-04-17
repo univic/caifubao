@@ -24,6 +24,8 @@ class DataRetriveTask(db.Document):
     args = ListField(StringField())
     kwargs = EmbeddedDocumentListField('KwArg')
     created_at = DateTimeField(default=datetime.datetime.now())
+    processed_at = DateTimeField()
+    completed_at = DateTimeField()
     priority = IntField(default=0)
     status = StringField(default='CRTD')
     message = StringField()

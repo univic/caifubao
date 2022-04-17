@@ -85,9 +85,9 @@ class ChinaAStock(object):
                 data_retrieve_kwarg = {
                     'code': code
                 }
-                self.data_retriver.create_data_retrieve_task('GET STOCK INDEX QUOTE',
+                self.data_retriver.create_data_retrieve_task('GET FULL STOCK INDEX QUOTE',
                                                              'akshare',
-                                                             '',
+                                                             'get_full_stock_index_quote',
                                                              kw_dict=data_retrieve_kwarg)
 
     def create_new_stock_index(self, code, name):
