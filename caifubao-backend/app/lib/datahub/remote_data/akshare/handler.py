@@ -27,7 +27,6 @@ def get_a_stock_trade_date_hist():
 
 def get_zh_stock_index_list():
     raw_df = interface.zh_stock_index_spot()
-    print(raw_df)
     index_list = raw_df[['代码', '名称']][raw_df['名称'] != '']
     return index_list
 

@@ -16,7 +16,7 @@ class KwArg(EmbeddedDocument):
 
 class DataRetriveTask(db.Document):
     """
-    status: 0-created, 5-pending, 7-failed, 9-completed
+    status: CRTD-created, PEND-pending, FAIL-failed, COMP-completed
     """
     name = StringField(required=True)
     callback_module = StringField(required=True)
@@ -25,7 +25,7 @@ class DataRetriveTask(db.Document):
     kwargs = EmbeddedDocumentListField('KwArg')
     created_at = DateTimeField(default=datetime.datetime.now())
     priority = IntField(default=0)
-    status = IntField(default=0)
+    status = StringField(default='CRTD')
     message = StringField()
 
 
