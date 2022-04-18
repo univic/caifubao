@@ -1,7 +1,7 @@
 import datetime
 import logging
 from importlib import import_module
-from app.model.data_retrive import DataRetriveTask, KwArgs
+from app.model.data_retrive import DataRetriveTask, KwArg
 
 logger = logging.getLogger()
 

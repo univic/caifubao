@@ -20,7 +20,7 @@ def create_logger(log_file='stellaris.log'):
     console_handler.setFormatter(formatter)
 
     log_file_path = os.path.join(pwd, 'app', 'log', log_file)
-    log_file_path = f"E:\\DEV\\stellaris\\stellaris-backend\\app\\log\\{log_file}"
+    # log_file_path = f"E:\\DEV\\stellaris\\stellaris-backend\\app\\log\\{log_file}"
 
     # Create a file handler
     file_handler = handlers.RotatingFileHandler(log_file_path,

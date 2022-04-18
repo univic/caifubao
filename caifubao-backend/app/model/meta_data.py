@@ -1,7 +1,7 @@
-from mongoengine import EmbeddedDocument, DatetimeField
+from mongoengine import EmbeddedDocument, DateTimeField
 
 
 class MetaData(EmbeddedDocument):
-    last_update = DatetimeField()
-    date_of_most_recent_daily_quote = DatetimeField()
+    last_update = DateTimeField()
+    date_of_most_recent_daily_quote = DateTimeField()
 

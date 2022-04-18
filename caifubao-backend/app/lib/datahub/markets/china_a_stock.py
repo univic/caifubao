@@ -1,8 +1,6 @@
 import datetime
 import logging
 from app.lib.datahub.remote_data.akshare import handler as akshare_handler
-from app.lib.datahub.remote_data.data_retriever import DataRetriever
-from app.lib.datahub.util import metadata
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock
 
 
@@ -21,7 +19,6 @@ class ChinaAStock(object):
 
     def check_local_data_existence(self):
         self.check_market_data_existence()
-        self.check_trade_calendar_integrity()
         self.check_stock_index_integrity()
 
     def check_market_data_existence(self):
@@ -32,9 +29,10 @@ class ChinaAStock(object):
             new_market = FinanceMarket()
             new_market.name = "A股"
             new_market.save()
+            self.market = new_market
         else:
             logger.info(f'Checking Market Data Integrity for {self.market.name}')
-            self.check_trade_calendar_integrity()
+        self.check_trade_calendar_integrity()
 
     def check_trade_calendar_integrity(self):
         if self.market.trade_calendar:
@@ -76,6 +74,7 @@ class ChinaAStock(object):
         else:
             logger.info(f'Stock Market {self.market.name} - Local index data not found, initializing...')
             for remote_index_item in remote_index_list.iterrows():
+                print(remote_index_item)
                 code = remote_index_item['代码']
                 name = remote_index_item['名称']
                 new_stock_index = StockIndex()

@@ -36,7 +36,6 @@ class FinanceMarket(db.Document):
 
 class DailyQuote(EmbeddedDocument):
     date = DateTimeField()
-    metadata = EmbeddedDocumentField()
     open = FloatField()
     close = FloatField()
     high = FloatField()
@@ -56,7 +55,6 @@ class BasicStock(db.Document):
     meta = {'allow_inheritance': True}
     code = StringField()
     name = StringField()
-    meta_data = EmbeddedDocument(MetaData)
     exchange = ReferenceField(StockExchange)
     market = ReferenceField(FinanceMarket)
     daily_quote = EmbeddedDocumentListField('DailyQuote')

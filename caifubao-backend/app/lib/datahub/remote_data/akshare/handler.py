@@ -10,19 +10,8 @@ logger = logging.getLogger()
 
 
 def get_a_stock_trade_date_hist():
-    today = datetime.datetime.today()
-    local_data = interface.get_trade_date_hist()
-    if local_data:
-        print('USE')
-        pass
-    else:
-        remote_data = interface.get_trade_date_hist()
-        remote_data_tail = remote_data.tail(1).iloc[0, 0]
-        local_data_tail = None
-        if remote_data_tail > today:
-            print(remote_data_tail)
-        else:
-            print('updating')
+    remote_data = interface.get_trade_date_hist()
+    return remote_data
 
 
 def get_zh_stock_index_list():
