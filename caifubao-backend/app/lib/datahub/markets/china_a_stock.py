@@ -2,6 +2,7 @@ import datetime
 import logging
 from app.lib.datahub.remote_data.akshare import handler as akshare_handler
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock
+from app.lib.datahub.data_retriever import data_retriever
 
 
 logger = logging.getLogger()
@@ -73,7 +74,7 @@ class ChinaAStock(object):
                     new_stock_index.save()
         else:
             logger.info(f'Stock Market {self.market.name} - Local index data not found, initializing...')
-            for remote_index_item in remote_index_list.iterrows():
+            for i, remote_index_item in remote_index_list.iterrows():
                 print(remote_index_item)
                 code = remote_index_item['代码']
                 name = remote_index_item['名称']
@@ -84,10 +85,12 @@ class ChinaAStock(object):
                 data_retrieve_kwarg = {
                     'code': code
                 }
-                self.data_retriver.create_data_retrieve_task('GET FULL STOCK INDEX QUOTE',
-                                                             'akshare',
-                                                             'get_full_stock_index_quote',
-                                                             kw_dict=data_retrieve_kwarg)
+                data_retriever.create_data_retrieve_task(name='GET STOCK INDEX FULL QUOTE',
+                                                         module='akshare',
+                                                         handler='get_full_stock_index_quote',
+                                                         kwarg_dict=data_retrieve_kwarg)
+            logger.info(f'Stock Market {self.market.name} - Local index data created')
+            logger.info(f'Stock Market {self.market.name} - index quote data retrieve task created')
 
     def create_new_stock_index(self, code, name):
         new_stock_index = StockIndex()
@@ -107,4 +110,4 @@ class ChinaAStock(object):
     def update_metadata(data, df, column):
         max_date = max(df[column])
         data.meta_data.last_update = datetime.datetime.now()
-        data.meta_data.date_of_most_recent_daily_quote = max_data
+        # data.meta_data.date_of_most_recent_daily_quote = max_data

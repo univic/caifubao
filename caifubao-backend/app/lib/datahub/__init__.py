@@ -6,6 +6,7 @@ import akshare as ak
 import logging
 from app.model.stock import FinanceMarket
 from app.lib.datahub import markets
+from pymongo.errors import ServerSelectionTimeoutError
 
 logger = logging.getLogger()
 
@@ -21,7 +22,11 @@ class Datahub(object):
 
     @staticmethod
     def initialize():
-        markets.initialize_markets()
+        try:
+            markets.initialize_markets()
+        except ServerSelectionTimeoutError:
+            logger.error("Timed out when establishing DB connection")
+            exit()
 
     def get_data(self, query, bypass_local_data):
         pass

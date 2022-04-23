@@ -16,12 +16,13 @@ class DataRetriever(object):
         for item in task_list:
             self.exec_data_retrieve_task(item)
 
-    @staticmethod
-    def create_data_retrieve_task(module, handler, args, kwargs):
+    def create_data_retrieve_task(self, name, module, handler, args=None, kwarg_dict=None):
         new_task = DataRetriveTask()
+        new_task.name = name
         new_task.callback_module = module
         new_task.callback_handler = handler
         new_task.args = args
+        new_task.kwargs = self.convert_kwarg_dict(kwarg_dict)
         new_task.save()
 
     @staticmethod
@@ -40,3 +41,13 @@ class DataRetriever(object):
             item.status = 'PEND'
             item.message = result.message
         item.save()
+
+    @staticmethod
+    def convert_kwarg_dict(kwarg_dict):
+        kwarg_list = []
+        for item in kwarg_dict.items():
+            kwarg_obj = KwArg()
+            kwarg_obj.keyword = item[0]
+            kwarg_obj.arg = item[1]
+            kwarg_list.append(kwarg_obj)
+        return kwarg_list
