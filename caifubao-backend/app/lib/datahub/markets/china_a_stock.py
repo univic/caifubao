@@ -85,7 +85,8 @@ class ChinaAStock(object):
                 data_retrieve_kwarg = {
                     'code': code
                 }
-                data_retriever.create_data_retrieve_task(name='GET STOCK INDEX FULL QUOTE',
+                data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR '
+                                                              f'{new_stock_index.code}-{new_stock_index.name}',
                                                          module='akshare',
                                                          handler='get_full_stock_index_quote',
                                                          kwarg_dict=data_retrieve_kwarg)
@@ -104,7 +105,7 @@ class ChinaAStock(object):
         if local_stock_list:
             pass
         else:
-            logger.info(f'Stock Market {self.market.name} - Local index data not found, initializing...')
+            logger.info(f'Stock Market {self.market.name} - Local indivdual stock data not found, initializing...')
 
     @staticmethod
     def update_metadata(data, df, column):

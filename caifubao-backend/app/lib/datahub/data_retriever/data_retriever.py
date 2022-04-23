@@ -23,7 +23,11 @@ class DataRetriever(object):
         new_task.callback_handler = handler
         new_task.args = args
         new_task.kwargs = self.convert_kwarg_dict(kwarg_dict)
-        new_task.save()
+        if self.check_task_uniqueness(new_task):
+            new_task.save()
+            logger.debug(f'Data retrieve task {new_task.name} created')
+        else:
+            logger.debug(f'Found duplicate data retrieve task {new_task.name}')
 
     @staticmethod
     def exec_data_retrieve_task(item):
@@ -51,3 +55,20 @@ class DataRetriever(object):
             kwarg_obj.arg = item[1]
             kwarg_list.append(kwarg_obj)
         return kwarg_list
+
+    def check_task_uniqueness(self, task_obj):
+        task_obj.uid = self.generate_task_uid(task_obj)
+        current_task = DataRetriveTask.objects(uid=task_obj.uid).first()
+        if current_task:
+            return False
+        else:
+            return True
+
+    @staticmethod
+    def generate_task_uid(task_obj):
+        obj_str = task_obj.name + task_obj.callback_module + task_obj.callback_handler
+        args_hash_str = hash(task_obj.args)
+        kwargs_hash_str = hash(task_obj.kwargs)
+        hash_str = obj_str + args_hash_str + kwargs_hash_str
+        uid = hash(hash_str)
+        return uid

@@ -18,6 +18,7 @@ class DataRetriveTask(db.Document):
     """
     status: CRTD-created, PEND-pending, FAIL-failed, COMP-completed
     """
+    uid = StringField(required=True)
     name = StringField(required=True)
     callback_module = StringField(required=True)
     callback_handler = StringField(required=True)

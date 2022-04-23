@@ -20,6 +20,11 @@ def get_zh_stock_index_list():
     return index_list
 
 
+def get_zh_individual_stock_list():
+    df = interface.stock_zh_a_spot_em()
+    stock_list = None
+
+
 def get_full_stock_index_quote(code):
     status = {
         'code': 'GOOD',
