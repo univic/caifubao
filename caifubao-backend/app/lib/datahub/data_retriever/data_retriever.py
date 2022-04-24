@@ -23,7 +23,7 @@ class DataRetriever(object):
         new_task.callback_handler = handler
         new_task.args = args
         new_task.kwargs = self.convert_kwarg_dict(kwarg_dict)
-        if self.check_task_uniqueness(new_task):
+        if self.check_task_uniqueness(new_task, kwarg_dict):
             new_task.save()
             logger.debug(f'Data retrieve task {new_task.name} created')
         else:
@@ -31,7 +31,6 @@ class DataRetriever(object):
 
     @staticmethod
     def exec_data_retrieve_task(item):
-
         func = getattr(import_module(f'{item.callback_package}.{item.callback_module}'), item.callback_handler)
         result = func(*item.args, **item.kwargs)
         item.processed_at = datetime.datetime.now()
@@ -56,8 +55,8 @@ class DataRetriever(object):
             kwarg_list.append(kwarg_obj)
         return kwarg_list
 
-    def check_task_uniqueness(self, task_obj):
-        task_obj.uid = self.generate_task_uid(task_obj)
+    def check_task_uniqueness(self, task_obj, kwarg_dict):
+        task_obj.uid = self.generate_task_uid(task_obj, kwarg_dict)
         current_task = DataRetriveTask.objects(uid=task_obj.uid).first()
         if current_task:
             return False
@@ -65,10 +64,13 @@ class DataRetriever(object):
             return True
 
     @staticmethod
-    def generate_task_uid(task_obj):
-        obj_str = task_obj.name + task_obj.callback_module + task_obj.callback_handler
-        args_hash_str = hash(task_obj.args)
-        kwargs_hash_str = hash(task_obj.kwargs)
+    def generate_task_uid(task_obj, kwarg_dict):
+        obj_str = str(task_obj.name + task_obj.callback_module + task_obj.callback_handler)
+        args_hash_str = str(hash(tuple(task_obj.args)))         # list is unable to hash, convert to tuple
+        kwargs_str = ''
+        for item in kwarg_dict.items():
+            kwargs_str += item[0] + item[1]
+        kwargs_hash_str = str(hash(kwargs_str))
         hash_str = obj_str + args_hash_str + kwargs_hash_str
-        uid = hash(hash_str)
+        uid = str(hash(hash_str))
         return uid
