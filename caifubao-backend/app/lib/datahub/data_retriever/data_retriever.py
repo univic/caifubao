@@ -14,8 +14,10 @@ class DataRetriever(object):
 
     def dispatch(self):
         logger.info(f'Data retriever dispatcher running...')
+        # TODO: HOW MANY TASKS ARE TO BE DONE?
         task_list = DataRetriveTask.objects(status='CRTD')[:2]
         for item in task_list:
+            # TODO: FANCY A PROGRESS BAR?
             self.exec_data_retrieve_task(item)
         logger.info(f'Data retrieve tasks completed')
 
