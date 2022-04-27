@@ -13,10 +13,11 @@ class DataRetriever(object):
         pass
 
     def dispatch(self):
-        logger.info(f'Data retriever dispatcher running')
-        task_list = DataRetriveTask.objects(status='CRTD')
-        for item in task_list[:5]:
+        logger.info(f'Data retriever dispatcher running...')
+        task_list = DataRetriveTask.objects(status='CRTD')[:2]
+        for item in task_list:
             self.exec_data_retrieve_task(item)
+        logger.info(f'Data retrieve tasks completed')
 
     def create_data_retrieve_task(self, name, module, handler, args=None, kwarg_dict=None):
         new_task = DataRetriveTask()
@@ -24,32 +25,29 @@ class DataRetriever(object):
         new_task.callback_module = module
         new_task.callback_handler = handler
         new_task.args = args
-        new_task.kwargs = self.convert_kwarg_dict(kwarg_dict)
+        new_task.kwargs = self.convert_dict_to_kwarg(kwarg_dict)
         if self.check_task_uniqueness(new_task, kwarg_dict):
             new_task.save()
             logger.debug(f'Data retrieve task {new_task.name} created')
         else:
             logger.debug(f'Found duplicate data retrieve task {new_task.name}')
 
-    @staticmethod
-    def exec_data_retrieve_task(item):
+    def exec_data_retrieve_task(self, item):
         func = getattr(import_module(f'app.lib.datahub.remote_data.{item.callback_module}.handler'),
                        item.callback_handler)
-        result = func(*item.args, **item.kwargs)
+        kwarg_dict = self.convert_kwarg_to_dict(item.kwargs)
+        result = func(*item.args, **kwarg_dict)
         item.processed_at = datetime.datetime.now()
-        if result.code == 'GOOD':
+        if result['code'] == 'GOOD':
             item.completed_at = datetime.datetime.now()
             item.status = 'COMP'
-        elif result.code == 'FAIL':
-            item.status = 'FAIL'
-            item.message = result.message
         else:
-            item.status = 'PEND'
+            item.status = 'FAIL'
             item.message = result.message
         item.save()
 
     @staticmethod
-    def convert_kwarg_dict(kwarg_dict):
+    def convert_dict_to_kwarg(kwarg_dict):
         kwarg_list = []
         for item in kwarg_dict.items():
             kwarg_obj = KwArg()
@@ -57,6 +55,13 @@ class DataRetriever(object):
             kwarg_obj.arg = item[1]
             kwarg_list.append(kwarg_obj)
         return kwarg_list
+
+    @staticmethod
+    def convert_kwarg_to_dict(kwarg_doc_list):
+        kwarg_dict = {}
+        for item in kwarg_doc_list:
+            kwarg_dict[item.keyword] = item.arg
+        return kwarg_dict
 
     def check_task_uniqueness(self, task_obj, kwarg_dict):
         task_obj.uid = self.generate_task_uid(task_obj, kwarg_dict)

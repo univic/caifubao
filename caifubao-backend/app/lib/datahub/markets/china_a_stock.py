@@ -20,7 +20,7 @@ class ChinaAStock(object):
 
     def check_local_data_existence(self):
         self.check_market_data_existence()
-        # self.check_stock_index_integrity()
+        self.check_stock_index_integrity()
 
     def check_market_data_existence(self):
         self.market = FinanceMarket.objects(name="A股").first()
@@ -59,10 +59,10 @@ class ChinaAStock(object):
         if local_index_list:
             logger.info(f'Stock Market {self.market.name} - '
                         f'Checking local index data integrity')
-            for remote_index_item in remote_index_list.iterrows():
+            for i, remote_index_item in remote_index_list.iterrows():
                 code = remote_index_item['代码']
                 name = remote_index_item['名称']
-                query = local_index_list.objects(code=code).first()
+                query = local_index_list(code=code).first()
                 if query:
                     pass
                 else:

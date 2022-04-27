@@ -30,12 +30,13 @@ def get_full_stock_index_quote(code):
         'code': 'GOOD',
         'message': None,
     }
-    stock_index = StockIndex.objects(code=code, type=0).first()
+    stock_index = StockIndex.objects(code=code).first()
     if stock_index:
         quote_df = interface.stock_zh_index_daily(code)
         daily_quote_list = []
-        for row in quote_df.iterrows():
+        for i, row in quote_df.iterrows():
             daily_quote = DailyQuote()
+            # TODO: NEED MORE ATTRIBUTES
             daily_quote.open = row['open']
             daily_quote.close = row['close']
             daily_quote.high = row['high']
