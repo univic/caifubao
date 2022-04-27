@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*-
 
 import datetime
-import akshare as ak
 import logging
+import akshare as ak
+from pymongo.errors import ServerSelectionTimeoutError
 from app.model.stock import FinanceMarket
 from app.lib.datahub import markets
-from pymongo.errors import ServerSelectionTimeoutError
+from app.lib.datahub.data_retriever import data_retriever
 
 logger = logging.getLogger()
 
@@ -24,6 +25,7 @@ class Datahub(object):
     def initialize():
         try:
             markets.initialize_markets()
+            data_retriever.dispatch()
         except ServerSelectionTimeoutError:
             logger.error("Timed out when establishing DB connection")
             exit()
@@ -33,21 +35,6 @@ class Datahub(object):
 
     def cache_data(self):
         pass
-
-    def get_overall_market_info(self):
-        pass
-
-    def get_a_stock_code_list(self):
-        pass
-
-    def get_individual_stock_quote(self):
-        pass
-
-    def get_individual_stock_valuation_indicator(self):
-        pass
-
-    def latest_trade_date(self):
-        self.today = datetime.date.today()
 
 
 class LocalData(object):

@@ -14,7 +14,8 @@ class BaseConfig(object):
     MONGODB_SETTINGS = {
         'db': 'stellaris',
         'host': 'mongodb://localhost:27017/',
-        'port': 27017
+        'port': 27017,
+        'alias': 'default'
     }
     # user config
     USER_SETTINGS = {

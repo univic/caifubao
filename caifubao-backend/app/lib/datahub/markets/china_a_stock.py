@@ -20,7 +20,7 @@ class ChinaAStock(object):
 
     def check_local_data_existence(self):
         self.check_market_data_existence()
-        self.check_stock_index_integrity()
+        # self.check_stock_index_integrity()
 
     def check_market_data_existence(self):
         self.market = FinanceMarket.objects(name="A股").first()
@@ -66,38 +66,53 @@ class ChinaAStock(object):
                 if query:
                     pass
                 else:
-                    logger.info(f'Stock Market {self.market.name} - '
-                                f'Local data for {code}-{name} not found, initializing...')
-                    new_stock_index = StockIndex()
-                    new_stock_index.code = code
-                    new_stock_index.name = name
-                    new_stock_index.save()
+                    # create absent stock index and create data retrieve task.
+                    self.handle_new_stock_index(code=code, name=name)
         else:
+            # create all stock index and create data retrieve task.
             logger.info(f'Stock Market {self.market.name} - Local index data not found, initializing...')
             for i, remote_index_item in remote_index_list.iterrows():
                 print(remote_index_item)
                 code = remote_index_item['代码']
                 name = remote_index_item['名称']
-                new_stock_index = StockIndex()
-                new_stock_index.code = code
-                new_stock_index.name = name
-                new_stock_index.save()
-                data_retrieve_kwarg = {
-                    'code': code
-                }
-                data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR '
-                                                              f'{new_stock_index.code}-{new_stock_index.name}',
-                                                         module='akshare',
-                                                         handler='get_full_stock_index_quote',
-                                                         kwarg_dict=data_retrieve_kwarg)
+                self.handle_new_stock_index(code=code, name=name)
             logger.info(f'Stock Market {self.market.name} - Local index data created')
             logger.info(f'Stock Market {self.market.name} - index quote data retrieve task created')
 
-    def create_new_stock_index(self, code, name):
+    def handle_new_stock_index(self, code, name):
+        logger.info(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
         new_stock_index = StockIndex()
         new_stock_index.code = code
         new_stock_index.name = name
         new_stock_index.market = self.market
+        new_stock_index.save()
+        data_retrieve_kwarg = {
+            'code': code
+        }
+        data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR '
+                                                      f'{new_stock_index.code}-{new_stock_index.name}',
+                                                 module='akshare',
+                                                 handler='get_full_stock_index_quote',
+                                                 kwarg_dict=data_retrieve_kwarg)
+
+    def check_stock_index_data_freshness(self, stock_index_obj):
+
+        # determine the closest trading day
+        now = datetime.datetime.now()
+        current_date = now.date()
+        print(current_date)
+        trading_date_list = self.market.trade_calendar
+        cloest_trading_day = min(trading_date_list, key=lambda x: (x > now, abs(x - now)))
+        if now.hour < 15:
+            closest_avail_trading_day = cloest_trading_day - datetime.timedelta(days=1)
+        else:
+            closest_avail_trading_day = cloest_trading_day
+        print(closest_avail_trading_day)
+
+        # determine latest quote data
+        quote_list = stock_index_obj.daily_quote
+
+        # create data update task
 
     def check_individual_stock_integrity(self):
         local_stock_list = IndividualStock.objects(market=self.market)

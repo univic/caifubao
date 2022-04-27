@@ -9,11 +9,13 @@ logger = logging.getLogger()
 class DataRetriever(object):
 
     def __init__(self):
+        # self.dispatcher()
         pass
 
-    def dispatcher(self):
+    def dispatch(self):
+        logger.info(f'Data retriever dispatcher running')
         task_list = DataRetriveTask.objects(status='CRTD')
-        for item in task_list:
+        for item in task_list[:5]:
             self.exec_data_retrieve_task(item)
 
     def create_data_retrieve_task(self, name, module, handler, args=None, kwarg_dict=None):
@@ -31,7 +33,8 @@ class DataRetriever(object):
 
     @staticmethod
     def exec_data_retrieve_task(item):
-        func = getattr(import_module(f'{item.callback_package}.{item.callback_module}'), item.callback_handler)
+        func = getattr(import_module(f'app.lib.datahub.remote_data.{item.callback_module}.handler'),
+                       item.callback_handler)
         result = func(*item.args, **item.kwargs)
         item.processed_at = datetime.datetime.now()
         if result.code == 'GOOD':

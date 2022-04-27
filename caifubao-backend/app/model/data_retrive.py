@@ -31,5 +31,4 @@ class DataRetriveTask(db.Document):
     status = StringField(default='CRTD')
     message = StringField()
 
-
-
+    # meta = {"db_alias": "default"}
