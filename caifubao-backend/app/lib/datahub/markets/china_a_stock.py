@@ -3,7 +3,7 @@ import logging
 from app.lib.datahub.remote_data.akshare import handler as akshare_handler
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock
 from app.lib.datahub.data_retriever import data_retriever
-
+from app.utilities.progress_bar import progress_bar
 
 logger = logging.getLogger()
 
@@ -68,6 +68,7 @@ class ChinaAStock(object):
                 else:
                     # create absent stock index and create data retrieve task.
                     self.handle_new_stock_index(code=code, name=name)
+                progress_bar(i, len(remote_index_item))
         else:
             # create all stock index and create data retrieve task.
             logger.info(f'Stock Market {self.market.name} - Local index data not found, initializing...')

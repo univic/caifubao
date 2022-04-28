@@ -2,6 +2,7 @@ import datetime
 import logging
 from importlib import import_module
 from app.model.data_retrive import DataRetriveTask, KwArg
+from app.utilities.progress_bar import progress_bar
 
 logger = logging.getLogger()
 
@@ -16,9 +17,10 @@ class DataRetriever(object):
         logger.info(f'Data retriever dispatcher running...')
         # TODO: HOW MANY TASKS ARE TO BE DONE?
         task_list = DataRetriveTask.objects(status='CRTD')[:2]
-        for item in task_list:
-            # TODO: FANCY A PROGRESS BAR?
+        logger.info(f'Found {len(task_list)} data retrieve task(s), executing')
+        for i, item in enumerate(task_list):
             self.exec_data_retrieve_task(item)
+            progress_bar(i, len(task_list))
         logger.info(f'Data retrieve tasks completed')
 
     def create_data_retrieve_task(self, name, module, handler, args=None, kwarg_dict=None):
