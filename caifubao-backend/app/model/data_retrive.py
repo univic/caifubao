@@ -3,10 +3,9 @@
 # Date: 2022-03-11
 
 import datetime
-from mongoengine import StringField, EmbeddedDocumentListField, DateTimeField, ReferenceField, ListField, \
-    EmbeddedDocument, BooleanField, FloatField, IntField
+from mongoengine import StringField, EmbeddedDocumentListField, DateTimeField, ListField, \
+    EmbeddedDocument, IntField
 from app.lib.database import db
-from app.model.stock import IndividualStock
 
 
 class KwArg(EmbeddedDocument):

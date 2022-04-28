@@ -15,13 +15,21 @@ class DataRetriever(object):
 
     def dispatch(self):
         logger.info(f'Data retriever dispatcher running...')
-        # TODO: HOW MANY TASKS ARE TO BE DONE?
-        task_list = DataRetriveTask.objects(status='CRTD')[:2]
+        task_list = DataRetriveTask.objects(status='CRTD')[:10]        # use slice at here to limit the task number
+        task_list_length = len(task_list)
         logger.info(f'Found {len(task_list)} data retrieve task(s), executing')
+        prog_bar = progress_bar()
+        task_complete_counter = 0
+        task_fail_counter = 0
         for i, item in enumerate(task_list):
-            self.exec_data_retrieve_task(item)
-            progress_bar(i, len(task_list))
-        logger.info(f'Data retrieve tasks completed')
+            result = self.exec_data_retrieve_task(item)
+            if result['code'] == 'GOOD':
+                task_complete_counter += 1
+            else:
+                task_fail_counter += 1
+            prog_bar(i, task_list_length)
+
+        logger.info(f'Data retrieve tasks completed, {task_complete_counter} success, {task_fail_counter} failed')
 
     def create_data_retrieve_task(self, name, module, handler, args=None, kwarg_dict=None):
         new_task = DataRetriveTask()
@@ -49,6 +57,7 @@ class DataRetriever(object):
             item.status = 'FAIL'
             item.message = result.message
         item.save()
+        return result
 
     @staticmethod
     def convert_dict_to_kwarg(kwarg_dict):

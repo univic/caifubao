@@ -1,3 +1,4 @@
+import time
 import datetime
 import logging
 from app.model.stock import StockIndex
@@ -25,7 +26,7 @@ def get_zh_individual_stock_list():
     stock_list = None
 
 
-def get_full_stock_index_quote(code):
+def get_zh_a_stock_index_quote_daily(code):
     status = {
         'code': 'GOOD',
         'message': None,
@@ -36,7 +37,7 @@ def get_full_stock_index_quote(code):
         daily_quote_list = []
         for i, row in quote_df.iterrows():
             daily_quote = DailyQuote()
-            # TODO: NEED MORE ATTRIBUTES
+            daily_quote.date = row['date']
             daily_quote.open = row['open']
             daily_quote.close = row['close']
             daily_quote.high = row['high']
@@ -50,9 +51,6 @@ def get_full_stock_index_quote(code):
             'code': 'FAIL',
             'message': 'INDEX CODE CAN NOT BE FOUND IN LOCAL DB',
         }
+    time.sleep(0.5)    # reduce the query frequency
     return status
 
-
-if __name__ == "__main__":
-    o = get_zh_stock_index_list()
-    print(o)

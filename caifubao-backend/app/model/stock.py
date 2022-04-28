@@ -53,8 +53,8 @@ class BasicStock(db.Document):
     type:
     """
     meta = {'allow_inheritance': True}
-    code = StringField()
-    name = StringField()
+    code = StringField(unique=True, required=True)
+    name = StringField(required=True)
     exchange = ReferenceField(StockExchange)
     market = ReferenceField(FinanceMarket)
     daily_quote = EmbeddedDocumentListField('DailyQuote')

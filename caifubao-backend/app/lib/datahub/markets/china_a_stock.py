@@ -56,6 +56,11 @@ class ChinaAStock(object):
     def check_stock_index_integrity(self):
         local_index_list = StockIndex.objects(market=self.market)
         remote_index_list = akshare_handler.get_zh_stock_index_list()
+        local_index_num = len(local_index_list)
+        remote_index_num = len(remote_index_list)
+        unmatched_counter = 0
+        update_requirement_counter = 0
+        prog_bar = progress_bar()
         if local_index_list:
             logger.info(f'Stock Market {self.market.name} - '
                         f'Checking local index data integrity')
@@ -64,24 +69,32 @@ class ChinaAStock(object):
                 name = remote_index_item['名称']
                 query = local_index_list(code=code).first()
                 if query:
-                    pass
+                    update_flag = self.check_stock_index_data_freshness(query)
+                    if update_flag:
+                        update_requirement_counter += 1
                 else:
                     # create absent stock index and create data retrieve task.
                     self.handle_new_stock_index(code=code, name=name)
-                progress_bar(i, len(remote_index_item))
+                    unmatched_counter += 1
+                prog_bar(i, remote_index_num)
+            logger.info(f'Stock Market {self.market.name} - '
+                        f'Checked {local_index_num} local indexes with {remote_index_num} remote data，'
+                        f'found {unmatched_counter} unmatched, {update_requirement_counter} requires quote data update' )
+            logger.info(f'Stock Market {self.market.name} - '
+                        f'Created {unmatched_counter} data for unmatched indexes')
         else:
             # create all stock index and create data retrieve task.
             logger.info(f'Stock Market {self.market.name} - Local index data not found, initializing...')
             for i, remote_index_item in remote_index_list.iterrows():
-                print(remote_index_item)
                 code = remote_index_item['代码']
                 name = remote_index_item['名称']
                 self.handle_new_stock_index(code=code, name=name)
-            logger.info(f'Stock Market {self.market.name} - Local index data created')
+                prog_bar(i, remote_index_num)
+            logger.info(f'Stock Market {self.market.name} - Created local data for {remote_index_num} stock indexes')
             logger.info(f'Stock Market {self.market.name} - index quote data retrieve task created')
 
     def handle_new_stock_index(self, code, name):
-        logger.info(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
+        logger.debug(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
         new_stock_index = StockIndex()
         new_stock_index.code = code
         new_stock_index.name = name
@@ -93,27 +106,31 @@ class ChinaAStock(object):
         data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR '
                                                       f'{new_stock_index.code}-{new_stock_index.name}',
                                                  module='akshare',
-                                                 handler='get_full_stock_index_quote',
+                                                 handler='get_zh_a_stock_index_quote_daily',
                                                  kwarg_dict=data_retrieve_kwarg)
 
     def check_stock_index_data_freshness(self, stock_index_obj):
+        update_flag = False
+        # check the existence of the quote data, if not, get the full quote
+        if stock_index_obj.daily_quote:
+            closest_avail_trading_day = self.determine_closest_trading_date()
 
-        # determine the closest trading day
-        now = datetime.datetime.now()
-        current_date = now.date()
-        print(current_date)
-        trading_date_list = self.market.trade_calendar
-        cloest_trading_day = min(trading_date_list, key=lambda x: (x > now, abs(x - now)))
-        if now.hour < 15:
-            closest_avail_trading_day = cloest_trading_day - datetime.timedelta(days=1)
+            # determine latest quote data
+            quote_list = stock_index_obj.daily_quote
+            latest_quote_date = self.determine_latest_quote_date(quote_list, 'date')
+
+            # create data update task
         else:
-            closest_avail_trading_day = cloest_trading_day
-        print(closest_avail_trading_day)
-
-        # determine latest quote data
-        quote_list = stock_index_obj.daily_quote
-
-        # create data update task
+            update_flag = True
+            data_retrieve_kwarg = {
+                'code': stock_index_obj.code
+            }
+            data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR '
+                                                          f'{stock_index_obj.code}-{stock_index_obj.name}',
+                                                     module='akshare',
+                                                     handler='get_zh_a_stock_index_quote_daily',
+                                                     kwarg_dict=data_retrieve_kwarg)
+        return update_flag
 
     def check_individual_stock_integrity(self):
         local_stock_list = IndividualStock.objects(market=self.market)
@@ -128,3 +145,18 @@ class ChinaAStock(object):
         max_date = max(df[column])
         data.meta_data.last_update = datetime.datetime.now()
         # data.meta_data.date_of_most_recent_daily_quote = max_data
+
+    def determine_closest_trading_date(self):
+        now = datetime.datetime.now()
+        trading_date_list = self.market.trade_calendar
+        cloest_trading_day = min(trading_date_list, key=lambda x: (x > now, abs(x - now)))
+        if now.hour < 15:
+            closest_avail_trading_day = cloest_trading_day - datetime.timedelta(days=1)
+        else:
+            closest_avail_trading_day = cloest_trading_day
+        return closest_avail_trading_day
+
+    @staticmethod
+    def determine_latest_quote_date(quote_list, date_attribute):
+        latest_quote_date = max(quote_list, key=lambda x: x[date_attribute])
+        return latest_quote_date

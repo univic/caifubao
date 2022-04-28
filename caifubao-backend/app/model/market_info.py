@@ -5,7 +5,6 @@
 from mongoengine import StringField, EmbeddedDocumentListField, DateTimeField, ReferenceField, ListField, \
     EmbeddedDocument, BooleanField, FloatField, IntField
 from app.lib.database import db
-from app.model.stock import Stock
 
 
 class StockExchange(db.Document):
@@ -20,7 +19,6 @@ class FinanceMarket(db.Document):
     name = StringField()
     code = StringField()
     exchange = ReferenceField(StockExchange)
-    stock_list = ListField(ReferenceField(Stock))
     overview = EmbeddedDocumentListField('MarketOverview')
 
 
