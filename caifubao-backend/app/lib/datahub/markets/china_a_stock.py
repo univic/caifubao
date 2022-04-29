@@ -118,8 +118,10 @@ class ChinaAStock(object):
             # determine latest quote data
             quote_list = stock_index_obj.daily_quote
             latest_quote_date = self.determine_latest_quote_date(quote_list, 'date')
-
             # create data update task
+            if latest_quote_date < closest_avail_trading_day:
+                pass
+
         else:
             update_flag = True
             data_retrieve_kwarg = {
