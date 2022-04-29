@@ -26,8 +26,12 @@ class DataRetriveTask(db.Document):
     created_at = DateTimeField(default=datetime.datetime.now())
     processed_at = DateTimeField()
     completed_at = DateTimeField()
-    priority = IntField(default=0)
+    priority = IntField(default=5)
     status = StringField(default='CRTD')
     message = StringField()
 
-    # meta = {"db_alias": "default"}
+    meta = {'allow_inheritance': True}
+
+
+class ScheduledDataUpdateTask(DataRetriveTask):
+    scheduled_process_time = DateTimeField(required=True)
