@@ -56,42 +56,57 @@ class ChinaAStock(object):
     def check_stock_index_integrity(self):
         local_index_list = StockIndex.objects(market=self.market)
         remote_index_list = akshare_handler.get_zh_stock_index_list()
+        # prepare the progress bar
         local_index_num = len(local_index_list)
         remote_index_num = len(remote_index_list)
-        unmatched_counter = 0
-        update_requirement_counter = 0
+        unmatched_index_counter = 0
+        matched_index_counter = 0
         prog_bar = progress_bar()
+        update_counter_dict = {
+            'NO': 0,
+            "UPD": 0,
+            "INC": 0,
+            "NEW": 0
+        }
+        # check the existence of the index list
         if local_index_list:
             logger.info(f'Stock Market {self.market.name} - '
                         f'Checking local index data integrity')
+
+            # check the existence of each index
             for i, remote_index_item in remote_index_list.iterrows():
                 code = remote_index_item['代码']
                 name = remote_index_item['名称']
                 query = local_index_list(code=code).first()
                 if query:
+                    # check the quote data freshness of each index
                     update_flag = self.check_stock_index_data_freshness(query)
-                    if update_flag:
-                        update_requirement_counter += 1
+                    update_counter_dict[update_flag] += 1
+                    matched_index_counter += 1
                 else:
                     # create absent stock index and create data retrieve task.
                     self.handle_new_stock_index(code=code, name=name)
-                    unmatched_counter += 1
+                    unmatched_index_counter += 1
                 prog_bar(i, remote_index_num)
             logger.info(f'Stock Market {self.market.name} - '
                         f'Checked {local_index_num} local indexes with {remote_index_num} remote data，'
-                        f'found {unmatched_counter} unmatched, {update_requirement_counter} requires quote data update' )
+                        f'Created {unmatched_index_counter} data and data retrieve tasks for unmatched indexes')
             logger.info(f'Stock Market {self.market.name} - '
-                        f'Created {unmatched_counter} data for unmatched indexes')
+                        f'Checked quote data freshness of {matched_index_counter} local indexes. \r '
+                        f'- Fresh:          {update_counter_dict["NO"]} \r'
+                        f'- Need update:    {update_counter_dict["UPD"]} \r'
+                        f'- Need overwrite: {update_counter_dict["INC"]} \r'
+                        f'- Need new data:  {update_counter_dict["NEW"]} \r')
         else:
-            # create all stock index and create data retrieve task.
+            # create all stock index from the scratch and create data retrieve task.
             logger.info(f'Stock Market {self.market.name} - Local index data not found, initializing...')
             for i, remote_index_item in remote_index_list.iterrows():
                 code = remote_index_item['代码']
                 name = remote_index_item['名称']
                 self.handle_new_stock_index(code=code, name=name)
                 prog_bar(i, remote_index_num)
-            logger.info(f'Stock Market {self.market.name} - Created local data for {remote_index_num} stock indexes')
-            logger.info(f'Stock Market {self.market.name} - index quote data retrieve task created')
+            logger.info(f'Stock Market {self.market.name} - '
+                        f'Created local data and data retrieve tasks for {remote_index_num} stock indexes')
 
     def handle_new_stock_index(self, code, name):
         logger.debug(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
@@ -110,7 +125,6 @@ class ChinaAStock(object):
                                                  kwarg_dict=data_retrieve_kwarg)
 
     def check_stock_index_data_freshness(self, stock_index_obj):
-        update_flag = False
         # check the existence of the quote data, if not, get the full quote
         if stock_index_obj.daily_quote:
             closest_avail_trading_day = self.determine_closest_trading_date()
@@ -118,12 +132,29 @@ class ChinaAStock(object):
             # determine latest quote data
             quote_list = stock_index_obj.daily_quote
             latest_quote_date = self.determine_latest_quote_date(quote_list, 'date')
+
+            # determine time difference
+            time_diff = closest_avail_trading_day - latest_quote_date
             # create data update task
-            if latest_quote_date < closest_avail_trading_day:
-                pass
+            if time_diff.days == 0:
+                update_flag = "NO"
+            elif time_diff.days == 1:
+                update_flag = "UPD"  # Just update it with the most recent daily quote (difference of only 1 day)
+            else:
+                # Need the whole history quote data to do the incremental update (difference of more than 1 day)
+                update_flag = "INC"
+                data_retrieve_kwarg = {
+                    'code': stock_index_obj.code
+                }
+                data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR '
+                                                              f'{stock_index_obj.code}-{stock_index_obj.name}',
+                                                         module='akshare',
+                                                         handler='get_zh_a_stock_index_quote_daily',
+                                                         kwarg_dict=data_retrieve_kwarg)
 
         else:
-            update_flag = True
+            # no quote data at all
+            update_flag = "NEW"
             data_retrieve_kwarg = {
                 'code': stock_index_obj.code
             }

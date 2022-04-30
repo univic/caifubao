@@ -31,8 +31,12 @@ class DataRetriever(object):
 
         logger.info(f'Data retrieve tasks completed, {task_complete_counter} success, {task_fail_counter} failed')
 
-    def create_data_retrieve_task(self, name, module, handler, args=None, kwarg_dict=None):
-        new_task = DataRetrieveTask()
+    def create_data_retrieve_task(self, name, module, handler, scheduled_time=None, args=None, kwarg_dict=None):
+        if scheduled_time:
+            new_task = ScheduledDataRetrieveTask()
+            new_task.scheduled_process_time = scheduled_time
+        else:
+            new_task = DataRetrieveTask()
         new_task.name = name
         new_task.callback_module = module
         new_task.callback_handler = handler
@@ -43,20 +47,6 @@ class DataRetriever(object):
             logger.debug(f'Data retrieve task {new_task.name} created')
         else:
             logger.debug(f'Found duplicate data retrieve task {new_task.name}')
-
-    def create_scheduled_data_retrieve_task(self, name, module, handler, scheduled_time, args=None, kwarg_dict=None):
-        new_task = ScheduledDataRetrieveTask()
-        new_task.name = name
-        new_task.callback_module = module
-        new_task.callback_handler = handler
-        new_task.scheduled_process_time = scheduled_time
-        new_task.args = args
-        new_task.kwargs = self.convert_dict_to_kwarg(kwarg_dict)
-        if self.check_task_uniqueness(new_task, kwarg_dict):
-            new_task.save()
-            logger.debug(f'Scheduled data retrieve task {new_task.name} created')
-        else:
-            logger.debug(f'Found duplicate  scheduled data retrieve task {new_task.name}')
 
     def exec_data_retrieve_task(self, item):
         func = getattr(import_module(f'app.lib.datahub.remote_data.{item.callback_module}.handler'),
@@ -100,12 +90,22 @@ class DataRetriever(object):
 
     @staticmethod
     def generate_task_uid(task_obj, kwarg_dict):
+        """
+        generate hash uid according to the attributes of the object
+        :param task_obj:
+        :param kwarg_dict:
+        :return:
+        """
         obj_str = str(task_obj.name + task_obj.callback_module + task_obj.callback_handler)
+        datetime_str = ""
+        # convert datetime to str
+        if task_obj.scheduled_process_time:
+            datetime_str = datetime.datetime.strftime(task_obj.scheduled_process_time, "%Y%m%d%H%M%S")
         args_hash_str = str(hash(tuple(task_obj.args)))         # list is unable to hash, convert to tuple
         kwargs_str = ''
         for item in kwarg_dict.items():
             kwargs_str += item[0] + item[1]
         kwargs_hash_str = str(hash(kwargs_str))
-        hash_str = obj_str + args_hash_str + kwargs_hash_str
+        hash_str = obj_str + args_hash_str + kwargs_hash_str + datetime_str
         uid = str(hash(hash_str))
         return uid
