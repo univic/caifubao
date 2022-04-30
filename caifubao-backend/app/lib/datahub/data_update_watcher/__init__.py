@@ -1,5 +1,6 @@
 import time
 import datetime
+from app.model.data_retrive import ScheduledDataUpdateTask
 
 
 class UpdateWatcher(object):
@@ -8,7 +9,11 @@ class UpdateWatcher(object):
         pass
 
     def init_data_update_watcher(self):
-        pass
+        task_list = ScheduledDataUpdateTask.objects(status='CRTD')
+        if task_list:
+            pass
+        else:
+            pass
 
     def data_update_dispatcher(self):
         pass

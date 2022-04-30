@@ -3,7 +3,7 @@ import datetime
 import logging
 from app.model.stock import StockIndex
 from app.model.stock import DailyQuote
-from app.model.data_retrive import DataRetriveTask
+from app.model.data_retrive import DataRetrieveTask
 import app.lib.datahub.remote_data.akshare.interface as interface
 
 
