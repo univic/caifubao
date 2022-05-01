@@ -127,18 +127,16 @@ class ChinaAStock(object):
     def check_stock_index_data_freshness(self, stock_index_obj):
         # check the existence of the quote data, if not, get the full quote
         if stock_index_obj.daily_quote:
-            closest_avail_trading_day = self.determine_closest_trading_date()
 
             # determine latest quote data
             quote_list = stock_index_obj.daily_quote
-            latest_quote_date = self.determine_latest_quote_date(quote_list, 'date')
 
             # determine time difference
-            time_diff = closest_avail_trading_day - latest_quote_date
+            time_diff = self.determine_date_diff_with_latest_quote(quote_list)
             # create data update task
-            if time_diff.days == 0:
+            if time_diff == 0:
                 update_flag = "NO"
-            elif time_diff.days == 1:
+            elif time_diff == 1:
                 update_flag = "UPD"  # Just update it with the most recent daily quote (difference of only 1 day)
             else:
                 # Need the whole history quote data to do the incremental update (difference of more than 1 day)
@@ -147,7 +145,7 @@ class ChinaAStock(object):
                     'code': stock_index_obj.code,
                     'incremental': True
                 }
-                data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR '
+                data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR INC UPD'
                                                               f'{stock_index_obj.code}-{stock_index_obj.name}',
                                                          module='akshare',
                                                          handler='get_zh_a_stock_index_quote_daily',
@@ -194,3 +192,13 @@ class ChinaAStock(object):
     def determine_latest_quote_date(quote_list, date_attribute):
         latest_quote_date = max(quote_list, key=lambda x: x[date_attribute])
         return latest_quote_date
+
+    def determine_date_diff_with_latest_quote(self, quote_list):
+        closest_avail_trading_day = self.determine_closest_trading_date()
+        latest_quote_date = self.determine_latest_quote_date(quote_list, 'date')
+        trade_day_list = sorted(self.market.trade_calendar, reverse=True)
+        latest_quote_date_index = trade_day_list.index(latest_quote_date)
+        closest_avail_trading_day_index = trade_day_list.index(closest_avail_trading_day)
+        date_diff = abs(closest_avail_trading_day_index - latest_quote_date_index)
+        return date_diff
+
