@@ -52,8 +52,9 @@ class DataRetriever(object):
         func = getattr(import_module(f'app.lib.datahub.remote_data.{item.callback_module}.handler'),
                        item.callback_handler)
         kwarg_dict = self.convert_kwarg_to_dict(item.kwargs)
-        result = func(*item.args, **kwarg_dict)
         item.processed_at = datetime.datetime.now()
+        result = func(*item.args, **kwarg_dict)
+
         if result['code'] == 'GOOD':
             item.completed_at = datetime.datetime.now()
             item.status = 'COMP'

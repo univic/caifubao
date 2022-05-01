@@ -26,26 +26,32 @@ def get_zh_individual_stock_list():
     stock_list = None
 
 
-def get_zh_a_stock_index_quote_daily(code):
+def get_zh_a_stock_index_quote_daily(code, incremental=False):
     status = {
         'code': 'GOOD',
         'message': None,
     }
     stock_index = StockIndex.objects(code=code).first()
+    quote_df = interface.stock_zh_index_daily(code)
     if stock_index:
-        quote_df = interface.stock_zh_index_daily(code)
-        daily_quote_list = []
-        for i, row in quote_df.iterrows():
-            daily_quote = DailyQuote()
-            daily_quote.date = row['date']
-            daily_quote.open = row['open']
-            daily_quote.close = row['close']
-            daily_quote.high = row['high']
-            daily_quote.low = row['low']
-            daily_quote.volume = row['volume']
-            daily_quote_list.append(daily_quote)
-        stock_index.daily_quote = daily_quote_list
-        stock_index.save()
+        if incremental and stock_index.daily_quote:
+            local_daily_quote_list = stock_index.daily_quote
+            most_recent_quote_date = max(local_daily_quote_list, key=lambda x: x.date)
+            sorted_quote_df = quote_df.sort_index(axis=1, ascending=False)
+
+        else:
+            daily_quote_list = []
+            for i, row in quote_df.iterrows():
+                daily_quote = DailyQuote()
+                daily_quote.date = row['date']
+                daily_quote.open = row['open']
+                daily_quote.close = row['close']
+                daily_quote.high = row['high']
+                daily_quote.low = row['low']
+                daily_quote.volume = row['volume']
+                daily_quote_list.append(daily_quote)
+            stock_index.daily_quote = daily_quote_list
+            stock_index.save()
     else:
         status = {
             'code': 'FAIL',

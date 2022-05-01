@@ -144,7 +144,8 @@ class ChinaAStock(object):
                 # Need the whole history quote data to do the incremental update (difference of more than 1 day)
                 update_flag = "INC"
                 data_retrieve_kwarg = {
-                    'code': stock_index_obj.code
+                    'code': stock_index_obj.code,
+                    'incremental': True
                 }
                 data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR '
                                                               f'{stock_index_obj.code}-{stock_index_obj.name}',
