@@ -1,13 +1,9 @@
 import datetime
 
 
-def determine_closest_trading_date(trade_calendar, ignore_trading_hour=False):
-    now = datetime.datetime.now()
-    cloest_trading_day = min(trade_calendar, key=lambda x: (x > now, abs(x - now)))
-    if not ignore_trading_hour and now.hour < 15:
-        closest_avail_trading_day = cloest_trading_day - datetime.timedelta(days=1)
-    else:
-        closest_avail_trading_day = cloest_trading_day
+def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.now()):
+
+    closest_avail_trading_day = min(trade_calendar, key=lambda x: (x > given_time, abs(x - given_time)))
     return closest_avail_trading_day
 
 

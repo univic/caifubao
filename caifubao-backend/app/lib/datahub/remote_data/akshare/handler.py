@@ -16,8 +16,12 @@ def get_a_stock_trade_date_hist():
 
 
 def get_zh_stock_index_list():
+    start = time.process_time()
     raw_df = interface.zh_stock_index_spot()
     index_list = raw_df[['代码', '名称']][raw_df['名称'] != '']
+    end = time.process_time()
+    t = end - start
+    logger.info(f'Elapsed time during the handler run: {t:.2f} seconds')
     return index_list
 
 
@@ -25,26 +29,40 @@ def get_zh_stock_index_daily_spot():
     """
     根据每日盘后信息更新当日日线数据
     """
-    status = {
-        'code': 'GOOD',
-        'message': None,
-    }
+    status_code = "GOOD"
+    status_msg = None
     remote_data_df = interface.zh_stock_index_spot()
     stock_index_list = StockIndex.objects()
     if stock_index_list:
         for i, row in remote_data_df.iterrows():
             local_stock_index_object = StockIndex.objects(code=row['代码']).first()
-            market = local_stock_index_object.market
-            new_daily_quote_data = DailyQuote()
-            new_daily_quote_data.date = trading_day_helper.determine_closest_trading_date(
-                trade_calendar=market.trade_calendar,
-                ignore_trading_hour=True)
+            if local_stock_index_object:
+                market = local_stock_index_object.market
+                date_of_incoming_data = trading_day_helper.determine_closest_trading_date(
+                    trade_calendar=market.trade_calendar)
+                date_diff = trading_day_helper.determine_date_diff_with_latest_quote(
+                    trade_calendar_list=market.trade_calendar,
+                    stock_index_obj=local_stock_index_object
+                )
+                if date_diff == 1:
+                    new_daily_quote_data = DailyQuote()
+                    new_daily_quote_data.date = date_of_incoming_data
+                elif date_diff == 0:
+                    status_msg += f'{row["名称"]} - {row["代码"]} is up to date. '
+                else:
+                    status_code = "WARN"
+                    status_msg += f'{row["名称"]} - {row["代码"]} local data was outdated. '
+            else:
+                status_code = "WARN"
+                status_msg += f'{row["名称"]} - {row["代码"]} local data not found. '
 
     else:
-        status = {
-            'code': 'FAIL',
-            'message': 'Local stock index data not found',
-        }
+        status_code = 'FAIL'
+        status_msg = 'Local stock index data not found.'
+    status = {
+        'code': status_code,
+        'message': status_msg,
+    }
     return status
 
 
@@ -53,7 +71,7 @@ def get_zh_individual_stock_list():
     stock_list = None
 
 
-def get_zh_a_stock_index_quote_daily(code, incremental=False):
+def get_zh_a_stock_index_quote_daily(code, incremental="false"):
     status = {
         'code': 'GOOD',
         'message': None,
@@ -62,7 +80,7 @@ def get_zh_a_stock_index_quote_daily(code, incremental=False):
     res_df = interface.stock_zh_index_daily(code)
     local_daily_quote_list = []
     if stock_index:
-        if incremental and stock_index.daily_quote:
+        if incremental == "true" and stock_index.daily_quote:
             # prepare the df for incremental update
             local_daily_quote_list = stock_index.daily_quote
             most_recent_quote = max(local_daily_quote_list, key=lambda x: x.date)

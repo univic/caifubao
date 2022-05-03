@@ -55,6 +55,8 @@ class ChinaAStock(object):
             self.market.save()
 
     def check_stock_index_integrity(self):
+        logger.info(f'Stock Market {self.market.name} - '
+                    f'Checking local index data integrity')
         local_index_list = StockIndex.objects(market=self.market)
         remote_index_list = akshare_handler.get_zh_stock_index_list()
         # prepare the progress bar
@@ -70,9 +72,7 @@ class ChinaAStock(object):
             "NEW": 0
         }
         # check the existence of the index list
-        if local_index_list:
-            logger.info(f'Stock Market {self.market.name} - '
-                        f'Checking local index data integrity')
+        if local_index_num > 0:
 
             # check the existence of each index
             for i, remote_index_item in remote_index_list.iterrows():
@@ -141,7 +141,7 @@ class ChinaAStock(object):
                 update_flag = "INC"
                 data_retrieve_kwarg = {
                     'code': stock_index_obj.code,
-                    'incremental': True
+                    'incremental': "true"
                 }
                 data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR INC UPD'
                                                               f'{stock_index_obj.code}-{stock_index_obj.name}',

@@ -57,7 +57,12 @@ class BasicStock(db.Document):
     """
     type:
     """
-    meta = {'allow_inheritance': True}
+    meta = {
+        'allow_inheritance': True,
+        'indexes': [
+            '#code',
+        ]
+    }
     code = StringField(unique=True, required=True)
     name = StringField(required=True)
     exchange = ReferenceField(StockExchange)

@@ -15,7 +15,7 @@ class DataRetriever(object):
 
     def dispatch(self):
         logger.info(f'Data retriever dispatcher running...')
-        task_list = DataRetrieveTask.objects(status='CRTD')[:5]        # use slice at here to limit the task number
+        task_list = DataRetrieveTask.objects(status='CRTD')        # use slice at here to limit the task number
         task_list_length = len(task_list)
         logger.info(f'Found {len(task_list)} data retrieve task(s), executing')
         prog_bar = progress_bar()
@@ -105,7 +105,7 @@ class DataRetriever(object):
         args_hash_str = str(hash(tuple(task_obj.args)))         # list is unable to hash, convert to tuple
         kwargs_str = ''
         for item in kwarg_dict.items():
-            kwargs_str += item[0] + item[1]
+            kwargs_str += str(item[0]) + str(item[1])
         kwargs_hash_str = str(hash(kwargs_str))
         hash_str = obj_str + args_hash_str + kwargs_hash_str + datetime_str
         uid = str(hash(hash_str))
