@@ -15,7 +15,7 @@ class DataRetriever(object):
 
     def dispatch(self):
         logger.info(f'Data retriever dispatcher running...')
-        task_list = DataRetrieveTask.objects(status='CRTD')[:10]        # use slice at here to limit the task number
+        task_list = DataRetrieveTask.objects(status='CRTD')[:5]        # use slice at here to limit the task number
         task_list_length = len(task_list)
         logger.info(f'Found {len(task_list)} data retrieve task(s), executing')
         prog_bar = progress_bar()
@@ -100,7 +100,7 @@ class DataRetriever(object):
         obj_str = str(task_obj.name + task_obj.callback_module + task_obj.callback_handler)
         datetime_str = ""
         # convert datetime to str
-        if task_obj.scheduled_process_time:
+        if isinstance(task_obj, ScheduledDataRetrieveTask):
             datetime_str = datetime.datetime.strftime(task_obj.scheduled_process_time, "%Y%m%d%H%M%S")
         args_hash_str = str(hash(tuple(task_obj.args)))         # list is unable to hash, convert to tuple
         kwargs_str = ''

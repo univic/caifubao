@@ -1,5 +1,5 @@
 from mongoengine import StringField, EmbeddedDocumentListField, DateTimeField, ReferenceField, ListField, \
-    EmbeddedDocument, BooleanField, FloatField, IntField
+    EmbeddedDocument, BooleanField, FloatField, IntField, EmbeddedDocumentField
 from app.lib.database import db
 from app.model.meta_data import MetaData
 
@@ -46,6 +46,11 @@ class DailyQuote(EmbeddedDocument):
     change_rate = FloatField()
     change_amount = FloatField()
     turnover_rate = FloatField()
+    reinstatement_factor = FloatField()
+
+
+class DataFreshnessMeta(EmbeddedDocument):
+    daily_quote = DateTimeField()
 
 
 class BasicStock(db.Document):
@@ -58,6 +63,7 @@ class BasicStock(db.Document):
     exchange = ReferenceField(StockExchange)
     market = ReferenceField(FinanceMarket)
     daily_quote = EmbeddedDocumentListField('DailyQuote')
+    data_freshness_meta = EmbeddedDocumentField(DataFreshnessMeta)
 
 
 class IndividualStock(BasicStock):
@@ -67,11 +73,6 @@ class IndividualStock(BasicStock):
 
 class StockIndex(BasicStock):
     pass
-
-
-class ReinstatementFactor(EmbeddedDocument):
-    date = DateTimeField()
-    reinstatement_factor = FloatField()
 
 
 class ValuationIndicator(EmbeddedDocument):

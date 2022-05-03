@@ -4,6 +4,7 @@ from app.lib.datahub.remote_data.akshare import handler as akshare_handler
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock
 from app.lib.datahub.data_retriever import data_retriever
 from app.utilities.progress_bar import progress_bar
+from app.utilities.trading_day_helper import determine_date_diff_with_latest_quote
 
 logger = logging.getLogger()
 
@@ -89,11 +90,10 @@ class ChinaAStock(object):
                     unmatched_index_counter += 1
                 prog_bar(i, remote_index_num)
             logger.info(f'Stock Market {self.market.name} - '
-                        f'Checked {local_index_num} local indexes with {remote_index_num} remote data，'
-                        f'Created {unmatched_index_counter} data and data retrieve tasks for unmatched indexes')
+                        f'Checked {local_index_num} local indexes with {remote_index_num} remote data，')
             logger.info(f'Stock Market {self.market.name} - '
                         f'Checked quote data freshness of {matched_index_counter} local indexes. \r '
-                        f'- Fresh:          {update_counter_dict["NO"]} \r'
+                        f'- Up to date:          {update_counter_dict["NO"]} \r'
                         f'- Need update:    {update_counter_dict["UPD"]} \r'
                         f'- Need overwrite: {update_counter_dict["INC"]} \r'
                         f'- Need new data:  {update_counter_dict["NEW"]} \r')
@@ -128,11 +128,9 @@ class ChinaAStock(object):
         # check the existence of the quote data, if not, get the full quote
         if stock_index_obj.daily_quote:
 
-            # determine latest quote data
-            quote_list = stock_index_obj.daily_quote
-
             # determine time difference
-            time_diff = self.determine_date_diff_with_latest_quote(quote_list)
+            time_diff = determine_date_diff_with_latest_quote(trade_calendar_list=self.market.trade_calendar,
+                                                              stock_index_obj=stock_index_obj)
             # create data update task
             if time_diff == 0:
                 update_flag = "NO"
@@ -177,28 +175,3 @@ class ChinaAStock(object):
         max_date = max(df[column])
         data.meta_data.last_update = datetime.datetime.now()
         # data.meta_data.date_of_most_recent_daily_quote = max_data
-
-    def determine_closest_trading_date(self):
-        now = datetime.datetime.now()
-        trading_date_list = self.market.trade_calendar
-        cloest_trading_day = min(trading_date_list, key=lambda x: (x > now, abs(x - now)))
-        if now.hour < 15:
-            closest_avail_trading_day = cloest_trading_day - datetime.timedelta(days=1)
-        else:
-            closest_avail_trading_day = cloest_trading_day
-        return closest_avail_trading_day
-
-    @staticmethod
-    def determine_latest_quote_date(quote_list, date_attribute):
-        latest_quote_date = max(quote_list, key=lambda x: x[date_attribute])
-        return latest_quote_date
-
-    def determine_date_diff_with_latest_quote(self, quote_list):
-        closest_avail_trading_day = self.determine_closest_trading_date()
-        latest_quote_date = self.determine_latest_quote_date(quote_list, 'date')
-        trade_day_list = sorted(self.market.trade_calendar, reverse=True)
-        latest_quote_date_index = trade_day_list.index(latest_quote_date)
-        closest_avail_trading_day_index = trade_day_list.index(closest_avail_trading_day)
-        date_diff = abs(closest_avail_trading_day_index - latest_quote_date_index)
-        return date_diff
-
