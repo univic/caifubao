@@ -35,6 +35,11 @@ class FinanceMarket(db.Document):
 
 
 class DailyQuote(EmbeddedDocument):
+    meta = {
+        'indexes': [
+            '#date',
+        ]
+    }
     date = DateTimeField()
     open = FloatField()
     close = FloatField()

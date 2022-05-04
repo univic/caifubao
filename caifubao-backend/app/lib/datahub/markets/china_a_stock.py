@@ -60,7 +60,7 @@ class ChinaAStock(object):
         local_index_list = StockIndex.objects(market=self.market)
         remote_index_list = akshare_handler.get_zh_stock_index_list()
         # prepare the progress bar
-        local_index_num = len(local_index_list)
+        local_index_num = local_index_list.count()
         remote_index_num = len(remote_index_list)
         unmatched_index_counter = 0
         matched_index_counter = 0

@@ -67,8 +67,13 @@ def get_zh_stock_index_daily_spot():
 
 
 def get_zh_individual_stock_list():
-    df = interface.stock_zh_a_spot_em()
-    stock_list = None
+    start = time.process_time()
+    raw_df = interface.zh_stock_index_spot()
+    stock_list = raw_df[['代码', '名称']][raw_df['名称'] != '']
+    end = time.process_time()
+    t = end - start
+    logger.info(f'Elapsed time during the handler run: {t:.2f} seconds')
+    return stock_list
 
 
 def get_zh_a_stock_index_quote_daily(code, incremental="false"):
