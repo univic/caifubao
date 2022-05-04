@@ -1,5 +1,5 @@
 import time
-import datetime
+import traceback
 import logging
 from app.model.stock import StockIndex, DataFreshnessMeta
 from app.model.stock import DailyQuote
@@ -72,46 +72,50 @@ def get_zh_individual_stock_list():
 
 
 def get_zh_a_stock_index_quote_daily(code, incremental="false"):
+    status_code = "GOOD"
+    status_msg = None
+    try:
+        res_df = interface.stock_zh_index_daily(code)
+        stock_index = StockIndex.objects(code=code).first()
+        local_daily_quote_list = []
+        if stock_index:
+            if incremental == "true" and stock_index.daily_quote:
+                # prepare the df for incremental update
+                local_daily_quote_list = stock_index.daily_quote
+                most_recent_quote = max(local_daily_quote_list, key=lambda x: x.date)
+                quote_df = res_df[res_df.date > most_recent_quote.date].sort_index(axis=1, ascending=False)
+            else:
+                quote_df = res_df
+
+            for i, row in quote_df.iterrows():
+                daily_quote = DailyQuote()
+                daily_quote.date = row['date']
+                daily_quote.open = row['open']
+                daily_quote.close = row['close']
+                daily_quote.high = row['high']
+                daily_quote.low = row['low']
+                daily_quote.volume = row['volume']
+                local_daily_quote_list.append(daily_quote)
+            stock_index.daily_quote = local_daily_quote_list
+
+            # update data freshness meta data
+            if stock_index.data_freshness_meta:
+                data_freshness_meta = stock_index.data_freshness_meta
+            else:
+                data_freshness_meta = DataFreshnessMeta()
+            data_freshness_meta.daily_quote = quote_df['date'].max()
+            stock_index.data_freshness_meta = data_freshness_meta
+            stock_index.save()
+        else:
+            status_code = 'FAIL'
+            status_msg = 'INDEX CODE CAN NOT BE FOUND IN LOCAL DB'
+        # time.sleep(0.5)    # reduce the query frequency
+    except Exception as e:
+        status_code = 'FAIL'
+        status_msg = ';'.join(traceback.format_exception(e))
     status = {
-        'code': 'GOOD',
-        'message': None,
+        'code': status_code,
+        'message': status_msg,
     }
-    stock_index = StockIndex.objects(code=code).first()
-    res_df = interface.stock_zh_index_daily(code)
-    local_daily_quote_list = []
-    if stock_index:
-        if incremental == "true" and stock_index.daily_quote:
-            # prepare the df for incremental update
-            local_daily_quote_list = stock_index.daily_quote
-            most_recent_quote = max(local_daily_quote_list, key=lambda x: x.date)
-            quote_df = res_df[res_df.date > most_recent_quote.date].sort_index(axis=1, ascending=False)
-        else:
-            quote_df = res_df
-
-        for i, row in quote_df.iterrows():
-            daily_quote = DailyQuote()
-            daily_quote.date = row['date']
-            daily_quote.open = row['open']
-            daily_quote.close = row['close']
-            daily_quote.high = row['high']
-            daily_quote.low = row['low']
-            daily_quote.volume = row['volume']
-            local_daily_quote_list.append(daily_quote)
-        stock_index.daily_quote = local_daily_quote_list
-
-        # update data freshness meta data
-        if stock_index.data_freshness_meta:
-            data_freshness_meta = stock_index.data_freshness_meta
-        else:
-            data_freshness_meta = DataFreshnessMeta()
-        data_freshness_meta.daily_quote = quote_df['date'].max()
-        stock_index.data_freshness_meta = data_freshness_meta
-        stock_index.save()
-    else:
-        status = {
-            'code': 'FAIL',
-            'message': 'INDEX CODE CAN NOT BE FOUND IN LOCAL DB',
-        }
-    # time.sleep(0.5)    # reduce the query frequency
     return status
 

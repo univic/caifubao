@@ -17,6 +17,6 @@ def progress_bar():
         a = "*" * int(percentage * bar_width)
         b = "." * int((100 - percentage) * bar_width)
         dur = stop - start
-        print(f"\r{percentage:6.2f}%[{a}>{b}]{dur:6.2f}s", end="")
+        print(f"\r{progress}/{scale} {percentage:6.2f}%[{a}>{b}]{dur:6.2f}s", end="")
 
     return show_progress_bar

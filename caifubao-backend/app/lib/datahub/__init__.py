@@ -22,7 +22,7 @@ class Datahub(object):
     @staticmethod
     def initialize():
         try:
-            markets.initialize_markets()
+            # markets.initialize_markets()
             data_retriever.dispatch()
         except ServerSelectionTimeoutError:
             logger.error("Timed out when establishing DB connection")

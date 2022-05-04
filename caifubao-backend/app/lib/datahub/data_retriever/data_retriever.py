@@ -60,7 +60,7 @@ class DataRetriever(object):
             item.status = 'COMP'
         else:
             item.status = 'FAIL'
-            item.message = result.message
+            item.message = result['message']
         item.save()
         return result
 

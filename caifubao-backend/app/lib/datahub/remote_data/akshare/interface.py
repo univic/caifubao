@@ -44,5 +44,5 @@ def stock_zh_a_spot_em():
 
 
 if __name__ == "__main__":
-    o = zh_stock_index_spot()
+    o = stock_zh_index_daily('sh000683')
     print(o)
