@@ -4,7 +4,7 @@ from app.lib.datahub.remote_data.akshare import handler as akshare_handler
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock
 from app.lib.datahub.data_retriever import data_retriever
 from app.utilities.progress_bar import progress_bar
-from app.utilities.trading_day_helper import determine_date_diff_with_latest_quote
+from app.utilities import trading_day_helper
 
 logger = logging.getLogger()
 
@@ -14,6 +14,8 @@ class ChinaAStock(object):
     def __init__(self):
         self.market = None
         self.market_name = "A股"
+        self.today = datetime.date.today()
+        self.most_recent_trading_day = None
         self.initialization()
 
     def initialization(self):
@@ -59,6 +61,13 @@ class ChinaAStock(object):
                     f'Checking local index data integrity')
         local_index_list = StockIndex.objects(market=self.market)
         remote_index_list = akshare_handler.get_zh_stock_index_list()
+
+        # determine the closest trading day
+        today = datetime.date.today()
+        if self.today != today or self.most_recent_trading_day is None:
+            self.today = today
+            self.most_recent_trading_day = trading_day_helper.determine_closest_trading_date(self.market.trade_calendar)
+
         # prepare the progress bar
         local_index_num = local_index_list.count()
         remote_index_num = len(remote_index_list)
@@ -92,11 +101,11 @@ class ChinaAStock(object):
             logger.info(f'Stock Market {self.market.name} - '
                         f'Checked {local_index_num} local indexes with {remote_index_num} remote data，')
             logger.info(f'Stock Market {self.market.name} - '
-                        f'Checked quote data freshness of {matched_index_counter} local indexes. \r '
-                        f'- Up to date:          {update_counter_dict["NO"]} \r'
-                        f'- Need update:    {update_counter_dict["UPD"]} \r'
-                        f'- Need overwrite: {update_counter_dict["INC"]} \r'
-                        f'- Need new data:  {update_counter_dict["NEW"]} \r')
+                        f'Checked quote data freshness of {matched_index_counter} local indexes. '
+                        f'- Up to date:          {update_counter_dict["NO"]} '
+                        f'- Need update:    {update_counter_dict["UPD"]} '
+                        f'- Need overwrite: {update_counter_dict["INC"]} '
+                        f'- Need new data:  {update_counter_dict["NEW"]} ')
         else:
             # create all stock index from the scratch and create data retrieve task.
             logger.info(f'Stock Market {self.market.name} - Local index data not found, initializing...')
@@ -129,14 +138,16 @@ class ChinaAStock(object):
         if stock_index_obj.daily_quote:
 
             # determine time difference
-            time_diff = determine_date_diff_with_latest_quote(trade_calendar_list=self.market.trade_calendar,
-                                                              stock_index_obj=stock_index_obj)
+            most_recent_quote_date = trading_day_helper.determine_latest_quote_date(stock_index_obj.daily_quote, 'date')
+            time_diff = trading_day_helper.determine_trading_date_diff(self.market.trade_calendar,
+                                                                       most_recent_quote_date,
+                                                                       self.most_recent_trading_day)
             # create data update task
             if time_diff == 0:
                 update_flag = "NO"
             elif time_diff == 1:
                 update_flag = "UPD"  # Just update it with the most recent daily quote (difference of only 1 day)
-            else:
+            elif time_diff > 1:
                 # Need the whole history quote data to do the incremental update (difference of more than 1 day)
                 update_flag = "INC"
                 data_retrieve_kwarg = {
@@ -148,6 +159,9 @@ class ChinaAStock(object):
                                                          module='akshare',
                                                          handler='get_zh_a_stock_index_quote_daily',
                                                          kwarg_dict=data_retrieve_kwarg)
+            else:
+                logger.warning(f'Stock Market {self.market.name} - {stock_index_obj.code} Quote date ahead of time!')
+                update_flag = "NO"
 
         else:
             # no quote data at all

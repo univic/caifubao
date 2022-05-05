@@ -9,7 +9,7 @@ def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.
 
 def determine_latest_quote_date(quote_list, date_attribute):
     latest_quote_date = max(quote_list, key=lambda x: x[date_attribute])
-    return latest_quote_date
+    return latest_quote_date[date_attribute]
 
 
 def determine_date_diff_with_latest_quote(trade_calendar_list, stock_index_obj):
@@ -19,6 +19,14 @@ def determine_date_diff_with_latest_quote(trade_calendar_list, stock_index_obj):
     latest_quote_date_index = trade_day_list.index(latest_quote_date)
     closest_avail_trading_day_index = trade_day_list.index(closest_avail_trading_day)
     date_diff = abs(closest_avail_trading_day_index - latest_quote_date_index)
+    return date_diff
+
+
+def determine_trading_date_diff(trade_calendar_list, trading_day_a, trading_day_b):
+    trade_day_list = sorted(trade_calendar_list, reverse=True)
+    trading_day_a_index = trade_day_list.index(trading_day_a)
+    trading_day_b_index = trade_day_list.index(trading_day_b)
+    date_diff = trading_day_a_index - trading_day_b_index
     return date_diff
 
 
