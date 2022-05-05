@@ -68,7 +68,7 @@ def get_zh_stock_index_daily_spot():
 
 def get_zh_individual_stock_list():
     start = time.process_time()
-    raw_df = interface.zh_stock_index_spot()
+    raw_df = interface.stock_zh_a_spot()
     stock_list = raw_df[['代码', '名称']][raw_df['名称'] != '']
     end = time.process_time()
     t = end - start

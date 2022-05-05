@@ -17,7 +17,7 @@ class DataRetriever(object):
         logger.info(f'Data retriever dispatcher running...')
         task_list = DataRetrieveTask.objects(status='CRTD')        # use slice at here to limit the task number
         task_list_length = len(task_list)
-        logger.info(f'Found {len(task_list)} data retrieve task(s), executing')
+        logger.info(f'Found {task_list_length} data retrieve task(s), executing')
         prog_bar = progress_bar()
         task_complete_counter = 0
         task_fail_counter = 0
@@ -29,7 +29,8 @@ class DataRetriever(object):
                 task_fail_counter += 1
             prog_bar(i, task_list_length)
 
-        logger.info(f'Data retrieve tasks completed, {task_complete_counter} success, {task_fail_counter} failed')
+        logger.info(f'Data retrieve tasks completed, {task_list_length} in total, '
+                    f'{task_complete_counter} success, {task_fail_counter} failed.')
 
     def create_data_retrieve_task(self, name, module, handler, scheduled_time=None, args=None, kwarg_dict=None):
         if scheduled_time:

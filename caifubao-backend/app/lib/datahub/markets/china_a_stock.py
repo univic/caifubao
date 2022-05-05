@@ -163,10 +163,26 @@ class ChinaAStock(object):
         return update_flag
 
     def check_individual_stock_integrity(self):
+        logger.info(f'Stock Market {self.market.name} - '
+                    f'Checking local stock data integrity')
         local_stock_list = IndividualStock.objects(market=self.market)
-        remote_stock_list = None
-        if local_stock_list:
-            pass
+        remote_stock_list = akshare_handler.get_zh_individual_stock_list()
+        # prepare the progress bar
+        local_stock_num = local_stock_list.count()
+        remote_stock_num = len(remote_stock_list)
+        prog_bar = progress_bar()
+        counter_dict = {
+            'NO': 0,
+            "UPD": 0,
+            "INC": 0,
+            "NEW": 0
+        }
+        # check the existence of the stock list
+        if local_stock_num > 0:
+            # check the existence of each index
+            for i, remote_stock_item in remote_stock_list.iterrows():
+                code = remote_stock_item['代码']
+                name = remote_stock_item['名称']
         else:
             logger.info(f'Stock Market {self.market.name} - Local indivdual stock data not found, initializing...')
 
