@@ -103,9 +103,9 @@ class ChinaAStock(object):
             logger.info(f'Stock Market {self.market.name} - '
                         f'Checked quote data freshness of {matched_index_counter} local indexes. '
                         f'- Up to date:          {update_counter_dict["NO"]} '
-                        f'- Need update:    {update_counter_dict["UPD"]} '
-                        f'- Need overwrite: {update_counter_dict["INC"]} '
-                        f'- Need new data:  {update_counter_dict["NEW"]} ')
+                        f'- One day behind:    {update_counter_dict["UPD"]} '
+                        f'- Need incremental update: {update_counter_dict["INC"]} \n'
+                        f'- No local data:  {update_counter_dict["NEW"]} ')
         else:
             # create all stock index from the scratch and create data retrieve task.
             logger.info(f'Stock Market {self.market.name} - Local index data not found, initializing...')

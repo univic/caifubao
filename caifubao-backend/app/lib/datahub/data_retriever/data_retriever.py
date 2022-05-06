@@ -84,7 +84,7 @@ class DataRetriever(object):
 
     def check_task_uniqueness(self, task_obj, kwarg_dict):
         task_obj.uid = self.generate_task_uid(task_obj, kwarg_dict)
-        current_task = DataRetrieveTask.objects(uid=task_obj.uid).first()
+        current_task = DataRetrieveTask.objects(uid=task_obj.uid, status='CRTD').first()
         if current_task:
             return False
         else:

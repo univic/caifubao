@@ -31,15 +31,23 @@ def get_zh_stock_index_daily_spot():
     """
     status_code = "GOOD"
     status_msg = None
+    counter_dict = {
+        "NO_UPD": 0,
+        "UPD": 0,
+        "OUT_DATED": 0,
+        "NO_DATA": 0
+    }
+    # TODO: FINISH HERE
     remote_data_df = interface.zh_stock_index_spot()
     stock_index_list = StockIndex.objects()
     if stock_index_list:
+        market = StockIndex.objects().first().market
+        date_of_incoming_data = trading_day_helper.determine_closest_trading_date(
+            trade_calendar=market.trade_calendar)
         for i, row in remote_data_df.iterrows():
             local_stock_index_object = StockIndex.objects(code=row['代码']).first()
             if local_stock_index_object:
-                market = local_stock_index_object.market
-                date_of_incoming_data = trading_day_helper.determine_closest_trading_date(
-                    trade_calendar=market.trade_calendar)
+
                 date_diff = trading_day_helper.determine_date_diff_with_latest_quote(
                     trade_calendar_list=market.trade_calendar,
                     stock_index_obj=local_stock_index_object
@@ -88,33 +96,40 @@ def get_zh_a_stock_index_quote_daily(code, incremental="false"):
                 # prepare the df for incremental update
                 local_daily_quote_list = stock_index.daily_quote
                 most_recent_quote = max(local_daily_quote_list, key=lambda x: x.date)
-                quote_df = res_df[res_df.date > most_recent_quote.date].sort_index(axis=1, ascending=False)
+                most_recent_quote_date = most_recent_quote.date.date()
+                quote_df = res_df[res_df.date > most_recent_quote_date].sort_index(axis=1, ascending=False)
             else:
                 quote_df = res_df
+            if not quote_df.empty:
+                for i, row in quote_df.iterrows():
+                    daily_quote = DailyQuote()
+                    daily_quote.date = row['date']
+                    daily_quote.open = row['open']
+                    daily_quote.close = row['close']
+                    daily_quote.high = row['high']
+                    daily_quote.low = row['low']
+                    daily_quote.volume = row['volume']
+                    local_daily_quote_list.append(daily_quote)
+                stock_index.daily_quote = local_daily_quote_list
 
-            for i, row in quote_df.iterrows():
-                daily_quote = DailyQuote()
-                daily_quote.date = row['date']
-                daily_quote.open = row['open']
-                daily_quote.close = row['close']
-                daily_quote.high = row['high']
-                daily_quote.low = row['low']
-                daily_quote.volume = row['volume']
-                local_daily_quote_list.append(daily_quote)
-            stock_index.daily_quote = local_daily_quote_list
-
-            # update data freshness meta data
-            if stock_index.data_freshness_meta:
-                data_freshness_meta = stock_index.data_freshness_meta
+                # update data freshness meta data
+                if stock_index.data_freshness_meta:
+                    data_freshness_meta = stock_index.data_freshness_meta
+                else:
+                    data_freshness_meta = DataFreshnessMeta()
+                data_freshness_meta.daily_quote = quote_df['date'].max()
+                stock_index.data_freshness_meta = data_freshness_meta
+                stock_index.save()
             else:
-                data_freshness_meta = DataFreshnessMeta()
-            data_freshness_meta.daily_quote = quote_df['date'].max()
-            stock_index.data_freshness_meta = data_freshness_meta
-            stock_index.save()
+                status_code = 'FAIL'
+                status_msg = 'No available data for update'
         else:
             status_code = 'FAIL'
             status_msg = 'INDEX CODE CAN NOT BE FOUND IN LOCAL DB'
         # time.sleep(0.5)    # reduce the query frequency
+    except KeyError as e:
+        status_code = 'FAIL'
+        status_msg = 'the interface did not return valid dataframe, possibly due to no quote data'
     except Exception as e:
         status_code = 'FAIL'
         status_msg = ';'.join(traceback.format_exception(e))

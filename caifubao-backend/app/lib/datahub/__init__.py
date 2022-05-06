@@ -27,4 +27,3 @@ class Datahub(object):
         except ServerSelectionTimeoutError:
             logger.error("Timed out when establishing DB connection")
             exit()
-
