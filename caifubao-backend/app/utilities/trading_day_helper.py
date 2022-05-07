@@ -1,4 +1,5 @@
 import datetime
+from app.model.stock import DataFreshnessMeta
 
 
 def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.now()):
@@ -23,6 +24,10 @@ def determine_date_diff_with_latest_quote(trade_calendar_list, stock_index_obj):
 
 
 def determine_trading_date_diff(trade_calendar_list, trading_day_a, trading_day_b):
+    """
+    put the earlier date in day_a, and the latter date in day_b
+    trade_day_list is descend sorted, the earlier date will have bigger index number than latter
+    """
     trade_day_list = sorted(trade_calendar_list, reverse=True)
     trading_day_a_index = trade_day_list.index(trading_day_a)
     trading_day_b_index = trade_day_list.index(trading_day_b)
@@ -34,3 +39,17 @@ def determine_pervious_trading_day(trade_calendar_list, given_date):
     trade_day_list = sorted(trade_calendar_list, reverse=True)
     given_date_index = trade_day_list.index(given_date)
     return trade_day_list[given_date_index + 1]
+
+
+def update_freshness_meta(obj, freshness_field, freshness_value):
+    if obj.data_freshness_meta:
+        data_freshness_meta = obj.data_freshness_meta
+    else:
+        data_freshness_meta = DataFreshnessMeta()
+    data_freshness_meta[freshness_field] = freshness_value
+    obj.data_freshness_meta = data_freshness_meta
+
+
+def read_freshness_meta(obj, freshness_field):
+    freshness_value = obj.data_freshness_meta[freshness_field]
+    return freshness_value
