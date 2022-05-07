@@ -43,6 +43,24 @@ def stock_zh_a_spot():
     return df
 
 
+def stock_zh_a_hist(code, start_date=None, end_date=None):
+    """单次返回指定沪深京 A 股上市公司、指定周期和指定日期间的历史行情日频率数据"""
+    if start_date:
+        df = akshare.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date, end_date=end_date)
+    else:
+        df = akshare.stock_zh_a_hist(symbol=code, period="daily")
+    return df
+
+
+def stock_zh_a_hist_163(code, start_date=None, end_date=None):
+    """单次返回指定沪深 A 股（不包含北交所）上市公司指定日期间的历史行情日频率数据, 该接口只返回未复权数据"""
+    if start_date:
+        df = akshare.stock_zh_a_hist_163(symbol=code, start_date=start_date, end_date=end_date)
+    else:
+        df = akshare.stock_zh_a_hist_163(symbol=code)
+    return df
+
+
 if __name__ == "__main__":
-    o = stock_zh_index_daily('sh000171')
+    o = stock_zh_a_hist('000001')
     print(o)

@@ -15,7 +15,7 @@ class Datahub(object):
 
     def __init__(self):
         logger.info("Initializing datahub")
-        # self.initialize()
+        self.initialize()
         self.run_handler()
 
     @staticmethod

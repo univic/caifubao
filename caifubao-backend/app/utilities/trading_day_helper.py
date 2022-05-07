@@ -51,5 +51,7 @@ def update_freshness_meta(obj, freshness_field, freshness_value):
 
 
 def read_freshness_meta(obj, freshness_field):
-    freshness_value = obj.data_freshness_meta[freshness_field]
+    freshness_value = None
+    if obj.data_freshness_meta:
+        freshness_value = obj.data_freshness_meta[freshness_field]
     return freshness_value

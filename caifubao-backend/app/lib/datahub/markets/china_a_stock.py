@@ -90,12 +90,12 @@ class ChinaAStock(object):
                 query = local_index_list(code=code).first()
                 if query:
                     # check the quote data freshness of each index
-                    update_flag = self.check_stock_index_data_freshness(query)
+                    update_flag = self.check_stock_data_freshness(query)
                     update_counter_dict[update_flag] += 1
                     matched_index_counter += 1
                 else:
                     # create absent stock index and create data retrieve task.
-                    self.handle_new_stock_index(code=code, name=name)
+                    self.handle_new_stock(code=code, name=name, obj_type='stock_index')
                     unmatched_index_counter += 1
                 prog_bar(i, remote_index_num)
             logger.info(f'Stock Market {self.market.name} - '
@@ -112,33 +112,53 @@ class ChinaAStock(object):
             for i, remote_index_item in remote_index_list.iterrows():
                 code = remote_index_item['代码']
                 name = remote_index_item['名称']
-                self.handle_new_stock_index(code=code, name=name)
+                self.handle_new_stock(code=code, name=name, obj_type='stock_index')
                 prog_bar(i, remote_index_num)
             logger.info(f'Stock Market {self.market.name} - '
                         f'Created local data and data retrieve tasks for {remote_index_num} stock indexes')
 
-    def handle_new_stock_index(self, code, name):
-        logger.debug(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
-        new_stock_index = StockIndex()
-        new_stock_index.code = code
-        new_stock_index.name = name
-        new_stock_index.market = self.market
-        new_stock_index.save()
+    def handle_new_stock(self, code, name, obj_type):
+        if obj_type == 'stock_index':
+            logger.debug(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
+            new_stock_obj = StockIndex()
+            task_name = f'GET FULL QUOTE FOR STOCK INDEX {new_stock_obj.code}-{new_stock_obj.name}'
+        else:
+            logger.debug(f'Stock Market {self.market.name} - Initializing local stock data for {code}-{name}')
+            new_stock_obj = IndividualStock()
+            task_name = f'GET FULL QUOTE FOR STOCK {new_stock_obj.code}-{new_stock_obj.name}'
+
+        new_stock_obj.code = code
+        new_stock_obj.name = name
+        new_stock_obj.market = self.market
+        new_stock_obj.save()
         data_retrieve_kwarg = {
             'code': code
         }
-        data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR '
-                                                      f'{new_stock_index.code}-{new_stock_index.name}',
+        data_retriever.create_data_retrieve_task(name=task_name,
                                                  module='akshare',
                                                  handler='get_zh_a_stock_index_quote_daily',
                                                  kwarg_dict=data_retrieve_kwarg)
 
-    def check_stock_index_data_freshness(self, stock_index_obj):
-        # check the existence of the quote data, if not, get the full quote
-        if stock_index_obj.daily_quote:
+    def check_stock_data_freshness(self, stock_obj):
+        """
+        check the existence of the quote data, if not, get the full quote
+        """
+        if type(stock_obj) == StockIndex:
+            full_quote_task_name = f'GET FULL QUOTE FOR STOCK INDEX {stock_obj.code}-{stock_obj.name}'
+            inc_quote_task_name = f'GET FULL QUOTE FOR INCREMENTAL UPD STOCK INDEX {stock_obj.code}-{stock_obj.name}'
+            handler = 'get_zh_a_stock_index_quote_daily'
+        elif type(stock_obj) == IndividualStock:
+            full_quote_task_name = f'GET FULL QUOTE FOR STOCK {stock_obj.code}-{stock_obj.name}'
+            inc_quote_task_name = f'GET FULL QUOTE FOR INCREMENTAL UPD STOCK {stock_obj.code}-{stock_obj.name}'
+            handler = 'get_zh_a_stock_quote_daily'
+        else:
+            full_quote_task_name = None
+            inc_quote_task_name = None
+            logger.warning(f'Stock Market {self.market.name} - OBJECT COMPARISON ERROR  {stock_obj.code}')
+        if stock_obj.daily_quote:
 
             # determine time difference
-            most_recent_quote_date = trading_day_helper.determine_latest_quote_date(stock_index_obj.daily_quote, 'date')
+            most_recent_quote_date = trading_day_helper.determine_latest_quote_date(stock_obj.daily_quote, 'date')
             time_diff = trading_day_helper.determine_trading_date_diff(self.market.trade_calendar,
                                                                        most_recent_quote_date,
                                                                        self.most_recent_trading_day)
@@ -151,28 +171,26 @@ class ChinaAStock(object):
                 # Need the whole history quote data to do the incremental update (difference of more than 1 day)
                 update_flag = "INC"
                 data_retrieve_kwarg = {
-                    'code': stock_index_obj.code,
+                    'code': stock_obj.code,
                     'incremental': "true"
                 }
-                data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR INC UPD'
-                                                              f'{stock_index_obj.code}-{stock_index_obj.name}',
+                data_retriever.create_data_retrieve_task(name=inc_quote_task_name,
                                                          module='akshare',
-                                                         handler='get_zh_a_stock_index_quote_daily',
+                                                         handler=handler,
                                                          kwarg_dict=data_retrieve_kwarg)
             else:
-                logger.warning(f'Stock Market {self.market.name} - {stock_index_obj.code} Quote date ahead of time!')
+                logger.warning(f'Stock Market {self.market.name} - {stock_obj.code} Quote date ahead of time!')
                 update_flag = "NO"
 
         else:
             # no quote data at all
             update_flag = "NEW"
             data_retrieve_kwarg = {
-                'code': stock_index_obj.code
+                'code': stock_obj.code
             }
-            data_retriever.create_data_retrieve_task(name=f'GET STOCK INDEX FULL QUOTE FOR '
-                                                          f'{stock_index_obj.code}-{stock_index_obj.name}',
+            data_retriever.create_data_retrieve_task(name=full_quote_task_name,
                                                      module='akshare',
-                                                     handler='get_zh_a_stock_index_quote_daily',
+                                                     handler=handler,
                                                      kwarg_dict=data_retrieve_kwarg)
         return update_flag
 
@@ -181,6 +199,7 @@ class ChinaAStock(object):
                     f'Checking local stock data integrity')
         local_stock_list = IndividualStock.objects(market=self.market)
         remote_stock_list = akshare_handler.get_zh_individual_stock_list()
+
         # prepare the progress bar
         local_stock_num = local_stock_list.count()
         remote_stock_num = len(remote_stock_list)
@@ -193,12 +212,34 @@ class ChinaAStock(object):
         }
         # check the existence of the stock list
         if local_stock_num > 0:
-            # check the existence of each index
+            # check the existence of each stock
             for i, remote_stock_item in remote_stock_list.iterrows():
                 code = remote_stock_item['代码']
                 name = remote_stock_item['名称']
+                local_stock_obj = local_stock_list(code=code).first()
+                if local_stock_obj:
+                    # check the quote data freshness of each index
+                    update_flag = self.check_stock_data_freshness(local_stock_obj)
+                    counter_dict[update_flag] += 1
+                else:
+                    # create absent stock index and create data retrieve task.
+                    self.handle_new_stock(code=code, name=name, obj_type='stock')
+                prog_bar(i, remote_stock_num)
+                logger.info(f'Stock Market {self.market.name} - '
+                            f'Checked {local_stock_num} local stock data with {remote_stock_num} remote data，' 
+                            f'- Up to date:          {counter_dict["NO"]} '
+                            f'- One day behind:    {counter_dict["UPD"]} '
+                            f'- Need incremental update: {counter_dict["INC"]} \n'
+                            f'- No local data:  {counter_dict["NEW"]} ')
         else:
-            logger.info(f'Stock Market {self.market.name} - Local indivdual stock data not found, initializing...')
+            logger.info(f'Stock Market {self.market.name} - Local stock data not found, initializing...')
+            for i, remote_stock_item in remote_stock_list.iterrows():
+                code = remote_stock_item['代码']
+                name = remote_stock_item['名称']
+                self.handle_new_stock(code=code, name=name, obj_type='stock')
+                prog_bar(i, remote_stock_num)
+            logger.info(f'Stock Market {self.market.name} - '
+                        f'Created local data and data retrieve tasks for {remote_stock_num} stocks')
 
     @staticmethod
     def update_metadata(data, df, column):

@@ -36,6 +36,7 @@ class FinanceMarket(db.Document):
 
 class DailyQuote(EmbeddedDocument):
     meta = {
+        'allow_inheritance': True,
         'indexes': [
             '#date',
         ]
@@ -43,15 +44,17 @@ class DailyQuote(EmbeddedDocument):
     date = DateTimeField()
     open = FloatField()
     close = FloatField()
+    previous_close = FloatField()
     high = FloatField()
     low = FloatField()
-    volume = IntField()
-    trade_amount = FloatField()
     amplitude = FloatField()
     change_rate = FloatField()
     change_amount = FloatField()
     turnover_rate = FloatField()
-    reinstatement_factor = FloatField()
+    qfq_factor = FloatField()
+    hfq_factor = FloatField()
+    volume = IntField()
+    trade_amount = FloatField()
 
 
 class DataFreshnessMeta(EmbeddedDocument):
@@ -79,6 +82,8 @@ class BasicStock(db.Document):
 class IndividualStock(BasicStock):
     total_equity = IntField()
     outstanding_share = IntField()
+    daily_quote_hfq = EmbeddedDocumentListField('DailyQuote')
+    daily_quote_qfq = EmbeddedDocumentListField('DailyQuote')
 
 
 class StockIndex(BasicStock):

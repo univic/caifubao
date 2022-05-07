@@ -35,3 +35,4 @@ class DataRetrieveTask(db.Document):
 
 class ScheduledDataRetrieveTask(DataRetrieveTask):
     scheduled_process_time = DateTimeField(required=True)
+    repeat = StringField()
