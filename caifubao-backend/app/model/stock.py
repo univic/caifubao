@@ -55,6 +55,12 @@ class DailyQuote(EmbeddedDocument):
     hfq_factor = FloatField()
     volume = IntField()
     trade_amount = FloatField()
+    trade_status = IntField()    # 1 - 正常交易  0 - 停牌
+    peTTM = FloatField()         # 滚动市盈率
+    pbMRQ = FloatField()         # 市净率
+    psTTM = FloatField()         # 滚动市销率
+    pcfNcfTTM = FloatField()     # 滚动市现率
+    isST = IntField()    # 1 - 被ST  0 - 否
 
 
 class DataFreshnessMeta(EmbeddedDocument):
