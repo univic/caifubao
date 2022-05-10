@@ -30,24 +30,26 @@ def terminate_baostock_conn():
     baostock.logout()
 
 
-def query_history_k_data():
+def query_history_k_data(code, start_date, end_date):
     """
     获取历史K线，返回Dataframe
 
     """
-    bs_conn = establish_baostock_conn()
+    # TODO: DO STOCK CODE CONVERSION
     res_fields = "date,code,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus," \
                  "pctChg, peTTM, pbMRQ, psTTM, pcfNcfTTM, isST"
-    res = baostock.query_history_k_data_plus("sz.000001",
-                                             res_fields,
-                                             start_date='2012-07-01',
-                                             end_date='2015-12-31',
-                                             frequency="d",
-                                             adjustflag="3")
-    terminate_baostock_conn()
-    return res.get_data()
+    result = baostock.query_history_k_data_plus(code,
+                                                res_fields,
+                                                start_date=start_date,
+                                                end_date=end_date,
+                                                frequency="d",
+                                                adjustflag="3")
+
+    return result.get_data()
 
 
 if __name__ == '__main__':
-    res = query_history_k_data()
+    bs_conn = establish_baostock_conn()
+    res = query_history_k_data('sz000001', "2021-01-01", "2021-09-05")
+    terminate_baostock_conn()
     print(res)

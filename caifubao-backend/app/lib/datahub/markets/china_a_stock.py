@@ -24,6 +24,7 @@ class ChinaAStock(object):
     def check_local_data_existence(self):
         self.check_market_data_existence()
         self.check_stock_index_integrity()
+        self.check_stock_integrity()
 
     def check_market_data_existence(self):
         self.market = FinanceMarket.objects(name="A股").first()
@@ -143,13 +144,17 @@ class ChinaAStock(object):
         """
         check the existence of the quote data, if not, get the full quote
         """
+        module = None
+        handler = None
         if type(stock_obj) == StockIndex:
             full_quote_task_name = f'GET FULL QUOTE FOR STOCK INDEX {stock_obj.code}-{stock_obj.name}'
             inc_quote_task_name = f'GET FULL QUOTE FOR INCREMENTAL UPD STOCK INDEX {stock_obj.code}-{stock_obj.name}'
+            module = 'akshare'
             handler = 'get_zh_a_stock_index_quote_daily'
         elif type(stock_obj) == IndividualStock:
             full_quote_task_name = f'GET FULL QUOTE FOR STOCK {stock_obj.code}-{stock_obj.name}'
             inc_quote_task_name = f'GET FULL QUOTE FOR INCREMENTAL UPD STOCK {stock_obj.code}-{stock_obj.name}'
+            module = 'baostock'
             handler = 'get_zh_a_stock_quote_daily'
         else:
             full_quote_task_name = None
@@ -175,7 +180,7 @@ class ChinaAStock(object):
                     'incremental': "true"
                 }
                 data_retriever.create_data_retrieve_task(name=inc_quote_task_name,
-                                                         module='akshare',
+                                                         module=module,
                                                          handler=handler,
                                                          kwarg_dict=data_retrieve_kwarg)
             else:
@@ -194,7 +199,7 @@ class ChinaAStock(object):
                                                      kwarg_dict=data_retrieve_kwarg)
         return update_flag
 
-    def check_individual_stock_integrity(self):
+    def check_stock_integrity(self):
         logger.info(f'Stock Market {self.market.name} - '
                     f'Checking local stock data integrity')
         local_stock_list = IndividualStock.objects(market=self.market)
