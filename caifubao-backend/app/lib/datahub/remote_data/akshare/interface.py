@@ -36,10 +36,19 @@ def stock_zh_index_daily(code):
 
 def stock_zh_a_spot():
     """
-    单次返回所有沪深京 A 股上市公司的实时行情数据
+    单次返回所有沪深京 A 股上市公司的实时行情数据（新浪接口）
     :return:
     """
     df = akshare.stock_zh_a_spot()
+    return df
+
+
+def stock_zh_a_spot_em():
+    """
+    单次返回所有沪深京 A 股上市公司的实时行情数据（东财接口）
+    :return:
+    """
+    df = akshare.stock_zh_a_spot_em()
     return df
 
 

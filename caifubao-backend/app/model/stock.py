@@ -1,7 +1,6 @@
 from mongoengine import StringField, EmbeddedDocumentListField, DateTimeField, ReferenceField, ListField, \
-    EmbeddedDocument, BooleanField, FloatField, IntField, EmbeddedDocumentField
+    EmbeddedDocument, FloatField, IntField, EmbeddedDocumentField
 from app.lib.database import db
-from app.model.meta_data import MetaData
 
 
 class StockExchange(db.Document):

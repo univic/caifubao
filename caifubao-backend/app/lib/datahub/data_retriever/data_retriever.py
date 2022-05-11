@@ -3,6 +3,7 @@ import logging
 from importlib import import_module
 from app.model.data_retrive import DataRetrieveTask, KwArg, ScheduledDataRetrieveTask
 from app.utilities.progress_bar import progress_bar
+from app.lib.datahub.remote_data import baostock
 
 logger = logging.getLogger()
 
@@ -14,23 +15,15 @@ class DataRetriever(object):
         pass
 
     def dispatch(self):
-        logger.info(f'Data retriever dispatcher running...')
-        task_list = DataRetrieveTask.objects(status='CRTD')        # use slice at here to limit the task number
+        logger.info(f'Data retriever dispatcher running')
+        task_list = DataRetrieveTask.objects(status='CRTD')        # Slice here to limit task number
         task_list_length = len(task_list)
         logger.info(f'Found {task_list_length} data retrieve task(s), executing')
-        prog_bar = progress_bar()
-        task_complete_counter = 0
-        task_fail_counter = 0
-        for i, item in enumerate(task_list):
-            result = self.exec_data_retrieve_task(item)
-            if result['code'] == 'GOOD':
-                task_complete_counter += 1
-            else:
-                task_fail_counter += 1
-            prog_bar(i, task_list_length)
 
-        logger.info(f'Data retrieve tasks completed, {task_list_length} in total, '
-                    f'{task_complete_counter} success, {task_fail_counter} failed.')
+        akshare_task_list = task_list(callback_module='akshare')
+        self.exec_task_list('Akshare', akshare_task_list)
+        baostock_task_list = task_list(callback_module='baostock')[:10]
+        self.exec_baostock_datahub_task_list(baostock_task_list)
 
     def create_data_retrieve_task(self, name, module, handler, scheduled_time=None, args=None, kwarg_dict=None):
         if scheduled_time:
@@ -49,6 +42,28 @@ class DataRetriever(object):
         else:
             logger.debug(f'Found duplicate data retrieve task {new_task.name}')
 
+    def exec_baostock_datahub_task_list(self, task_list):
+        lg = baostock.interface.establish_baostock_conn()
+        self.exec_task_list('Baostock', task_list)
+        baostock.interface.terminate_baostock_conn()
+
+    def exec_task_list(self, name, task_list):
+        task_list_length = task_list.count()
+        prog_bar = progress_bar()
+        counter = {
+            "COMP": 0,
+            "FAIL": 0
+        }
+        for i, item in enumerate(task_list):
+            result = self.exec_data_retrieve_task(item)
+            if result['code'] == 'GOOD':
+                counter["COMP"] += 1
+            else:
+                counter["FAIL"] += 1
+            prog_bar(i, task_list_length)
+        logger.info(f'{name} datahub tasks completed, {task_list_length} in total, '
+                    f'{counter["COMP"]} success, {counter["FAIL"]} failed.')
+
     def exec_data_retrieve_task(self, item):
         func = getattr(import_module(f'app.lib.datahub.remote_data.{item.callback_module}.handler'),
                        item.callback_handler)
@@ -64,6 +79,9 @@ class DataRetriever(object):
             item.message = result['message']
         item.save()
         return result
+
+    # TODO: INITIALIZE SCHEDULED DATAHUB TASK
+    # TODO: EXEC SCHEDULED DATAHUB TASK
 
     @staticmethod
     def convert_dict_to_kwarg(kwarg_dict):

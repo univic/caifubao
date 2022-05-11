@@ -50,7 +50,6 @@ def query_history_k_data(code, start_date=None, end_date=None):
     # convert stock code
     regex_pattern = r"(^[a-zA-Z]{2})"
     new_code = re.sub(regex_pattern, r"\1.", code)
-    # TODO: DO STOCK CODE CONVERSION
     res_fields = "date,code,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus," \
                  "pctChg, peTTM, pbMRQ, psTTM, pcfNcfTTM, isST"
     result = baostock.query_history_k_data_plus(new_code,

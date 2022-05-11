@@ -41,7 +41,7 @@ def determine_pervious_trading_day(trade_calendar_list, given_date):
     return trade_day_list[given_date_index + 1]
 
 
-def determine_next_trading_day(trade_calendar_list, given_date):
+def next_trading_day(trade_calendar_list, given_date):
     trade_day_list = sorted(trade_calendar_list, reverse=True)
     given_date_index = trade_day_list.index(given_date)
     return trade_day_list[given_date_index - 1]

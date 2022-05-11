@@ -23,8 +23,8 @@ class ChinaAStock(object):
 
     def check_local_data_existence(self):
         self.check_market_data_existence()
-        self.check_stock_index_integrity()
-        self.check_stock_integrity()
+        # self.check_stock_index_integrity()
+        self.check_stock_data_integrity()
 
     def check_market_data_existence(self):
         self.market = FinanceMarket.objects(name="A股").first()
@@ -179,11 +179,12 @@ class ChinaAStock(object):
             elif time_diff > 1:
                 # Need the whole history quote data to do the incremental update (difference of more than 1 day)
                 update_flag = "INC"
+                start_date = trading_day_helper.next_trading_day(self.market.trade_calendar, most_recent_quote_date)
                 data_retrieve_kwarg = {
                     'code': stock_obj.code,
-                    'incremental': "true"
+                    'incremental': "true",
+                    "start_date": start_date.strftime('%Y-%m-%d')
                 }
-                # TODO: FIND DATE RANGE
                 data_retriever.create_data_retrieve_task(name=inc_quote_task_name,
                                                          module=module,
                                                          handler=handler,
@@ -204,7 +205,7 @@ class ChinaAStock(object):
                                                      kwarg_dict=data_retrieve_kwarg)
         return update_flag
 
-    def check_stock_integrity(self):
+    def check_stock_data_integrity(self):
         logger.info(f'Stock Market {self.market.name} - '
                     f'Checking local stock data integrity')
         local_stock_list = IndividualStock.objects(market=self.market)

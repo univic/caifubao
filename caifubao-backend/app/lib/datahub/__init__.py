@@ -16,12 +16,12 @@ class Datahub(object):
     def __init__(self):
         logger.info("Initializing datahub")
         self.initialize()
-        self.run_handler()
+        # self.run_handler()
 
     @staticmethod
     def initialize():
         try:
-            markets.initialize_markets()
+            # markets.initialize_markets()
             data_retriever.dispatch()
 
         except ServerSelectionTimeoutError:
