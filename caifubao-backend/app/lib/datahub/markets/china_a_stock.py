@@ -123,10 +123,14 @@ class ChinaAStock(object):
             logger.debug(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
             new_stock_obj = StockIndex()
             task_name = f'GET FULL QUOTE FOR STOCK INDEX {new_stock_obj.code}-{new_stock_obj.name}'
+            module = 'akshare'
+            handler = 'get_zh_a_stock_index_quote_daily'
         else:
             logger.debug(f'Stock Market {self.market.name} - Initializing local stock data for {code}-{name}')
             new_stock_obj = IndividualStock()
             task_name = f'GET FULL QUOTE FOR STOCK {new_stock_obj.code}-{new_stock_obj.name}'
+            module = 'baostock'
+            handler = 'get_zh_a_stock_k_data_daily'
 
         new_stock_obj.code = code
         new_stock_obj.name = name
@@ -136,8 +140,8 @@ class ChinaAStock(object):
             'code': code
         }
         data_retriever.create_data_retrieve_task(name=task_name,
-                                                 module='akshare',
-                                                 handler='get_zh_a_stock_index_quote_daily',
+                                                 module=module,
+                                                 handler=handler,
                                                  kwarg_dict=data_retrieve_kwarg)
 
     def check_stock_data_freshness(self, stock_obj):
@@ -155,7 +159,7 @@ class ChinaAStock(object):
             full_quote_task_name = f'GET FULL QUOTE FOR STOCK {stock_obj.code}-{stock_obj.name}'
             inc_quote_task_name = f'GET FULL QUOTE FOR INCREMENTAL UPD STOCK {stock_obj.code}-{stock_obj.name}'
             module = 'baostock'
-            handler = 'get_zh_a_stock_quote_daily'
+            handler = 'get_zh_a_stock_k_data_daily'
         else:
             full_quote_task_name = None
             inc_quote_task_name = None
@@ -179,6 +183,7 @@ class ChinaAStock(object):
                     'code': stock_obj.code,
                     'incremental': "true"
                 }
+                # TODO: FIND DATE RANGE
                 data_retriever.create_data_retrieve_task(name=inc_quote_task_name,
                                                          module=module,
                                                          handler=handler,
@@ -194,7 +199,7 @@ class ChinaAStock(object):
                 'code': stock_obj.code
             }
             data_retriever.create_data_retrieve_task(name=full_quote_task_name,
-                                                     module='akshare',
+                                                     module=module,
                                                      handler=handler,
                                                      kwarg_dict=data_retrieve_kwarg)
         return update_flag
@@ -245,9 +250,3 @@ class ChinaAStock(object):
                 prog_bar(i, remote_stock_num)
             logger.info(f'Stock Market {self.market.name} - '
                         f'Created local data and data retrieve tasks for {remote_stock_num} stocks')
-
-    @staticmethod
-    def update_metadata(data, df, column):
-        max_date = max(df[column])
-        data.meta_data.last_update = datetime.datetime.now()
-        # data.meta_data.date_of_most_recent_daily_quote = max_data
