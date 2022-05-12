@@ -1,8 +1,26 @@
 import logging
 import datetime
 from app.model.data_retrive import DataRetrieveTask, ScheduledDatahubTask, KwArg
+from importlib import import_module
 
 logger = logging.getLogger()
+
+
+def exec_data_retrieve_task(item):
+    func = getattr(import_module(f'app.lib.datahub.remote_data.{item.callback_module}.handler'),
+                   item.callback_handler)
+    kwarg_dict = convert_kwarg_to_dict(item.kwargs)
+    item.processed_at = datetime.datetime.now()
+    result = func(*item.args, **kwarg_dict)
+
+    if result['code'] == 'GOOD':
+        item.completed_at = datetime.datetime.now()
+        item.status = 'COMP'
+    else:
+        item.status = 'FAIL'
+        item.message = result['message']
+    item.save()
+    return result
 
 
 def convert_dict_to_kwarg(kwarg_dict):
