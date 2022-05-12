@@ -33,6 +33,6 @@ class DataRetrieveTask(db.Document):
     meta = {'allow_inheritance': True}
 
 
-class ScheduledDataRetrieveTask(DataRetrieveTask):
+class ScheduledDatahubTask(DataRetrieveTask):
     scheduled_process_time = DateTimeField(required=True)
     repeat = StringField()

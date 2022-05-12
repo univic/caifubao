@@ -45,7 +45,7 @@ def update_zh_stock_index_daily_spot():
     stock_index_list = StockIndex.objects()
     if stock_index_list:
 
-        closest_avail_trading_day = trading_day_helper.determine_closest_trading_date(market.trade_calendar)
+        closest_trading_day = trading_day_helper.determine_closest_trading_date(market.trade_calendar)
         for i, row in remote_data_df.iterrows():
             local_index_obj = StockIndex.objects(code=row['代码']).first()
             # if the local index data exists
@@ -56,17 +56,17 @@ def update_zh_stock_index_daily_spot():
                     date_diff = trading_day_helper.determine_trading_date_diff(
                         trade_calendar_list=market.trade_calendar,
                         trading_day_a=latest_quote_date,
-                        trading_day_b=closest_avail_trading_day
+                        trading_day_b=closest_trading_day
                     )
                     if date_diff == 1:
                         new_daily_quote_data = DailyQuote()
-                        new_daily_quote_data.date = closest_avail_trading_day
+                        new_daily_quote_data.date = closest_trading_day
                         new_daily_quote_data.open = row['今开']
                         new_daily_quote_data.close = row['最新价']
                         new_daily_quote_data.high = row['最高']
                         new_daily_quote_data.low = row['最低']
                         new_daily_quote_data.volume = row['成交量']
-                        trading_day_helper.update_freshness_meta(local_index_obj, 'daily_quote', closest_avail_trading_day)
+                        trading_day_helper.update_freshness_meta(local_index_obj, 'daily_quote', closest_trading_day)
                         counter_dict["UPD"] += 1
                     elif date_diff == 0:
                         status_msg += f'{row["名称"]} - {row["代码"]} is up to date. '
@@ -220,7 +220,7 @@ def get_zh_a_stock_quote_daily(code, incremental="false"):
 
 
 @performance_helper.func_performance_timer
-def update_zh_stock_spot():
+def update_zh_stock_spot(detail_msg=False):
     """
     根据每日盘后信息更新当日个股日线数据
     """
@@ -234,14 +234,14 @@ def update_zh_stock_spot():
         "NO_DATA": 0
     }
     market = IndividualStock.objects().first().market
-    logger.info(f'Stock Market {market.name} - Updating index daily quote with spot data')
+    logger.info(f'Stock Market {market.name} - Updating stock daily quote with spot data')
     prog_bar = progress_bar()
     # Use eastmoney interface here
     remote_data_df = interface.stock_zh_a_spot_em()
     remote_index_num = len(remote_data_df)
     stock_list = IndividualStock.objects()
     if stock_list:
-        closest_avail_trading_day = trading_day_helper.determine_closest_trading_date(market.trade_calendar)
+        closest_trading_day = trading_day_helper.determine_closest_trading_date(market.trade_calendar)
         for i, row in remote_data_df.iterrows():
             local_stock_obj = IndividualStock.objects(code=row['代码']).first()
             # if the local index data exists
@@ -252,17 +252,26 @@ def update_zh_stock_spot():
                     date_diff = trading_day_helper.determine_trading_date_diff(
                         trade_calendar_list=market.trade_calendar,
                         trading_day_a=latest_quote_date,
-                        trading_day_b=closest_avail_trading_day
+                        trading_day_b=closest_trading_day
                     )
                     if date_diff == 1:
                         new_daily_quote_data = DailyQuote()
-                        new_daily_quote_data.date = closest_avail_trading_day
+                        new_daily_quote_data.date = closest_trading_day
                         new_daily_quote_data.open = row['今开']
                         new_daily_quote_data.close = row['最新价']
                         new_daily_quote_data.high = row['最高']
                         new_daily_quote_data.low = row['最低']
+                        new_daily_quote_data.change_rate = row['涨跌幅']
+                        new_daily_quote_data.change_amount = row['涨跌额']
+                        new_daily_quote_data.low = row['最低']
                         new_daily_quote_data.volume = row['成交量']
-                        trading_day_helper.update_freshness_meta(local_stock_obj, 'daily_quote', closest_avail_trading_day)
+                        new_daily_quote_data.trade_amount = row['成交额']
+                        new_daily_quote_data.previous_close = row['昨收']
+                        new_daily_quote_data.amplitude = row['振幅']
+                        new_daily_quote_data.turnover_rate = row['换手率']
+                        new_daily_quote_data.peTTM = row['市盈率-动态']
+                        new_daily_quote_data.psTTM = row['市净率']
+                        trading_day_helper.update_freshness_meta(local_stock_obj, 'daily_quote', closest_trading_day)
                         counter_dict["UPD"] += 1
                     elif date_diff == 0:
                         status_msg += f'{row["名称"]} - {row["代码"]} is up to date. '
@@ -290,8 +299,12 @@ def update_zh_stock_spot():
                      f"{counter_dict['NO_UPD']} was up to date already," \
                      f"{counter_dict['OUT_DATED']} outdated (did not update), " \
                      f"{counter_dict['NO_DATA']} no local data "
-        status_msg = status_brief + status_msg
-        logger.info(f'Stock Market {market.name} - {status_brief}')
+        #
+        if detail_msg:
+            status_msg = status_brief + status_msg
+        else:
+            status_msg = status_brief
+        logger.info(f'Stock Market {market.name} - {status_msg}')
     else:
         logger.info(f'Stock Market {market.name} - Index daily quote update failed, {status_msg}')
 
