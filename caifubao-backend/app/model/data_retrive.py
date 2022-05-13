@@ -13,7 +13,7 @@ class KwArg(EmbeddedDocument):
     arg = StringField()
 
 
-class DataRetrieveTask(db.Document):
+class DatahubTaskDoc(db.Document):
     """
     status: CRTD-created, PEND-pending, FAIL-failed, COMP-completed
     """
@@ -33,6 +33,6 @@ class DataRetrieveTask(db.Document):
     meta = {'allow_inheritance': True}
 
 
-class ScheduledDatahubTask(DataRetrieveTask):
+class ScheduledDatahubTaskDoc(DatahubTaskDoc):
     scheduled_process_time = DateTimeField(required=True)
     repeat = StringField()

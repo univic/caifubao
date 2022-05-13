@@ -1,6 +1,6 @@
 import logging
 import datetime
-from app.model.data_retrive import DataRetrieveTask, ScheduledDatahubTask, KwArg
+from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc, KwArg
 from importlib import import_module
 
 logger = logging.getLogger()
@@ -50,7 +50,7 @@ def generate_task_uid(task_obj, kwarg_dict):
     obj_str = str(task_obj.name + task_obj.callback_module + task_obj.callback_handler)
     datetime_str = ""
     # convert datetime to str
-    if isinstance(task_obj, ScheduledDatahubTask):
+    if isinstance(task_obj, ScheduledDatahubTaskDoc):
         datetime_str = datetime.datetime.strftime(task_obj.scheduled_process_time, "%Y%m%d%H%M%S")
     args_hash_str = str(hash(tuple(task_obj.args)))  # list is unable to hash, convert to tuple
     kwargs_str = ''
@@ -64,7 +64,7 @@ def generate_task_uid(task_obj, kwarg_dict):
 
 def check_task_uniqueness(task_obj, kwarg_dict):
     task_obj.uid = generate_task_uid(task_obj, kwarg_dict)
-    task_query = DataRetrieveTask.objects(uid=task_obj.uid, status='CRTD').first()
+    task_query = DatahubTaskDoc.objects(uid=task_obj.uid, status='CRTD').first()
     if task_query:
         return False
     else:
