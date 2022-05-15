@@ -1,3 +1,4 @@
+import time
 import datetime
 import logging
 from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc
@@ -17,22 +18,22 @@ class DatahubTask(object):
         self.task_list_length = 0
 
     def get_task_list(self):
-        task_list = self.task_obj.objects(status='CRTD')  # Slice here to limit task number
-        return task_list
+        self.task_list = self.task_obj.objects(status='CRTD')  # Slice here to limit task number
+        self.task_list_length = len(self.task_list)
+        return self.task_list
 
     def dispatch(self):
         logger.info(f'Executing {self.runner_name} datahub tasks')
-        self.setup_before_exec()
+        self.before_exec()
 
         # get task list and calculate list length
         self.task_list = self.get_task_list()
-        self.task_list_length = len(self.task_list)
         logger.info(f'Found {self.task_list_length} data retrieve task(s), executing')
         self.exec_task_list()
 
-        self.cleanup_after_exec()
+        self.after_exec()
 
-    def setup_before_exec(self):
+    def before_exec(self):
         pass
 
     def create_task(self, name, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
@@ -55,7 +56,7 @@ class DatahubTask(object):
             "FAIL": 0
         }
         for i, item in enumerate(self.task_list):
-            result = exec_data_retrieve_task(item)
+            result = self.exec_task()
             if result['code'] == 'GOOD':
                 counter["COMP"] += 1
             else:
@@ -64,10 +65,12 @@ class DatahubTask(object):
         logger.info(f'Processed {self.task_list_length} tasks, '
                     f'{counter["COMP"]} success, {counter["FAIL"]} failed.')
 
-    def exec_task(self):
-        pass
+    @staticmethod
+    def exec_task(item):
+        result = exec_data_retrieve_task(item)
+        return result
 
-    def cleanup_after_exec(self):
+    def after_exec(self):
         pass
 
 
@@ -88,10 +91,10 @@ class BaostockDatahubTask(DatahubTask):
         task_list = self.task_obj.objects(status='CRTD', callback_module='baostock')  # Slice here to limit task number
         return task_list
 
-    def setup_before_exec(self):
+    def before_exec(self):
         baostock.interface.establish_baostock_conn()
 
-    def cleanup_after_exec(self):
+    def after_exec(self):
         baostock.interface.terminate_baostock_conn()
 
 
@@ -108,6 +111,10 @@ class ScheduledDatahubTask(DatahubTask):
     def dispatch_scheduled_tasks(self):
         pass
 
+    def initialize_scheduled_task(self):
+        pass
+        # TODO: first 2 task
+
     def create_task(self, name, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
         new_task = self.task_obj()
         new_task.scheduled_process_time = extra_kw["scheduled_time"]
@@ -123,5 +130,63 @@ class ScheduledDatahubTask(DatahubTask):
         else:
             logger.debug(f'Found duplicate task {new_task.name}')
 
-    def exec_scheduled_task():
+    def get_task_list(self):
+        task_list = self.task_obj.objects(status='CRTD').order_by('-scheduled_time')  # Slice here to limit task number
+        return task_list
+
+    def exec_task_list(self):
+        continue_flag = True
+        task_scan_interval = 30  # minutes
+        next_scan_second = task_scan_interval * 60
+        counter = {
+            "COMP": 0,
+            "FAIL": 0
+        }
+        while continue_flag:
+            task_list = self.get_task_list()
+            logger.info(f'Found {self.task_list_length} scheduled task(s)')
+            if task_list:
+                for i, item in enumerate(task_list):
+                    scheduled_run_time = item.scheduled_process_time
+                    time_diff = datetime.datetime.now() - scheduled_run_time
+                    time_diff_second = time_diff.seconds
+                    if time_diff_second <= 0:
+                        next_run = 0
+                    if time_diff_second > next_scan_second:
+                        next_run = -1
+                    else:
+                        next_run = time_diff_second
+                    if next_run >= 0:
+                        logger.info(f'Will run task {item.name} in {next_run} seconds')
+                        time.sleep(next_run)
+                        logger.info(f'Running task {item.name}')
+                        result = exec_scheduled_task(item)
+                        if result['code'] == 'GOOD':
+                            logger.info(f'Successfully processed task {item.name}')
+                        else:
+                            counter["FAIL"] += 1
+                            logger.info(f'Error when processing task {item.name}')
+                logger.info(f'Task scan completed, next scan in {task_scan_interval} minuets')
+            else:
+                logger.info(f'No scheduled task was found, next scan in {task_scan_interval} minuets')
+            time.sleep(next_scan_second)
+
+    def exec_scheduled_task(self, item):
+        if item.callback_module == 'baostock':
+            self.before_exec()
+            result = exec_data_retrieve_task(item)
+            self.after_exec()
+        else:
+            result = exec_data_retrieve_task(item)
+        return result
+
+    def before_exec(self):
+
+        baostock.interface.establish_baostock_conn()
+
+    def after_exec(self):
+        baostock.interface.terminate_baostock_conn()
+
+    def handle_repeat_task(self):
         pass
+        # TODO handle repeat
