@@ -17,37 +17,21 @@ class DatahubTask(object):
         self.task_list = []
         self.task_list_length = 0
 
-    def get_task_list(self):
-        self.task_list = self.task_obj.objects(status='CRTD')  # Slice here to limit task number
-        self.task_list_length = len(self.task_list)
-        return self.task_list
-
     def dispatch(self):
         logger.info(f'Executing {self.runner_name} datahub tasks')
-        self.before_exec()
+        self.before_task_list_exec()
 
         # get task list and calculate list length
         self.task_list = self.get_task_list()
         logger.info(f'Found {self.task_list_length} data retrieve task(s), executing')
         self.exec_task_list()
 
-        self.after_exec()
+        self.after_task_list_exec()
 
-    def before_exec(self):
-        pass
-
-    def create_task(self, name, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
-        new_task = self.task_obj()
-        new_task.name = name
-        new_task.callback_module = module
-        new_task.callback_handler = handler
-        new_task.args = task_args_list
-        new_task.kwargs = convert_dict_to_kwarg(task_kwarg_dict)
-        if check_task_uniqueness(new_task, task_kwarg_dict):
-            new_task.save()
-            logger.debug(f'Data retrieve task {new_task.name} created')
-        else:
-            logger.debug(f'Found duplicate data retrieve task {new_task.name}')
+    def get_task_list(self):
+        self.task_list = self.task_obj.objects(status='CRTD')  # Slice here to limit task number
+        self.task_list_length = len(self.task_list)
+        return self.task_list
 
     def exec_task_list(self):
         prog_bar = progress_bar()
@@ -65,13 +49,36 @@ class DatahubTask(object):
         logger.info(f'Processed {self.task_list_length} tasks, '
                     f'{counter["COMP"]} success, {counter["FAIL"]} failed.')
 
-    @staticmethod
-    def exec_task(item):
+    def exec_task(self, item):
+        self.before_task_exec()
         result = exec_data_retrieve_task(item)
+        self.after_task_exec()
         return result
 
-    def after_exec(self):
+    def before_task_list_exec(self):
         pass
+
+    def after_task_list_exec(self):
+        pass
+
+    def before_task_exec(self):
+        pass
+
+    def after_task_exec(self, item):
+        pass
+
+    def create_task(self, name, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
+        new_task = self.task_obj()
+        new_task.name = name
+        new_task.callback_module = module
+        new_task.callback_handler = handler
+        new_task.args = task_args_list
+        new_task.kwargs = convert_dict_to_kwarg(task_kwarg_dict)
+        if check_task_uniqueness(new_task, task_kwarg_dict):
+            new_task.save()
+            logger.debug(f'Data retrieve task {new_task.name} created')
+        else:
+            logger.debug(f'Found duplicate data retrieve task {new_task.name}')
 
 
 class AkshareDatahubTask(DatahubTask):
@@ -91,10 +98,10 @@ class BaostockDatahubTask(DatahubTask):
         task_list = self.task_obj.objects(status='CRTD', callback_module='baostock')  # Slice here to limit task number
         return task_list
 
-    def before_exec(self):
+    def before_task_list_exec(self):
         baostock.interface.establish_baostock_conn()
 
-    def after_exec(self):
+    def after_task_list_exec(self):
         baostock.interface.terminate_baostock_conn()
 
 
@@ -108,27 +115,9 @@ class ScheduledDatahubTask(DatahubTask):
     def __init__(self):
         super().__init__(runner_name='Scheduled', task_obj=ScheduledDatahubTaskDoc)
 
-    def dispatch_scheduled_tasks(self):
-        pass
-
     def initialize_scheduled_task(self):
         pass
         # TODO: first 2 task
-
-    def create_task(self, name, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
-        new_task = self.task_obj()
-        new_task.scheduled_process_time = extra_kw["scheduled_time"]
-        new_task.name = name
-        new_task.callback_module = module
-        new_task.callback_handler = handler
-        new_task.repeat = extra_kw["repeat"]
-        new_task.args = task_args_list
-        new_task.kwargs = convert_dict_to_kwarg(task_kwarg_dict)
-        if check_task_uniqueness(new_task, task_kwarg_dict):
-            new_task.save()
-            logger.debug(f'Scheduled datahub task {new_task.name} created')
-        else:
-            logger.debug(f'Found duplicate task {new_task.name}')
 
     def get_task_list(self):
         task_list = self.task_obj.objects(status='CRTD').order_by('-scheduled_time')  # Slice here to limit task number
@@ -160,7 +149,7 @@ class ScheduledDatahubTask(DatahubTask):
                         logger.info(f'Will run task {item.name} in {next_run} seconds')
                         time.sleep(next_run)
                         logger.info(f'Running task {item.name}')
-                        result = exec_scheduled_task(item)
+                        result = self.exec_task(item)
                         if result['code'] == 'GOOD':
                             logger.info(f'Successfully processed task {item.name}')
                         else:
@@ -171,22 +160,29 @@ class ScheduledDatahubTask(DatahubTask):
                 logger.info(f'No scheduled task was found, next scan in {task_scan_interval} minuets')
             time.sleep(next_scan_second)
 
-    def exec_scheduled_task(self, item):
-        if item.callback_module == 'baostock':
-            self.before_exec()
-            result = exec_data_retrieve_task(item)
-            self.after_exec()
-        else:
-            result = exec_data_retrieve_task(item)
-        return result
-
-    def before_exec(self):
+    def before_task_exec(self):
 
         baostock.interface.establish_baostock_conn()
 
-    def after_exec(self):
+    def after_task_exec(self, item):
         baostock.interface.terminate_baostock_conn()
+        self.handle_repeat_task(item)
 
-    def handle_repeat_task(self):
+    def handle_repeat_task(self, item):
         pass
         # TODO handle repeat
+
+    def create_task(self, name, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
+        new_task = self.task_obj()
+        new_task.scheduled_process_time = extra_kw["scheduled_time"]
+        new_task.name = name
+        new_task.callback_module = module
+        new_task.callback_handler = handler
+        new_task.repeat = extra_kw["repeat"]
+        new_task.args = task_args_list
+        new_task.kwargs = convert_dict_to_kwarg(task_kwarg_dict)
+        if check_task_uniqueness(new_task, task_kwarg_dict):
+            new_task.save()
+            logger.debug(f'Scheduled datahub task {new_task.name} created')
+        else:
+            logger.debug(f'Found duplicate task {new_task.name}')
