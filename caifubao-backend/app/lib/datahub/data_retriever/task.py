@@ -61,7 +61,7 @@ class DatahubTask(object):
     def after_task_list_exec(self):
         pass
 
-    def before_task_exec(self):
+    def before_task_exec(self, item):
         pass
 
     def after_task_exec(self, item):
@@ -155,17 +155,18 @@ class ScheduledDatahubTask(DatahubTask):
                         else:
                             counter["FAIL"] += 1
                             logger.info(f'Error when processing task {item.name}')
-                logger.info(f'Task scan completed, next scan in {task_scan_interval} minuets')
+                logger.info(f'Task scan completed, next scan in {task_scan_interval} minutes')
             else:
                 logger.info(f'No scheduled task was found, next scan in {task_scan_interval} minuets')
-            time.sleep(next_scan_second)
+                time.sleep(next_scan_second)
 
-    def before_task_exec(self):
-
-        baostock.interface.establish_baostock_conn()
+    def before_task_exec(self, item):
+        if item.callback_module == 'baostock':
+            baostock.interface.establish_baostock_conn()
 
     def after_task_exec(self, item):
-        baostock.interface.terminate_baostock_conn()
+        if item.callback_module == 'baostock':
+            baostock.interface.terminate_baostock_conn()
         self.handle_repeat_task(item)
 
     def handle_repeat_task(self, item):
