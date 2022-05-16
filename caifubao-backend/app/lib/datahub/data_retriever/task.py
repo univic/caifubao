@@ -4,7 +4,9 @@ import logging
 from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc
 from app.utilities.progress_bar import progress_bar
 from app.lib.datahub.remote_data import baostock
-from app.lib.datahub.data_retriever.common import convert_dict_to_kwarg, check_task_uniqueness, exec_data_retrieve_task
+from app.lib.datahub.data_retriever.common import convert_dict_to_kwarg, check_task_uniqueness, \
+    exec_data_retrieve_task, convert_kwarg_to_dict
+from app.utilities import trading_day_helper
 
 logger = logging.getLogger()
 
@@ -40,7 +42,7 @@ class DatahubTask(object):
             "FAIL": 0
         }
         for i, item in enumerate(self.task_list):
-            result = self.exec_task()
+            result = self.exec_task(item)
             if result['code'] == 'GOOD':
                 counter["COMP"] += 1
             else:
@@ -50,9 +52,9 @@ class DatahubTask(object):
                     f'{counter["COMP"]} success, {counter["FAIL"]} failed.')
 
     def exec_task(self, item):
-        self.before_task_exec()
+        self.before_task_exec(item)
         result = exec_data_retrieve_task(item)
-        self.after_task_exec()
+        self.after_task_exec(item)
         return result
 
     def before_task_list_exec(self):
@@ -170,8 +172,27 @@ class ScheduledDatahubTask(DatahubTask):
         self.handle_repeat_task(item)
 
     def handle_repeat_task(self, item):
-        pass
-        # TODO handle repeat
+        if item.repeat:
+
+            if item.repeat == 'T-DAY':
+                trade_calendar = item.market.trade_calendar
+                curr_run_time = item.scheduled_time
+                next_run_time = trading_day_helper.next_trading_day(trade_calendar)
+                next_run_time += datetime.timedelta(hours=curr_run_time.hour,
+                                                    minutes=curr_run_time.minute,
+                                                    seconds=curr_run_time.second)
+
+            else:
+                next_run_time = None
+            # create task
+            kw_dict = convert_kwarg_to_dict(item.kwargs)
+            self.create_task(name=item.name,
+                             module=item.callback_module,
+                             handler=item.callback_handler,
+                             repeat=item.repeat,
+                             args=item.args,
+                             task_kwarg_dict=kw_dict,
+                             scheduled_time=next_run_time)
 
     def create_task(self, name, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
         new_task = self.task_obj()
