@@ -5,7 +5,7 @@
 import logging
 from pymongo.errors import ServerSelectionTimeoutError
 from app.lib.datahub import markets
-from app.lib.datahub.data_retriever import data_retriever
+from app.lib.datahub.data_retriever import data_retriever_init
 from app.lib.datahub.remote_data.akshare import handler
 
 logger = logging.getLogger()
@@ -15,14 +15,12 @@ class Datahub(object):
 
     def __init__(self):
         logger.info("Initializing datahub")
-        self.initialize()
-        # self.run_handler()
 
     @staticmethod
     def initialize():
         try:
             # markets.initialize_markets()
-            data_retriever.dispatch()
+            data_retriever_init()
 
         except ServerSelectionTimeoutError:
             logger.error("Timed out when establishing DB connection")

@@ -1,5 +1,5 @@
-import datetime
-from app.model.stock import DataFreshnessMeta
+import time, datetime
+from app.model.stock import FinanceMarket, DataFreshnessMeta
 
 
 def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.now()):
@@ -65,3 +65,26 @@ def read_freshness_meta(obj, freshness_field):
     if obj.data_freshness_meta:
         freshness_value = obj.data_freshness_meta[freshness_field]
     return freshness_value
+
+
+def is_trading_day(trade_calendar, given_time=datetime.datetime.now()):
+    given_time.replace(hour=0, minute=0, second=0)
+    if given_time in trade_calendar:
+        response = True
+    else:
+        response = False
+    return response
+
+
+def get_a_stock_market_trade_calendar():
+    market = FinanceMarket(market_name="A股").first()
+    trade_calendar = market.trade_calendar
+    return trade_calendar
+
+
+def convert_date_to_datetime(date):
+    """
+    the akshare trade calendar interface returns date object, but mongodb store as Datetime
+    """
+    dt = datetime.datetime.combine(date, datetime.time())
+    return dt

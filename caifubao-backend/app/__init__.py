@@ -22,4 +22,5 @@ def create_app():
     register_blueprint(app)
     config_extensions(app)
     db_init(app)
-    obj = Datahub()
+    datahub = Datahub()
+    datahub.initialize()

@@ -2,7 +2,7 @@ import datetime
 import logging
 from app.lib.datahub.remote_data.akshare import handler as akshare_handler
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock
-from app.lib.datahub.data_retriever import data_retriever
+from app.lib.datahub.data_retriever import akshare_datahub_task, baostock_datahub_task
 from app.utilities.progress_bar import progress_bar
 from app.utilities import trading_day_helper
 
@@ -16,14 +16,13 @@ class ChinaAStock(object):
         self.market_name = "A股"
         self.today = datetime.date.today()
         self.most_recent_trading_day = None
-        self.initialization()
 
-    def initialization(self):
+    def initialize(self):
         self.check_local_data_existence()
 
     def check_local_data_existence(self):
         self.check_market_data_existence()
-        # self.check_stock_index_integrity()
+        self.check_stock_index_integrity()
         self.check_stock_data_integrity()
 
     def check_market_data_existence(self):
@@ -122,13 +121,15 @@ class ChinaAStock(object):
         if obj_type == 'stock_index':
             logger.debug(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
             new_stock_obj = StockIndex()
-            task_name = f'GET FULL QUOTE FOR STOCK INDEX {new_stock_obj.code}-{new_stock_obj.name}'
+            datahub_task_handler = akshare_datahub_task
+            task_name = f'GET FULL QUOTE FOR STOCK INDEX {code}-{name}'
             module = 'akshare'
             handler = 'get_zh_a_stock_index_quote_daily'
         else:
             logger.debug(f'Stock Market {self.market.name} - Initializing local stock data for {code}-{name}')
             new_stock_obj = IndividualStock()
-            task_name = f'GET FULL QUOTE FOR STOCK {new_stock_obj.code}-{new_stock_obj.name}'
+            datahub_task_handler = baostock_datahub_task
+            task_name = f'GET FULL QUOTE FOR STOCK {code}-{name}'
             module = 'baostock'
             handler = 'get_zh_a_stock_k_data_daily'
 
@@ -139,10 +140,10 @@ class ChinaAStock(object):
         data_retrieve_kwarg = {
             'code': code
         }
-        data_retriever.create_data_retrieve_task(name=task_name,
-                                                 module=module,
-                                                 handler=handler,
-                                                 kwarg_dict=data_retrieve_kwarg)
+        datahub_task_handler.create_task(name=task_name,
+                                         module=module,
+                                         handler=handler,
+                                         task_kwarg_dict=data_retrieve_kwarg)
 
     def check_stock_data_freshness(self, stock_obj):
         """
@@ -150,14 +151,17 @@ class ChinaAStock(object):
         """
         module = None
         handler = None
+        datahub_task_handler = akshare_datahub_task
         if type(stock_obj) == StockIndex:
             full_quote_task_name = f'GET FULL QUOTE FOR STOCK INDEX {stock_obj.code}-{stock_obj.name}'
             inc_quote_task_name = f'GET FULL QUOTE FOR INCREMENTAL UPD STOCK INDEX {stock_obj.code}-{stock_obj.name}'
+            datahub_task_handler = akshare_datahub_task
             module = 'akshare'
             handler = 'get_zh_a_stock_index_quote_daily'
         elif type(stock_obj) == IndividualStock:
             full_quote_task_name = f'GET FULL QUOTE FOR STOCK {stock_obj.code}-{stock_obj.name}'
             inc_quote_task_name = f'GET FULL QUOTE FOR INCREMENTAL UPD STOCK {stock_obj.code}-{stock_obj.name}'
+            datahub_task_handler = baostock_datahub_task
             module = 'baostock'
             handler = 'get_zh_a_stock_k_data_daily'
         else:
@@ -185,10 +189,10 @@ class ChinaAStock(object):
                     'incremental': "true",
                     "start_date": start_date.strftime('%Y-%m-%d')
                 }
-                data_retriever.create_data_retrieve_task(name=inc_quote_task_name,
-                                                         module=module,
-                                                         handler=handler,
-                                                         kwarg_dict=data_retrieve_kwarg)
+                datahub_task_handler.create_task(name=inc_quote_task_name,
+                                                 module=module,
+                                                 handler=handler,
+                                                 kwarg_dict=data_retrieve_kwarg)
             else:
                 logger.warning(f'Stock Market {self.market.name} - {stock_obj.code} Quote date ahead of time!')
                 update_flag = "NO"
@@ -199,10 +203,10 @@ class ChinaAStock(object):
             data_retrieve_kwarg = {
                 'code': stock_obj.code
             }
-            data_retriever.create_data_retrieve_task(name=full_quote_task_name,
-                                                     module=module,
-                                                     handler=handler,
-                                                     kwarg_dict=data_retrieve_kwarg)
+            datahub_task_handler.create_task(name=full_quote_task_name,
+                                             module=module,
+                                             handler=handler,
+                                             task_kwarg_dict=data_retrieve_kwarg)
         return update_flag
 
     def check_stock_data_integrity(self):
@@ -236,12 +240,12 @@ class ChinaAStock(object):
                     # create absent stock index and create data retrieve task.
                     self.handle_new_stock(code=code, name=name, obj_type='stock')
                 prog_bar(i, remote_stock_num)
-                logger.info(f'Stock Market {self.market.name} - '
-                            f'Checked {local_stock_num} local stock data with {remote_stock_num} remote data，' 
-                            f'- Up to date:          {counter_dict["NO"]} '
-                            f'- One day behind:    {counter_dict["UPD"]} '
-                            f'- Need incremental update: {counter_dict["INC"]} \n'
-                            f'- No local data:  {counter_dict["NEW"]} ')
+            logger.info(f'Stock Market {self.market.name} - '
+                        f'Checked {local_stock_num} local stock data with {remote_stock_num} remote data，' 
+                        f'- Up to date:          {counter_dict["NO"]} '
+                        f'- One day behind:    {counter_dict["UPD"]} '
+                        f'- Need incremental update: {counter_dict["INC"]} \n'
+                        f'- No local data:  {counter_dict["NEW"]} ')
         else:
             logger.info(f'Stock Market {self.market.name} - Local stock data not found, initializing...')
             for i, remote_stock_item in remote_stock_list.iterrows():

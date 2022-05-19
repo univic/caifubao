@@ -13,7 +13,9 @@ logger = logging.getLogger()
 
 def get_a_stock_trade_date_hist():
     remote_data = interface.get_trade_date_hist()
-    return remote_data
+    # convert to datetime
+    r = map(trading_day_helper.convert_date_to_datetime, remote_data)
+    return r
 
 
 @performance_helper.func_performance_timer

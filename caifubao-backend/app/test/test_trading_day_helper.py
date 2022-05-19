@@ -22,6 +22,12 @@ class TestTradingDayHelper(unittest.TestCase):
                                                                          given_time=given_input_1)
         self.assertEqual(act_result_1, exp_result_1)
 
+    def test_convert_date_to_datetime(self):
+        date = datetime.date(2022, 5, 18)
+        exp_result_1 = datetime.datetime(2022, 5, 18, 0, 0, 0)
+        act_result_1 = trading_day_helper.convert_date_to_datetime(date)
+        self.assertEqual(act_result_1, exp_result_1)
+
 
 if __name__ == '__main__':
     unittest.main()

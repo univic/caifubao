@@ -1,5 +1,6 @@
 import logging
 import datetime
+import hashlib
 from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc, KwArg
 from importlib import import_module
 
@@ -49,16 +50,19 @@ def generate_task_uid(task_obj, kwarg_dict):
     """
     obj_str = str(task_obj.name + task_obj.callback_module + task_obj.callback_handler)
     datetime_str = ""
+    kwargs_str = ""
+    args_str = ""
     # convert datetime to str
     if isinstance(task_obj, ScheduledDatahubTaskDoc):
         datetime_str = datetime.datetime.strftime(task_obj.scheduled_process_time, "%Y%m%d%H%M%S")
-    args_hash_str = str(hash(tuple(task_obj.args)))  # list is unable to hash, convert to tuple
-    kwargs_str = ''
-    for item in kwarg_dict.items():
-        kwargs_str += str(item[0]) + str(item[1])
-    kwargs_hash_str = str(hash(kwargs_str))
-    hash_str = obj_str + args_hash_str + kwargs_hash_str + datetime_str
-    uid = str(hash(hash_str))
+    if task_obj.args:
+        args_str = "-".join(task_obj.args)
+    # convert kwarg_dict to str
+    if kwarg_dict:
+        for item in kwarg_dict.items():
+            kwargs_str += str(item[0]) + str(item[1])
+    hash_str = obj_str + args_str + kwargs_str + datetime_str
+    uid = hashlib.md5(hash_str.encode(encoding='UTF-8')).hexdigest()
     return uid
 
 
