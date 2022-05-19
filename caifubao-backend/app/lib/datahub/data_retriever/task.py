@@ -3,6 +3,7 @@ import time
 import datetime
 import logging
 from app.lib.database import connect_to_db, disconnect_from_db
+from app.conf import app_config
 from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc
 from app.utilities.progress_bar import progress_bar
 from app.lib.datahub.remote_data import baostock
@@ -21,7 +22,7 @@ class DatahubTask(object):
         self.task_obj = task_obj
         self.task_list = []
         self.task_list_length = 0
-        self.task_scan_interval = 30     # in minutes
+        self.task_scan_interval = app_config.DATAHUB_SETTINGS["TASK_SCAN_INTERVAL"]
         self.continue_scan = True
 
     def dispatch(self):
@@ -106,7 +107,7 @@ class AkshareDatahubTask(DatahubTask):
         super().__init__(runner_name='Akshare', task_obj=DatahubTaskDoc)
 
     def get_task_list(self):
-        self.task_list = self.task_obj.objects(status='CRTD', callback_module='akshare')[:5]  # Slice here to limit task number
+        self.task_list = self.task_obj.objects(status='CRTD', callback_module='akshare')  # Slice here to limit task number
         return self.task_list
 
 

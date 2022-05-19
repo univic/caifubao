@@ -1,3 +1,4 @@
+import time
 import traceback
 from app.model.stock import IndividualStock, DailyQuote
 from app.utilities import performance_helper, trading_day_helper
@@ -53,7 +54,6 @@ def get_zh_a_stock_k_data_daily(code, start_date=None, end_date=None):
         else:
             status_code = 'FAIL'
             status_msg = 'STOCK CODE CAN NOT BE FOUND IN LOCAL DB'
-        # time.sleep(0.5)    # reduce the query frequency
     except KeyError:
         status_code = 'FAIL'
         status_msg = 'the interface did not return valid dataframe, possibly due to no quote data'
@@ -64,4 +64,5 @@ def get_zh_a_stock_k_data_daily(code, start_date=None, end_date=None):
         'code': status_code,
         'message': status_msg,
     }
+    time.sleep(0.5)    # reduce the query frequency
     return status

@@ -23,6 +23,9 @@ class BaseConfig(object):
         'MIN_PWD_LENGTH': 8,
         'MAX_PWD_LENGTH': 32,
     }
+    DATAHUB_SETTINGS = {
+        'TASK_SCAN_INTERVAL': 0.5,      # in minutes
+    }
 
 
 def get_config():
