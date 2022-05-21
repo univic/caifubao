@@ -19,6 +19,7 @@ class DatahubTaskDoc(db.Document):
     """
     uid = StringField(required=True, unique=True)
     name = StringField(required=True)
+    callback_package = StringField(required=True)
     callback_module = StringField(required=True)
     callback_handler = StringField(required=True)
     args = ListField(StringField())

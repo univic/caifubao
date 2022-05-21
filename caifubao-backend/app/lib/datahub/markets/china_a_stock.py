@@ -23,7 +23,7 @@ class ChinaAStock(object):
     def check_local_data_existence(self):
         self.check_market_data_existence()
         self.check_stock_index_integrity()
-        self.check_stock_data_integrity()
+        # self.check_stock_data_integrity()
 
     def check_market_data_existence(self):
         self.market = FinanceMarket.objects(name="A股").first()
@@ -141,6 +141,7 @@ class ChinaAStock(object):
             'code': code
         }
         datahub_task_handler.create_task(name=task_name,
+                                         package='remote_data',
                                          module=module,
                                          handler=handler,
                                          task_kwarg_dict=data_retrieve_kwarg)
@@ -190,9 +191,10 @@ class ChinaAStock(object):
                     "start_date": start_date.strftime('%Y-%m-%d')
                 }
                 datahub_task_handler.create_task(name=inc_quote_task_name,
+                                                 package='remote_data',
                                                  module=module,
                                                  handler=handler,
-                                                 kwarg_dict=data_retrieve_kwarg)
+                                                 task_kwarg_dict=data_retrieve_kwarg)
             else:
                 logger.warning(f'Stock Market {self.market.name} - {stock_obj.code} Quote date ahead of time!')
                 update_flag = "NO"
@@ -204,6 +206,7 @@ class ChinaAStock(object):
                 'code': stock_obj.code
             }
             datahub_task_handler.create_task(name=full_quote_task_name,
+                                             package='remote_data',
                                              module=module,
                                              handler=handler,
                                              task_kwarg_dict=data_retrieve_kwarg)

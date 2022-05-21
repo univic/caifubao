@@ -20,27 +20,29 @@ def get_zh_a_stock_k_data_daily(code, start_date=None, end_date=None):
                 quote_df = interface.query_history_k_data(code)
 
             if not quote_df.empty:
-                for i, row in quote_df.iterrows():
+                for i, raw_row in quote_df.iterrows():
+                    row = raw_row.replace('', 0)
                     daily_quote = DailyQuote()
                     daily_quote.date = row['date']
-                    daily_quote.open = row['open']
-                    daily_quote.close = row['close']
-                    daily_quote.high = row['high']
-                    daily_quote.low = row['low']
-                    daily_quote.volume = row['volume']
-                    daily_quote.trade_amount = row['amount']
-                    daily_quote.amplitude = row['high'] - row['low']
-                    daily_quote.change_rate = row['pctChg']
-                    DailyQuote.change_amount = row['close'] - row['preclose']
-                    daily_quote.turnover_rate = row['turn']
+                    daily_quote.open = float(row['open'])
+                    daily_quote.close = float(row['close'])
+                    daily_quote.previous_close = float(row['preclose'])
+                    daily_quote.high = float(row['high'])
+                    daily_quote.low = float(row['low'])
+                    daily_quote.volume = int(row['volume'])
+                    daily_quote.trade_amount = float(row['amount'])
+                    daily_quote.amplitude = daily_quote.high - daily_quote.low
+                    daily_quote.change_rate = float(row['pctChg'])
+                    DailyQuote.change_amount = daily_quote.close - daily_quote.previous_close
+                    daily_quote.turnover_rate = float(row['turn'])
 
-                    daily_quote.peTTM = row['peTTM']
-                    daily_quote.pbMRQ = row['pbMRQ']
-                    daily_quote.psTTM = row['psTTM']
-                    daily_quote.pcfNcfTTM = row['pcfNcfTTM']
+                    daily_quote.peTTM = float(row['peTTM'])
+                    daily_quote.pbMRQ = float(row['pbMRQ'])
+                    daily_quote.psTTM = float(row['psTTM'])
+                    daily_quote.pcfNcfTTM = float(row['pcfNcfTTM'])
 
-                    daily_quote.trade_status = row['tradestatus']
-                    daily_quote.isST = row['isST']
+                    daily_quote.trade_status = int(row['tradestatus'])
+                    daily_quote.isST = int(row['isST'])
                     local_daily_quote_list.append(daily_quote)
                 stock_obj.daily_quote = local_daily_quote_list
 
@@ -51,6 +53,7 @@ def get_zh_a_stock_k_data_daily(code, start_date=None, end_date=None):
             else:
                 status_code = 'FAIL'
                 status_msg = 'No available data for update'
+                time.sleep(0.5)  # reduce the query frequency
         else:
             status_code = 'FAIL'
             status_msg = 'STOCK CODE CAN NOT BE FOUND IN LOCAL DB'
@@ -64,5 +67,4 @@ def get_zh_a_stock_k_data_daily(code, start_date=None, end_date=None):
         'code': status_code,
         'message': status_msg,
     }
-    time.sleep(0.5)    # reduce the query frequency
     return status

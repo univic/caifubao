@@ -8,7 +8,7 @@ from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc
 from app.utilities.progress_bar import progress_bar
 from app.lib.datahub.remote_data import baostock
 from app.lib.datahub.data_retriever.common import convert_dict_to_kwarg, check_task_uniqueness, \
-    exec_data_retrieve_task, convert_kwarg_to_dict
+    exec_datahub_task, convert_kwarg_to_dict
 from app.utilities import trading_day_helper
 
 logger = logging.getLogger()
@@ -71,7 +71,7 @@ class DatahubTask(object):
 
     def exec_task(self, item):
         self.before_task_exec(item)
-        result = exec_data_retrieve_task(item)
+        result = exec_datahub_task(item)
         self.after_task_exec(item)
         return result
 
@@ -87,9 +87,10 @@ class DatahubTask(object):
     def after_task_exec(self, item):
         pass
 
-    def create_task(self, name, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
+    def create_task(self, name, package, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
         new_task = self.task_obj()
         new_task.name = name
+        new_task.callback_package = package
         new_task.callback_module = module
         new_task.callback_handler = handler
         new_task.args = task_args_list
@@ -107,7 +108,7 @@ class AkshareDatahubTask(DatahubTask):
         super().__init__(runner_name='Akshare', task_obj=DatahubTaskDoc)
 
     def get_task_list(self):
-        self.task_list = self.task_obj.objects(status='CRTD', callback_module='akshare')  # Slice here to limit task number
+        self.task_list = self.task_obj.objects(status='CRTD', callback_module='akshare')[:2]  # Slice here to limit task number
         return self.task_list
 
 
@@ -116,7 +117,7 @@ class BaostockDatahubTask(DatahubTask):
         super().__init__(runner_name='Baostock', task_obj=DatahubTaskDoc)
 
     def get_task_list(self):
-        self.task_list = self.task_obj.objects(status='CRTD', callback_module='baostock')[:5]  # Slice here to limit task number
+        self.task_list = self.task_obj.objects(status='CRTD', callback_module='baostock')[:2]  # Slice here to limit task number
         return self.task_list
 
     def before_task_list_exec(self):
@@ -150,11 +151,13 @@ class ScheduledDatahubTask(DatahubTask):
         if task_num == 0:
             logger.info(f'Initializing scheduled datahub tasks')
             self.create_task(name=f'UPDATE INDEX QUOTE WITH SPOT DATA {date_str}',
+                             package='remote_data',
                              module='akshare',
                              handler='get_zh_a_stock_index_quote_daily',
                              repeat='T-DAY',
                              scheduled_time=next_run_time)
             self.create_task(name=f'UPDATE STOCK QUOTE WITH SPOT DATA {date_str}',
+                             package='remote_data',
                              module='akshare',
                              handler='get_zh_a_stock_quote_daily',
                              repeat='T-DAY',
@@ -227,6 +230,7 @@ class ScheduledDatahubTask(DatahubTask):
             # create task
             kw_dict = convert_kwarg_to_dict(item.kwargs)
             self.create_task(name=item.name,
+                             package=item.callback_package,
                              module=item.callback_module,
                              handler=item.callback_handler,
                              repeat=item.repeat,
@@ -234,10 +238,11 @@ class ScheduledDatahubTask(DatahubTask):
                              task_kwarg_dict=kw_dict,
                              scheduled_time=next_run_time)
 
-    def create_task(self, name, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
+    def create_task(self, name, package, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
         new_task = self.task_obj()
         new_task.scheduled_process_time = extra_kw["scheduled_time"]
         new_task.name = name
+        new_task.callback_package = package
         new_task.callback_module = module
         new_task.callback_handler = handler
         new_task.repeat = extra_kw["repeat"]

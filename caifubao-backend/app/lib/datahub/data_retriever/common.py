@@ -7,8 +7,8 @@ from importlib import import_module
 logger = logging.getLogger()
 
 
-def exec_data_retrieve_task(item):
-    func = getattr(import_module(f'app.lib.datahub.remote_data.{item.callback_module}.handler'),
+def exec_datahub_task(item):
+    func = getattr(import_module(f'app.lib.datahub.{item.callback_package}.{item.callback_module}.handler'),
                    item.callback_handler)
     kwarg_dict = convert_kwarg_to_dict(item.kwargs)
     item.processed_at = datetime.datetime.now()
@@ -48,7 +48,7 @@ def generate_task_uid(task_obj, kwarg_dict):
     :param kwarg_dict:
     :return:
     """
-    obj_str = str(task_obj.name + task_obj.callback_module + task_obj.callback_handler)
+    obj_str = str(task_obj.name + task_obj.callback_package + task_obj.callback_module + task_obj.callback_handler)
     datetime_str = ""
     kwargs_str = ""
     args_str = ""
