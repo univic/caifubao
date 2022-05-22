@@ -1,5 +1,10 @@
+import re
+import logging
 import time, datetime
 from app.model.stock import FinanceMarket, DataFreshnessMeta
+
+
+logger = logging.getLogger()
 
 
 def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.now()):
@@ -88,3 +93,16 @@ def convert_date_to_datetime(date):
     """
     dt = datetime.datetime.combine(date, datetime.time())
     return dt
+
+
+def update_title_date_str(title_str, date):
+    pattern = r"[0-9]{8}"
+    date_str = date.strftime('%Y%m%d')
+    res = re.search(pattern, title_str)
+    if res:
+        new_str = re.sub(pattern, date_str, title_str)
+        return new_str
+    else:
+        new_str = title_str + ' ' + date_str
+        return new_str
+

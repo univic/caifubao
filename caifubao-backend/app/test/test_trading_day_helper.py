@@ -28,6 +28,17 @@ class TestTradingDayHelper(unittest.TestCase):
         act_result_1 = trading_day_helper.convert_date_to_datetime(date)
         self.assertEqual(act_result_1, exp_result_1)
 
+    def test_update_title_date_str(self):
+        dt_1 = datetime.datetime(2022, 5, 23, 0, 0, 0)
+        title_str_1 = 'UPDATE INDEX QUOTE WITH SPOT DATA 20220522'
+        exp_result_1 = 'UPDATE INDEX QUOTE WITH SPOT DATA 20220523'
+        act_result_1 = trading_day_helper.update_title_date_str(title_str_1, dt_1)
+        self.assertEqual(exp_result_1, act_result_1)
+        title_str_2 = 'UPDATE INDEX QUOTE WITH SPOT DATA'
+        exp_result_2 = 'UPDATE INDEX QUOTE WITH SPOT DATA 20220523'
+        act_result_2 = trading_day_helper.update_title_date_str(title_str_2, dt_1)
+        self.assertEqual(exp_result_2, act_result_2)
+
 
 if __name__ == '__main__':
     unittest.main()

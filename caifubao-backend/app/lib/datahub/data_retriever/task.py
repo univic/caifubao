@@ -37,7 +37,7 @@ class DatahubTask(object):
             self.get_task_list()
             self.task_list_length = len(self.task_list)
             if self.task_list_length > 0:
-                logger.info(f'{self.runner_name} task worker - found {self.task_list_length} task(s), now executing')
+                logger.info(f'{self.runner_name} task worker - found {self.task_list_length} task(s)')
                 self.exec_task_list()
             else:
                 logger.info(f'{self.runner_name} task worker - no available task，waiting for next scan')
@@ -72,6 +72,7 @@ class DatahubTask(object):
         self.after_task_list_exec()
 
     def exec_task(self, item):
+        # result = {"code": "GOOD"}
         self.before_task_exec(item)
         result = exec_datahub_task(item)
         self.after_task_exec(item)
@@ -155,23 +156,24 @@ class ScheduledDatahubTask(DatahubTask):
             logger.info(f'Initializing scheduled datahub tasks')
             trade_calendar = trading_day_helper.get_a_stock_market_trade_calendar()
             run_hour = 18
-            date_str = datetime.date.today().strftime('%Y%m%d')
             if trading_day_helper.is_trading_day(trade_calendar):
                 next_run_time = datetime.datetime.now()
             else:
                 next_run_time = trading_day_helper.next_trading_day(trade_calendar)
             next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
 
-            self.create_task(name=f'UPDATE INDEX QUOTE WITH SPOT DATA {date_str}',
+            self.create_task(name=trading_day_helper.update_title_date_str('UPDATE INDEX QUOTE WITH SPOT DATA',
+                                                                           next_run_time),
                              package='remote_data',
                              module='akshare',
-                             handler='get_zh_a_stock_index_quote_daily',
+                             handler='update_zh_stock_index_daily_spot',
                              repeat='T-DAY',
                              scheduled_time=next_run_time)
-            self.create_task(name=f'UPDATE STOCK QUOTE WITH SPOT DATA {date_str}',
+            self.create_task(name=trading_day_helper.update_title_date_str('UPDATE STOCK QUOTE WITH SPOT DATA',
+                                                                           next_run_time),
                              package='remote_data',
                              module='akshare',
-                             handler='get_zh_a_stock_quote_daily',
+                             handler='update_zh_stock_spot',
                              repeat='T-DAY',
                              scheduled_time=next_run_time)
             logger.info(f'Scheduled datahub tasks Initialized')
@@ -182,28 +184,31 @@ class ScheduledDatahubTask(DatahubTask):
 
     def exec_task_list(self):
         continue_flag = True
-        task_scan_interval = 30  # minutes
-        next_scan_second = task_scan_interval * 60
-        counter = {
-            "COMP": 0,
-            "FAIL": 0
-        }
+        next_scan_second = self.task_scan_interval * 60
         while continue_flag:
-            task_list = self.get_task_list()
-            logger.info(f'Found {self.task_list_length} scheduled task(s)')
-            if task_list:
-                for i, item in enumerate(task_list):
-                    scheduled_run_time = item.scheduled_process_time
-                    time_diff = datetime.datetime.now() - scheduled_run_time
-                    time_diff_second = time_diff.seconds
-                    if time_diff_second <= 0:
+            if self.task_list:
+                counter = {
+                    "COMP": 0,
+                    "FAIL": 0,
+                    "SKIP": 0,
+                }
+                for i, item in enumerate(self.task_list):
+                    scheduled_run_timestamp = datetime.datetime.timestamp(item.scheduled_process_time)
+                    time_diff = scheduled_run_timestamp - datetime.datetime.timestamp(datetime.datetime.now())
+                    # determine whether to execute
+                    if time_diff <= 0:
                         next_run = 0
-                    if time_diff_second > next_scan_second:
+                        exec_flag = True
+                    elif time_diff > next_scan_second:
                         next_run = -1
+                        counter["SKIP"] += 1
+                        exec_flag = False
                     else:
-                        next_run = time_diff_second
-                    if next_run >= 0:
-                        logger.info(f'Will run task {item.name} in {next_run} seconds')
+                        exec_flag = True
+                        next_run = time_diff
+
+                    if exec_flag:
+                        logger.info(f'Will run task {item.name} in {int(next_run)} seconds')
                         time.sleep(next_run)
                         logger.info(f'Running task {item.name}')
                         result = self.exec_task(item)
@@ -212,10 +217,12 @@ class ScheduledDatahubTask(DatahubTask):
                         else:
                             counter["FAIL"] += 1
                             logger.info(f'Error when processing task {item.name}')
-                logger.info(f'Task scan completed, next scan in {task_scan_interval} minutes')
+                logger.info(f'Task execution completed, of {self.task_list_length} in total'
+                            f'{counter["COMP"]} success, {counter["FAIL"]} failed, {counter["SKIP"]} skipped, '
+                            f'next scan in {self.task_scan_interval} minutes')
             else:
-                logger.info(f'No scheduled task was found, next scan in {task_scan_interval} minuets')
-                time.sleep(next_scan_second)
+                logger.info(f'No scheduled task was found, next scan in {self.task_scan_interval} minuets')
+            time.sleep(next_scan_second)
 
     def before_task_exec(self, item):
         if item.callback_module == 'baostock':
@@ -228,20 +235,18 @@ class ScheduledDatahubTask(DatahubTask):
 
     def handle_repeat_task(self, item):
         if item.repeat:
-
             if item.repeat == 'T-DAY':
-                trade_calendar = item.market.trade_calendar
-                curr_run_time = item.scheduled_time
+                trade_calendar = trading_day_helper.get_a_stock_market_trade_calendar()
+                curr_run_time = item.scheduled_process_time
                 next_run_time = trading_day_helper.next_trading_day(trade_calendar)
                 next_run_time += datetime.timedelta(hours=curr_run_time.hour,
                                                     minutes=curr_run_time.minute,
                                                     seconds=curr_run_time.second)
-
             else:
                 next_run_time = None
             # create task
             kw_dict = convert_kwarg_to_dict(item.kwargs)
-            self.create_task(name=item.name,
+            self.create_task(name=trading_day_helper.update_title_date_str(item.name, next_run_time),
                              package=item.callback_package,
                              module=item.callback_module,
                              handler=item.callback_handler,

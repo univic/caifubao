@@ -17,6 +17,10 @@ def exec_datahub_task(item):
     if result['code'] == 'GOOD':
         item.completed_at = datetime.datetime.now()
         item.status = 'COMP'
+    elif result['code'] == 'WARN':
+        item.completed_at = datetime.datetime.now()
+        item.status = 'COMP'
+        item.message = result['message']
     else:
         item.status = 'FAIL'
         item.message = result['message']
