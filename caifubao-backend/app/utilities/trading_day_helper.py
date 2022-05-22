@@ -77,7 +77,7 @@ def is_trading_day(trade_calendar, given_time=datetime.datetime.now()):
 
 
 def get_a_stock_market_trade_calendar():
-    market = FinanceMarket(market_name="A股").first()
+    market = FinanceMarket.objects(name="A股").first()
     trade_calendar = market.trade_calendar
     return trade_calendar
 

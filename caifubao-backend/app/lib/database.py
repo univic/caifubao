@@ -1,3 +1,4 @@
+import os
 import logging
 from flask_mongoengine import MongoEngine
 from mongoengine import connect, disconnect
@@ -14,7 +15,7 @@ def db_init(app):
 
 
 def connect_to_db(alias='default'):
-    logger.info(f'Opening database connection with alias {alias}')
+    logger.info(f'Opening database connection with alias {alias} in process {os.getpid()}')
     connect(db=app_config.MONGODB_SETTINGS["db"],
             host=app_config.MONGODB_SETTINGS["host"],
             port=app_config.MONGODB_SETTINGS["port"],
@@ -22,5 +23,5 @@ def connect_to_db(alias='default'):
 
 
 def disconnect_from_db(alias='default'):
-    logger.info(f'Disconnecting database connection with alias {alias}')
+    logger.info(f'Disconnecting database connection with alias {alias} in process {os.getpid()}')
     disconnect(alias=alias)

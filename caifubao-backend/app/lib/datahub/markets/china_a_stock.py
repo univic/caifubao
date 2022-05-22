@@ -23,7 +23,7 @@ class ChinaAStock(object):
     def check_local_data_existence(self):
         self.check_market_data_existence()
         self.check_stock_index_integrity()
-        # self.check_stock_data_integrity()
+        self.check_stock_data_integrity()
 
     def check_market_data_existence(self):
         self.market = FinanceMarket.objects(name="A股").first()
@@ -45,14 +45,12 @@ class ChinaAStock(object):
             if local_data_tail < today:
                 logger.info(f"Stock Market {self.market.name} - Updating trade calendar")
                 trade_calendar = akshare_handler.get_a_stock_trade_date_hist()
-                trade_calendar = list(trade_calendar['trade_date'])
                 self.market.trade_calendar = trade_calendar
                 self.market.save()
             else:
                 logger.info(f'Trade calendar check OK, using local trade calendar for {self.market.name}')
         else:
             trade_calendar = akshare_handler.get_a_stock_trade_date_hist()
-            trade_calendar = list(trade_calendar['trade_date'])
             self.market.trade_calendar = trade_calendar
             self.market.save()
 

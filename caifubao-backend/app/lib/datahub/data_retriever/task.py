@@ -33,6 +33,7 @@ class DatahubTask(object):
             logger.info(f'{self.runner_name} task worker - Preparing for task scan')
 
             connect_to_db()
+            self.before_dispatch()
             self.get_task_list()
             self.task_list_length = len(self.task_list)
             if self.task_list_length > 0:
@@ -42,6 +43,7 @@ class DatahubTask(object):
                 logger.info(f'{self.runner_name} task worker - no available task，waiting for next scan')
             logger.info(f'{self.runner_name} task worker - task scan completed, '
                         f'next scan in {self.task_scan_interval} minutes')
+            self.after_dispatch()
             disconnect_from_db()
             time_to_wait = self.task_scan_interval * 60
             time.sleep(time_to_wait)
@@ -74,6 +76,12 @@ class DatahubTask(object):
         result = exec_datahub_task(item)
         self.after_task_exec(item)
         return result
+
+    def before_dispatch(self):
+        pass
+
+    def after_dispatch(self):
+        pass
 
     def before_task_list_exec(self):
         pass
@@ -108,7 +116,7 @@ class AkshareDatahubTask(DatahubTask):
         super().__init__(runner_name='Akshare', task_obj=DatahubTaskDoc)
 
     def get_task_list(self):
-        self.task_list = self.task_obj.objects(status='CRTD', callback_module='akshare')[:2]  # Slice here to limit task number
+        self.task_list = self.task_obj.objects(status='CRTD', callback_module='akshare')[:]  # Slice here to limit task number
         return self.task_list
 
 
@@ -117,7 +125,7 @@ class BaostockDatahubTask(DatahubTask):
         super().__init__(runner_name='Baostock', task_obj=DatahubTaskDoc)
 
     def get_task_list(self):
-        self.task_list = self.task_obj.objects(status='CRTD', callback_module='baostock')[:2]  # Slice here to limit task number
+        self.task_list = self.task_obj.objects(status='CRTD', callback_module='baostock')[:]  # Slice here to limit task number
         return self.task_list
 
     def before_task_list_exec(self):
@@ -137,19 +145,23 @@ class ScheduledDatahubTask(DatahubTask):
         # self.initialize_scheduled_task()
         # TODO: WHERE TO INIT?
 
+    def before_dispatch(self):
+        self.initialize_scheduled_task()
+
     def initialize_scheduled_task(self):
         task_num = self.task_obj.objects().count()
-        trade_calendar = trading_day_helper.get_a_stock_market_trade_calendar()
-        run_hour = 18
-        date_str = datetime.date.today().strftime('%Y%m%d')
-        if trading_day_helper.is_trading_day(trade_calendar):
-            next_run_time = datetime.datetime.now()
-        else:
-            next_run_time = trading_day_helper.next_trading_day(trade_calendar)
-        next_run_time.replace(hour=run_hour, minute=0, second=0)
 
         if task_num == 0:
             logger.info(f'Initializing scheduled datahub tasks')
+            trade_calendar = trading_day_helper.get_a_stock_market_trade_calendar()
+            run_hour = 18
+            date_str = datetime.date.today().strftime('%Y%m%d')
+            if trading_day_helper.is_trading_day(trade_calendar):
+                next_run_time = datetime.datetime.now()
+            else:
+                next_run_time = trading_day_helper.next_trading_day(trade_calendar)
+            next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
+
             self.create_task(name=f'UPDATE INDEX QUOTE WITH SPOT DATA {date_str}',
                              package='remote_data',
                              module='akshare',
@@ -165,8 +177,8 @@ class ScheduledDatahubTask(DatahubTask):
             logger.info(f'Scheduled datahub tasks Initialized')
 
     def get_task_list(self):
-        task_list = self.task_obj.objects(status='CRTD').order_by('-scheduled_time')  # Slice here to limit task number
-        return task_list
+        self.task_list = self.task_obj.objects(status='CRTD').order_by('-scheduled_time')  # Slice here to limit task number
+        return self.task_list
 
     def exec_task_list(self):
         continue_flag = True
@@ -247,7 +259,8 @@ class ScheduledDatahubTask(DatahubTask):
         new_task.callback_handler = handler
         new_task.repeat = extra_kw["repeat"]
         new_task.args = task_args_list
-        new_task.kwargs = convert_dict_to_kwarg(task_kwarg_dict)
+        if new_task.kwargs:
+            new_task.kwargs = convert_dict_to_kwarg(task_kwarg_dict)
         if check_task_uniqueness(new_task, task_kwarg_dict):
             new_task.save()
             logger.debug(f'Scheduled datahub task {new_task.name} created')

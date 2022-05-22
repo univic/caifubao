@@ -1,4 +1,4 @@
-
+import datetime
 import traceback
 import logging
 from app.model.stock import StockIndex, IndividualStock
@@ -14,8 +14,9 @@ logger = logging.getLogger()
 def get_a_stock_trade_date_hist():
     remote_data = interface.get_trade_date_hist()
     # convert to datetime
-    r = map(trading_day_helper.convert_date_to_datetime, remote_data)
-    return r
+    r = remote_data['trade_date'].map(trading_day_helper.convert_date_to_datetime)
+    # r = remote_data['trade_date'].map(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d'))
+    return list(r)
 
 
 @performance_helper.func_performance_timer
@@ -108,7 +109,7 @@ def update_zh_stock_index_daily_spot():
     return status
 
 
-def get_zh_a_stock_index_quote_daily(code, incremental="false"):
+def get_zh_a_stock_index_quote_daily(code, incremental="false", start_date=None):
     status_code = "GOOD"
     status_msg = None
     try:
