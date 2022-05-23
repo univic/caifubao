@@ -1,10 +1,11 @@
 import datetime
 import traceback
 import logging
+from mongoengine.errors import ValidationError
 from app.model.stock import StockIndex, IndividualStock
 from app.model.stock import DailyQuote
 from app.utilities.progress_bar import progress_bar
-from app.utilities import trading_day_helper, performance_helper
+from app.utilities import trading_day_helper, performance_helper, stock_code_helper
 import app.lib.datahub.remote_data.akshare.interface as interface
 
 
@@ -62,6 +63,7 @@ def update_zh_stock_index_daily_spot():
                         trading_day_b=closest_trading_day
                     )
                     if date_diff == 1:
+                        quote_data_list = local_index_obj.daily_quote
                         new_daily_quote_data = DailyQuote()
                         new_daily_quote_data.date = closest_trading_day
                         new_daily_quote_data.open = row['今开']
@@ -70,20 +72,23 @@ def update_zh_stock_index_daily_spot():
                         new_daily_quote_data.low = row['最低']
                         new_daily_quote_data.volume = row['成交量']
                         trading_day_helper.update_freshness_meta(local_index_obj, 'daily_quote', closest_trading_day)
+                        quote_data_list.append(new_daily_quote_data)
+                        local_index_obj.daily_quote = quote_data_list
+                        local_index_obj.save()
                         counter_dict["UPD"] += 1
                     elif date_diff == 0:
                         status_msg += f'{row["名称"]} - {row["代码"]} is up to date. '
                         counter_dict["NO_UPD"] += 1
                     else:
-                        status_code = "WARN"
+                        # status_code = "WARN"
                         status_msg += f'{row["名称"]} - {row["代码"]} local data was outdated. '
                         counter_dict["OUT_DATED"] += 1
                 else:
-                    status_code = "WARN"
+                    # status_code = "WARN"
                     status_msg += f'{row["名称"]} - {row["代码"]} quote freshness data not found. '
                     counter_dict["NO_DATA"] += 1
             else:
-                status_code = "WARN"
+                # status_code = "WARN"
                 status_msg += f'{row["名称"]} - {row["代码"]} local data not found. '
                 counter_dict["NO_DATA"] += 1
             prog_bar(i, remote_index_num)
@@ -234,19 +239,22 @@ def update_zh_stock_spot(detail_msg=False):
         "NO_UPD": 0,
         "UPD": 0,
         "OUT_DATED": 0,
-        "NO_DATA": 0
+        "NO_DATA": 0,
+        "ERR": 0
     }
     market = IndividualStock.objects().first().market
     logger.info(f'Stock Market {market.name} - Updating stock daily quote with spot data')
     prog_bar = progress_bar()
     # Use eastmoney interface here
-    remote_data_df = interface.stock_zh_a_spot_em()
+    raw_remote_data_df = interface.stock_zh_a_spot_em()
+    remote_data_df = raw_remote_data_df.fillna(0)
     remote_index_num = len(remote_data_df)
     stock_list = IndividualStock.objects()
     if stock_list:
         closest_trading_day = trading_day_helper.determine_closest_trading_date(market.trade_calendar)
         for i, row in remote_data_df.iterrows():
-            local_stock_obj = IndividualStock.objects(code=row['代码']).first()
+            stock_code = stock_code_helper.add_market_prefix(row['代码'])
+            local_stock_obj = IndividualStock.objects(code=stock_code).first()
             # if the local index data exists
             if local_stock_obj:
                 latest_quote_date = trading_day_helper.read_freshness_meta(local_stock_obj, 'daily_quote')
@@ -275,7 +283,17 @@ def update_zh_stock_spot(detail_msg=False):
                         new_daily_quote_data.peTTM = row['市盈率-动态']
                         new_daily_quote_data.psTTM = row['市净率']
                         trading_day_helper.update_freshness_meta(local_stock_obj, 'daily_quote', closest_trading_day)
-                        counter_dict["UPD"] += 1
+                        quote_data_list = local_stock_obj.daily_quote
+                        quote_data_list.append(new_daily_quote_data)
+                        local_stock_obj.daily_quote = quote_data_list
+                        try:
+                            local_stock_obj.save()
+                            counter_dict["UPD"] += 1
+                        except ValidationError as e:
+                            counter_dict["ERR"] += 1
+                            status_msg += f'{row["名称"]} - {row["代码"]} encountered error'
+                            print(f"validation error on {local_stock_obj.code}, {e}")
+
                     elif date_diff == 0:
                         status_msg += f'{row["名称"]} - {row["代码"]} is up to date. '
                         counter_dict["NO_UPD"] += 1
@@ -297,11 +315,12 @@ def update_zh_stock_spot(detail_msg=False):
         status_code = 'FAIL'
         status_msg = 'Local stock index data not found.'
     if status_code != 'FAIL':
-        status_brief = f"Index spot info update result: " \
+        status_brief = f"Stock quote data update result: " \
                      f"{counter_dict['UPD']} updated, " \
                      f"{counter_dict['NO_UPD']} was up to date already," \
                      f"{counter_dict['OUT_DATED']} outdated (did not update), " \
-                     f"{counter_dict['NO_DATA']} no local data "
+                     f"{counter_dict['NO_DATA']} no local data, " \
+                     f"{counter_dict['ERR']} encountered error "
         #
         if detail_msg:
             status_msg = status_brief + status_msg

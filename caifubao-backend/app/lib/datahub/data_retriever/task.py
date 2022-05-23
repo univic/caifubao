@@ -58,17 +58,20 @@ class DatahubTask(object):
         prog_bar = progress_bar()
         counter = {
             "COMP": 0,
+            "WARN": 0,
             "FAIL": 0
         }
         for i, item in enumerate(self.task_list):
             result = self.exec_task(item)
             if result['code'] == 'GOOD':
                 counter["COMP"] += 1
+            elif result['code'] == 'WARN':
+                counter["WARN"] += 1
             else:
                 counter["FAIL"] += 1
             prog_bar(i, self.task_list_length)
         logger.info(f'Processed {self.task_list_length} tasks, '
-                    f'{counter["COMP"]} success, {counter["FAIL"]} failed.')
+                    f'{counter["COMP"]} success, {counter["WARN"]} completed with warning, {counter["FAIL"]} failed.')
         self.after_task_list_exec()
 
     def exec_task(self, item):
@@ -189,6 +192,7 @@ class ScheduledDatahubTask(DatahubTask):
             if self.task_list:
                 counter = {
                     "COMP": 0,
+                    "WARN": 0,
                     "FAIL": 0,
                     "SKIP": 0,
                 }
@@ -213,11 +217,16 @@ class ScheduledDatahubTask(DatahubTask):
                         logger.info(f'Running task {item.name}')
                         result = self.exec_task(item)
                         if result['code'] == 'GOOD':
+                            counter["GOOD"] += 1
                             logger.info(f'Successfully processed task {item.name}')
+                        elif result['code'] == 'WARN':
+                            counter["WARN"] += 1
+                            logger.info(f'Task {item.name} completed with warning message')
                         else:
                             counter["FAIL"] += 1
                             logger.info(f'Error when processing task {item.name}')
-                logger.info(f'Task execution completed, of {self.task_list_length} in total'
+                logger.info(f'Task execution completed, of all {self.task_list_length} task(s) '
+                            f'{counter["WARN"]} completed with warning, '
                             f'{counter["COMP"]} success, {counter["FAIL"]} failed, {counter["SKIP"]} skipped, '
                             f'next scan in {self.task_scan_interval} minutes')
             else:

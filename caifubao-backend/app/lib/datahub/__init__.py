@@ -16,11 +16,11 @@ class Datahub(object):
     def __init__(self):
         logger.info("Initializing datahub")
 
-    @staticmethod
-    def initialize():
+    def initialize(self):
         try:
-            # markets.initialize_markets()
+            markets.initialize_markets()
             data_retriever_init()
+            # self.run_handler()
 
         except ServerSelectionTimeoutError:
             logger.error("Timed out when establishing DB connection")
@@ -28,4 +28,4 @@ class Datahub(object):
 
     @staticmethod
     def run_handler():
-        handler.update_zh_stock_index_daily_spot()
+        handler.update_zh_stock_spot()
