@@ -217,7 +217,7 @@ class ScheduledDatahubTask(DatahubTask):
                         logger.info(f'Running task {item.name}')
                         result = self.exec_task(item)
                         if result['code'] == 'GOOD':
-                            counter["GOOD"] += 1
+                            counter["COMP"] += 1
                             logger.info(f'Successfully processed task {item.name}')
                         elif result['code'] == 'WARN':
                             counter["WARN"] += 1

@@ -19,7 +19,7 @@ class Datahub(object):
     def initialize(self):
         try:
             markets.initialize_markets()
-            data_retriever_init()
+            # data_retriever_init()
             # self.run_handler()
 
         except ServerSelectionTimeoutError:

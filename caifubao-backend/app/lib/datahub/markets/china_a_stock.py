@@ -1,3 +1,4 @@
+import time
 import datetime
 import logging
 from app.lib.datahub.remote_data.akshare import handler as akshare_handler
@@ -85,7 +86,8 @@ class ChinaAStock(object):
             for i, remote_index_item in remote_index_list.iterrows():
                 code = remote_index_item['代码']
                 name = remote_index_item['名称']
-                query = local_index_list(code=code).first()
+                # only fetch necessary fields, to improve query performance ( by a lot)
+                query = local_index_list(code=code).only('code', 'data_freshness_meta').first()
                 if query:
                     # check the quote data freshness of each index
                     update_flag = self.check_stock_data_freshness(query)
@@ -168,7 +170,7 @@ class ChinaAStock(object):
             inc_quote_task_name = None
             logger.warning(f'Stock Market {self.market.name} - OBJECT COMPARISON ERROR  {stock_obj.code}')
         if stock_obj.daily_quote:
-
+            # TODO performance improvement here, check metadata only
             # determine time difference
             most_recent_quote_date = trading_day_helper.determine_latest_quote_date(stock_obj.daily_quote, 'date')
             time_diff = trading_day_helper.determine_trading_date_diff(self.market.trade_calendar,
@@ -232,7 +234,7 @@ class ChinaAStock(object):
             for i, remote_stock_item in remote_stock_list.iterrows():
                 code = remote_stock_item['代码']
                 name = remote_stock_item['名称']
-                local_stock_obj = local_stock_list(code=code).first()
+                local_stock_obj = local_stock_list(code=code).only('code', 'data_freshness_meta').first()
                 if local_stock_obj:
                     # check the quote data freshness of each index
                     update_flag = self.check_stock_data_freshness(local_stock_obj)
