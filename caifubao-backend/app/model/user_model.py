@@ -3,8 +3,8 @@
 # Date: 2021-01-31
 
 import datetime
-from mongoengine import StringField, ListField, ReferenceField, EmailField, DateTimeField, IntField
-from app.lib.database import db
+from mongoengine import StringField, ListField, EmailField, DateTimeField, IntField
+from app.lib.db_tool.mongoengine_tool import db
 import app.utilities.db_util as db_util
 
 

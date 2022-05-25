@@ -3,7 +3,7 @@
 # Date: 2021-02-03
 
 from flask_security import MongoEngineUserDatastore, Security
-from app.lib.database import db
+from app.lib.db_tool.mongoengine_tool import db
 from app.model.user_role import UserRole
 from app.model.user_model import User
 

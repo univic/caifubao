@@ -5,7 +5,7 @@
 import datetime
 from mongoengine import StringField, EmbeddedDocumentListField, DateTimeField, ListField, \
     EmbeddedDocument, IntField
-from app.lib.database import db
+from app.lib.db_tool.mongoengine_tool import db
 
 
 class KwArg(EmbeddedDocument):

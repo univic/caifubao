@@ -1,6 +1,6 @@
 import time
 import traceback
-from app.model.stock import IndividualStock, DailyQuote
+from app.model.stock import IndividualStock, StockDailyQuote
 from app.utilities import performance_helper, trading_day_helper
 from app.lib.datahub.remote_data.baostock import interface
 
@@ -9,20 +9,23 @@ def get_zh_a_stock_k_data_daily(code, start_date=None, end_date=None):
     status_code = "GOOD"
     status_msg = None
     try:
-        stock_obj = IndividualStock.objects(code=code).first()
-        local_daily_quote_list = []
+        stock_obj = IndividualStock.objects(code=code).only('code', 'data_freshness_meta').first()
+        most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_obj, 'daily_quote')
         if stock_obj:
-            if start_date and stock_obj.daily_quote:
+            if start_date and most_recent_quote_date:
                 # prepare the df for incremental update
-                local_daily_quote_list = stock_obj.daily_quote
                 quote_df = interface.query_history_k_data(code, start_date=start_date, end_date=end_date)
             else:
                 quote_df = interface.query_history_k_data(code)
 
             if not quote_df.empty:
                 for i, raw_row in quote_df.iterrows():
+                    # replace empty cells
                     row = raw_row.replace('', 0)
-                    daily_quote = DailyQuote()
+
+                    daily_quote = StockDailyQuote()
+                    daily_quote.code = stock_obj.code
+                    daily_quote.stock = stock_obj
                     daily_quote.date = row['date']
                     daily_quote.open = float(row['open'])
                     daily_quote.close = float(row['close'])
@@ -33,7 +36,7 @@ def get_zh_a_stock_k_data_daily(code, start_date=None, end_date=None):
                     daily_quote.trade_amount = float(row['amount'])
                     daily_quote.amplitude = daily_quote.high - daily_quote.low
                     daily_quote.change_rate = float(row['pctChg'])
-                    DailyQuote.change_amount = daily_quote.close - daily_quote.previous_close
+                    daily_quote.change_amount = daily_quote.close - daily_quote.previous_close
                     daily_quote.turnover_rate = float(row['turn'])
 
                     daily_quote.peTTM = float(row['peTTM'])
@@ -43,8 +46,7 @@ def get_zh_a_stock_k_data_daily(code, start_date=None, end_date=None):
 
                     daily_quote.trade_status = int(row['tradestatus'])
                     daily_quote.isST = int(row['isST'])
-                    local_daily_quote_list.append(daily_quote)
-                stock_obj.daily_quote = local_daily_quote_list
+                    daily_quote.save()
 
                 # update data freshness meta data
                 date_of_quote = quote_df['date'].max()

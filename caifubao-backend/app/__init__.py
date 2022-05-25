@@ -7,7 +7,7 @@ from flask import Flask
 from app.utilities.logger import create_logger
 from app.conf import app_config
 from app.api import register_blueprint
-from app.lib.database import db_init
+from app.lib.db_tool.mongoengine_tool import db_init
 from app.lib.datahub import Datahub
 from app.extensions import config_extensions
 

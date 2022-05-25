@@ -3,8 +3,8 @@
 # Date: 2022-01-15
 
 from mongoengine import StringField, EmbeddedDocumentListField, DateTimeField, ReferenceField, ListField, \
-    EmbeddedDocument, BooleanField, FloatField, IntField
-from app.lib.database import db
+    EmbeddedDocument, FloatField, IntField
+from app.lib.db_tool.mongoengine_tool import db
 
 
 class StockExchange(db.Document):

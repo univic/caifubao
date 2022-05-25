@@ -67,7 +67,7 @@ class ChinaAStock(object):
             self.today = today
             self.most_recent_trading_day = trading_day_helper.determine_closest_trading_date(self.market.trade_calendar)
 
-        # prepare the progress bar
+        # prepare the progress bar and counter
         local_index_num = local_index_list.count()
         remote_index_num = len(remote_index_list)
         unmatched_index_counter = 0
@@ -169,10 +169,13 @@ class ChinaAStock(object):
             full_quote_task_name = None
             inc_quote_task_name = None
             logger.warning(f'Stock Market {self.market.name} - OBJECT COMPARISON ERROR  {stock_obj.code}')
-        if stock_obj.daily_quote:
+
+        # check data freshness by freshness meta
+        most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_obj, 'daily_quote')
+        if most_recent_quote_date:
             # TODO performance improvement here, check metadata only
             # determine time difference
-            most_recent_quote_date = trading_day_helper.determine_latest_quote_date(stock_obj.daily_quote, 'date')
+            # most_recent_quote_date = trading_day_helper.determine_latest_quote_date(stock_obj.daily_quote, 'date')
             time_diff = trading_day_helper.determine_trading_date_diff(self.market.trade_calendar,
                                                                        most_recent_quote_date,
                                                                        self.most_recent_trading_day)

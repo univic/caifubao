@@ -1,6 +1,6 @@
 from mongoengine import StringField, EmbeddedDocumentListField, DateTimeField, ReferenceField, ListField, \
-    EmbeddedDocument, FloatField, IntField, EmbeddedDocumentField
-from app.lib.database import db
+    EmbeddedDocument, FloatField, IntField, EmbeddedDocumentField, GenericLazyReferenceField
+from app.lib.db_tool.mongoengine_tool import db
 
 
 class StockExchange(db.Document):
@@ -31,6 +31,36 @@ class FinanceMarket(db.Document):
     stock_list = ListField(ReferenceField('Stock'))
     trade_calendar = ListField(DateTimeField())
     overview = EmbeddedDocumentListField(MarketOverview)
+
+
+class StockDailyQuote(db.Document):
+    meta = {
+        'allow_inheritance': True,
+        'indexes': [
+            '#date',
+        ]
+    }
+    stock = GenericLazyReferenceField(required=True)
+    code = StringField(required=True, unique_with='date')
+    date = DateTimeField(required=True)
+    open = FloatField()
+    close = FloatField()
+    previous_close = FloatField()
+    high = FloatField()
+    low = FloatField()
+    amplitude = FloatField()
+    change_rate = FloatField()
+    change_amount = FloatField()
+    turnover_rate = FloatField()
+    fq_factor = FloatField()
+    volume = IntField()
+    trade_amount = FloatField()
+    trade_status = IntField()    # 1 - 正常交易  0 - 停牌
+    peTTM = FloatField()         # 滚动市盈率
+    pbMRQ = FloatField()         # 市净率
+    psTTM = FloatField()         # 滚动市销率
+    pcfNcfTTM = FloatField()     # 滚动市现率
+    isST = IntField()    # 1 - 被ST  0 - 否
 
 
 class DailyQuote(EmbeddedDocument):

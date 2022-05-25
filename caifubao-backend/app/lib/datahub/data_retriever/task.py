@@ -2,7 +2,7 @@ import os
 import time
 import datetime
 import logging
-from app.lib.database import connect_to_db, disconnect_from_db
+from app.lib.db_tool.mongoengine_tool import connect_to_db, disconnect_from_db
 from app.conf import app_config
 from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc
 from app.utilities.progress_bar import progress_bar
