@@ -1,12 +1,12 @@
-import datetime
 import traceback
 import logging
 from mongoengine.errors import ValidationError
-from app.model.stock import StockIndex, IndividualStock
 from app.model.stock import StockDailyQuote
 from app.utilities.progress_bar import progress_bar
-from app.utilities import trading_day_helper, performance_helper, stock_code_helper
+from app.model.stock import StockIndex, IndividualStock
+from app.lib.datahub.markets import ChinaAStock
 import app.lib.datahub.remote_data.akshare.interface as interface
+from app.utilities import trading_day_helper, performance_helper, stock_code_helper
 
 
 logger = logging.getLogger()
@@ -35,10 +35,12 @@ def update_zh_stock_index_daily_spot():
     status_code = "GOOD"
     status_msg = ""
     counter_dict = {
-        "NO_UPD": 0,
+        "GOOD": 0,
         "UPD": 0,
         "OUT_DATED": 0,
-        "NO_DATA": 0
+        "NO_QUOTE": 0,
+        "NO_DATA": 0,
+        "ERR": 0
     }
 
     market = StockIndex.objects().first().market
@@ -75,22 +77,26 @@ def update_zh_stock_index_daily_spot():
                         new_quote.volume = row['成交量']
                         trading_day_helper.update_freshness_meta(local_index_obj, 'daily_quote', closest_trading_day)
                         new_quote.save()
+                        local_index_obj.save()
                         counter_dict["UPD"] += 1
                     elif date_diff == 0:
                         status_msg += f'{row["名称"]} - {row["代码"]} is up to date. '
-                        counter_dict["NO_UPD"] += 1
+                        counter_dict["GOOD"] += 1
                     else:
                         # status_code = "WARN"
                         status_msg += f'{row["名称"]} - {row["代码"]} local data was outdated. '
                         counter_dict["OUT_DATED"] += 1
+                        # TODO: generate datahub task
                 else:
                     # status_code = "WARN"
                     status_msg += f'{row["名称"]} - {row["代码"]} quote freshness data not found. '
-                    counter_dict["NO_DATA"] += 1
+                    counter_dict["NO_QUOTE"] += 1
+                    # TODO: generate datahub task
             else:
                 # status_code = "WARN"
                 status_msg += f'{row["名称"]} - {row["代码"]} local data not found. '
                 counter_dict["NO_DATA"] += 1
+                ChinaAStock.handle_zh_a_new_index(code=row["代码"], name=row["名称"], market=market)
             prog_bar(i, remote_index_num)
 
     else:
@@ -99,9 +105,11 @@ def update_zh_stock_index_daily_spot():
     if status_code != 'FAIL':
         status_brief = f"Index spot info update result: " \
                      f"{counter_dict['UPD']} updated, " \
-                     f"{counter_dict['NO_UPD']} was up to date already," \
+                     f"{counter_dict['GOOD']} was up to date already," \
                      f"{counter_dict['OUT_DATED']} outdated (did not update), " \
-                     f"{counter_dict['NO_DATA']} no local data "
+                     f"{counter_dict['NO_DATA']} no local primary data, " \
+                     f"{counter_dict['NO_QUOTE']} no local quote data, " \
+                     f"{counter_dict['ERR']} encountered error "
         status_msg = status_brief + status_msg
         logger.info(f'Stock Market {market.name} - {status_brief}')
     else:
@@ -172,6 +180,12 @@ def get_zh_individual_stock_list():
 
 
 def get_zh_a_stock_quote_daily(code, incremental="false"):
+    """
+    INOP: preclose data not available, use baostock data instead
+    :param code:
+    :param incremental:
+    :return:
+    """
     status_code = "GOOD"
     status_msg = None
     try:
@@ -234,9 +248,10 @@ def update_zh_stock_spot(detail_msg=False):
     status_code = "GOOD"
     status_msg = ""
     counter_dict = {
-        "NO_UPD": 0,
+        "GOOD": 0,
         "UPD": 0,
         "OUT_DATED": 0,
+        "NO_QUOTE": 0,
         "NO_DATA": 0,
         "ERR": 0
     }
@@ -293,19 +308,19 @@ def update_zh_stock_spot(detail_msg=False):
 
                     elif date_diff == 0:
                         status_msg += f'{row["名称"]} - {row["代码"]} is up to date. '
-                        counter_dict["NO_UPD"] += 1
+                        counter_dict["GOOD"] += 1
                     else:
-                        status_code = "WARN"
                         status_msg += f'{row["名称"]} - {row["代码"]} local data was outdated. '
                         counter_dict["OUT_DATED"] += 1
+                        # TODO: generate datahub task
                 else:
-                    status_code = "WARN"
                     status_msg += f'{row["名称"]} - {row["代码"]} quote freshness data not found. '
-                    counter_dict["NO_DATA"] += 1
+                    counter_dict["NO_QUOTE"] += 1
+                    # TODO: generate datahub task
             else:
-                status_code = "WARN"
-                status_msg += f'{row["名称"]} - {row["代码"]} local data not found. '
+                status_msg += f'{row["名称"]} - {row["代码"]} local data not found.'
                 counter_dict["NO_DATA"] += 1
+                ChinaAStock.handle_zh_a_new_stock(code=row["代码"], name=row["名称"], market=market)
             prog_bar(i, remote_index_num)
 
     else:
@@ -314,9 +329,10 @@ def update_zh_stock_spot(detail_msg=False):
     if status_code != 'FAIL':
         status_brief = f"Stock quote data update result: " \
                      f"{counter_dict['UPD']} updated, " \
-                     f"{counter_dict['NO_UPD']} was up to date already," \
+                     f"{counter_dict['GOOD']} was up to date already," \
                      f"{counter_dict['OUT_DATED']} outdated (did not update), " \
-                     f"{counter_dict['NO_DATA']} no local data, " \
+                     f"{counter_dict['NO_DATA']} no local primary data, " \
+                     f"{counter_dict['NO_QUOTE']} no local quote data, " \
                      f"{counter_dict['ERR']} encountered error "
         #
         if detail_msg:
@@ -332,3 +348,4 @@ def update_zh_stock_spot(detail_msg=False):
         'message': status_msg,
     }
     return status
+

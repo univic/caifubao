@@ -1,6 +1,6 @@
 import re
 import logging
-import time, datetime
+import datetime
 from app.model.stock import FinanceMarket, DataFreshnessMeta
 
 

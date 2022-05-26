@@ -1,3 +1,4 @@
+from mongoengine.errors import NotUniqueError
 from app.lib.db_tool import mongoengine_tool
 from app.utilities.progress_bar import progress_bar
 from app.model.stock import StockIndex, IndividualStock, StockDailyQuote
@@ -11,8 +12,11 @@ def go_convert():
     prog_bar = progress_bar()
     list_len = stock_list.count()
     for i, stock_item in enumerate(stock_list):
-        quote_list = stock_item.daily_quote
-        if quote_list:
+
+        source_quote_list_len = stock_item.daily_quote.count()
+        dest_quote_list_len = StockDailyQuote.objects(code=stock_item.code).count()
+        if source_quote_list_len > 0 and source_quote_list_len != dest_quote_list_len:
+            quote_list = stock_item.daily_quote
             for quote_item in quote_list:
                 new_quote = StockDailyQuote()
                 new_quote.stock = stock_item
@@ -36,7 +40,10 @@ def go_convert():
                 new_quote.psTTM = quote_item.psTTM  # 滚动市销率
                 new_quote.pcfNcfTTM = quote_item.pcfNcfTTM  # 滚动市现率
                 new_quote.isST = quote_item.isST  # 1 - 被ST  0 - 否
-                new_quote.save()
+                try:
+                    new_quote.save()
+                except NotUniqueError as e:
+                    print(e)
         prog_bar(i, list_len)
 
     # convert index

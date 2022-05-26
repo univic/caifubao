@@ -1,4 +1,4 @@
-import time
+
 import datetime
 import logging
 from app.lib.datahub.remote_data.akshare import handler as akshare_handler
@@ -95,7 +95,7 @@ class ChinaAStock(object):
                     matched_index_counter += 1
                 else:
                     # create absent stock index and create data retrieve task.
-                    self.handle_new_stock(code=code, name=name, obj_type='stock_index')
+                    self.handle_zh_a_new_index(code=code, name=name, market=self.market)
                     unmatched_index_counter += 1
                 prog_bar(i, remote_index_num)
             logger.info(f'Stock Market {self.market.name} - '
@@ -112,39 +112,10 @@ class ChinaAStock(object):
             for i, remote_index_item in remote_index_list.iterrows():
                 code = remote_index_item['代码']
                 name = remote_index_item['名称']
-                self.handle_new_stock(code=code, name=name, obj_type='stock_index')
+                self.handle_zh_a_new_index(code=code, name=name, market=self.market)
                 prog_bar(i, remote_index_num)
             logger.info(f'Stock Market {self.market.name} - '
                         f'Created local data and data retrieve tasks for {remote_index_num} stock indexes')
-
-    def handle_new_stock(self, code, name, obj_type):
-        if obj_type == 'stock_index':
-            logger.debug(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
-            new_stock_obj = StockIndex()
-            datahub_task_handler = akshare_datahub_task
-            task_name = f'GET FULL QUOTE FOR STOCK INDEX {code}-{name}'
-            module = 'akshare'
-            handler = 'get_zh_a_stock_index_quote_daily'
-        else:
-            logger.debug(f'Stock Market {self.market.name} - Initializing local stock data for {code}-{name}')
-            new_stock_obj = IndividualStock()
-            datahub_task_handler = baostock_datahub_task
-            task_name = f'GET FULL QUOTE FOR STOCK {code}-{name}'
-            module = 'baostock'
-            handler = 'get_zh_a_stock_k_data_daily'
-
-        new_stock_obj.code = code
-        new_stock_obj.name = name
-        new_stock_obj.market = self.market
-        new_stock_obj.save()
-        data_retrieve_kwarg = {
-            'code': code
-        }
-        datahub_task_handler.create_task(name=task_name,
-                                         package='remote_data',
-                                         module=module,
-                                         handler=handler,
-                                         task_kwarg_dict=data_retrieve_kwarg)
 
     def check_stock_data_freshness(self, stock_obj):
         """
@@ -244,7 +215,7 @@ class ChinaAStock(object):
                     counter_dict[update_flag] += 1
                 else:
                     # create absent stock index and create data retrieve task.
-                    self.handle_new_stock(code=code, name=name, obj_type='stock')
+                    self.handle_zh_a_new_stock(code=code, name=name, market=self.market)
                 prog_bar(i, remote_stock_num)
             logger.info(f'Stock Market {self.market.name} - '
                         f'Checked {local_stock_num} local stock data with {remote_stock_num} remote data，' 
@@ -257,7 +228,49 @@ class ChinaAStock(object):
             for i, remote_stock_item in remote_stock_list.iterrows():
                 code = remote_stock_item['代码']
                 name = remote_stock_item['名称']
-                self.handle_new_stock(code=code, name=name, obj_type='stock')
+                self.handle_zh_a_new_stock(code=code, name=name, market=self.market)
                 prog_bar(i, remote_stock_num)
             logger.info(f'Stock Market {self.market.name} - '
                         f'Created local data and data retrieve tasks for {remote_stock_num} stocks')
+
+    @staticmethod
+    def handle_zh_a_new_stock(code, name, market):
+        logger.debug(f'Stock Market {market.name} - Initializing local stock data for {code}-{name}')
+        new_stock_obj = IndividualStock()
+        datahub_task_handler = baostock_datahub_task
+        task_name = f'GET FULL QUOTE FOR STOCK {code}-{name}'
+        module = 'baostock'
+        handler = 'get_zh_a_stock_k_data_daily'
+        new_stock_obj.code = code
+        new_stock_obj.name = name
+        new_stock_obj.market = market
+        new_stock_obj.save()
+        data_retrieve_kwarg = {
+            'code': code
+        }
+        datahub_task_handler.create_task(name=task_name,
+                                         package='remote_data',
+                                         module=module,
+                                         handler=handler,
+                                         task_kwarg_dict=data_retrieve_kwarg)
+
+    @staticmethod
+    def handle_zh_a_new_index(code, name, market):
+        logger.debug(f'Stock Market {market.name} - Initializing local index data for {code}-{name}')
+        new_stock_obj = StockIndex()
+        datahub_task_handler = akshare_datahub_task
+        task_name = f'GET FULL QUOTE FOR STOCK INDEX {code}-{name}'
+        module = 'akshare'
+        handler = 'get_zh_a_stock_index_quote_daily'
+        new_stock_obj.code = code
+        new_stock_obj.name = name
+        new_stock_obj.market = market
+        new_stock_obj.save()
+        data_retrieve_kwarg = {
+            'code': code
+        }
+        datahub_task_handler.create_task(name=task_name,
+                                         package='remote_data',
+                                         module=module,
+                                         handler=handler,
+                                         task_kwarg_dict=data_retrieve_kwarg)
