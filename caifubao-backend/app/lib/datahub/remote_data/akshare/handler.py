@@ -1,10 +1,10 @@
 import traceback
 import logging
-from mongoengine.errors import ValidationError
+from mongoengine.errors import ValidationError, NotUniqueError
 from app.model.stock import StockDailyQuote
 from app.utilities.progress_bar import progress_bar
-from app.model.stock import StockIndex, IndividualStock
-from app.lib.datahub.markets import ChinaAStock
+from app.model.stock import StockIndex, IndividualStock, FinanceMarket
+# from app.lib.datahub.markets import ChinaAStock
 import app.lib.datahub.remote_data.akshare.interface as interface
 from app.utilities import trading_day_helper, performance_helper, stock_code_helper
 
@@ -53,7 +53,7 @@ def update_zh_stock_index_daily_spot():
 
         closest_trading_day = trading_day_helper.determine_closest_trading_date(market.trade_calendar)
         for i, row in remote_data_df.iterrows():
-            local_index_obj = StockIndex.objects(code=row['代码']).only('code', 'data_freshness_meta').first()
+            local_index_obj = StockIndex.objects(code=row['代码']).only('code', 'name', 'data_freshness_meta').first()
             # if the local index data exists
             if local_index_obj:
                 latest_quote_date = trading_day_helper.read_freshness_meta(local_index_obj, 'daily_quote')
@@ -75,10 +75,19 @@ def update_zh_stock_index_daily_spot():
                         new_quote.high = row['最高']
                         new_quote.low = row['最低']
                         new_quote.volume = row['成交量']
-                        trading_day_helper.update_freshness_meta(local_index_obj, 'daily_quote', closest_trading_day)
-                        new_quote.save()
-                        local_index_obj.save()
-                        counter_dict["UPD"] += 1
+                        try:
+                            trading_day_helper.update_freshness_meta(local_index_obj, 'daily_quote', closest_trading_day)
+                            new_quote.save()
+                            local_index_obj.save()
+                            counter_dict["UPD"] += 1
+                        except NotUniqueError as e:
+                            status_code = 'WARN'
+                            status_msg += f'{row["名称"]} - {row["代码"]} encountered NotUnique error'
+                            print(f'{row["名称"]} - {row["代码"]} encountered NotUnique error, '
+                                  f'recalibrating freshness meta')
+                            trading_day_helper.update_freshness_meta(local_index_obj, 'daily_quote',
+                                                                     closest_trading_day)
+                            local_index_obj.save()
                     elif date_diff == 0:
                         status_msg += f'{row["名称"]} - {row["代码"]} is up to date. '
                         counter_dict["GOOD"] += 1
@@ -96,7 +105,7 @@ def update_zh_stock_index_daily_spot():
                 # status_code = "WARN"
                 status_msg += f'{row["名称"]} - {row["代码"]} local data not found. '
                 counter_dict["NO_DATA"] += 1
-                ChinaAStock.handle_zh_a_new_index(code=row["代码"], name=row["名称"], market=market)
+                # ChinaAStock.handle_zh_a_new_index(code=row["代码"], name=row["名称"], market=market)
             prog_bar(i, remote_index_num)
 
     else:
@@ -255,7 +264,7 @@ def update_zh_stock_spot(detail_msg=False):
         "NO_DATA": 0,
         "ERR": 0
     }
-    market = IndividualStock.objects().first().market
+    market = FinanceMarket.objects(name="A股").first()
     logger.info(f'Stock Market {market.name} - Updating stock daily quote with spot data')
     prog_bar = progress_bar()
     # Use eastmoney interface here
@@ -297,14 +306,25 @@ def update_zh_stock_spot(detail_msg=False):
                         new_quote.turnover_rate = row['换手率']
                         new_quote.peTTM = row['市盈率-动态']
                         new_quote.psTTM = row['市净率']
-                        trading_day_helper.update_freshness_meta(local_stock_obj, 'daily_quote', closest_trading_day)
+
                         try:
                             new_quote.save()
+                            trading_day_helper.update_freshness_meta(local_stock_obj, 'daily_quote',
+                                                                     closest_trading_day)
+                            local_stock_obj.save()
                             counter_dict["UPD"] += 1
                         except ValidationError as e:
                             counter_dict["ERR"] += 1
                             status_msg += f'{row["名称"]} - {row["代码"]} encountered error'
                             print(f"validation error on {local_stock_obj.code}, {e}")
+                        except NotUniqueError as e:
+                            status_code = 'WARN'
+                            status_msg += f'{row["名称"]} - {row["代码"]} encountered NotUnique error'
+                            print(f'{row["名称"]} - {row["代码"]} encountered NotUnique error, '
+                                  f'recalibrating freshness meta')
+                            trading_day_helper.update_freshness_meta(local_stock_obj, 'daily_quote',
+                                                                     closest_trading_day)
+                            local_stock_obj.save()
 
                     elif date_diff == 0:
                         status_msg += f'{row["名称"]} - {row["代码"]} is up to date. '
@@ -320,7 +340,7 @@ def update_zh_stock_spot(detail_msg=False):
             else:
                 status_msg += f'{row["名称"]} - {row["代码"]} local data not found.'
                 counter_dict["NO_DATA"] += 1
-                ChinaAStock.handle_zh_a_new_stock(code=row["代码"], name=row["名称"], market=market)
+                # ChinaAStock.handle_zh_a_new_stock(code=row["代码"], name=row["名称"], market=market)
             prog_bar(i, remote_index_num)
 
     else:
