@@ -39,6 +39,19 @@ class TestTradingDayHelper(unittest.TestCase):
         act_result_2 = trading_day_helper.update_title_date_str(title_str_2, dt_1)
         self.assertEqual(exp_result_2, act_result_2)
 
+    def test_next_trading_day(self):
+        trade_calendar_list = [
+            datetime.datetime(2022, 4, 28, 0, 0, 0),
+            datetime.datetime(2022, 4, 29, 0, 0, 0),
+            datetime.datetime(2022, 5, 5, 0, 0, 0),
+            datetime.datetime(2022, 5, 6, 0, 0, 0),
+        ]
+        given_input_1 = datetime.datetime(2022, 4, 29, 0, 0, 0)
+        exp_result_1 = datetime.datetime(2022, 5, 5, 0, 0, 0)
+        act_result_1 = trading_day_helper.next_trading_day(trade_calendar=trade_calendar_list,
+                                                           given_time=given_input_1)
+        self.assertEqual(act_result_1, exp_result_1)
+
 
 if __name__ == '__main__':
     unittest.main()

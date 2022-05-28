@@ -4,8 +4,7 @@ from mongoengine.errors import ValidationError
 from app.model.stock import StockDailyQuote
 from app.utilities.progress_bar import progress_bar
 from app.model.stock import StockIndex, IndividualStock
-from app.lib.datahub.markets import ChinaAStock
-import app.lib.datahub.remote_data.akshare.interface as interface
+import app.lib.datahub.remote_data.interface.akshare as akshare_if
 from app.utilities import trading_day_helper, performance_helper, stock_code_helper
 
 
@@ -13,7 +12,7 @@ logger = logging.getLogger()
 
 
 def get_a_stock_trade_date_hist():
-    remote_data = interface.get_trade_date_hist()
+    remote_data = akshare_if.get_trade_date_hist()
     # convert to datetime
     r = remote_data['trade_date'].map(trading_day_helper.convert_date_to_datetime)
     # r = remote_data['trade_date'].map(lambda x: datetime.datetime.strptime(x, '%Y-%m-%d'))
@@ -22,111 +21,61 @@ def get_a_stock_trade_date_hist():
 
 @performance_helper.func_performance_timer
 def get_zh_stock_index_list():
-    raw_df = interface.zh_stock_index_spot()
+    raw_df = akshare_if.zh_stock_index_spot()
     index_list = raw_df[['代码', '名称']][raw_df['名称'] != '']
     return index_list
 
 
 @performance_helper.func_performance_timer
-def update_zh_stock_index_daily_spot():
-    """
-    根据每日盘后信息更新当日指数日线数据
-    """
-    status_code = "GOOD"
-    status_msg = ""
-    counter_dict = {
-        "GOOD": 0,
-        "UPD": 0,
-        "OUT_DATED": 0,
-        "NO_QUOTE": 0,
-        "NO_DATA": 0,
-        "ERR": 0
+def get_zh_a_stock_index_spot():
+    name_mapping = {
+        '名称': 'name',
+        '代码': 'code',
+        '今开': 'open',
+        '最新价': 'close',
+        '最高': 'high',
+        '最低': 'low',
+        '成交量': 'volume'
     }
+    raw_df = akshare_if.zh_stock_index_spot()
+    df = raw_df[raw_df['名称'] != '']
+    df.rename(name_mapping, axis=1, inplace=True)
+    return df
 
-    market = StockIndex.objects().first().market
-    logger.info(f'Stock Market {market.name} - Updating index daily quote with spot data')
-    prog_bar = progress_bar()
-    remote_data_df = interface.zh_stock_index_spot()
-    remote_index_num = len(remote_data_df)
-    stock_index_list = StockIndex.objects()
-    if stock_index_list:
 
-        closest_trading_day = trading_day_helper.determine_closest_trading_date(market.trade_calendar)
-        for i, row in remote_data_df.iterrows():
-            local_index_obj = StockIndex.objects(code=row['代码']).only('code', 'data_freshness_meta').first()
-            # if the local index data exists
-            if local_index_obj:
-                latest_quote_date = trading_day_helper.read_freshness_meta(local_index_obj, 'daily_quote')
-                # if the freshness data exists
-                if latest_quote_date:
-                    date_diff = trading_day_helper.determine_trading_date_diff(
-                        trade_calendar_list=market.trade_calendar,
-                        trading_day_a=latest_quote_date,
-                        trading_day_b=closest_trading_day
-                    )
-                    if date_diff == 1:
-                        # quote_data_list = local_index_obj.daily_quote
-                        new_quote = StockDailyQuote()
-                        new_quote.code = local_index_obj.code
-                        new_quote.stock = local_index_obj
-                        new_quote.date = closest_trading_day
-                        new_quote.open = row['今开']
-                        new_quote.close = row['最新价']
-                        new_quote.high = row['最高']
-                        new_quote.low = row['最低']
-                        new_quote.volume = row['成交量']
-                        trading_day_helper.update_freshness_meta(local_index_obj, 'daily_quote', closest_trading_day)
-                        new_quote.save()
-                        local_index_obj.save()
-                        counter_dict["UPD"] += 1
-                    elif date_diff == 0:
-                        status_msg += f'{row["名称"]} - {row["代码"]} is up to date. '
-                        counter_dict["GOOD"] += 1
-                    else:
-                        # status_code = "WARN"
-                        status_msg += f'{row["名称"]} - {row["代码"]} local data was outdated. '
-                        counter_dict["OUT_DATED"] += 1
-                        # TODO: generate datahub task
-                else:
-                    # status_code = "WARN"
-                    status_msg += f'{row["名称"]} - {row["代码"]} quote freshness data not found. '
-                    counter_dict["NO_QUOTE"] += 1
-                    # TODO: generate datahub task
-            else:
-                # status_code = "WARN"
-                status_msg += f'{row["名称"]} - {row["代码"]} local data not found. '
-                counter_dict["NO_DATA"] += 1
-                ChinaAStock.handle_zh_a_new_index(code=row["代码"], name=row["名称"], market=market)
-            prog_bar(i, remote_index_num)
+@performance_helper.func_performance_timer
+def get_zh_a_stock_spot():
+    name_mapping = {
+        '名称': 'name',
+        # '代码': 'code',        # will carry out code convert later
+        '今开': 'open',
+        '昨收': 'previous_close',
+        '最新价': 'close',
+        '涨跌幅': 'change_rate',
+        '涨跌额': 'change_amount',
+        '最高': 'high',
+        '最低': 'low',
+        '成交量': 'volume',
+        '成交额': 'trade_amount',
+        '振幅': 'amplitude',
+        '换手率': 'turnover_rate',
+        '市盈率-动态': 'peTTM',
+        '市净率': 'pbMRQ'
 
-    else:
-        status_code = 'FAIL'
-        status_msg = 'Local stock index data not found.'
-    if status_code != 'FAIL':
-        status_brief = f"Index spot info update result: " \
-                     f"{counter_dict['UPD']} updated, " \
-                     f"{counter_dict['GOOD']} was up to date already," \
-                     f"{counter_dict['OUT_DATED']} outdated (did not update), " \
-                     f"{counter_dict['NO_DATA']} no local primary data, " \
-                     f"{counter_dict['NO_QUOTE']} no local quote data, " \
-                     f"{counter_dict['ERR']} encountered error "
-        status_msg = status_brief + status_msg
-        logger.info(f'Stock Market {market.name} - {status_brief}')
-    else:
-        logger.info(f'Stock Market {market.name} - Index daily quote update failed, {status_msg}')
-
-    status = {
-        'code': status_code,
-        'message': status_msg,
     }
-    return status
+    raw_df = akshare_if.stock_zh_a_spot_em()
+    df = raw_df[raw_df['名称'] != '']
+    df.fillna(0, inplace=True)
+    df.rename(name_mapping, axis=1, inplace=True)        # rename column
+    df['code'] = df['代码'].apply(stock_code_helper.add_market_prefix)
+    return df
 
 
 def get_zh_a_stock_index_quote_daily(code, incremental="false", start_date=None):
     status_code = "GOOD"
     status_msg = None
     try:
-        res_df = interface.stock_zh_index_daily(code)
+        res_df = akshare_if.stock_zh_index_daily(code)
         stock_index = StockIndex.objects(code=code).only('code', 'data_freshness_meta').first()
         most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_index, 'daily_quote').date()
         if stock_index:
@@ -172,13 +121,6 @@ def get_zh_a_stock_index_quote_daily(code, incremental="false", start_date=None)
     return status
 
 
-@performance_helper.func_performance_timer
-def get_zh_individual_stock_list():
-    raw_df = interface.stock_zh_a_spot()
-    stock_list = raw_df[['代码', '名称']][raw_df['名称'] != '']
-    return stock_list
-
-
 def get_zh_a_stock_quote_daily(code, incremental="false"):
     """
     INOP: preclose data not available, use baostock data instead
@@ -194,9 +136,9 @@ def get_zh_a_stock_quote_daily(code, incremental="false"):
         if stock_obj:
             if incremental == "true" and most_recent_quote_date:
                 # prepare the df for incremental update
-                quote_df = interface.stock_zh_a_hist(code)
+                quote_df = akshare_if.stock_zh_a_hist(code)
             else:
-                quote_df = interface.stock_zh_a_hist(code)
+                quote_df = akshare_if.stock_zh_a_hist(code)
             if not quote_df.empty:
                 for i, row in quote_df.iterrows():
                     daily_quote = StockDailyQuote()
@@ -259,7 +201,7 @@ def update_zh_stock_spot(detail_msg=False):
     logger.info(f'Stock Market {market.name} - Updating stock daily quote with spot data')
     prog_bar = progress_bar()
     # Use eastmoney interface here
-    raw_remote_data_df = interface.stock_zh_a_spot_em()
+    raw_remote_data_df = akshare_if.stock_zh_a_spot_em()
     remote_data_df = raw_remote_data_df.fillna(0)
     remote_index_num = len(remote_data_df)
     stock_list = IndividualStock.objects()
@@ -320,7 +262,7 @@ def update_zh_stock_spot(detail_msg=False):
             else:
                 status_msg += f'{row["名称"]} - {row["代码"]} local data not found.'
                 counter_dict["NO_DATA"] += 1
-                ChinaAStock.handle_zh_a_new_stock(code=row["代码"], name=row["名称"], market=market)
+                ChinaAStock.handle_new_stock(code=row["代码"], name=row["名称"], market=market)
             prog_bar(i, remote_index_num)
 
     else:
@@ -349,3 +291,7 @@ def update_zh_stock_spot(detail_msg=False):
     }
     return status
 
+
+if __name__ == '__main__':
+    o = get_zh_a_stock_spot()
+    print(o)

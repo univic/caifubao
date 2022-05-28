@@ -71,5 +71,5 @@ def stock_zh_a_hist_163(code, start_date=None, end_date=None):
 
 
 if __name__ == "__main__":
-    o = stock_zh_a_hist('000001')
+    o = stock_zh_a_spot_em()
     print(o)

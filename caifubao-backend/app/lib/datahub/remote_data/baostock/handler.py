@@ -1,8 +1,7 @@
 import time
 import traceback
 from app.model.stock import IndividualStock, StockDailyQuote
-from app.utilities import performance_helper, trading_day_helper
-from app.lib.datahub.remote_data.baostock import interface
+from app.utilities import trading_day_helper
 
 
 def get_zh_a_stock_k_data_daily(code, start_date=None, end_date=None):

@@ -46,13 +46,8 @@ def determine_pervious_trading_day(trade_calendar_list, given_date):
     return trade_day_list[given_date_index + 1]
 
 
-# def next_trading_day(trade_calendar_list, given_date):
-#     trade_day_list = sorted(trade_calendar_list, reverse=True)
-#     given_date_index = trade_day_list.index(given_date)
-#     return trade_day_list[given_date_index - 1]
-
 def next_trading_day(trade_calendar, given_time=datetime.datetime.now()):
-    t_day = min(trade_calendar, key=lambda x: (x < given_time, abs(x - given_time)))
+    t_day = min(trade_calendar, key=lambda x: (x <= given_time, abs(x - given_time)))
     return t_day
 
 

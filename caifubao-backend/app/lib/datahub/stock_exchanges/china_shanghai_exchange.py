@@ -1,8 +1,7 @@
 import datetime
 import logging
 from app.model.market_info import StockExchange
-from app.lib.datahub.remote_data.akshare import interface as akshare_interface
-from app.model.stock import Stock
+from app.lib.datahub.remote_data.interface import akshare as akshare_interface
 
 logger = logging.getLogger()
 
