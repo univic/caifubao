@@ -110,15 +110,15 @@ class BasicStock(db.Document):
     name = StringField(required=True)
     exchange = ReferenceField(StockExchange)
     market = ReferenceField(FinanceMarket)
-    # daily_quote = EmbeddedDocumentListField('DailyQuote')
+    daily_quote = EmbeddedDocumentListField('DailyQuote')
     data_freshness_meta = EmbeddedDocumentField(DataFreshnessMeta)
 
 
 class IndividualStock(BasicStock):
     total_equity = IntField()
     outstanding_share = IntField()
-    # daily_quote_hfq = EmbeddedDocumentListField('DailyQuote')
-    # daily_quote_qfq = EmbeddedDocumentListField('DailyQuote')
+    daily_quote_hfq = EmbeddedDocumentListField('DailyQuote')
+    daily_quote_qfq = EmbeddedDocumentListField('DailyQuote')
 
 
 class StockIndex(BasicStock):
