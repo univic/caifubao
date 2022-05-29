@@ -85,8 +85,15 @@ class ChinaAStock(object):
                     f'Checking local {obj_name} data integrity, data update: {allow_update}')
         status_code = "GOOD"
         status_msg = ""
-        counter_dict = {
+        check_counter_dict = {
             'GOOD': 0,
+            "UPD": 0,
+            "INC": 0,
+            "FULL": 0,
+            "WARN": 0,
+            "NEW": 0
+        }
+        upd_counter_dict = {
             "UPD": 0,
             "INC": 0,
             "FULL": 0,
@@ -111,7 +118,7 @@ class ChinaAStock(object):
                 if stock_obj:
                     # check the quote data freshness of each index
                     flag = self.check_data_freshness(stock_obj)
-                    counter_dict[flag] += 1
+                    check_counter_dict[flag] += 1
                     if allow_update:
                         if flag == "UPD":
                             most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_obj, 'daily_quote')
@@ -125,22 +132,33 @@ class ChinaAStock(object):
                             hist_handler(code=code, start_date=start_date)
                         elif flag == "FULL":
                             hist_handler(code=code)
+                        upd_counter_dict[flag] += 1
                 else:
-                    counter_dict["NEW"] += 1
+                    check_counter_dict["NEW"] += 1
                     if allow_update:
                         # create absent stock index and create data retrieve task.
                         new_obj_handler(code=code, name=name)
+                        upd_counter_dict["NEW"] +=1
                 prog_bar(i, remote_data_num)
-            logger.info(f'Stock Market {self.market.name} - '
-                        f'Checked {local_data_num} local {obj_name} data with {remote_data_num} remote data，'
-                        f'- Up to date:          {counter_dict["GOOD"]} '
-                        f'- One day behind:    {counter_dict["UPD"]} '
-                        f'- Need incremental update: {counter_dict["INC"]}'
-                        f'- No local data:  {counter_dict["FULL"]} '
-                        f'- With warning: {counter_dict["WARN"]}')
             if bulk_insert:
                 # do bulk insert
                 StockDailyQuote.objects.insert(new_quote_instance_list, load_bulk=False)
+            logger.info(f'Stock Market {self.market.name} - '
+                        f'Checked {local_data_num} local {obj_name} data with {remote_data_num} remote data，'
+                        f'- Up to date:          {check_counter_dict["GOOD"]} '
+                        f'- One day behind:    {check_counter_dict["UPD"]} '
+                        f'- Need incremental update: {check_counter_dict["INC"]}'
+                        f'- No local data:  {check_counter_dict["FULL"]} '
+                        f'- With warning: {check_counter_dict["WARN"]}')
+            if allow_update:
+                logger.info(f'Stock Market {self.market.name} - update attempt for {obj_name} data are as follows: '
+                            f'- Update with spot data:    {upd_counter_dict["UPD"]} '
+                            f'- Incremental update: {upd_counter_dict["INC"]}'
+                            f'- Get full quote data:  {upd_counter_dict["FULL"]} '
+                            f'- New stock:  {upd_counter_dict["NEW"]} '
+                            f'- With warning: {upd_counter_dict["WARN"]}')
+            else:
+                logger.info(f'Stock Market {self.market.name} - no update attempt was made for {obj_name} data.')
         else:
             for i, remote_stock_item in remote_data_list.iterrows():
                 code = remote_stock_item['代码']
@@ -259,10 +277,57 @@ class ChinaAStock(object):
         return new_quote
 
     def get_hist_stock_quote_data(self, code, start_date=None, end_date=None, incremental=True):
-        pass
+        status_code = "GOOD"
+        status_msg = None
 
     def get_hist_index_quote_data(self, code, start_date=None, end_date=None, incremental=True):
-        pass
+        status_code = "GOOD"
+        status_msg = None
+        try:
+            res_df = zh_a_data.get_zh_a_index_hist_daily_quote(code)
+            index_obj = StockIndex.objects(code=code).only('code', 'data_freshness_meta').first()
+            most_recent_quote_date = trading_day_helper.read_freshness_meta(index_obj, 'daily_quote').date()
+            if index_obj:
+                if incremental == "true" and most_recent_quote_date:
+                    # prepare the df for incremental update
+                    quote_df = res_df[res_df.date > most_recent_quote_date].sort_index(axis=1, ascending=False)
+                else:
+                    quote_df = res_df
+                if not quote_df.empty:
+                    for i, row in quote_df.iterrows():
+                        daily_quote = StockDailyQuote()
+                        daily_quote.code = index_obj.code
+                        daily_quote.stock = index_obj
+                        daily_quote.date = row['date']
+                        daily_quote.open = row['open']
+                        daily_quote.close = row['close']
+                        daily_quote.high = row['high']
+                        daily_quote.low = row['low']
+                        daily_quote.volume = row['volume']
+                        daily_quote.save()
+
+                    # update data freshness meta data
+                    date_of_quote = quote_df['date'].max()
+                    trading_day_helper.update_freshness_meta(index_obj, 'daily_quote', date_of_quote)
+                    index_obj.save()
+                else:
+                    status_code = 'FAIL'
+                    status_msg = 'No available data for update'
+            else:
+                status_code = 'FAIL'
+                status_msg = 'INDEX CODE CAN NOT BE FOUND IN LOCAL DB'
+            # time.sleep(0.5)    # reduce the query frequency
+        except KeyError:
+            status_code = 'FAIL'
+            status_msg = 'the interface did not return valid dataframe, possibly due to no quote data'
+        except Exception as e:
+            status_code = 'FAIL'
+            status_msg = ';'.join(traceback.format_exception(e))
+        status = {
+            'code': status_code,
+            'message': status_msg,
+        }
+        return status
 
     def perform_date_check(self):
         # determine the closest trading day
