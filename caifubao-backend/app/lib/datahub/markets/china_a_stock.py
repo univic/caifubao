@@ -1,11 +1,12 @@
-
-import datetime
+import time
 import logging
+import datetime
+import traceback
 from app.lib.datahub.remote_data.handler import zh_a_data
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock, StockDailyQuote
 from app.lib.datahub.data_retriever import akshare_datahub_task, baostock_datahub_task
 from app.utilities.progress_bar import progress_bar
-from app.utilities import trading_day_helper
+from app.utilities import trading_day_helper, performance_helper
 
 logger = logging.getLogger()
 
@@ -276,23 +277,66 @@ class ChinaAStock(object):
         stock_obj.save()
         return new_quote
 
-    def get_hist_stock_quote_data(self, code, start_date=None, end_date=None, incremental=True):
+    # @performance_helper.func_performance_timer
+    def get_hist_stock_quote_data(self, code, start_date=None, incremental=True, bulk_insert=True):
         status_code = "GOOD"
         status_msg = None
+        try:
+            stock_obj = IndividualStock.objects(code=code).only('code', 'name', 'data_freshness_meta').first()
+            if stock_obj:
+                quote_df = zh_a_data.get_zh_a_stock_hist_daily_quote(code, start_date=start_date)
+                if not quote_df.empty:
+                    # get column names of the df
+                    bulk_insert_list = []
+                    col_name_list = quote_df.columns.tolist()
+                    for i, row in quote_df.iterrows():
+                        daily_quote = StockDailyQuote()
+                        daily_quote.code = stock_obj.code
+                        daily_quote.stock = stock_obj
+                        for col in col_name_list:
+                            setattr(daily_quote, col, row[col])
+                        # TODO: limit data precision
+                        daily_quote.amplitude = daily_quote.high - daily_quote.low
+                        daily_quote.change_amount = daily_quote.close - daily_quote.previous_close
+                        if bulk_insert:
+                            bulk_insert_list.append(daily_quote)
+                        else:
+                            daily_quote.save()
+                    if bulk_insert:
+                        # do bulk insert
+                        StockDailyQuote.objects.insert(bulk_insert_list, load_bulk=False)
+                    # update data freshness meta data
+                    date_of_quote = quote_df['date'].max()
+                    trading_day_helper.update_freshness_meta(stock_obj, 'daily_quote', date_of_quote)
+                    stock_obj.save()
+                else:
+                    status_code = 'FAIL'
+                    status_msg = 'No available data for update'
+                    time.sleep(0.5)  # reduce the query frequency
+            else:
+                status_code = 'FAIL'
+                status_msg = 'STOCK CODE CAN NOT BE FOUND IN LOCAL DB'
+        except KeyError:
+            status_code = 'FAIL'
+            status_msg = 'the interface did not return valid dataframe, possibly due to no quote data'
+        except Exception as e:
+            status_code = 'FAIL'
+            status_msg = ';'.join(traceback.format_exception(e))
+        status = {
+            'code': status_code,
+            'message': status_msg,
+        }
+        return status
 
     def get_hist_index_quote_data(self, code, start_date=None, end_date=None, incremental=True):
         status_code = "GOOD"
         status_msg = None
         try:
-            res_df = zh_a_data.get_zh_a_index_hist_daily_quote(code)
             index_obj = StockIndex.objects(code=code).only('code', 'data_freshness_meta').first()
             most_recent_quote_date = trading_day_helper.read_freshness_meta(index_obj, 'daily_quote').date()
+            # start_date = trading_day_helper.next_trading_day(most_recent_quote_date)
+            quote_df = zh_a_data.get_zh_a_index_hist_daily_quote(code, start_date=start_date)
             if index_obj:
-                if incremental == "true" and most_recent_quote_date:
-                    # prepare the df for incremental update
-                    quote_df = res_df[res_df.date > most_recent_quote_date].sort_index(axis=1, ascending=False)
-                else:
-                    quote_df = res_df
                 if not quote_df.empty:
                     for i, row in quote_df.iterrows():
                         daily_quote = StockDailyQuote()
@@ -305,7 +349,6 @@ class ChinaAStock(object):
                         daily_quote.low = row['low']
                         daily_quote.volume = row['volume']
                         daily_quote.save()
-
                     # update data freshness meta data
                     date_of_quote = quote_df['date'].max()
                     trading_day_helper.update_freshness_meta(index_obj, 'daily_quote', date_of_quote)
@@ -347,3 +390,13 @@ class ChinaAStock(object):
 
     def data_integrity_self_check(self):
         pass
+
+
+if __name__ == '__main__':
+    from app.lib.db_tool import mongoengine_tool
+    from app.lib.datahub.remote_data import interface
+    interface.baostock.establish_baostock_conn()
+    mongoengine_tool.connect_to_db()
+    obj = ChinaAStock()
+    o = obj.get_hist_stock_quote_data(code="sh600815")
+    print(o)

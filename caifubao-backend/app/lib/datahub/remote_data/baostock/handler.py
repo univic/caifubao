@@ -13,9 +13,9 @@ def get_zh_a_stock_k_data_daily(code, start_date=None, end_date=None):
         if stock_obj:
             if start_date and most_recent_quote_date:
                 # prepare the df for incremental update
-                quote_df = interface.query_history_k_data(code, start_date=start_date, end_date=end_date)
+                quote_df = interface.get_zh_a_stock_hist_k_data(code, start_date=start_date, end_date=end_date)
             else:
-                quote_df = interface.query_history_k_data(code)
+                quote_df = interface.get_zh_a_stock_hist_k_data(code)
 
             if not quote_df.empty:
                 for i, raw_row in quote_df.iterrows():

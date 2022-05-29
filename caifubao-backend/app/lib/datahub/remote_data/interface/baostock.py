@@ -32,7 +32,7 @@ def terminate_baostock_conn():
     baostock.logout()
 
 
-def query_history_k_data(code, start_date=None, end_date=None):
+def get_zh_a_stock_hist_k_data(code, start_date=None, end_date=None):
     """
     获取历史K线，返回Dataframe
 
@@ -64,6 +64,6 @@ def query_history_k_data(code, start_date=None, end_date=None):
 
 if __name__ == '__main__':
     bs_conn = establish_baostock_conn()
-    res = query_history_k_data('sz000001')
+    res = get_zh_a_stock_hist_k_data('sz000001')
     terminate_baostock_conn()
     print(res)
