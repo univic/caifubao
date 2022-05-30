@@ -6,7 +6,7 @@ from app.lib.db_tool.mongoengine_tool import connect_to_db, disconnect_from_db
 from app.conf import app_config
 from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc
 from app.utilities.progress_bar import progress_bar
-from app.lib.datahub.remote_data import baostock
+from app.lib.datahub.remote_data.interface import baostock as baostock_if
 from app.lib.datahub.data_retriever.common import convert_dict_to_kwarg, check_task_uniqueness, \
     exec_datahub_task, convert_kwarg_to_dict
 from app.utilities import trading_day_helper
@@ -99,11 +99,12 @@ class DatahubTask(object):
     def after_task_exec(self, item):
         pass
 
-    def create_task(self, name, package, module, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
+    def create_task(self, name, package, module, obj, handler, task_args_list=None, task_kwarg_dict=None, **extra_kw):
         new_task = self.task_obj()
         new_task.name = name
         new_task.callback_package = package
         new_task.callback_module = module
+        new_task.callback_object = obj
         new_task.callback_handler = handler
         new_task.args = task_args_list
         if task_kwarg_dict:
@@ -133,10 +134,10 @@ class BaostockDatahubTask(DatahubTask):
         return self.task_list
 
     def before_task_list_exec(self):
-        baostock.interface.establish_baostock_conn()
+        baostock_if.establish_baostock_conn()
 
     def after_task_list_exec(self):
-        baostock.interface.terminate_baostock_conn()
+        baostock_if.terminate_baostock_conn()
 
 
 class ScheduledDatahubTask(DatahubTask):
@@ -235,11 +236,11 @@ class ScheduledDatahubTask(DatahubTask):
 
     def before_task_exec(self, item):
         if item.callback_module == 'baostock':
-            baostock.interface.establish_baostock_conn()
+            baostock_if.establish_baostock_conn()
 
     def after_task_exec(self, item):
         if item.callback_module == 'baostock':
-            baostock.interface.terminate_baostock_conn()
+            baostock_if.terminate_baostock_conn()
         self.handle_repeat_task(item)
 
     def handle_repeat_task(self, item):

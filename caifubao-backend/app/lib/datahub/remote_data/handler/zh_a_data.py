@@ -1,10 +1,7 @@
 import traceback
 import logging
 
-import pandas
 
-from app.model.stock import StockDailyQuote
-from app.model.stock import StockIndex, IndividualStock
 from app.lib.datahub.remote_data import interface
 from app.utilities import trading_day_helper, performance_helper, stock_code_helper
 
@@ -17,7 +14,6 @@ def get_a_stock_trade_date_hist():
     # convert to datetime
     r = remote_data['trade_date'].map(trading_day_helper.convert_date_to_datetime)
     return list(r)
-
 
 
 @performance_helper.func_performance_timer

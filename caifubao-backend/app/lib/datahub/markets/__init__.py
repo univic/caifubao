@@ -1,7 +1,8 @@
 from app.lib.datahub.markets.china_a_stock import ChinaAStock
 
+zh_a_stock_market = ChinaAStock()
+
 
 def initialize_markets():
-    a_stock_market_obj = ChinaAStock()
-    a_stock_market_obj.initialize()
 
+    zh_a_stock_market.initialize()

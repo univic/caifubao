@@ -18,12 +18,12 @@ class ChinaAStock(object):
         self.market_code = "ZH-A"
         self.today = datetime.date.today()
         self.most_recent_trading_day = None
-        self.market = FinanceMarket.objects(name="A股").first()
 
     def initialize(self):
+        self.market = FinanceMarket.objects(name="A股").first()
         self.check_market_data_existence()
-        self.check_index_data_integrity()
-        self.check_stock_data_integrity()
+        self.check_index_data_integrity(allow_update=True)
+        # self.check_stock_data_integrity()
 
     def check_market_data_existence(self):
         self.market = FinanceMarket.objects(name="A股").first()
@@ -61,9 +61,8 @@ class ChinaAStock(object):
         remote_index_list = zh_a_data.get_zh_a_stock_index_spot()
         status = self.check_data_integrity(obj_name='index',
                                            local_data_list=local_index_list,
-                                           remote_data_list=remote_index_list,
-                                           new_quote_handler=self.handle_new_index_quote,
-                                           hist_handler=self.get_hist_index_quote_data,
+                                           remote_data_df=remote_index_list,
+                                           hist_handler='get_hist_quote_data',
                                            new_obj_handler=self.handle_new_index,
                                            allow_update=allow_update)
         return status
@@ -73,14 +72,13 @@ class ChinaAStock(object):
         remote_stock_list = zh_a_data.get_zh_a_stock_spot()
         status = self.check_data_integrity(obj_name='index',
                                            local_data_list=local_stock_list,
-                                           remote_data_list=remote_stock_list,
-                                           new_quote_handler=self.handle_new_stock_quote,
-                                           hist_handler=self.get_hist_stock_quote_data,
+                                           remote_data_df=remote_stock_list,
+                                           hist_handler='get_hist_quote_data',
                                            new_obj_handler=self.handle_new_stock,
                                            allow_update=allow_update)
         return status
 
-    def check_data_integrity(self, obj_name, local_data_list, remote_data_list, new_quote_handler,
+    def check_data_integrity(self, obj_name, local_data_list, remote_data_df,
                              hist_handler, new_obj_handler, allow_update=False, bulk_insert=False):
         logger.info(f'Stock Market {self.market.name} - '
                     f'Checking local {obj_name} data integrity, data update: {allow_update}')
@@ -103,7 +101,8 @@ class ChinaAStock(object):
         }
         self.perform_date_check()
         local_data_num = local_data_list.count()
-        remote_data_num = len(remote_data_list)
+        remote_data_num = len(remote_data_df)
+        remote_data_col_list = remote_data_df.columns.tolist()
         # prepare quote list for bulk insert
         new_quote_instance_list = []
         # prepare the progress bar
@@ -112,34 +111,32 @@ class ChinaAStock(object):
         # check the existence of the stock list
         if local_data_num > 0:
             # check the existence of each stock
-            for i, remote_stock_item in remote_data_list.iterrows():
+            for i, remote_stock_item in remote_data_df.iterrows():
                 code = remote_stock_item['code']
                 name = remote_stock_item['name']
-                stock_obj = local_data_list(code=code).only('code', 'data_freshness_meta').first()
+                stock_obj = local_data_list(code=code).exclude('daily_quote').first()
                 if stock_obj:
                     # check the quote data freshness of each index
                     flag = self.check_data_freshness(stock_obj)
                     check_counter_dict[flag] += 1
                     if allow_update:
+                        self.perform_stock_name_check(stock_obj, name)
                         if flag == "UPD":
                             most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_obj, 'daily_quote')
                             save_quote = not bulk_insert
-                            new_quote = new_quote_handler(stock_obj, remote_stock_item,
-                                                          most_recent_quote_date, save_quote=save_quote)
+                            new_quote = self.handle_new_quote(stock_obj, remote_data_col_list, remote_stock_item,
+                                                              most_recent_quote_date, save_quote=save_quote)
                             new_quote_instance_list.append(new_quote)
-                        elif flag == "INC":
-                            most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_obj, 'daily_quote')
-                            start_date = trading_day_helper.next_trading_day(most_recent_quote_date)
-                            hist_handler(code=code, start_date=start_date)
-                        elif flag == "FULL":
-                            hist_handler(code=code)
+                        elif flag in ["INC", "FULL"]:
+                            self.handle_get_hist_quote_data(stock_obj=stock_obj, handler=hist_handler)
+
                         upd_counter_dict[flag] += 1
                 else:
                     check_counter_dict["NEW"] += 1
                     if allow_update:
                         # create absent stock index and create data retrieve task.
                         new_obj_handler(code=code, name=name)
-                        upd_counter_dict["NEW"] +=1
+                        upd_counter_dict["NEW"] += 1
                 prog_bar(i, remote_data_num)
             if bulk_insert:
                 # do bulk insert
@@ -161,11 +158,12 @@ class ChinaAStock(object):
             else:
                 logger.info(f'Stock Market {self.market.name} - no update attempt was made for {obj_name} data.')
         else:
-            for i, remote_stock_item in remote_data_list.iterrows():
-                code = remote_stock_item['代码']
-                name = remote_stock_item['名称']
-                new_obj_handler(code=code, name=name, market=self.market)
-                prog_bar(i, remote_data_num)
+            if allow_update:
+                for i, remote_stock_item in remote_data_df.iterrows():
+                    code = remote_stock_item['代码']
+                    name = remote_stock_item['名称']
+                    new_obj_handler(code=code, name=name, market=self.market)
+                    prog_bar(i, remote_data_num)
         status = {"code": status_code,
                   "msg": status_msg}
         return status
@@ -193,34 +191,11 @@ class ChinaAStock(object):
             update_flag = "FULL"
         return update_flag
 
-    @staticmethod
-    def handle_new_stock(code, name, market):
-        logger.debug(f'Stock Market {market.name} - Initializing local stock data for {code}-{name}')
+    def handle_new_stock(self, code, name):
+        logger.debug(f'Stock Market {self.market.name} - Initializing local stock data for {code}-{name}')
         new_stock_obj = IndividualStock()
-        datahub_task_handler = baostock_datahub_task
         task_name = f'GET FULL QUOTE FOR STOCK {code}-{name}'
-        module = 'baostock'
-        handler = 'get_zh_a_stock_k_data_daily'
-        new_stock_obj.code = code
-        new_stock_obj.name = name
-        new_stock_obj.market = market
-        new_stock_obj.save()
-        data_retrieve_kwarg = {
-            'code': code
-        }
-        datahub_task_handler.create_task(name=task_name,
-                                         package='remote_data',
-                                         module=module,
-                                         handler=handler,
-                                         task_kwarg_dict=data_retrieve_kwarg)
-
-    def handle_new_index(self, code, name):
-        logger.debug(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
-        new_stock_obj = StockIndex()
-        datahub_task_handler = akshare_datahub_task
-        task_name = f'GET FULL QUOTE FOR STOCK INDEX {code}-{name}'
-        module = 'akshare'
-        handler = 'get_zh_a_stock_index_quote_daily'
+        handler = 'get_hist_stock_quote_data'
         new_stock_obj.code = code
         new_stock_obj.name = name
         new_stock_obj.market = self.market
@@ -228,54 +203,67 @@ class ChinaAStock(object):
         data_retrieve_kwarg = {
             'code': code
         }
-        datahub_task_handler.create_task(name=task_name,
-                                         package='remote_data',
-                                         module=module,
+        akshare_datahub_task.create_task(name=task_name,
+                                         package='datahub',
+                                         module='markets',
+                                         obj='zh_a_stock_market',
+                                         handler=handler,
+                                         task_kwarg_dict=data_retrieve_kwarg)
+
+    def handle_new_index(self, code, name):
+        logger.debug(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
+        new_stock_obj = StockIndex()
+        task_name = f'GET FULL QUOTE FOR STOCK INDEX {code}-{name}'
+        handler = 'get_hist_index_quote_data'
+        new_stock_obj.code = code
+        new_stock_obj.name = name
+        new_stock_obj.market = self.market
+        new_stock_obj.save()
+        data_retrieve_kwarg = {
+            'code': code
+        }
+        akshare_datahub_task.create_task(name=task_name,
+                                         package='datahub',
+                                         module='markets',
+                                         obj='zh_a_stock_market',
                                          handler=handler,
                                          task_kwarg_dict=data_retrieve_kwarg)
 
     @staticmethod
-    def handle_new_index_quote(index_obj, quote_obj, quote_date, save_quote=False):
+    def handle_new_quote(stock_obj, col_name_list, quote_row, quote_date=None, save_quote=False):
         new_quote = StockDailyQuote()
-        new_quote.code = index_obj.code
-        new_quote.stock = index_obj
-        new_quote.date = quote_date
-        new_quote.open = quote_obj['open']
-        new_quote.close = quote_obj['close']
-        new_quote.high = quote_obj['high']
-        new_quote.low = quote_obj['low']
-        new_quote.volume = quote_obj['volume']
-        trading_day_helper.update_freshness_meta(index_obj, 'daily_quote', quote_date)
-        if save_quote:
-            new_quote.save()
-        index_obj.save()
-        return new_quote
-
-    @staticmethod
-    def handle_new_stock_quote(stock_obj, quote_obj, quote_date, save_quote=False):
-        new_quote = StockDailyQuote()
+        for col in col_name_list:
+            setattr(new_quote, col, quote_row[col])
         new_quote.code = stock_obj.code
         new_quote.stock = stock_obj
-        new_quote.date = quote_date
-        new_quote.open = quote_obj['open']
-        new_quote.close = quote_obj['close']
-        new_quote.high = quote_obj['high']
-        new_quote.low = quote_obj['low']
-        new_quote.volume = quote_obj['volume']
-        new_quote.change_rate = quote_obj['change_rate']
-        new_quote.change_amount = quote_obj['change_amount']
-        new_quote.volume = quote_obj['volume']
-        new_quote.trade_amount = quote_obj['trade_amount']
-        new_quote.previous_close = quote_obj['previous_close']
-        new_quote.amplitude = quote_obj['amplitude']
-        new_quote.turnover_rate = quote_obj['turnover_rate']
-        new_quote.peTTM = quote_obj['peTTM']
-        new_quote.psTTM = quote_obj['pbMRQ']
+        if quote_date:
+            new_quote.date = quote_date
         trading_day_helper.update_freshness_meta(stock_obj, 'daily_quote', quote_date)
         if save_quote:
             new_quote.save()
         stock_obj.save()
         return new_quote
+
+    def handle_get_hist_quote_data(self, stock_obj, handler, force_upd=False):
+        start_date = None
+        most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_obj, 'daily_quote')
+        if most_recent_quote_date:
+            start_date = trading_day_helper.next_trading_day(self.market.trade_calendar, most_recent_quote_date)
+            start_date_str = start_date.strftime('%Y-%m-%d')
+            task_name = f'Get quote data from {start_date_str}for {stock_obj.code}-{stock_obj.name}'
+        else:
+            task_name = f'Get full quote data for {stock_obj.code}-{stock_obj.name}'
+        data_retrieve_kwarg = {
+            'code': stock_obj.code,
+        }
+        if start_date:
+            data_retrieve_kwarg['start_date'] = start_date.strftime('%Y-%m-%d')
+        akshare_datahub_task.create_task(name=task_name,
+                                         package='datahub',
+                                         module='markets',
+                                         obj='zh_a_stock_market',
+                                         handler=handler,
+                                         task_kwarg_dict=data_retrieve_kwarg)
 
     # @performance_helper.func_performance_timer
     def get_hist_stock_quote_data(self, code, start_date=None, incremental=True, bulk_insert=True):
@@ -295,9 +283,8 @@ class ChinaAStock(object):
                         daily_quote.stock = stock_obj
                         for col in col_name_list:
                             setattr(daily_quote, col, row[col])
-                        # TODO: limit data precision
-                        daily_quote.amplitude = daily_quote.high - daily_quote.low
-                        daily_quote.change_amount = daily_quote.close - daily_quote.previous_close
+                        daily_quote.amplitude = round(daily_quote.high - daily_quote.low, 2)
+                        daily_quote.change_amount = round(daily_quote.close - daily_quote.previous_close, 2)
                         if bulk_insert:
                             bulk_insert_list.append(daily_quote)
                         else:
@@ -328,13 +315,12 @@ class ChinaAStock(object):
         }
         return status
 
-    def get_hist_index_quote_data(self, code, start_date=None, end_date=None, incremental=True):
+    @staticmethod
+    def get_hist_index_quote_data(code, start_date=None, end_date=None, incremental=True):
         status_code = "GOOD"
         status_msg = None
         try:
             index_obj = StockIndex.objects(code=code).only('code', 'data_freshness_meta').first()
-            most_recent_quote_date = trading_day_helper.read_freshness_meta(index_obj, 'daily_quote').date()
-            # start_date = trading_day_helper.next_trading_day(most_recent_quote_date)
             quote_df = zh_a_data.get_zh_a_index_hist_daily_quote(code, start_date=start_date)
             if index_obj:
                 if not quote_df.empty:
@@ -379,8 +365,13 @@ class ChinaAStock(object):
             self.today = today
             self.most_recent_trading_day = trading_day_helper.determine_closest_trading_date(self.market.trade_calendar)
 
-    def perform_stock_name_check(self):
-        pass
+    @staticmethod
+    def perform_stock_name_check(stock_obj, curr_name):
+        if stock_obj.name != curr_name:
+            pre_name_list = stock_obj.pre_name
+            pre_name_list.append(stock_obj.name)
+            stock_obj.name = curr_name
+            stock_obj.save()
 
     def check_scheduled_task(self):
         pass

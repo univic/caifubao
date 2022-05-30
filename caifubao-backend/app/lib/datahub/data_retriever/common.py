@@ -8,9 +8,10 @@ logger = logging.getLogger()
 
 
 def exec_datahub_task(item):
-    func = getattr(import_module(f'app.lib.datahub.{item.callback_package}.{item.callback_module}.handler'),
-                   item.callback_handler)
+    obj = getattr(import_module(f'app.lib.{item.callback_package}.{item.callback_module}'),
+                  item.callback_object)
     kwarg_dict = convert_kwarg_to_dict(item.kwargs)
+    func = getattr(obj, item.callback_handler)
     item.processed_at = datetime.datetime.now()
     result = func(*item.args, **kwarg_dict)
 

@@ -20,12 +20,7 @@ class Datahub(object):
         try:
             markets.initialize_markets()
             # data_retriever_init()
-            # self.run_handler()
 
         except ServerSelectionTimeoutError:
             logger.error("Timed out when establishing DB connection")
             exit()
-
-    @staticmethod
-    def run_handler():
-        handler.update_zh_stock_spot()

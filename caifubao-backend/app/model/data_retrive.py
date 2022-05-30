@@ -21,6 +21,7 @@ class DatahubTaskDoc(db.Document):
     name = StringField(required=True)
     callback_package = StringField(required=True)
     callback_module = StringField(required=True)
+    callback_object = StringField()
     callback_handler = StringField(required=True)
     args = ListField(StringField())
     kwargs = EmbeddedDocumentListField('KwArg')
