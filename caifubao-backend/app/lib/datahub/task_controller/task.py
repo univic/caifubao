@@ -177,14 +177,14 @@ class ScheduledDatahubTask(DatahubTask):
 
             self.create_task(name=trading_day_helper.update_title_date_str('UPDATE INDEX QUOTE WITH SPOT DATA',
                                                                            next_run_time),
-                             package='remote_data',
+                             package='data_source',
                              module='akshare',
                              handler='update_zh_stock_index_daily_spot',
                              repeat='T-DAY',
                              scheduled_time=next_run_time)
             self.create_task(name=trading_day_helper.update_title_date_str('UPDATE STOCK QUOTE WITH SPOT DATA',
                                                                            next_run_time),
-                             package='remote_data',
+                             package='data_source',
                              module='akshare',
                              handler='update_zh_stock_spot',
                              repeat='T-DAY',

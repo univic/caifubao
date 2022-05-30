@@ -2,7 +2,7 @@ import time
 import logging
 import datetime
 import traceback
-from app.lib.datahub.remote_data.handler import zh_a_data
+from app.lib.datahub.data_source.handler import zh_a_data
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock, StockDailyQuote
 from app.lib.datahub.task_controller import akshare_datahub_task, baostock_datahub_task
 from app.utilities.progress_bar import progress_bar
@@ -65,6 +65,7 @@ class ChinaAStock(object):
         status = self.check_data_integrity(obj_name='index',
                                            local_data_list=local_index_list,
                                            remote_data_df=remote_index_list,
+                                           task_handler=akshare_datahub_task,
                                            hist_handler='get_hist_quote_data',
                                            new_obj_handler=self.handle_new_index,
                                            allow_update=allow_update)
@@ -76,12 +77,13 @@ class ChinaAStock(object):
         status = self.check_data_integrity(obj_name='stock',
                                            local_data_list=local_stock_list,
                                            remote_data_df=remote_stock_list,
+                                           task_handler=baostock_datahub_task,
                                            hist_handler='get_hist_quote_data',
                                            new_obj_handler=self.handle_new_stock,
                                            allow_update=allow_update)
         return status
 
-    def check_data_integrity(self, obj_name, local_data_list, remote_data_df,
+    def check_data_integrity(self, obj_name, local_data_list, remote_data_df, task_handler,
                              hist_handler, new_obj_handler, allow_update=False, bulk_insert=False):
         logger.info(f'Stock Market {self.market.name} - '
                     f'Checking local {obj_name} data integrity, data update: {allow_update}')
@@ -132,7 +134,8 @@ class ChinaAStock(object):
                                                               quote_date, save_quote=save_quote)
                             new_quote_instance_list.append(new_quote)
                         elif flag in ["INC", "FULL"]:
-                            self.handle_get_hist_quote_data(stock_obj=stock_obj, handler=hist_handler)
+                            self.handle_get_hist_quote_data(stock_obj=stock_obj, task_handler=task_handler,
+                                                            hist_quote_handler=hist_handler)
 
                         upd_counter_dict[flag] += 1
                 else:
@@ -207,7 +210,7 @@ class ChinaAStock(object):
         data_retrieve_kwarg = {
             'code': code
         }
-        akshare_datahub_task.create_task(name=task_name,
+        baostock_datahub_task.create_task(name=task_name,
                                          package='datahub',
                                          module='markets',
                                          obj='zh_a_stock_market',
@@ -248,7 +251,7 @@ class ChinaAStock(object):
         stock_obj.save()
         return new_quote
 
-    def handle_get_hist_quote_data(self, stock_obj, handler, force_upd=False):
+    def handle_get_hist_quote_data(self, stock_obj, task_handler, hist_quote_handler, force_upd=False):
         start_date = None
         most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_obj, 'daily_quote')
         if most_recent_quote_date:
@@ -262,12 +265,12 @@ class ChinaAStock(object):
         }
         if start_date:
             data_retrieve_kwarg['start_date'] = start_date.strftime('%Y-%m-%d')
-        akshare_datahub_task.create_task(name=task_name,
-                                         package='datahub',
-                                         module='markets',
-                                         obj='zh_a_stock_market',
-                                         handler=handler,
-                                         task_kwarg_dict=data_retrieve_kwarg)
+        task_handler.create_task(name=task_name,
+                                 package='datahub',
+                                 module='markets',
+                                 obj='zh_a_stock_market',
+                                 handler=hist_quote_handler,
+                                 task_kwarg_dict=data_retrieve_kwarg)
 
     # @performance_helper.func_performance_timer
     def get_hist_stock_quote_data(self, code, start_date=None, incremental=True, bulk_insert=True):
@@ -388,7 +391,7 @@ class ChinaAStock(object):
 
 if __name__ == '__main__':
     from app.lib.db_tool import mongoengine_tool
-    from app.lib.datahub.remote_data import interface
+    from app.lib.datahub.data_source import interface
     interface.baostock.establish_baostock_conn()
     mongoengine_tool.connect_to_db()
     obj = ChinaAStock()

@@ -14,7 +14,7 @@ def create_logger(log_file='stellaris.log'):
     # Create a standard formatter
     formatter = logging.Formatter('%(asctime)s - %(name)s:%(lineno)s - %(levelname)s - %(message)s')
 
-    # create console handler and set level to debug
+    # create console hist_quote_handler and set level to debug
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
     console_handler.setFormatter(formatter)
@@ -28,7 +28,7 @@ def create_logger(log_file='stellaris.log'):
         path_str = os.sep.join(splited_path[:i + 1])
         log_file_path = os.path.join(path_str, 'app', 'log', log_file)
 
-    # Create a file handler
+    # Create a file hist_quote_handler
     file_handler = handlers.RotatingFileHandler(log_file_path,
                                                 mode='a',
                                                 maxBytes=app_config.LOGGING['MAX_LOG_SIZE'] * 1024,
