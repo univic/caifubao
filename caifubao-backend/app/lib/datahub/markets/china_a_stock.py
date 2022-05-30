@@ -371,7 +371,7 @@ class ChinaAStock(object):
 
     @staticmethod
     def perform_stock_name_check(stock_obj, curr_name):
-        if stock_obj.name != curr_name:
+        if stock_obj.name != curr_name and curr_name not in stock_obj.pre_name:
             stock_obj.pre_name.append(stock_obj.name)
             stock_obj.name = curr_name
             stock_obj.save()
