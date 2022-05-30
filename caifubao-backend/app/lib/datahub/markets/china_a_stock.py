@@ -4,7 +4,7 @@ import datetime
 import traceback
 from app.lib.datahub.remote_data.handler import zh_a_data
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock, StockDailyQuote
-from app.lib.datahub.data_retriever import akshare_datahub_task, baostock_datahub_task
+from app.lib.datahub.task_controller import akshare_datahub_task, baostock_datahub_task
 from app.utilities.progress_bar import progress_bar
 from app.utilities import trading_day_helper, performance_helper
 
@@ -18,12 +18,15 @@ class ChinaAStock(object):
         self.market_code = "ZH-A"
         self.today = datetime.date.today()
         self.most_recent_trading_day = None
+        self.market = None
+        self.trade_calendar = None
 
     def initialize(self):
         self.market = FinanceMarket.objects(name="A股").first()
+        self.trade_calendar = self.market.trade_calendar
         self.check_market_data_existence()
-        self.check_index_data_integrity(allow_update=True)
-        # self.check_stock_data_integrity()
+        # self.check_index_data_integrity(allow_update=True)
+        self.check_stock_data_integrity(allow_update=True)
 
     def check_market_data_existence(self):
         self.market = FinanceMarket.objects(name="A股").first()
@@ -70,7 +73,7 @@ class ChinaAStock(object):
     def check_stock_data_integrity(self, allow_update=False):
         local_stock_list = IndividualStock.objects(market=self.market)
         remote_stock_list = zh_a_data.get_zh_a_stock_spot()
-        status = self.check_data_integrity(obj_name='index',
+        status = self.check_data_integrity(obj_name='stock',
                                            local_data_list=local_stock_list,
                                            remote_data_df=remote_stock_list,
                                            hist_handler='get_hist_quote_data',
@@ -93,6 +96,7 @@ class ChinaAStock(object):
             "NEW": 0
         }
         upd_counter_dict = {
+            'GOOD': 0,
             "UPD": 0,
             "INC": 0,
             "FULL": 0,
@@ -114,7 +118,7 @@ class ChinaAStock(object):
             for i, remote_stock_item in remote_data_df.iterrows():
                 code = remote_stock_item['code']
                 name = remote_stock_item['name']
-                stock_obj = local_data_list(code=code).exclude('daily_quote').first()
+                stock_obj = local_data_list(code=code).first()
                 if stock_obj:
                     # check the quote data freshness of each index
                     flag = self.check_data_freshness(stock_obj)
@@ -122,10 +126,10 @@ class ChinaAStock(object):
                     if allow_update:
                         self.perform_stock_name_check(stock_obj, name)
                         if flag == "UPD":
-                            most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_obj, 'daily_quote')
+                            quote_date = self.most_recent_trading_day
                             save_quote = not bulk_insert
                             new_quote = self.handle_new_quote(stock_obj, remote_data_col_list, remote_stock_item,
-                                                              most_recent_quote_date, save_quote=save_quote)
+                                                              quote_date, save_quote=save_quote)
                             new_quote_instance_list.append(new_quote)
                         elif flag in ["INC", "FULL"]:
                             self.handle_get_hist_quote_data(stock_obj=stock_obj, handler=hist_handler)
@@ -368,8 +372,7 @@ class ChinaAStock(object):
     @staticmethod
     def perform_stock_name_check(stock_obj, curr_name):
         if stock_obj.name != curr_name:
-            pre_name_list = stock_obj.pre_name
-            pre_name_list.append(stock_obj.name)
+            stock_obj.pre_name.append(stock_obj.name)
             stock_obj.name = curr_name
             stock_obj.save()
 

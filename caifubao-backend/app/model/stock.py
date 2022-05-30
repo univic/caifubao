@@ -108,7 +108,7 @@ class BasicStock(db.Document):
     }
     code = StringField(unique=True, required=True)
     name = StringField(required=True)
-    pre_name = ListField(StringField)
+    pre_name = ListField(StringField())
     exchange = ReferenceField(StockExchange)
     market = ReferenceField(FinanceMarket)
     daily_quote = EmbeddedDocumentListField('DailyQuote')

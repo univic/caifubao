@@ -23,6 +23,7 @@ class DatahubTaskDoc(db.Document):
     callback_module = StringField(required=True)
     callback_object = StringField()
     callback_handler = StringField(required=True)
+    callback_interface = StringField()
     args = ListField(StringField())
     kwargs = EmbeddedDocumentListField('KwArg')
     created_at = DateTimeField(default=datetime.datetime.now())
