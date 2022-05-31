@@ -4,7 +4,8 @@ import datetime
 import traceback
 from app.lib.datahub.data_source.handler import zh_a_data
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock, StockDailyQuote
-from app.lib.datahub.task_controller import akshare_datahub_task, baostock_datahub_task
+from app.model.data_retrive import DatahubTaskDoc
+from app.lib.datahub.task_controller import akshare_datahub_task, baostock_datahub_task, scheduled_datahub_task
 from app.utilities.progress_bar import progress_bar
 from app.utilities import trading_day_helper, performance_helper
 
@@ -25,8 +26,9 @@ class ChinaAStock(object):
         self.market = FinanceMarket.objects(name="A股").first()
         self.trade_calendar = self.market.trade_calendar
         self.check_market_data_existence()
+        self.check_scheduled_task()
         # self.check_index_data_integrity(allow_update=True)
-        self.check_stock_data_integrity(allow_update=True)
+        # self.check_stock_data_integrity(allow_update=True)
 
     def check_market_data_existence(self):
         self.market = FinanceMarket.objects(name="A股").first()
@@ -380,10 +382,53 @@ class ChinaAStock(object):
             stock_obj.save()
 
     def check_scheduled_task(self):
-        pass
-
-    def register_scheduled_task(self):
-        pass
+        # check the existence of index task
+        index_task_ok_flag = False
+        stock_task_ok_flag = False
+        run_hour = 18
+        task_num = DatahubTaskDoc.objects(status="CRTD",
+                                          name__startswith="UPDATE INDEX QUOTE WITH SPOT DATA").count()
+        if task_num == 0:
+            logger.info(f'Stock Market {self.market.name} - Initializing scheduled index data update task')
+            if trading_day_helper.is_trading_day(self.trade_calendar):
+                next_run_time = datetime.datetime.now()
+            else:
+                next_run_time = trading_day_helper.next_trading_day(self.trade_calendar)
+            next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
+            scheduled_datahub_task.create_task(
+                name=trading_day_helper.update_title_date_str('UPDATE INDEX QUOTE WITH SPOT DATA', next_run_time),
+                package='datahub',
+                module='markets',
+                obj='zh_a_stock_market',
+                interface='akshare',
+                handler='check_index_data_integrity',
+                repeat='T-DAY',
+                scheduled_time=next_run_time)
+        else:
+            index_task_ok_flag = True
+        # check the existence of stock task
+        task_num = DatahubTaskDoc.objects(status="CRTD",
+                                          name__startswith="UPDATE STOCK QUOTE WITH SPOT DATA").count()
+        if task_num == 0:
+            logger.info(f'Stock Market {self.market.name} - Initializing scheduled stock data update task')
+            if trading_day_helper.is_trading_day(self.trade_calendar):
+                next_run_time = datetime.datetime.now()
+            else:
+                next_run_time = trading_day_helper.next_trading_day(self.trade_calendar)
+            next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
+            scheduled_datahub_task.create_task(
+                name=trading_day_helper.update_title_date_str('UPDATE STOCK QUOTE WITH SPOT DATA', next_run_time),
+                package='datahub',
+                module='markets',
+                obj='zh_a_stock_market',
+                interface='akshare',
+                handler='check_stock_data_integrity',
+                repeat='T-DAY',
+                scheduled_time=next_run_time)
+        else:
+            stock_task_ok_flag = True
+        if stock_task_ok_flag and index_task_ok_flag:
+            logger.info(f'Stock Market {self.market.name} - Scheduled data update task check OK')
 
     def data_integrity_self_check(self):
         pass

@@ -6,7 +6,7 @@ from app.lib.db_tool.mongoengine_tool import connect_to_db, disconnect_from_db
 from app.conf import app_config
 from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc
 from app.utilities.progress_bar import progress_bar
-from app.lib.datahub.remote_data.interface import baostock as baostock_if
+from app.lib.datahub.data_source.interface import baostock as baostock_if
 from app.lib.datahub.task_controller.common import convert_dict_to_kwarg, check_task_uniqueness, \
     exec_datahub_task, convert_kwarg_to_dict
 from app.utilities import trading_day_helper
@@ -129,6 +129,7 @@ class AkshareDatahubTask(DatahubTask):
                     task_args_list=None, task_kwarg_dict=None, **extra_kw):
         super().create_task(name, package, module, obj, handler, interface, task_args_list, task_kwarg_dict, **extra_kw)
 
+
 class BaostockDatahubTask(DatahubTask):
     def __init__(self):
         super().__init__(runner_name='Baostock', task_obj=DatahubTaskDoc)
@@ -140,7 +141,6 @@ class BaostockDatahubTask(DatahubTask):
     def create_task(self, name, package, module, obj, handler, interface='baostock',
                     task_args_list=None, task_kwarg_dict=None, **extra_kw):
         super().create_task(name, package, module, obj, handler, interface, task_args_list, task_kwarg_dict, **extra_kw)
-
 
     def before_task_list_exec(self):
         baostock_if.establish_baostock_conn()
@@ -160,36 +160,7 @@ class ScheduledDatahubTask(DatahubTask):
         # TODO: WHERE TO INIT?
 
     def before_dispatch(self):
-        self.initialize_scheduled_task()
-
-    def initialize_scheduled_task(self):
-        task_num = self.task_obj.objects().count()
-
-        if task_num == 0:
-            logger.info(f'Initializing scheduled datahub tasks')
-            trade_calendar = trading_day_helper.get_a_stock_market_trade_calendar()
-            run_hour = 18
-            if trading_day_helper.is_trading_day(trade_calendar):
-                next_run_time = datetime.datetime.now()
-            else:
-                next_run_time = trading_day_helper.next_trading_day(trade_calendar)
-            next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
-
-            self.create_task(name=trading_day_helper.update_title_date_str('UPDATE INDEX QUOTE WITH SPOT DATA',
-                                                                           next_run_time),
-                             package='data_source',
-                             module='akshare',
-                             handler='update_zh_stock_index_daily_spot',
-                             repeat='T-DAY',
-                             scheduled_time=next_run_time)
-            self.create_task(name=trading_day_helper.update_title_date_str('UPDATE STOCK QUOTE WITH SPOT DATA',
-                                                                           next_run_time),
-                             package='data_source',
-                             module='akshare',
-                             handler='update_zh_stock_spot',
-                             repeat='T-DAY',
-                             scheduled_time=next_run_time)
-            logger.info(f'Scheduled datahub tasks Initialized')
+        pass
 
     def get_task_list(self):
         self.task_list = self.task_obj.objects(status='CRTD').order_by('-scheduled_time')  # Slice here to limit task number

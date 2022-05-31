@@ -6,7 +6,7 @@ import logging
 from pymongo.errors import ServerSelectionTimeoutError
 from app.lib.datahub import markets
 from app.lib.datahub.task_controller import data_retriever_init
-from app.lib.datahub.remote_data.handler import zh_a_data
+from app.lib.datahub.data_source.handler import zh_a_data
 
 logger = logging.getLogger()
 
