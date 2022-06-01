@@ -39,13 +39,9 @@ def get_zh_a_stock_hist_k_data(code, start_date=None, end_date=None):
     """
     # convert date, assign the default data
     if start_date is None:
-        start_date_str = "1990-01-01"
-    else:
-        start_date_str = start_date.strftime('%Y-%m-%d')
+        start_date = "1990-01-01"
     if end_date is None:
-        end_date_str = datetime.date.today().strftime('%Y-%m-%d')
-    else:
-        end_date_str = end_date.strftime('%Y-%m-%d')
+        end_date = datetime.date.today().strftime('%Y-%m-%d')
 
     # convert stock code
     regex_pattern = r"(^[a-zA-Z]{2})"
@@ -54,8 +50,8 @@ def get_zh_a_stock_hist_k_data(code, start_date=None, end_date=None):
                  "pctChg, peTTM, pbMRQ, psTTM, pcfNcfTTM, isST"
     result = baostock.query_history_k_data_plus(new_code,
                                                 res_fields,
-                                                start_date=start_date_str,
-                                                end_date=end_date_str,
+                                                start_date=start_date,
+                                                end_date=end_date,
                                                 frequency="d",
                                                 adjustflag="3")
 

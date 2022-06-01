@@ -12,10 +12,10 @@ logger = logging.getLogger()
 
 def data_retriever_init():
     logger.info(f'Starting data retriever processes, master process id {os.getpid()}')
-    # p1 = Process(target=akshare_datahub_task.dispatch)
-    # p1.start()
-    # p2 = Process(target=baostock_datahub_task.dispatch)
-    # p2.start()
+    p1 = Process(target=akshare_datahub_task.dispatch)
+    p1.start()
+    p2 = Process(target=baostock_datahub_task.dispatch)
+    p2.start()
     p3 = Process(target=scheduled_datahub_task.dispatch)
     p3.start()
 

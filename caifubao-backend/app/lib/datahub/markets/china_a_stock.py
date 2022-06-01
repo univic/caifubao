@@ -2,6 +2,7 @@ import time
 import logging
 import datetime
 import traceback
+from app.lib.db_tool import mongoengine_tool
 from app.lib.datahub.data_source.handler import zh_a_data
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock, StockDailyQuote
 from app.model.data_retrive import DatahubTaskDoc
@@ -19,19 +20,21 @@ class ChinaAStock(object):
         self.market_code = "ZH-A"
         self.today = datetime.date.today()
         self.most_recent_trading_day = None
-        self.market = None
-        self.trade_calendar = None
-
-    def initialize(self):
+        mongoengine_tool.connect_to_db()
         self.market = FinanceMarket.objects(name="A股").first()
         self.trade_calendar = self.market.trade_calendar
+
+    # def __del__(self):
+    #     mongoengine_tool.disconnect_from_db()
+
+    def initialize(self):
+
         self.check_market_data_existence()
         self.check_scheduled_task()
         # self.check_index_data_integrity(allow_update=True)
         # self.check_stock_data_integrity(allow_update=True)
 
     def check_market_data_existence(self):
-        self.market = FinanceMarket.objects(name="A股").first()
         # check the existence of basic market data
         if not self.market:
             logger.info(f'Stock Market {self.market.name} - Local market data not found, initializing')
@@ -68,7 +71,7 @@ class ChinaAStock(object):
                                            local_data_list=local_index_list,
                                            remote_data_df=remote_index_list,
                                            task_handler=akshare_datahub_task,
-                                           hist_handler='get_hist_quote_data',
+                                           hist_handler='get_hist_index_quote_data',
                                            new_obj_handler=self.handle_new_index,
                                            allow_update=allow_update)
         return status
@@ -80,7 +83,7 @@ class ChinaAStock(object):
                                            local_data_list=local_stock_list,
                                            remote_data_df=remote_stock_list,
                                            task_handler=baostock_datahub_task,
-                                           hist_handler='get_hist_quote_data',
+                                           hist_handler='get_hist_stock_quote_data',
                                            new_obj_handler=self.handle_new_stock,
                                            allow_update=allow_update)
         return status
@@ -150,22 +153,28 @@ class ChinaAStock(object):
             if bulk_insert:
                 # do bulk insert
                 StockDailyQuote.objects.insert(new_quote_instance_list, load_bulk=False)
-            logger.info(f'Stock Market {self.market.name} - '
-                        f'Checked {local_data_num} local {obj_name} data with {remote_data_num} remote data，'
-                        f'- Up to date:          {check_counter_dict["GOOD"]} '
-                        f'- One day behind:    {check_counter_dict["UPD"]} '
-                        f'- Need incremental update: {check_counter_dict["INC"]}'
-                        f'- No local data:  {check_counter_dict["FULL"]} '
-                        f'- With warning: {check_counter_dict["WARN"]}')
+            msg_str = f'Stock Market {self.market.name} - '
+            f'Checked {local_data_num} local {obj_name} data with {remote_data_num} remote data，'
+            f'- Up to date:          {check_counter_dict["GOOD"]} '
+            f'- One day behind:    {check_counter_dict["UPD"]} '
+            f'- Need incremental update: {check_counter_dict["INC"]}'
+            f'- No local data:  {check_counter_dict["FULL"]} '
+            f'- With warning: {check_counter_dict["WARN"]}'
+            logger.info(msg_str)
+            status_msg += msg_str
             if allow_update:
-                logger.info(f'Stock Market {self.market.name} - update attempt for {obj_name} data are as follows: '
-                            f'- Update with spot data:    {upd_counter_dict["UPD"]} '
-                            f'- Incremental update: {upd_counter_dict["INC"]}'
-                            f'- Get full quote data:  {upd_counter_dict["FULL"]} '
-                            f'- New stock:  {upd_counter_dict["NEW"]} '
-                            f'- With warning: {upd_counter_dict["WARN"]}')
+                msg_str = f'Stock Market {self.market.name} - update attempt for {obj_name} data are as follows: '
+                f'- Update with spot data:    {upd_counter_dict["UPD"]} '
+                f'- Incremental update: {upd_counter_dict["INC"]}'
+                f'- Get full quote data:  {upd_counter_dict["FULL"]} '
+                f'- New stock:  {upd_counter_dict["NEW"]} '
+                f'- With warning: {upd_counter_dict["WARN"]}'
+                logger.info(msg_str)
+                status_msg += msg_str
             else:
-                logger.info(f'Stock Market {self.market.name} - no update attempt was made for {obj_name} data.')
+                msg_str = f'Stock Market {self.market.name} - no update attempt was made for {obj_name} data.'
+                logger.info(msg_str)
+                status_msg += msg_str
         else:
             if allow_update:
                 for i, remote_stock_item in remote_data_df.iterrows():
@@ -213,11 +222,11 @@ class ChinaAStock(object):
             'code': code
         }
         baostock_datahub_task.create_task(name=task_name,
-                                         package='datahub',
-                                         module='markets',
-                                         obj='zh_a_stock_market',
-                                         handler=handler,
-                                         task_kwarg_dict=data_retrieve_kwarg)
+                                          package='datahub',
+                                          module='markets',
+                                          obj='zh_a_stock_market',
+                                          handler=handler,
+                                          task_kwarg_dict=data_retrieve_kwarg)
 
     def handle_new_index(self, code, name):
         logger.debug(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
@@ -316,7 +325,7 @@ class ChinaAStock(object):
             status_code = 'FAIL'
             status_msg = 'the interface did not return valid dataframe, possibly due to no quote data'
         except Exception as e:
-            status_code = 'FAIL'
+            status_code = 'ERR'
             status_msg = ';'.join(traceback.format_exception(e))
         status = {
             'code': status_code,
@@ -325,14 +334,15 @@ class ChinaAStock(object):
         return status
 
     @staticmethod
-    def get_hist_index_quote_data(code, start_date=None, end_date=None, incremental=True):
+    def get_hist_index_quote_data(code, start_date=None, end_date=None, incremental=True, bulk_insert=True):
         status_code = "GOOD"
         status_msg = None
         try:
-            index_obj = StockIndex.objects(code=code).only('code', 'data_freshness_meta').first()
+            index_obj = StockIndex.objects(code=code).only('code', 'name', 'data_freshness_meta').first()
             quote_df = zh_a_data.get_zh_a_index_hist_daily_quote(code, start_date=start_date)
             if index_obj:
                 if not quote_df.empty:
+                    bulk_insert_list = []
                     for i, row in quote_df.iterrows():
                         daily_quote = StockDailyQuote()
                         daily_quote.code = index_obj.code
@@ -343,7 +353,13 @@ class ChinaAStock(object):
                         daily_quote.high = row['high']
                         daily_quote.low = row['low']
                         daily_quote.volume = row['volume']
-                        daily_quote.save()
+                        if bulk_insert:
+                            bulk_insert_list.append(daily_quote)
+                        else:
+                            daily_quote.save()
+                    if bulk_insert:
+                        # do bulk insert
+                        StockDailyQuote.objects.insert(bulk_insert_list, load_bulk=False)
                     # update data freshness meta data
                     date_of_quote = quote_df['date'].max()
                     trading_day_helper.update_freshness_meta(index_obj, 'daily_quote', date_of_quote)
@@ -359,7 +375,7 @@ class ChinaAStock(object):
             status_code = 'FAIL'
             status_msg = 'the interface did not return valid dataframe, possibly due to no quote data'
         except Exception as e:
-            status_code = 'FAIL'
+            status_code = 'ERR'
             status_msg = ';'.join(traceback.format_exception(e))
         status = {
             'code': status_code,
@@ -387,44 +403,50 @@ class ChinaAStock(object):
         stock_task_ok_flag = False
         run_hour = 18
         task_num = DatahubTaskDoc.objects(status="CRTD",
-                                          name__startswith="UPDATE INDEX QUOTE WITH SPOT DATA").count()
+                                          name__startswith="Check index data integrity").count()
+        data_retrieve_kwarg = {
+            'allow_update': 'True'
+        }
         if task_num == 0:
-            logger.info(f'Stock Market {self.market.name} - Initializing scheduled index data update task')
+            logger.info(f'Stock Market {self.market.name} - Initializing scheduled index data integrity task')
             if trading_day_helper.is_trading_day(self.trade_calendar):
                 next_run_time = datetime.datetime.now()
             else:
                 next_run_time = trading_day_helper.next_trading_day(self.trade_calendar)
             next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
             scheduled_datahub_task.create_task(
-                name=trading_day_helper.update_title_date_str('UPDATE INDEX QUOTE WITH SPOT DATA', next_run_time),
+                name=trading_day_helper.update_title_date_str('Check index data integrity', next_run_time),
                 package='datahub',
                 module='markets',
                 obj='zh_a_stock_market',
                 interface='akshare',
                 handler='check_index_data_integrity',
                 repeat='T-DAY',
-                scheduled_time=next_run_time)
+                scheduled_time=next_run_time,
+                task_kwarg_dict=data_retrieve_kwarg)
         else:
             index_task_ok_flag = True
         # check the existence of stock task
         task_num = DatahubTaskDoc.objects(status="CRTD",
-                                          name__startswith="UPDATE STOCK QUOTE WITH SPOT DATA").count()
+                                          name__startswith="Check stock data integrity").count()
         if task_num == 0:
-            logger.info(f'Stock Market {self.market.name} - Initializing scheduled stock data update task')
+            logger.info(f'Stock Market {self.market.name} - Initializing scheduled stock data integrity task')
             if trading_day_helper.is_trading_day(self.trade_calendar):
                 next_run_time = datetime.datetime.now()
             else:
                 next_run_time = trading_day_helper.next_trading_day(self.trade_calendar)
             next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
+
             scheduled_datahub_task.create_task(
-                name=trading_day_helper.update_title_date_str('UPDATE STOCK QUOTE WITH SPOT DATA', next_run_time),
+                name=trading_day_helper.update_title_date_str('Check stock data integrity', next_run_time),
                 package='datahub',
                 module='markets',
                 obj='zh_a_stock_market',
                 interface='akshare',
                 handler='check_stock_data_integrity',
                 repeat='T-DAY',
-                scheduled_time=next_run_time)
+                scheduled_time=next_run_time,
+                task_kwarg_dict=data_retrieve_kwarg)
         else:
             stock_task_ok_flag = True
         if stock_task_ok_flag and index_task_ok_flag:

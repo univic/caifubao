@@ -22,6 +22,9 @@ def exec_datahub_task(item):
         item.completed_at = datetime.datetime.now()
         item.status = 'COMP'
         item.message = result['message']
+    elif result['code'] == 'ERR':
+        item.status = 'ERR'
+        item.message = result['message']
     else:
         item.status = 'FAIL'
         item.message = result['message']
@@ -34,7 +37,18 @@ def convert_dict_to_kwarg(kwarg_dict):
     for item in kwarg_dict.items():
         kwarg_obj = KwArg()
         kwarg_obj.keyword = item[0]
-        kwarg_obj.arg = item[1]
+        if item[1] is True:
+            kwarg_obj.arg = 'True'
+        elif item[1] is False:
+            kwarg_obj.arg = 'False'
+        else:
+            kwarg_obj.arg = item[1]
+        # if item[1] == 'True':
+        #     kwarg_obj.arg = True
+        # elif item[1] == 'False':
+        #     kwarg_obj.arg = False
+        # else:
+        #     kwarg_obj.arg = item[1]
         kwarg_list.append(kwarg_obj)
     return kwarg_list
 
@@ -42,7 +56,12 @@ def convert_dict_to_kwarg(kwarg_dict):
 def convert_kwarg_to_dict(kwarg_doc_list):
     kwarg_dict = {}
     for item in kwarg_doc_list:
-        kwarg_dict[item.keyword] = item.arg
+        if item.arg == 'True':
+            kwarg_dict[item.keyword] = True
+        elif item.arg == 'False':
+            kwarg_dict[item.keyword] = False
+        else:
+            kwarg_dict[item.keyword] = item.arg
     return kwarg_dict
 
 

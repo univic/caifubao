@@ -1,4 +1,4 @@
-
+import datetime
 import logging
 
 
@@ -65,6 +65,7 @@ def get_zh_a_index_hist_daily_quote(code, start_date=None, incremental=True):
     raw_df = interface.akshare.stock_zh_index_daily(code)
     raw_df.fillna(0, inplace=True)
     if incremental and start_date:
+        start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d').date()
         df = raw_df[raw_df.date > start_date].sort_index(axis=1, ascending=False)
     else:
         df = raw_df
@@ -82,7 +83,7 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None):
     float_columns = ["open", "high", "low", "close", "preclose", "volume", "amount", "turn", "pctChg", "peTTM", "pbMRQ",
                      "psTTM", "pcfNcfTTM"]
     int_columns = ["adjustflag", "tradestatus", "isST"]
-    raw_df = interface.baostock.get_zh_a_stock_hist_k_data(code)
+    raw_df = interface.baostock.get_zh_a_stock_hist_k_data(code, start_date)
     raw_df.replace('', 0, inplace=True)  # replace empty cells
     raw_df.fillna(0, inplace=True)
     # perform type convert

@@ -68,7 +68,7 @@ def read_freshness_meta(obj, freshness_field):
 
 
 def is_trading_day(trade_calendar, given_time=datetime.datetime.now()):
-    given_time.replace(hour=0, minute=0, second=0)
+    given_time = given_time.replace(hour=0, minute=0, second=0, microsecond=0)
     if given_time in trade_calendar:
         response = True
     else:
