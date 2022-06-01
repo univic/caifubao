@@ -162,8 +162,6 @@ class ScheduledDatahubTask(DatahubTask):
 
     def __init__(self):
         super().__init__(runner_name='Scheduled', task_obj=ScheduledDatahubTaskDoc)
-        # self.initialize_scheduled_task()
-        # TODO: WHERE TO INIT?
 
     def before_dispatch(self):
         pass
