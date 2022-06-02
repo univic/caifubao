@@ -1,7 +1,7 @@
 import re
 import logging
 import datetime
-from app.model.stock import FinanceMarket, DataFreshnessMeta
+from app.model.stock import FinanceMarket, DataFreshnessMeta, StockDailyQuote
 
 
 logger = logging.getLogger()
@@ -13,9 +13,12 @@ def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.
     return closest_avail_trading_day
 
 
-def determine_latest_quote_date(quote_list, date_attribute):
-    latest_quote_date = max(quote_list, key=lambda x: x[date_attribute])
-    return latest_quote_date[date_attribute]
+def determine_latest_quote_date(stock_obj, date_attribute='date'):
+    res = None
+    latest_quote_obj = StockDailyQuote.objects(code=stock_obj.code).order_by(f'-{date_attribute}').first()
+    if latest_quote_obj:
+        res = latest_quote_obj[date_attribute]
+    return res
 
 
 def determine_date_diff_with_latest_quote(trade_calendar_list, stock_index_obj):

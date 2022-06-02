@@ -31,8 +31,8 @@ class ChinaAStock(object):
 
         self.check_market_data_existence()
         self.check_scheduled_task()
-        # self.check_index_data_integrity(allow_update=True)
-        # self.check_stock_data_integrity(allow_update=True)
+        self.check_index_data_integrity(allow_update=True)
+        self.check_stock_data_integrity(allow_update=True)
 
     def check_market_data_existence(self):
         # check the existence of basic market data
@@ -153,22 +153,22 @@ class ChinaAStock(object):
             if bulk_insert:
                 # do bulk insert
                 StockDailyQuote.objects.insert(new_quote_instance_list, load_bulk=False)
-            msg_str = f'Stock Market {self.market.name} - '
-            f'Checked {local_data_num} local {obj_name} data with {remote_data_num} remote data，'
-            f'- Up to date:          {check_counter_dict["GOOD"]} '
-            f'- One day behind:    {check_counter_dict["UPD"]} '
-            f'- Need incremental update: {check_counter_dict["INC"]}'
-            f'- No local data:  {check_counter_dict["FULL"]} '
-            f'- With warning: {check_counter_dict["WARN"]}'
+            msg_str = (f'Stock Market {self.market.name} - '
+                       f'Checked {local_data_num} local {obj_name} data with {remote_data_num} remote data，'
+                       f'- Up to date:          {check_counter_dict["GOOD"]} '
+                       f'- One day behind:    {check_counter_dict["UPD"]} '
+                       f'- Need incremental update: {check_counter_dict["INC"]}'
+                       f'- No local data:  {check_counter_dict["FULL"]} '
+                       f'- With warning: {check_counter_dict["WARN"]}')
             logger.info(msg_str)
             status_msg += msg_str
             if allow_update:
-                msg_str = f'Stock Market {self.market.name} - update attempt for {obj_name} data are as follows: '
-                f'- Update with spot data:    {upd_counter_dict["UPD"]} '
-                f'- Incremental update: {upd_counter_dict["INC"]}'
-                f'- Get full quote data:  {upd_counter_dict["FULL"]} '
-                f'- New stock:  {upd_counter_dict["NEW"]} '
-                f'- With warning: {upd_counter_dict["WARN"]}'
+                msg_str = (f'Stock Market {self.market.name} - update attempt for {obj_name} data are as follows: '
+                           f'- Update with spot data:  {upd_counter_dict["UPD"]} '
+                           f'- Incremental update: {upd_counter_dict["INC"]}'
+                           f'- Get full quote data:  {upd_counter_dict["FULL"]} '
+                           f'- New stock:  {upd_counter_dict["NEW"]} '
+                           f'- With warning: {upd_counter_dict["WARN"]}')
                 logger.info(msg_str)
                 status_msg += msg_str
             else:
@@ -284,7 +284,7 @@ class ChinaAStock(object):
                                  task_kwarg_dict=data_retrieve_kwarg)
 
     # @performance_helper.func_performance_timer
-    def get_hist_stock_quote_data(self, code, start_date=None, incremental=True, bulk_insert=True):
+    def get_hist_stock_quote_data(self, code, start_date=None, force_insert=False, bulk_insert=True):
         status_code = "GOOD"
         status_msg = None
         try:
@@ -306,7 +306,7 @@ class ChinaAStock(object):
                         if bulk_insert:
                             bulk_insert_list.append(daily_quote)
                         else:
-                            daily_quote.save()
+                            daily_quote.save(force_insert=force_insert)
                     if bulk_insert:
                         # do bulk insert
                         StockDailyQuote.objects.insert(bulk_insert_list, load_bulk=False)
@@ -334,7 +334,16 @@ class ChinaAStock(object):
         return status
 
     @staticmethod
-    def get_hist_index_quote_data(code, start_date=None, end_date=None, incremental=True, bulk_insert=True):
+    def get_hist_index_quote_data(code, start_date=None, end_date=None, force_insert=False, bulk_insert=True):
+        """
+
+        :param code:
+        :param start_date:
+        :param end_date:
+        :param force_insert: only works when bulk insert is false!
+        :param bulk_insert:
+        :return:
+        """
         status_code = "GOOD"
         status_msg = None
         try:
@@ -363,7 +372,7 @@ class ChinaAStock(object):
                     # update data freshness meta data
                     date_of_quote = quote_df['date'].max()
                     trading_day_helper.update_freshness_meta(index_obj, 'daily_quote', date_of_quote)
-                    index_obj.save()
+                    index_obj.save(force_insert=force_insert)
                 else:
                     status_code = 'FAIL'
                     status_msg = 'No available data for update'
@@ -462,5 +471,5 @@ if __name__ == '__main__':
     interface.baostock.establish_baostock_conn()
     mongoengine_tool.connect_to_db()
     obj = ChinaAStock()
-    o = obj.get_hist_stock_quote_data(code="sh600815")
+    o = obj.get_hist_index_quote_data(code="sh000061", force_insert=True, bulk_insert=False)
     print(o)

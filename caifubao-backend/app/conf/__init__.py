@@ -24,7 +24,7 @@ class BaseConfig(object):
         'MAX_PWD_LENGTH': 32,
     }
     DATAHUB_SETTINGS = {
-        'TASK_SCAN_INTERVAL': 1,      # in minutes
+        'TASK_SCAN_INTERVAL': 5,      # in minutes
     }
 
 
