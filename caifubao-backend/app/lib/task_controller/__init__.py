@@ -1,7 +1,7 @@
 import os
 import logging
-from multiprocessing import Process, Pool
-from app.lib.datahub.task_controller.task import AkshareDatahubTask, BaostockDatahubTask, ScheduledDatahubTask
+from multiprocessing import Process
+from app.lib.task_controller.task import AkshareDatahubTask, BaostockDatahubTask, ScheduledDatahubTask
 
 akshare_datahub_task = AkshareDatahubTask()
 baostock_datahub_task = BaostockDatahubTask()

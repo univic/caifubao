@@ -1,7 +1,4 @@
-
-# TODO: FORCE UPDATE
-# TODO: INTEGRITY SELF CHECK
-
+import re
 import pandas as pd
 from app.lib.db_tool import mongoengine_tool
 from app.utilities.progress_bar import progress_bar
@@ -133,9 +130,23 @@ class DataIntegrityWatcher(object):
             print(item)
 
 
+def stock_quote_code_conversion():
+    pattern = re.compile(r"^([a-z]{2})(\.)", flags=re.A)
+    obj_list = StockDailyQuote.objects(code__regex=pattern)
+    prog_bar = progress_bar()
+    list_len = obj_list.count()
+    for i, item in enumerate(obj_list):
+        item.code = item.code.replace(".", "")
+        item.save()
+        prog_bar(i, list_len)
+
+
 if __name__ == '__main__':
-    runner = DataIntegrityWatcher()
-    runner.check_index_data_integrity()
+    mongoengine_tool.connect_to_db()
+    stock_quote_code_conversion()
+    mongoengine_tool.disconnect_from_db()
+    # runner = DataIntegrityWatcher()
+    # runner.check_index_data_integrity()
     # runner.check_stock_data_integrity()
     # runner.before_check()
     # t_obj = StockIndex.objects(code='sz399986').first()

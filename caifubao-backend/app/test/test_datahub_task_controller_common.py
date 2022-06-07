@@ -1,7 +1,6 @@
 import unittest
-import datetime
 from app.model.data_retrive import KwArg
-from app.lib.datahub.task_controller import common
+from app.lib.task_controller import common
 
 
 class TestDatahubTaskControllerCommon(unittest.TestCase):

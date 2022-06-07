@@ -90,6 +90,7 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None):
     raw_df[float_columns] = raw_df[float_columns].astype('float')
     raw_df[int_columns] = raw_df[int_columns].astype('int')
     raw_df.rename(name_mapping, axis=1, inplace=True)  # rename column
+    raw_df['code'] = raw_df['code'].apply(lambda x: x.replace(".", ""))           # replace the dot in the stock code
     return raw_df
 
 # def get_zh_a_stock_quote_daily(code, incremental="false"):

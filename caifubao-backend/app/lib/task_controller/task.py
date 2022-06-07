@@ -7,7 +7,7 @@ from app.conf import app_config
 from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc
 from app.utilities.progress_bar import progress_bar
 from app.lib.datahub.data_source.interface import baostock as baostock_if
-from app.lib.datahub.task_controller.common import convert_dict_to_kwarg, check_task_uniqueness, \
+from app.lib.task_controller.common import convert_dict_to_kwarg, check_task_uniqueness, \
     exec_datahub_task, convert_kwarg_to_dict
 from app.utilities import trading_day_helper
 

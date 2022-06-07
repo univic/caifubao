@@ -2,13 +2,13 @@ import time
 import logging
 import datetime
 import traceback
-from app.lib.db_tool import mongoengine_tool
 from app.lib.datahub.data_source.handler import zh_a_data
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock, StockDailyQuote
 from app.model.data_retrive import DatahubTaskDoc
-from app.lib.datahub.task_controller import akshare_datahub_task, baostock_datahub_task, scheduled_datahub_task
+from app.lib.db_tool import mongoengine_tool
+from app.lib.task_controller import akshare_datahub_task, baostock_datahub_task, scheduled_datahub_task
 from app.utilities.progress_bar import progress_bar
-from app.utilities import trading_day_helper, performance_helper
+from app.utilities import trading_day_helper
 
 logger = logging.getLogger()
 
@@ -31,8 +31,8 @@ class ChinaAStock(object):
 
         self.check_market_data_existence()
         self.check_scheduled_task()
-        self.check_index_data_integrity(allow_update=True)
-        self.check_stock_data_integrity(allow_update=True)
+        # self.check_index_data_integrity(allow_update=True)
+        # self.check_stock_data_integrity(allow_update=True)
 
     def check_market_data_existence(self):
         # check the existence of basic market data
@@ -462,6 +462,9 @@ class ChinaAStock(object):
             logger.info(f'Stock Market {self.market.name} - Scheduled data update task check OK')
 
     def data_integrity_self_check(self):
+        pass
+
+    def perform_factor_process(self):
         pass
 
 
