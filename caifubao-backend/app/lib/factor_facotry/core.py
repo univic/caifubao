@@ -6,12 +6,13 @@ class FactorProcesser(object):
     def __init__(self):
         self.obj = None
         self.obj_list = []
+        self.processer_list = []
 
     def dispatcher(self):
         pass
 
     def generate_zh_a_stock_factors(self):
-        pass
+        self.obj = IndividualStock
 
     def generate_zh_a_index_factors(self):
         pass
