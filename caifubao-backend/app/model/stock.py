@@ -94,6 +94,7 @@ class DailyQuote(EmbeddedDocument):
 
 class DataFreshnessMeta(EmbeddedDocument):
     daily_quote = DateTimeField()
+    fq_factor = DateTimeField()
 
 
 class BasicStock(db.Document):

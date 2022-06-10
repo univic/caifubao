@@ -1,4 +1,5 @@
 from app.model.stock import StockIndex, IndividualStock
+# from app.lib.factor_facotry.quote_factor import
 
 
 class FactorProcesser(object):
@@ -9,10 +10,13 @@ class FactorProcesser(object):
         self.processer_list = []
 
     def dispatcher(self):
-        pass
+        for item in self.obj_list:
+            for func in self.processer_list:
+                func(item)
 
     def generate_zh_a_stock_factors(self):
         self.obj = IndividualStock
+        self.dispatcher()
 
     def generate_zh_a_index_factors(self):
         pass
