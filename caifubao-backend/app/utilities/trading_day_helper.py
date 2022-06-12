@@ -8,7 +8,9 @@ logger = logging.getLogger()
 
 
 def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.now()):
-
+    divide_hour = 3
+    if given_time.hour < divide_hour:
+        given_time = given_time - datetime.timedelta(days=1)
     closest_avail_trading_day = min(trade_calendar, key=lambda x: (x > given_time, abs(x - given_time)))
     return closest_avail_trading_day
 

@@ -21,6 +21,18 @@ class TestTradingDayHelper(unittest.TestCase):
         act_result_1 = trading_day_helper.determine_closest_trading_date(trade_calendar=trade_calendar_list,
                                                                          given_time=given_input_1)
         self.assertEqual(act_result_1, exp_result_1)
+        
+        given_input_2 = datetime.datetime(2022, 5, 5, 2, 0, 0)
+        exp_result_2 = datetime.datetime(2022, 4, 29, 0, 0, 0)
+        act_result_2 = trading_day_helper.determine_closest_trading_date(trade_calendar=trade_calendar_list,
+                                                                         given_time=given_input_2)
+        self.assertEqual(act_result_2, exp_result_2)
+        
+        given_input_3 = datetime.datetime(2022, 5, 5, 9, 0, 0)
+        exp_result_3 = datetime.datetime(2022, 5, 5, 0, 0, 0)
+        act_result_3 = trading_day_helper.determine_closest_trading_date(trade_calendar=trade_calendar_list,
+                                                                         given_time=given_input_3)
+        self.assertEqual(act_result_3, exp_result_3)
 
     def test_convert_date_to_datetime(self):
         date = datetime.date(2022, 5, 18)

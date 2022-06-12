@@ -1,7 +1,6 @@
 import datetime
 import logging
 
-
 from app.lib.datahub.data_source import interface
 from app.utilities import trading_day_helper, performance_helper, stock_code_helper
 
@@ -83,7 +82,7 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None):
     float_columns = ["open", "high", "low", "close", "preclose", "volume", "amount", "turn", "pctChg", "peTTM", "pbMRQ",
                      "psTTM", "pcfNcfTTM"]
     int_columns = ["adjustflag", "tradestatus", "isST"]
-    raw_df = interface.baostock.get_zh_a_stock_hist_k_data(code, start_date)
+    raw_df = interface.baostock_interface.get_zh_a_stock_hist_k_data(code, start_date)
     raw_df.replace('', 0, inplace=True)  # replace empty cells
     raw_df.fillna(0, inplace=True)
     # perform type convert
@@ -154,6 +153,6 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None):
 
 
 if __name__ == '__main__':
-    interface.baostock.establish_baostock_conn()
+    interface.baostock_interface.establish_baostock_conn()
     o = get_zh_a_stock_hist_daily_quote(code="sh600284")
     print(o)

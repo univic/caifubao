@@ -91,6 +91,13 @@ class DailyQuote(EmbeddedDocument):
     pcfNcfTTM = FloatField()     # 滚动市现率
     isST = IntField()    # 1 - 被ST  0 - 否
 
+    # restatement factor and price calculation
+    fq_factor = FloatField()
+    open_hfq = FloatField()
+    close_hfq = FloatField()
+    high_hfq = FloatField()
+    low_hfq = FloatField()
+
 
 class DataFreshnessMeta(EmbeddedDocument):
     daily_quote = DateTimeField()

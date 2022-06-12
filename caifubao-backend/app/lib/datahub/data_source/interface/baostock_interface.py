@@ -1,7 +1,7 @@
 import re
 import logging
 import datetime
-import baostock
+import baostock as bs
 
 
 logger = logging.getLogger()
@@ -22,17 +22,17 @@ logger = logging.getLogger()
 
 
 def establish_baostock_conn():
-    bs_conn = baostock.login()
-    if bs_conn.error_code != "0":
-        logger.error(f"Error connecting Baostock: {bs_conn.error_msg}")
-    return bs_conn
+    conn = bs.login()
+    if conn.error_code != "0":
+        logger.error(f"Error connecting Baostock: {conn.error_msg}")
+    return conn
 
 
 def terminate_baostock_conn():
-    baostock.logout()
+    bs.logout()
 
 
-def get_zh_a_stock_hist_k_data(code, start_date=None, end_date=None):
+def get_zh_a_stock_hist_k_data(code, start_date=None, end_date=None, adjustflag="3"):
     """
     获取历史K线，返回Dataframe
 
@@ -48,18 +48,18 @@ def get_zh_a_stock_hist_k_data(code, start_date=None, end_date=None):
     new_code = re.sub(regex_pattern, r"\1.", code)
     res_fields = "date,code,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus," \
                  "pctChg, peTTM, pbMRQ, psTTM, pcfNcfTTM, isST"
-    result = baostock.query_history_k_data_plus(new_code,
-                                                res_fields,
-                                                start_date=start_date,
-                                                end_date=end_date,
-                                                frequency="d",
-                                                adjustflag="3")
+    result = bs.query_history_k_data_plus(new_code,
+                                          res_fields,
+                                          start_date=start_date,
+                                          end_date=end_date,
+                                          frequency="d",
+                                          adjustflag=adjustflag)
 
     return result.get_data()
 
 
 if __name__ == '__main__':
     bs_conn = establish_baostock_conn()
-    res = get_zh_a_stock_hist_k_data('sz000001')
+    res = get_zh_a_stock_hist_k_data('sh601166', adjustflag="1")
     terminate_baostock_conn()
     print(res)

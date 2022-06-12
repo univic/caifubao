@@ -52,9 +52,9 @@ def go_convert():
     # list_len = stock_list.count()
     # print("converting index quote data")
     # for i, stock_item in enumerate(stock_list):
-    #     quote_list = stock_item.daily_quote
-    #     if quote_list:
-    #         for quote_item in quote_list:
+    #     quote_qs = stock_item.daily_quote
+    #     if quote_qs:
+    #         for quote_item in quote_qs:
     #             new_quote = StockDailyQuote()
     #             new_quote.stock = stock_item
     #             new_quote.code = stock_item.code

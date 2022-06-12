@@ -31,8 +31,8 @@ class ChinaAStock(object):
 
         self.check_market_data_existence()
         self.check_scheduled_task()
-        # self.check_index_data_integrity(allow_update=True)
-        # self.check_stock_data_integrity(allow_update=True)
+        self.check_index_data_integrity(allow_update=True)
+        self.check_stock_data_integrity(allow_update=True)
 
     def check_market_data_existence(self):
         # check the existence of basic market data
@@ -178,9 +178,9 @@ class ChinaAStock(object):
         else:
             if allow_update:
                 for i, remote_stock_item in remote_data_df.iterrows():
-                    code = remote_stock_item['代码']
-                    name = remote_stock_item['名称']
-                    new_obj_handler(code=code, name=name, market=self.market)
+                    code = remote_stock_item['code']
+                    name = remote_stock_item['name']
+                    new_obj_handler(code=code, name=name)
                     prog_bar(i, remote_data_num)
         status = {"code": status_code,
                   "msg": status_msg}
