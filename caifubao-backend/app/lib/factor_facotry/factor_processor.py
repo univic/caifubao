@@ -16,6 +16,7 @@ class FactorProcessor(object):
         self.quote_df = None
         self.stock_obj = None
         self.update_field_list = []
+        self.update_freshness_meta_list = []
 
     def dispatch(self, item, allow_update=False):
         self.stock_obj = item
@@ -51,8 +52,10 @@ class FactorProcessor(object):
         self.quote_df.set_index("date", inplace=True)
 
     def calc_ma_factor(self):
+        field_list = ["ma_10"]
         self.quote_df["ma_10"] = talib.MA(self.quote_df["close_hfq"], timeperiod=10)
-        self.update_field_list += ["ma_10"]
+        self.update_field_list += field_list
+        self.update_freshness_meta_list += field_list
 
     def calc_fq_factor(self):
 
@@ -62,6 +65,7 @@ class FactorProcessor(object):
         self.quote_df["high_hfq"] = (self.quote_df["high"] * (self.quote_df["close_hfq"] / self.quote_df["close"])).round(decimals=4)
         self.quote_df["low_hfq"] = (self.quote_df["low"] * (self.quote_df["close_hfq"] / self.quote_df["close"])).round(decimals=4)
         self.update_field_list += ["fq_factor", "close_hfq", "open_hfq", "high_hfq", "low_hfq"]
+        self.update_freshness_meta_list.append("fq_factor")
         pass
     
     def update_quote_data(self):
@@ -69,6 +73,8 @@ class FactorProcessor(object):
             quote_obj = self.quote_qs(_id=quote_item["_id"])
             for field_name in self.update_field_list:
                 quote_obj[field_name] = quote_item[field_name]
+        for field_name in self.update_freshness_meta_list:
+            trading_day_helper.update_freshness_meta(self.stock_obj, field_name, self.most_recent_trading_day)
 
 
 if __name__ == '__main__':
