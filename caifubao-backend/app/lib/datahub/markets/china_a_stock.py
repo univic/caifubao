@@ -31,8 +31,8 @@ class ChinaAStock(object):
 
         self.check_market_data_existence()
         self.check_scheduled_task()
-        self.check_index_data_integrity(allow_update=True)
-        self.check_stock_data_integrity(allow_update=True)
+        # self.check_index_data_integrity(allow_update=True)
+        # self.check_stock_data_integrity(allow_update=True)
 
     def check_market_data_existence(self):
         # check the existence of basic market data
@@ -471,7 +471,7 @@ class ChinaAStock(object):
 if __name__ == '__main__':
     from app.lib.db_tool import mongoengine_tool
     from app.lib.datahub.data_source import interface
-    interface.baostock.establish_baostock_conn()
+    interface.baostock_interface.establish_baostock_conn()
     mongoengine_tool.connect_to_db()
     obj = ChinaAStock()
     o = obj.get_hist_index_quote_data(code="sh000061", force_insert=True, bulk_insert=False)
