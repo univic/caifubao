@@ -43,5 +43,3 @@ class BackTester(object):
 
     def generate_backtest_report(self):
         pass
-
-

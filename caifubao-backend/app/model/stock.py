@@ -99,6 +99,7 @@ class DailyQuote(EmbeddedDocument):
     low_hfq = FloatField()
 
 
+# TODO: make it dynamic
 class DataFreshnessMeta(EmbeddedDocument):
     daily_quote = DateTimeField()
     fq_factor = DateTimeField()
