@@ -1,9 +1,10 @@
 import datetime
 import pandas as pd
 import talib
-from app.model.stock import StockDailyQuote, IndividualStock
 from app.lib.db_tool import mongoengine_tool
 from app.utilities import trading_day_helper
+from app.model.stock import StockDailyQuote, IndividualStock
+from app.model.factor import FactorDataEntry
 
 
 class FactorProcessor(object):
@@ -56,17 +57,6 @@ class FactorProcessor(object):
         self.quote_df["ma_10"] = talib.MA(self.quote_df["close_hfq"], timeperiod=10)
         self.update_field_list += field_list
         self.update_freshness_meta_list += field_list
-
-    def calc_fq_factor(self):
-
-        self.quote_df["fq_factor"] = (self.quote_df["close"] / self.quote_df["previous_close"]).cumprod()
-        self.quote_df["close_hfq"] = (self.quote_df["fq_factor"] * self.quote_df.iloc[0]['previous_close']).round(decimals=4)
-        self.quote_df["open_hfq"] = (self.quote_df["open"] * (self.quote_df["close_hfq"] / self.quote_df["close"])).round(decimals=4)
-        self.quote_df["high_hfq"] = (self.quote_df["high"] * (self.quote_df["close_hfq"] / self.quote_df["close"])).round(decimals=4)
-        self.quote_df["low_hfq"] = (self.quote_df["low"] * (self.quote_df["close_hfq"] / self.quote_df["close"])).round(decimals=4)
-        self.update_field_list += ["fq_factor", "close_hfq", "open_hfq", "high_hfq", "low_hfq"]
-        self.update_freshness_meta_list.append("fq_factor")
-        pass
     
     def update_quote_data(self):
         for i, quote_item in self.quote_df.iterrows():

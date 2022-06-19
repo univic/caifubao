@@ -52,7 +52,6 @@ class StockDailyQuote(db.Document):
     change_rate = FloatField()
     change_amount = FloatField()
     turnover_rate = FloatField()
-    fq_factor = FloatField()
     volume = IntField()
     trade_amount = FloatField()
     trade_status = IntField()    # 1 - 正常交易  0 - 停牌
@@ -61,6 +60,13 @@ class StockDailyQuote(db.Document):
     psTTM = FloatField()         # 滚动市销率
     pcfNcfTTM = FloatField()     # 滚动市现率
     isST = IntField()    # 1 - 被ST  0 - 否
+
+    # restatement factor and price calculation
+    fq_factor = FloatField()
+    open_hfq = FloatField()
+    close_hfq = FloatField()
+    high_hfq = FloatField()
+    low_hfq = FloatField()
 
 
 class DailyQuote(EmbeddedDocument):
@@ -91,13 +97,6 @@ class DailyQuote(EmbeddedDocument):
     pcfNcfTTM = FloatField()     # 滚动市现率
     isST = IntField()    # 1 - 被ST  0 - 否
 
-    # restatement factor and price calculation
-    fq_factor = FloatField()
-    open_hfq = FloatField()
-    close_hfq = FloatField()
-    high_hfq = FloatField()
-    low_hfq = FloatField()
-
 
 # TODO: make it dynamic
 class DataFreshnessMeta(EmbeddedDocument):
@@ -122,6 +121,7 @@ class BasicStock(db.Document):
     market = ReferenceField(FinanceMarket)
     daily_quote = EmbeddedDocumentListField('DailyQuote')
     data_freshness_meta = EmbeddedDocumentField(DataFreshnessMeta)
+    watch_level = IntField()
 
 
 class IndividualStock(BasicStock):
