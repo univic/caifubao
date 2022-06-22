@@ -23,7 +23,6 @@ class FactorProcessor(object):
         self.stock_obj = item
         self.perform_date_check()
         self.query_quote_data()
-        self.calc_fq_factor()
         if allow_update:
             self.update_quote_data()
 
