@@ -14,7 +14,8 @@ class FactorProcesser(object):
     def dispatcher(self):
         self.generate_process_plan()
         self.get_quote_df()
-        fq_factor.calc_fq_factor(self)
+        p = fq_factor.FQFactorProcessor(self)
+        p.perform_factor_calc()
 
     def generate_process_plan(self):
         pass

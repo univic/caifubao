@@ -1,3 +1,4 @@
+from app.utilities import freshness_meta_helper
 
 
 class FactorProcessor(object):
@@ -7,6 +8,8 @@ class FactorProcessor(object):
 
     def __init__(self, stock_obj):
         self.stock_obj = stock_obj
+        self.factor_name = None
+        self.most_recent_factor_date = None
 
     @classmethod
     def check_exec_availiablity(cls, stock_obj):
@@ -19,6 +22,9 @@ class FactorProcessor(object):
 
     def exec(self):
         self.before_exec()
+        self.read_freshness_meta()
+        if self.most_recent_factor_date:
+            self.read_existing_factors()
         self.perform_factor_calc()
         self.perform_db_upsert()
         self.after_exec()
@@ -27,6 +33,12 @@ class FactorProcessor(object):
         pass
 
     def check_dependency(self):
+        pass
+
+    def read_freshness_meta(self):
+        self.most_recent_factor_date = freshness_meta_helper.read_freshness_meta(self.stock_obj.code, self.factor_name)
+
+    def read_existing_factors(self):
         pass
 
     def perform_db_upsert(self):

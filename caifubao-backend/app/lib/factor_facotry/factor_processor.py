@@ -8,7 +8,7 @@ from app.model.factor import FactorDataEntry
 
 
 class FactorProcessor(object):
-    def __init__(self):
+    def __init__(self, factor_processor):
         mongoengine_tool.connect_to_db()
         self.today = datetime.date.today()
         self.most_recent_trading_day = None
@@ -23,8 +23,6 @@ class FactorProcessor(object):
         self.stock_obj = item
         self.perform_date_check()
         self.query_quote_data()
-        if allow_update:
-            self.update_quote_data()
 
     def perform_date_check(self):
         # determine the closest trading day
@@ -50,20 +48,14 @@ class FactorProcessor(object):
         quote_json = self.quote_qs.as_pymongo()
         self.quote_df = pd.DataFrame(quote_json)
         self.quote_df.set_index("date", inplace=True)
-
-    def calc_ma_factor(self):
-        field_list = ["ma_10"]
-        self.quote_df["ma_10"] = talib.MA(self.quote_df["close_hfq"], timeperiod=10)
-        self.update_field_list += field_list
-        self.update_freshness_meta_list += field_list
     
-    def update_quote_data(self):
-        for i, quote_item in self.quote_df.iterrows():
-            quote_obj = self.quote_qs(_id=quote_item["_id"])
-            for field_name in self.update_field_list:
-                quote_obj[field_name] = quote_item[field_name]
-        for field_name in self.update_freshness_meta_list:
-            trading_day_helper.update_freshness_meta(self.stock_obj, field_name, self.most_recent_trading_day)
+    # def update_quote_data(self):
+    #     for i, quote_item in self.quote_df.iterrows():
+    #         quote_obj = self.quote_qs(_id=quote_item["_id"])
+    #         for field_name in self.update_field_list:
+    #             quote_obj[field_name] = quote_item[field_name]
+    #     for field_name in self.update_freshness_meta_list:
+    #         trading_day_helper.update_freshness_meta(self.stock_obj, field_name, self.most_recent_trading_day)
 
 
 if __name__ == '__main__':
