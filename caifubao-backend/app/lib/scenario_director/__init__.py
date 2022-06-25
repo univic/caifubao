@@ -10,3 +10,14 @@ how would you like the world to turn?
 
 # do the jobs
 
+
+class BasicScenario(object):
+    pass
+
+
+class RealOperationScenario(BasicScenario):
+    pass
+
+
+class BackTestScenario(BasicScenario):
+    pass

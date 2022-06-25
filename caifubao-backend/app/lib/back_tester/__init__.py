@@ -1,7 +1,7 @@
 from app.lib.db_tool import mongoengine_tool
 
 
-class BackTester(object):
+class BasicBackTester(object):
 
     def __init__(self):
         self.scenario = None
