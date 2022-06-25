@@ -1,6 +1,5 @@
 import datetime
 import pandas as pd
-import talib
 from app.lib.db_tool import mongoengine_tool
 from app.utilities import trading_day_helper
 from app.model.stock import StockDailyQuote, IndividualStock
