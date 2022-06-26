@@ -20,4 +20,3 @@ class StrategyInterpreter(object):
     def parse_opportunity_seeker(self):
         pass
 
-
