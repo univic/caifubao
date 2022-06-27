@@ -5,11 +5,13 @@ how we deal with information and make effective decision?
 
 class StrategyInterpreter(object):
 
-    def __init__(self, strategy_definition):
-        self.definition = strategy_definition
+    def __init__(self, strategy_scheme):
+        self.scheme = strategy_scheme
 
     def parse_stock_scope(self):
-        pass
+        stock_list = []
+        if self.scheme.stock_scope == "single":
+            pass
 
     def parse_factors(self):
         pass
