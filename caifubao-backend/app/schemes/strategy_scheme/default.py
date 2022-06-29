@@ -6,7 +6,7 @@ class BasicStrategyScheme(object):
         self.code = None
         self.market_name = "A股"
         stock_scope = "single"            # single | list | pattern | full
-        stock_list = []
+        stock_code_list = []
         stock_select_pattern = ""
         factor_list = [
             "FQ_FACTOR"
