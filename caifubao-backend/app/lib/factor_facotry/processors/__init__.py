@@ -9,7 +9,7 @@ factor_registry = {
     },
     "MA_10": {
         'processor_object': moving_average.MovingAverageFactorProcessor,
-        'handler': 'perform_factor_calc'
+        'handler': 'perform_ma_10_calc'
     }
 }
 

@@ -21,3 +21,8 @@ class RealOperationScenario(BasicScenario):
 
 class BackTestScenario(BasicScenario):
     pass
+
+
+class ScenarioDirector(object):
+    def __init__(self):
+        pass
