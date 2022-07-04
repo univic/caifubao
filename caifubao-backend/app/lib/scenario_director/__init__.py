@@ -1,3 +1,5 @@
+from app.schemes import scenario
+from app.lib.scenario_director import processors
 """
 how would you like the world to turn?
 """
@@ -11,18 +13,11 @@ how would you like the world to turn?
 # do the jobs
 
 
-class BasicScenario(object):
-    pass
-
-
-class RealOperationScenario(BasicScenario):
-    pass
-
-
-class BackTestScenario(BasicScenario):
-    pass
-
-
 class ScenarioDirector(object):
-    def __init__(self):
-        pass
+
+    def __init__(self, scenario_scheme):
+        scenario_director_obj = getattr(processors, scenario_scheme.scenario_name)
+
+
+if __name__ == '__main__':
+    obj = ScenarioDirector(scenario.ScenarioScheme)
