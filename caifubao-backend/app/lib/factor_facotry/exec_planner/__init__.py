@@ -2,7 +2,7 @@
 
 class ExecPlanner(object):
     """
-    for each incoming stock object, generate execution plan for factor processors
+    for each incoming stock object, generate execution plan for factor scenarios
     """
 
     def __init__(self):
