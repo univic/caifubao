@@ -27,8 +27,12 @@ class ScenarioDirector(object):
         self.scenario = getattr(scenarios, self.scenario_scheme_name)
 
     def run_scenario(self):
-        pass
+        self.load_scenario_scheme()
+        self.load_scenario()
+        obj = self.scenario(self.scenario_scheme)
+        obj.exec_scheme()
 
 
 if __name__ == '__main__':
-    obj = ScenarioDirector(scenario.ScenarioScheme)
+    obj_a = ScenarioDirector('BackTestScenario')
+    obj_a.run_scenario()

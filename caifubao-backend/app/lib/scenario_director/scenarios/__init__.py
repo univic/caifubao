@@ -1,7 +1,10 @@
 class BasicScenario(object):
-    def __init__(self):
+    def __init__(self, scheme):
         portfolio = None
         strategy = None
+
+    def exec_scheme(self):
+        print('OH YEAH')
 
 
 class RealOperationScenario(BasicScenario):
