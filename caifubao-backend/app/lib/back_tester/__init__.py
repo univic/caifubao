@@ -3,10 +3,13 @@ from app.lib.db_tool import mongoengine_tool
 
 class BasicBackTester(object):
 
-    def __init__(self):
+    def __init__(self, scenario, portfolio, strategy):
         self.scenario = None
         self.trading_day_list = []
         self.stock_list = []
+
+    def run_back_test(self):
+        pass
 
     def before_back_test(self):
         mongoengine_tool.connect_to_db()
@@ -20,9 +23,6 @@ class BasicBackTester(object):
     def setup_backtest(self, scenario):
         self.scenario = scenario
         self.load_test_scenario()
-
-    def exec_test_scenario(self):
-        pass
 
     def get_stock_list(self):
         pass
@@ -49,3 +49,10 @@ class BasicBackTester(object):
 
     def generate_backtest_report(self):
         pass
+
+
+class BackTesterA(BasicBackTester):
+    """
+    Single stock single strategy back tester
+    """
+    pass
