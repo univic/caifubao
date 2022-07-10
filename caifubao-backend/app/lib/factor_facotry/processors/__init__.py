@@ -16,7 +16,7 @@ factor_registry = {
 
 class FactorProcessor(object):
     """
-    Base class for all the factor scenarios
+    Base class for all the factor scenario_processors
     """
 
     def __init__(self, stock_obj):
