@@ -19,20 +19,20 @@ class ScenarioDirector(object):
     def __init__(self, scenario_scheme_name):
         self.scenario_processor = None
         self.portfolio = None
-        self.scenario_scheme = None
+        self.scenario = None
         self.scenario_scheme_name = scenario_scheme_name
 
     def load_scenario_scheme(self):
         """
         load the scheme class according to the scheme name provided by user
         """
-        self.scenario_scheme = getattr(scenario_schemes, self.scenario_scheme_name)
+        self.scenario = getattr(scenario_schemes, self.scenario_scheme_name)
 
     def load_scenario_processor(self):
         """
         load scenario processor according to the name provided by scenario scheme
         """
-        self.scenario_processor = getattr(scenario_processors, self.scenario_scheme.scenario_processor_name)
+        self.scenario_processor = getattr(scenario_processors, self.scenario.scenario_processor_name)
 
     def run_scenario(self):
         """
@@ -40,7 +40,7 @@ class ScenarioDirector(object):
         """
         self.load_scenario_scheme()
         self.load_scenario_processor()
-        obj = self.scenario_processor(self.scenario_scheme)
+        obj = self.scenario_processor(self.scenario)
         obj.exec_scheme()
 
 

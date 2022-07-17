@@ -1,4 +1,5 @@
 from app.lib.db_tool import mongoengine_tool
+from app.lib.strategy import StrategyInterpreter
 
 
 class BasicBackTester(object):
@@ -7,9 +8,10 @@ class BasicBackTester(object):
         self.scenario = None
         self.trading_day_list = []
         self.stock_list = []
+        self.strategy_interpreter = StrategyInterpreter(strategy)
 
     def run_back_test(self):
-        pass
+        print('backtest running')
 
     def before_back_test(self):
         mongoengine_tool.connect_to_db()
@@ -17,12 +19,8 @@ class BasicBackTester(object):
     def after_back_test(self):
         mongoengine_tool.disconnect_from_db()
 
-    def load_test_scenario(self):
-        pass
-
     def setup_backtest(self, scenario):
         self.scenario = scenario
-        self.load_test_scenario()
 
     def get_stock_list(self):
         pass
