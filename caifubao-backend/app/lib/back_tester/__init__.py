@@ -1,5 +1,7 @@
+import datetime
 from app.lib.db_tool import mongoengine_tool
 from app.lib.strategy import StrategyInterpreter
+from app.lib.portfolio_manager import PortfolioManager
 from app.utilities import trading_day_helper
 
 
@@ -10,6 +12,7 @@ class BasicBackTester(object):
         self.trading_day_list = []
         self.stock_list = []
         self.strategy_interpreter = StrategyInterpreter(strategy)
+        self.portfolio_manager = PortfolioManager()
 
     def run_back_test(self):
         print('backtest running')
@@ -24,9 +27,11 @@ class BasicBackTester(object):
         mongoengine_tool.disconnect_from_db()
 
     def get_backtest_date_range(self):
-        start_date = self.scenario.start_date
+        start_date_str = self.scenario.start_date
+        start_date = datetime.datetime.strptime(start_date_str, '%Y-%m-%d')
         trade_calendar = trading_day_helper.get_a_stock_market_trade_calendar()
-        print(start_date)
+        backtest_date_list = [date for date in trade_calendar if date >= start_date]
+        pass
 
     def setup_backtest(self, scenario):
         self.scenario = scenario
