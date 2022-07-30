@@ -18,6 +18,7 @@ class BasicBackTester(object):
     def run_back_test(self):
         print('backtest running')
         self.get_backtest_date_range()
+        self.get_stock_list()
         for trading_day in self.backtest_date_list:
             self.perform_daily_analysis()
         # self.before_back_test()
@@ -35,19 +36,17 @@ class BasicBackTester(object):
         trade_calendar = trading_day_helper.get_a_stock_market_trade_calendar()
         self.backtest_date_list = [date for date in trade_calendar if date >= start_date]
 
-    def setup_backtest(self, scenario):
-        self.scenario = scenario
-
     def get_stock_list(self):
-        pass
+        self.stock_list = self.strategy_interpreter.get_stock_list()
 
     def get_quote_list(self):
         pass
 
     def perform_daily_analysis(self):
-        self.generate_factors()
-        self.generate_signals()
-        self.generate_trade_plan()
+        for stock in self.stock_list:
+            self.generate_factors()
+            self.generate_signals()
+            self.generate_trade_plan()
 
     def generate_factors(self):
         pass

@@ -13,7 +13,7 @@ class BasicStrategy(object):
 
 class Strategy01(BasicStrategy):
     stock_scope = "single"            # single | list | pattern | full
-    stock_code_list = []
+    stock_code_list = ['sz000977']
     factor_list = [
         "FQ_FACTOR"
         "MA_10",

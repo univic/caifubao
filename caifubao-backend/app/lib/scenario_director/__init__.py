@@ -24,19 +24,19 @@ class ScenarioDirector(object):
 
     def load_scenario_scheme(self):
         """
-        load the scheme class according to the scheme name provided by user
+        load the strategy class according to the strategy name provided by user
         """
         self.scenario = getattr(scenario_schemes, self.scenario_scheme_name)
 
     def load_scenario_processor(self):
         """
-        load scenario processor according to the name provided by scenario scheme
+        load scenario processor according to the name provided by scenario strategy
         """
         self.scenario_processor = getattr(scenario_processors, self.scenario.scenario_processor_name)
 
     def run_scenario(self):
         """
-        run the scenario scheme with designated processor
+        run the scenario strategy with designated processor
         """
         self.load_scenario_scheme()
         self.load_scenario_processor()

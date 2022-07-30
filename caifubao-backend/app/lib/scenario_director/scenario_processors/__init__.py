@@ -7,22 +7,31 @@ class BasicScenarioProcessor(object):
         self.portfolio = None
         self.scenario = scheme
         self.strategy = None
+        self.setup_scenario()
 
-    def exec_scheme(self):
-        print('OH YEAH')
+    def setup_scenario(self):
+        """
+        load strategy and portfolios
+        :return:
+        """
+        self.load_strategy_scheme()
+        # self.load_portfolio()
 
     def load_strategy_scheme(self):
         """
-        load strategy scheme according to the name provided by scenario scheme
+        load strategy strategy according to the name provided by scenario strategy
         """
         self.strategy = getattr(strategy, self.scenario.strategy_name)
 
     def load_portfolio(self):
         """
-        load strategy scheme according to the name provided by scenario scheme
+        load strategy strategy according to the name provided by scenario strategy
         """
         # self.portfolio = getattr(strategy, self.scenario_scheme.strategy_name)
         pass
+
+    def exec_scheme(self):
+        print('OH YEAH')
 
 
 class RealOperationScenarioProcessor(BasicScenarioProcessor):
