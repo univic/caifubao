@@ -18,11 +18,15 @@ class StrategyInterpreter(object):
                 stock_obj_list.append(stock_obj)
         return stock_obj_list
 
+    def get_stock_factor_list(self):
+        stock_factor_list = self.strategy.stock_factor_list
+        return stock_factor_list
+
     def get_trade_calendar(self):
         pass
 
     def parse_factors(self):
-        for factor in self.strategy.factor_list:
+        for factor in self.strategy.stock_factor_list:
             pass
 
     def parse_signals(self):

@@ -49,7 +49,7 @@ class BasicBackTester(object):
             self.generate_trade_plan()
 
     def generate_factors(self):
-        pass
+        stock_factor_list = self.strategy_interpreter.get_stock_factor_list()
 
     def generate_signals(self):
         pass

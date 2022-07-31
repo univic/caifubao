@@ -5,7 +5,7 @@ class BasicStrategy(object):
     stock_scope = "single"            # single | list | pattern | full
     stock_code_list = []
     stock_select_pattern = ""
-    factor_list = []
+    stock_factor_list = []
     signal_list = []
     opportunity_seeker_list_long = []
     opportunity_seeker_list_short = []
@@ -14,7 +14,7 @@ class BasicStrategy(object):
 class Strategy01(BasicStrategy):
     stock_scope = "single"            # single | list | pattern | full
     stock_code_list = ['sz000977']
-    factor_list = [
+    stock_factor_list = [
         "FQ_FACTOR"
         "MA_10",
     ]
