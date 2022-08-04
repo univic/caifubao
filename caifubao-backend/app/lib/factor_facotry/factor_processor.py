@@ -57,6 +57,29 @@ class FactorProcessor(object):
     #         trading_day_helper.update_freshness_meta(self.stock_obj, field_name, self.most_recent_trading_day)
 
 
+class BacktestStockFactorProcessor(object):
+
+    def __init__(self, stock, stock_quote_df, factor_name_list):
+        self.stock = stock
+        self.factor_name_list = factor_name_list
+        self.factor_obj_list = None
+
+    def exec_factor_generation(self):
+        self.generate_exec_plan()
+
+    def generate_exec_plan(self):
+        pass
+
+    def get_processor_obj(self):
+        pass
+
+    def run_processors(self):
+        pass
+
+
+
+
+
 if __name__ == '__main__':
     obj = FactorProcessor()
     stock_obj = IndividualStock.objects(code='sh601166').first()
