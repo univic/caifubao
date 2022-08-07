@@ -2,19 +2,16 @@ import datetime
 import pandas as pd
 import numpy as np
 
-from app.utilities import freshness_meta_helper, trading_day_helper
+from app.utilities import trading_day_helper
 from app.model.stock import StockDailyQuote, BasicStock
-from app.lib.factor_facotry.processors import FactorProcessor
+from app.lib.factor_facotry.processors.factor_processor import FactorProcessor
 
 
 class FQFactorProcessor(FactorProcessor):
 
-    def __init__(self, stock_obj):
-        super().__init__(stock_obj)
+    def __init__(self, stock, quote_df):
+        super().__init__(stock, quote_df)
         self.factor_name = 'fq_factor'
-
-    def read_freshness_meta(self):
-        self.most_recent_factor_date = freshness_meta_helper.read_freshness_meta(self.stock_obj, 'fq_factor')
 
     def perform_factor_calc(self):
 
@@ -40,16 +37,12 @@ class FQFactorProcessor(FactorProcessor):
             decimals=4)
 
         # update database
-        # for i, row in df.iterrows():
-        #     field_list = ["fq_factor", "close_hfq", "open_hfq", "high_hfq", "low_hfq"]
-        #     quote_obj = StockDailyQuote.objects(code=row["code"], date=i).first()
-        #     for field in field_list:
-        #         quote_obj[field] = row[field]
-        #     quote_obj.save()
-
-        # upsert freshness meta
-        last_factor_date = df.iloc[-1]['date']
-        trading_day_helper.update_freshness_meta(self.stock_obj, self.factor_name, last_factor_date)
+        for i, row in df.iterrows():
+            field_list = ["fq_factor", "close_hfq", "open_hfq", "high_hfq", "low_hfq"]
+            quote_obj = StockDailyQuote.objects(code=row["code"], date=i).first()
+            for field in field_list:
+                quote_obj[field] = row[field]
+            quote_obj.save()
 
 
 if __name__ == '__main__':

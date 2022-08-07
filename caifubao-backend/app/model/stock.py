@@ -98,7 +98,6 @@ class DailyQuote(EmbeddedDocument):
     isST = IntField()    # 1 - 被ST  0 - 否
 
 
-# TODO: make it dynamic
 class DataFreshnessMeta(EmbeddedDocument):
     daily_quote = DateTimeField()
     fq_factor = DateTimeField()

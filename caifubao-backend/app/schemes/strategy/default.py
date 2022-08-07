@@ -15,7 +15,7 @@ class Strategy01(BasicStrategy):
     stock_scope = "single"            # single | list | pattern | full
     stock_code_list = ['sz000977']
     stock_factor_list = [
-        "FQ_FACTOR"
+        "FQ_FACTOR",
         "MA_10",
     ]
     signal_list = []

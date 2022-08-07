@@ -12,3 +12,4 @@ def read_freshness_meta(stock_obj, name):
 def upsert_freshness_meta(stock_obj, name, date):
     query = DataFreshnessMeta.objects(code=stock_obj.code, name=name)
     query.upsert_one(set__date=date)
+    query.save()
