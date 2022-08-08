@@ -13,6 +13,6 @@ class FactorDataEntry(DynamicDocument):
         ]
     }
     name = StringField()
-    target_code = StringField()
+    stock_code = StringField()
     category = StringField()
     date = DateTimeField()

@@ -1,3 +1,4 @@
+import logging
 import datetime
 import pandas as pd
 import numpy as np
@@ -5,6 +6,8 @@ import numpy as np
 from app.utilities import trading_day_helper
 from app.model.stock import StockDailyQuote, BasicStock
 from app.lib.factor_facotry.processors.factor_processor import FactorProcessor
+
+logger = logging.getLogger()
 
 
 class FQFactorProcessor(FactorProcessor):

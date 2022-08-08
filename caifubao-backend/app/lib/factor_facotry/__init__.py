@@ -57,7 +57,12 @@ class FactorFactory(object):
             processor_object = processors.factor_registry[factor_name]['processor_object']
             processor_instance = processor_object(self.stock, self.quote_df)
             process_handler_func = getattr(processor_instance, processors.factor_registry[factor_name]['handler'])
-            process_handler_func()
+            if hasattr(processors.factor_registry[factor_name], 'kwargs'):
+                kwargs = getattr(processors.factor_registry[factor_name], 'kwargs')
+                process_handler_func(**kwargs)
+            else:
+                process_handler_func()
+
 
 
 if __name__ == '__main__':
