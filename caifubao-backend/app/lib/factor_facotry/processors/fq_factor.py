@@ -12,7 +12,7 @@ logger = logging.getLogger()
 
 class FQFactorProcessor(FactorProcessor):
 
-    def __init__(self, stock, quote_df):
+    def __init__(self, stock, quote_df, *args, **kwargs):
         super().__init__(stock, quote_df)
         self.factor_name = 'fq_factor'
 

@@ -18,7 +18,6 @@ class MovingAverageFactorProcessor(FactorProcessor):
         # TODO: use bulk insert
         self.quote_df[self.factor_name] = talib.MA(self.quote_df[self.factor_name],
                                                    timeperiod=self.ma_days)
-
         # update database
 
     def read_existing_factors(self):

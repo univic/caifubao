@@ -12,7 +12,7 @@ class FactorProcessor(object):
     Base class for all the factor scenario_processors
     """
 
-    def __init__(self, stock, quote_df, current_processing_date=None):
+    def __init__(self, stock, quote_df, current_processing_date=None, *args, **kwargs):
         self.stock = stock
         self.quote_df = quote_df
         self.factor_name = None
@@ -32,7 +32,7 @@ class FactorProcessor(object):
             if self.current_processing_date and self.most_recent_factor_date >= self.current_processing_date:
                 self.exec_flag = False
 
-    def perform_factor_calc(self):
+    def perform_factor_calc(self, *args, **kwargs):
         pass
 
     def generate_factor(self):
