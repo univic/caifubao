@@ -55,10 +55,10 @@ class FactorFactory(object):
         for factor_name in self.factor_name_list:
             logger.info(f'Running factor processors {factor_name}')
             processor_object = processors.factor_registry[factor_name]['processor_object']
-            kwargs = None
+            kwargs = {}
             if 'kwargs' in processors.factor_registry[factor_name].keys():
                 kwargs = processors.factor_registry[factor_name]['kwargs']
-            processor_instance = processor_object(self.stock, self.quote_df, kwargs)
+            processor_instance = processor_object(self.stock, self.quote_df, **kwargs)
             process_handler_func = getattr(processor_instance, processors.factor_registry[factor_name]['handler'])
             process_handler_func()
 
