@@ -16,3 +16,4 @@ class FactorDataEntry(DynamicDocument):
     stock_code = StringField()
     category = StringField()
     date = DateTimeField()
+    value = FloatField()

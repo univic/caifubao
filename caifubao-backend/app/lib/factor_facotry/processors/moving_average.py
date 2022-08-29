@@ -20,6 +20,20 @@ class MovingAverageFactorProcessor(FactorProcessor):
                                                    timeperiod=self.ma_days)
         pass
         # update database
+        bulk_insert_list = []
+        for i, row in self.quote_df[self.quote_df[self.factor_name].notna()].iterrows():
+            factor_data = FactorDataEntry()
+            factor_data.name = self.factor_name
+            factor_data.stock_code = self.stock.code
+            factor_data.value = row[self.factor_name]
+            factor_data.date = i
+            bulk_insert_list.append(factor_data)
+        FactorDataEntry.objects.insert(bulk_insert_list, load_bulk=False)
+
+        # update_freshness_meta
+        latest_factor_date = max(self.quote_df.index)
+        freshness_meta_helper.upsert_freshness_meta(self.stock, self.factor_name, latest_factor_date)
+
 
     def read_existing_factors(self):
         pass
