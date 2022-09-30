@@ -53,7 +53,7 @@ class FactorFactory(object):
     def run_processors(self):
         logger.info(f'Running factor processors for {self.stock.code} - {self.stock.name}')
         for factor_name in self.factor_name_list:
-            logger.info(f'Running factor processors {factor_name}')
+            logger.info(f'Running factor processor {factor_name}')
             processor_object = processors.factor_registry[factor_name]['processor_object']
             kwargs = {}
             if 'kwargs' in processors.factor_registry[factor_name].keys():
