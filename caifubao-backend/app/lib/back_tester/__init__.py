@@ -32,7 +32,7 @@ class BasicBackTester(object):
         # daily analysis
         for trading_day in self.backtest_date_list:
             self.current_trading_day = trading_day
-            self.perform_daily_analysis()
+            self.do_daily_job()
 
         # self.after_back_test()
 
@@ -54,17 +54,13 @@ class BasicBackTester(object):
     def get_quote_list(self):
         pass
 
-    def perform_overall_analysis(self):
-        for stock in self.stock_list:
-            self.generate_factors(stock)
-
-    def perform_daily_analysis(self):
+    def do_daily_job(self):
         for stock in self.stock_list:
             self.generate_factors(stock)
             self.generate_signals()
             self.generate_trade_plan()
 
-    def generate_factors(self, stock, batch_analysis=False):
+    def generate_factors(self, stock):
         stock_factor_name_list = self.strategy_interpreter.get_stock_factor_list()
         factor_factory = FactorFactory(stock, stock_factor_name_list)
         factor_factory.run_factor_factory()
@@ -87,3 +83,8 @@ class BackTesterA(BasicBackTester):
     Single stock single strategy back tester
     """
     pass
+
+
+if __name__ == '__main__':
+    pass
+

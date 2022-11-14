@@ -1,9 +1,12 @@
+import logging
 from app.schemes import scenario as scenario_schemes
 
 from app.lib.scenario_director import scenario_processors
 """
 how would you like the world to turn?
 """
+
+logger = logging.getLogger()
 
 # load scenario
 
@@ -40,6 +43,7 @@ class ScenarioDirector(object):
         """
         self.load_scenario_scheme()
         self.load_scenario_processor()
+        logger.info(f'Preparing scenario {self.scenario_scheme_name}')
         obj = self.scenario_processor(self.scenario)
         obj.exec_scheme()
 

@@ -2,7 +2,7 @@ import logging
 import pandas as pd
 from app.model.stock import BasicStock, StockDailyQuote
 from app.lib.factor_facotry import processors
-from app.utilities import trading_day_helper
+from app.utilities import trading_day_helper, freshness_meta_helper
 
 logger = logging.getLogger()
 
@@ -12,8 +12,10 @@ class FactorFactory(object):
         logger.info('Initializing factor factory')
         self.stock = stock
         self.quote_df = quote_df
+        self.latest_quote_date = None
         self.factor_name_list = factor_name_list
         self.factor_processor_list = []
+        self.factor_processor_exec_list = []
 
     def before_exec(self):
         pass
@@ -22,12 +24,10 @@ class FactorFactory(object):
         pass
 
     def run_factor_factory(self):
-        self.generate_exec_plan()
-        self.read_quote_data()
-        self.run_processors()
 
-    def generate_exec_plan(self):
-        pass
+        self.read_quote_data()
+        self.generate_exec_plan()
+        self.run_processors()
 
     def read_quote_data(self):
         if not self.quote_df:
@@ -48,11 +48,19 @@ class FactorFactory(object):
             # convert to df
             quote_json = quote_qs.as_pymongo()
             self.quote_df = pd.DataFrame(quote_json)
-            self.quote_df.set_index("date", inplace=True)
+        self.quote_df.set_index("date", inplace=True)
+        self.latest_quote_date = self.quote_df.index[-1]
+
+    def generate_exec_plan(self):
+        # Check meta data and determine whether to run the processor
+        for factor_name in self.factor_name_list:
+            latest_factor_date = freshness_meta_helper.read_freshness_meta(self.stock, factor_name)
+            if self.latest_quote_date != latest_factor_date:
+                self.factor_processor_exec_list.append(factor_name)
 
     def run_processors(self):
         logger.info(f'Running factor processors for {self.stock.code} - {self.stock.name}')
-        for factor_name in self.factor_name_list:
+        for factor_name in self.factor_processor_exec_list:
             logger.info(f'Running factor processor {factor_name}')
             processor_object = processors.factor_registry[factor_name]['processor_object']
             kwargs = {}
