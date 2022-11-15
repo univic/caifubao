@@ -23,18 +23,24 @@ class BasicBackTester(object):
     def run_back_test(self):
         logger.info(f'Running backtest {self.scenario.back_tester_name}')
         logger.info(f'Using strategy {self.scenario.strategy_name}')
-        # self.before_back_test()
+        self.before_back_test()
         self.get_backtest_date_range()
         self.get_stock_list()
 
         # overall analysis
+        pass
+
+        # generate factors
+
+        self.generate_factors()
+        self.generate_signals()
+        self.generate_trade_plan()
 
         # daily analysis
-        for trading_day in self.backtest_date_list:
-            self.current_trading_day = trading_day
-            self.do_daily_job()
+        # for trading_day in self.backtest_date_list:
+        #     self.current_trading_day = trading_day
 
-        # self.after_back_test()
+        self.after_back_test()
 
     def before_back_test(self):
         mongoengine_tool.connect_to_db()
@@ -51,19 +57,11 @@ class BasicBackTester(object):
     def get_stock_list(self):
         self.stock_list = self.strategy_interpreter.get_stock_list()
 
-    def get_quote_list(self):
-        pass
-
-    def do_daily_job(self):
+    def generate_factors(self):
         for stock in self.stock_list:
-            self.generate_factors(stock)
-            self.generate_signals()
-            self.generate_trade_plan()
-
-    def generate_factors(self, stock):
-        stock_factor_name_list = self.strategy_interpreter.get_stock_factor_list()
-        factor_factory = FactorFactory(stock, stock_factor_name_list)
-        factor_factory.run_factor_factory()
+            stock_factor_name_list = self.strategy_interpreter.get_stock_factor_list()
+            factor_factory = FactorFactory(stock, stock_factor_name_list)
+            factor_factory.run_factor_factory()
 
     def generate_signals(self):
         pass

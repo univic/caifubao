@@ -16,6 +16,10 @@ class FactorFactory(object):
         self.factor_name_list = factor_name_list
         self.factor_processor_list = []
         self.factor_processor_exec_list = []
+        self.counter_dict = {
+            'FINI': 0,
+            'SKIP': 0,
+        }
 
     def before_exec(self):
         pass
@@ -28,6 +32,9 @@ class FactorFactory(object):
         self.read_quote_data()
         self.generate_exec_plan()
         self.run_processors()
+        logger.info(f'Factor generated for {self.stock.name}, '
+                    f'{self.counter_dict["FINI"]} finished, '
+                    f'{self.counter_dict["SKIP"]} skipped.')
 
     def read_quote_data(self):
         if not self.quote_df:
@@ -55,8 +62,11 @@ class FactorFactory(object):
         # Check meta data and determine whether to run the processor
         for factor_name in self.factor_name_list:
             latest_factor_date = freshness_meta_helper.read_freshness_meta(self.stock, factor_name)
-            if self.latest_quote_date != latest_factor_date:
+            if not latest_factor_date or self.latest_quote_date > latest_factor_date:
                 self.factor_processor_exec_list.append(factor_name)
+                self.counter_dict['FINI'] += 1
+            else:
+                self.counter_dict['SKIP'] += 1
 
     def run_processors(self):
         logger.info(f'Running factor processors for {self.stock.code} - {self.stock.name}')
@@ -71,8 +81,8 @@ class FactorFactory(object):
             process_handler_func()
 
 
-if __name__ == '__main__':
-    from app.lib.db_tool import mongoengine_tool
-    mongoengine_tool.connect_to_db()
-    obj = FactorProcesser()
-    obj.generate_factors("sh601166")
+# if __name__ == '__main__':
+#     from app.lib.db_tool import mongoengine_tool
+#     mongoengine_tool.connect_to_db()
+#     obj = FactorProcesser()
+#     obj.generate_factors("sh601166")

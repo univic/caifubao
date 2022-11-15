@@ -14,7 +14,7 @@ class FQFactorProcessor(FactorProcessor):
 
     def __init__(self, stock, quote_df, *args, **kwargs):
         super().__init__(stock, quote_df)
-        self.factor_name = 'fq_factor'
+        self.factor_name = 'FQ_FACTOR'
 
     def perform_factor_calc(self):
 
@@ -48,9 +48,9 @@ class FQFactorProcessor(FactorProcessor):
             quote_obj.save()
 
 
-if __name__ == '__main__':
-    from app.lib.db_tool import mongoengine_tool
-    mongoengine_tool.connect_to_db()
-    stock_obj = BasicStock.objects(code="sh601166").first()
-    obj = FQFactorProcessor(stock_obj)
-    obj.perform_factor_calc()
+# if __name__ == '__main__':
+#     from app.lib.db_tool import mongoengine_tool
+#     mongoengine_tool.connect_to_db()
+#     stock_obj = BasicStock.objects(code="sh601166").first()
+#     obj = FQFactorProcessor(stock_obj)
+#     obj.perform_factor_calc()
