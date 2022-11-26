@@ -1,9 +1,4 @@
-# import datetime
-# import pandas as pd
-# from app.lib.db_tool import mongoengine_tool
-from app.utilities import trading_day_helper
-# from app.model.stock import StockDailyQuote, IndividualStock
-# from app.model.factor import FactorDataEntry
+
 from app.utilities import freshness_meta_helper
 
 
@@ -36,7 +31,7 @@ class FactorProcessor(object):
 
     def update_freshness_meta(self):
         last_factor_date = self.quote_df.index[-1]
-        freshness_meta_helper.upsert_freshness_meta(self.stock, self.factor_name, last_factor_date)
+        freshness_meta_helper.upsert_freshness_meta(self.stock, self.factor_name, 'factor', last_factor_date)
 
     def read_existing_factors(self):
         pass

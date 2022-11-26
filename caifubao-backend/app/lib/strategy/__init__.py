@@ -22,6 +22,10 @@ class StrategyInterpreter(object):
         stock_factor_list = self.strategy.stock_factor_list
         return stock_factor_list
 
+    def get_signal_list(self):
+        signal_list = self.strategy.signal_list
+        return signal_list
+
     def get_trade_calendar(self):
         pass
 

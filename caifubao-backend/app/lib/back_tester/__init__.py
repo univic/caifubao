@@ -64,7 +64,9 @@ class BasicBackTester(object):
             factor_factory.run_factor_factory()
 
     def generate_signals(self):
-        pass
+        logger.info(f'Preparing to generate signals')
+        for stock in self.stock_list:
+            pass
 
     def generate_trade_plan(self):
         pass

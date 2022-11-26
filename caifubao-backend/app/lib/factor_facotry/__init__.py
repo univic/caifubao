@@ -19,6 +19,7 @@ class FactorFactory(object):
         self.counter_dict = {
             'FINI': 0,
             'SKIP': 0,
+            'ERR': 0,
         }
 
     def before_exec(self):
