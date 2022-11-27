@@ -11,7 +11,9 @@ factor_registry = {
             'PRI_MA': 120,        # Primary MA line
             'REF_MA': 250,        # MA line for reference
             'CROSS_TYPE': 'UP',   # MA lines can up or down cross each other,
-        }
+        },
+        'factor_dependency': ['MA_120', 'MA_250'],
+        'quote_dependent': False,
     }
 }
 

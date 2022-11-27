@@ -4,6 +4,6 @@ from mongoengine import Document, StringField, EmbeddedDocumentListField, DateTi
 
 class DataFreshnessMeta(Document):
     code = StringField()
-    type = StringField()
     name = StringField()
+    category = StringField()
     date = DateTimeField()
