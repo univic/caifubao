@@ -15,7 +15,7 @@ class MovingAverageFactorProcessor(FactorProcessor):
         self.factor_name = f'MA_{self.ma_days}'
 
     def perform_factor_calc(self):
-        # TODO: use bulk insert
+        # TODO: FIX DUPLICATE VALUE
         self.quote_df[self.factor_name] = talib.MA(self.quote_df['close_hfq'],
                                                    timeperiod=self.ma_days)
         pass
@@ -32,7 +32,7 @@ class MovingAverageFactorProcessor(FactorProcessor):
 
         # update_freshness_meta
         latest_factor_date = max(self.quote_df.index)
-        freshness_meta_helper.upsert_freshness_meta(self.stock, self.factor_name, latest_factor_date)
+        freshness_meta_helper.upsert_freshness_meta(self.stock, self.factor_name, 'factor', latest_factor_date)
 
     def read_existing_factors(self):
         pass

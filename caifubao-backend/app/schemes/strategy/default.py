@@ -17,7 +17,10 @@ class Strategy01(BasicStrategy):
     stock_factor_list = [
         "FQ_FACTOR",
         "MA_10",
+        "MA_20",
     ]
-    signal_list = []
+    signal_list = [
+        "MA_10_UPCROSS_20",
+    ]
     opportunity_seeker_list_long = []
     opportunity_seeker_list_short = []

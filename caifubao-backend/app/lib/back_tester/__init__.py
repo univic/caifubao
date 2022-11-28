@@ -4,6 +4,7 @@ from app.lib.db_tool import mongoengine_tool
 from app.lib.strategy import StrategyInterpreter
 from app.lib.portfolio_manager import PortfolioManager
 from app.lib.factor_facotry import FactorFactory
+from app.lib.signal_man import SignalMan
 from app.utilities import trading_day_helper
 
 logger = logging.getLogger()
@@ -65,8 +66,13 @@ class BasicBackTester(object):
 
     def generate_signals(self):
         logger.info(f'Preparing to generate signals')
+        stock_signal_name_list = self.strategy_interpreter.get_signal_list()
         for stock in self.stock_list:
-            pass
+            signal_man = SignalMan(stock, stock_signal_name_list)
+            signal_man.run()
+
+    def scan_trade_opportunities(self):
+        pass
 
     def generate_trade_plan(self):
         pass

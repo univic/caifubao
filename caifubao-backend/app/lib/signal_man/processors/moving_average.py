@@ -2,7 +2,7 @@ import logging
 import pandas as pd
 from app.utilities import freshness_meta_helper
 from app.model.factor import FactorDataEntry
-from app.lib.signal_man.processors import SignalProcessor
+from app.lib.signal_man.processors.signal_processor import SignalProcessor
 
 logger = logging.getLogger()
 
@@ -15,6 +15,7 @@ class MACrossSignalProcessor(SignalProcessor):
         self.ref_ma = kwargs['REF_MA']
         self.cross_type = kwargs['CROSS_TYPE']
         self.latest_analysis_date = None
+        self.factor_df = None
 
     def read_factor_data(self):
         logger.info(f'Reading factor data for {self.stock.code} - {self.stock.name}')
@@ -27,7 +28,17 @@ class MACrossSignalProcessor(SignalProcessor):
         # convert json to df
         pri_ma_factor_df = pd.DataFrame(pri_ma_factor_query_json)
         ref_ma_factor_df = pd.DataFrame(ref_ma_factor_query_json)
-        self.latest_analysis_date = pri_ma_factor_df.index[-1]
+        # # set index
+        pri_ma_factor_df.set_index("date", inplace=True)
+        ref_ma_factor_df.set_index("date", inplace=True)
+        # rename column
+        pri_ma_factor_df.rename(columns={"value": self.pri_ma}, inplace=True)
+        ref_ma_factor_df.rename(columns={"value": self.ref_ma}, inplace=True)
+        self.factor_df = pd.merge(pri_ma_factor_df, ref_ma_factor_df, how="outer", left_index=True, right_index=True)
+        self.latest_analysis_date = self.factor_df.index[-1]
+
+    def generate_signal(self, *args, **kwargs):
+        pass
 
     def update_freshness_meta(self):
         freshness_meta_helper.upsert_freshness_meta(self.stock, self.signal_name,
