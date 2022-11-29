@@ -7,11 +7,12 @@ class FactorProcessor(object):
     Base class for all the factor scenario_processors
     """
 
-    def __init__(self, stock, quote_df, *args, **kwargs):
+    def __init__(self, stock, quote_df, latest_factor_date, *args, **kwargs):
         self.stock = stock
         self.quote_df = quote_df
         self.factor_name = None
         self.most_recent_factor_date = None
+        self.latest_factor_date = latest_factor_date
 
     def before_exec(self):
         pass

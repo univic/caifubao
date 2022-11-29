@@ -12,8 +12,8 @@ logger = logging.getLogger()
 
 class FQFactorProcessor(FactorProcessor):
 
-    def __init__(self, stock, quote_df, *args, **kwargs):
-        super().__init__(stock, quote_df)
+    def __init__(self, stock, quote_df, latest_factor_date, *args, **kwargs):
+        super().__init__(stock, quote_df, latest_factor_date)
         self.factor_name = 'FQ_FACTOR'
 
     def perform_factor_calc(self):

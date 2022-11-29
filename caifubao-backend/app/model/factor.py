@@ -13,7 +13,7 @@ class FactorDataEntry(DynamicDocument):
         ]
     }
     name = StringField()
-    stock_code = StringField()
+    stock_code = StringField(unique_with=['date', 'name'])
     category = StringField()
     date = DateTimeField()
     value = FloatField()

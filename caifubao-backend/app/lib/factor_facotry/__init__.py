@@ -13,6 +13,7 @@ class FactorFactory(object):
         self.stock = stock
         self.quote_df = quote_df
         self.latest_quote_date = None
+        self.latest_factor_date = None
         self.factor_name_list = factor_name_list
         self.factor_processor_list = []
         self.factor_processor_exec_list = []
@@ -48,7 +49,6 @@ class FactorFactory(object):
                                                    date__gt=most_recent_factor_date) \
                     .exclude(*field_exclude_list) \
                     .order_by('+date')
-
             else:
                 quote_qs = StockDailyQuote.objects(code=self.stock.code) \
                     .exclude(*field_exclude_list) \
@@ -62,8 +62,8 @@ class FactorFactory(object):
     def generate_exec_plan(self):
         # Check meta data and determine whether to run the processor
         for factor_name in self.factor_name_list:
-            latest_factor_date = freshness_meta_helper.read_freshness_meta(self.stock, factor_name)
-            if not latest_factor_date or self.latest_quote_date > latest_factor_date:
+            self.latest_factor_date = freshness_meta_helper.read_freshness_meta(self.stock, factor_name)
+            if not self.latest_factor_date or self.latest_quote_date > self.latest_factor_date:
                 self.factor_processor_exec_list.append(factor_name)
                 self.counter_dict['FINI'] += 1
             else:
@@ -77,7 +77,7 @@ class FactorFactory(object):
             kwargs = {}
             if 'kwargs' in processors.factor_registry[factor_name].keys():
                 kwargs = processors.factor_registry[factor_name]['kwargs']
-            processor_instance = processor_object(self.stock, self.quote_df, **kwargs)
+            processor_instance = processor_object(self.stock, self.quote_df, self.latest_factor_date, **kwargs)
             process_handler_func = getattr(processor_instance, processors.factor_registry[factor_name]['handler'])
             process_handler_func()
 

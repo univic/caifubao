@@ -39,6 +39,7 @@ class MACrossSignalProcessor(SignalProcessor):
 
     def generate_signal(self, *args, **kwargs):
         pass
+    # TODO GENERATE SIGNAL
 
     def update_freshness_meta(self):
         freshness_meta_helper.upsert_freshness_meta(self.stock, self.signal_name,

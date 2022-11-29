@@ -9,19 +9,21 @@ logger = logging.getLogger()
 
 class MovingAverageFactorProcessor(FactorProcessor):
 
-    def __init__(self, stock, quote_df, *args, **kwargs):
-        super().__init__(stock, quote_df)
+    def __init__(self, stock, quote_df, latest_factor_date, *args, **kwargs):
+        super().__init__(stock, quote_df, latest_factor_date)
         self.ma_days = kwargs['MA']
         self.factor_name = f'MA_{self.ma_days}'
 
     def perform_factor_calc(self):
-        # TODO: FIX DUPLICATE VALUE
         self.quote_df[self.factor_name] = talib.MA(self.quote_df['close_hfq'],
                                                    timeperiod=self.ma_days)
         pass
         # update database
         bulk_insert_list = []
-        for i, row in self.quote_df[self.quote_df[self.factor_name].notna()].iterrows():
+        trimmed_quote_df = self.quote_df[self.quote_df[self.factor_name].notna()]
+        if self.latest_factor_date:
+            trimmed_quote_df = trimmed_quote_df[trimmed_quote_df.index > self.latest_factor_date]
+        for i, row in trimmed_quote_df.iterrows():
             factor_data = FactorDataEntry()
             factor_data.name = self.factor_name
             factor_data.stock_code = self.stock.code
