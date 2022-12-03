@@ -2,6 +2,7 @@ import logging
 import pandas as pd
 from app.utilities import freshness_meta_helper
 from app.model.factor import FactorDataEntry
+from app.model.signal import SpotSignalData
 from app.lib.signal_man.processors.signal_processor import SignalProcessor
 
 logger = logging.getLogger()
@@ -28,16 +29,30 @@ class MACrossSignalProcessor(SignalProcessor):
         # convert json to df
         pri_ma_factor_df = pd.DataFrame(pri_ma_factor_query_json)
         ref_ma_factor_df = pd.DataFrame(ref_ma_factor_query_json)
-        # # set index
+        # set index
         pri_ma_factor_df.set_index("date", inplace=True)
         ref_ma_factor_df.set_index("date", inplace=True)
         # rename column
         pri_ma_factor_df.rename(columns={"value": self.pri_ma}, inplace=True)
         ref_ma_factor_df.rename(columns={"value": self.ref_ma}, inplace=True)
+        # remove abundant columns
+        pri_ma_factor_df.drop(['_id', 'name', 'stock_code'], axis=1, inplace=True)
+        ref_ma_factor_df.drop(['_id', 'name', 'stock_code'], axis=1, inplace=True)
+
         self.factor_df = pd.merge(pri_ma_factor_df, ref_ma_factor_df, how="outer", left_index=True, right_index=True)
+
         self.latest_analysis_date = self.factor_df.index[-1]
 
     def generate_signal(self, *args, **kwargs):
+        self.factor_df['pri_above_ref'] = self.factor_df[self.pri_ma] > self.factor_df[self.ref_ma]
+        self.factor_df['pri_cross_ref'] = self.factor_df['pri_above_ref'].diff()
+        # drop NA lines, otherwise the and operation will fail
+        self.factor_df.dropna(inplace=True)
+        self.factor_df['pri_up_cross_ref'] = (self.factor_df['pri_above_ref'] & self.factor_df['pri_cross_ref'])
+
+    def perform_db_upsert(self):
+        signal_df = self.factor_df[(self.factor_df['pri_up_cross_ref'])]
+        signal_data_item = SpotSignalData()
         pass
     # TODO GENERATE SIGNAL
 

@@ -11,7 +11,7 @@ class Signal(Document):
     category = StringField
 
 
-class SignalDataEntry(Document):
+class SignalData(Document):
     meta = {
         'allow_inheritance': True,
         'indexes': [
@@ -26,10 +26,10 @@ class SignalDataEntry(Document):
     category = IntField()
 
 
-class OneTimeSignalDataEntry(SignalDataEntry):
+class SpotSignalData(SignalData):
     pass
 
 
-class ContinuousSignalDataEntry(SignalDataEntry):
+class ContinuousSignalData(SignalData):
     active_status = StringField()
     expire_date = StringField()
