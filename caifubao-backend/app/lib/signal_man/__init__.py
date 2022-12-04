@@ -17,6 +17,7 @@ class SignalMan(object):
         self.signal_processor_list = []
         self.signal_processor_exec_list = []
         self.latest_quote_date = None
+        self.latest_signal_date = None
         self.counter_dict = {
             'FINI': 0,
             'SKIP': 0,
@@ -48,8 +49,8 @@ class SignalMan(object):
         for signal_name in self.signal_name_list:
             exec_flag = True
             # if signal analysis has never happend, or analysis date is behind quote date, run the processor
-            latest_signal_analysis_date = freshness_meta_helper.read_freshness_meta(self.stock, name=signal_name)
-            if latest_signal_analysis_date and self.latest_quote_date <= latest_signal_analysis_date:
+            self.latest_signal_date = freshness_meta_helper.read_freshness_meta(self.stock, name=signal_name)
+            if self.latest_signal_date and self.latest_quote_date <= self.latest_signal_date:
                 self.counter_dict['SKIP'] += 1
                 exec_flag = False
                 logger.info(f'Signal processor {signal_name} skipped')
@@ -64,7 +65,7 @@ class SignalMan(object):
             kwargs = {}
             if 'kwargs' in processors.factor_registry[signal_name].keys():
                 kwargs = processors.factor_registry[signal_name]['kwargs']
-            processor_instance = processor_object(self.stock, signal_name, **kwargs)
+            processor_instance = processor_object(self.stock, signal_name, self.latest_signal_date, **kwargs)
             process_handler_func = getattr(processor_instance, processors.factor_registry[signal_name]['handler'])
             exec_result_dict = process_handler_func()
             result_flag = exec_result_dict["flag"]

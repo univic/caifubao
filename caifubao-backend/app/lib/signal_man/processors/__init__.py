@@ -14,4 +14,3 @@ factor_registry = {
     }
 }
 
-

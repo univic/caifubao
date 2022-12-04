@@ -9,14 +9,12 @@ logger = logging.getLogger()
 
 
 class MACrossSignalProcessor(SignalProcessor):
-    def __init__(self, stock, signal_name, *args, **kwargs):
-        super().__init__(stock, signal_name)
+    def __init__(self, stock, signal_name, latest_signal_date, *args, **kwargs):
+        super().__init__(stock, signal_name, latest_signal_date)
         self.backtest_overall_anaylsis = True
         self.pri_ma = kwargs['PRI_MA']
         self.ref_ma = kwargs['REF_MA']
         self.cross_type = kwargs['CROSS_TYPE']
-        self.latest_analysis_date = None
-        self.factor_df = None
 
     def read_factor_data(self):
         logger.info(f'Reading factor data for {self.stock.code} - {self.stock.name}')
@@ -41,7 +39,7 @@ class MACrossSignalProcessor(SignalProcessor):
 
         self.factor_df = pd.merge(pri_ma_factor_df, ref_ma_factor_df, how="outer", left_index=True, right_index=True)
 
-        self.latest_analysis_date = self.factor_df.index[-1]
+        self.latest_factor_date = self.factor_df.index[-1]
 
     def generate_signal(self, *args, **kwargs):
         self.factor_df['pri_above_ref'] = self.factor_df[self.pri_ma] > self.factor_df[self.ref_ma]
@@ -51,12 +49,16 @@ class MACrossSignalProcessor(SignalProcessor):
         self.factor_df['pri_up_cross_ref'] = (self.factor_df['pri_above_ref'] & self.factor_df['pri_cross_ref'])
 
     def perform_db_upsert(self):
-        signal_df = self.factor_df[(self.factor_df['pri_up_cross_ref'])]
-        signal_data_item = SpotSignalData()
+        bulk_insert_list = []
+        if self.latest_signal_date:
+            signal_df = self.factor_df[(self.factor_df['pri_up_cross_ref']), self.factor_df.index > self.latest_signal_date]
+        else:
+            signal_df = self.factor_df[(self.factor_df['pri_up_cross_ref'])]
+        for i, row in signal_df.iterrows():
+            signal_data = SpotSignalData()
+            signal_data.name = self.signal_name
+            signal_data.stock_code = self.stock.code
+            signal_data.date = i
+            bulk_insert_list.append(signal_data)
+        SpotSignalData.objects.insert(bulk_insert_list, load_bulk=False)
         pass
-    # TODO GENERATE SIGNAL
-
-    def update_freshness_meta(self):
-        freshness_meta_helper.upsert_freshness_meta(self.stock, self.signal_name,
-                                                    'signal_analysis', self.latest_analysis_date)
-

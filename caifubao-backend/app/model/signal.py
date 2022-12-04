@@ -4,26 +4,24 @@ from mongoengine import Document, StringField, EmbeddedDocumentListField, DateTi
 
 class Signal(Document):
     """
-    category: 0: one-time, 1: cont
+    category: 0: spot, 1: cont
     """
     code = StringField()
     name = StringField()
-    category = StringField
+    category = StringField()
 
 
 class SignalData(Document):
     meta = {
         'allow_inheritance': True,
-        'indexes': [
-            '-date',
-            ('code', 'target_code')
-        ]
+        # 'indexes': [
+        #     '-date',
+        #     ('name', 'stock_code')
+        # ]
     }
-    code = StringField()
-    signal = ReferenceField(Signal)
+    name = StringField(unique_with=['date', 'stock_code'])
     date = DateTimeField()
-    target_code = StringField()
-    category = IntField()
+    stock_code = StringField()
 
 
 class SpotSignalData(SignalData):
