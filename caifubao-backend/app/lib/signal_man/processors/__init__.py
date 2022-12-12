@@ -1,6 +1,6 @@
 from app.lib.signal_man.processors import moving_average
 
-factor_registry = {
+registry = {
     "MA_10_UPCROSS_20": {
         'processor_object': moving_average.MACrossSignalProcessor,
         'handler': 'run',

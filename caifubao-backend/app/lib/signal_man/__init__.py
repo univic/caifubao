@@ -43,7 +43,6 @@ class SignalMan(object):
         pass
 
     def generate_exec_plan(self):
-        # TODO: how to determine exec plan
         # Check meta data and determine whether to run the processor
         self.latest_quote_date = trading_day_helper.read_freshness_meta(self.stock, 'daily_quote')
         for signal_name in self.signal_name_list:
@@ -61,12 +60,12 @@ class SignalMan(object):
         logger.info(f'Running signal processors for {self.stock.code} - {self.stock.name}')
         for signal_name in self.signal_processor_exec_list:
             logger.info(f'Running signal processor {signal_name}')
-            processor_object = processors.factor_registry[signal_name]['processor_object']
+            processor_object = processors.registry[signal_name]['processor_object']
             kwargs = {}
-            if 'kwargs' in processors.factor_registry[signal_name].keys():
-                kwargs = processors.factor_registry[signal_name]['kwargs']
+            if 'kwargs' in processors.registry[signal_name].keys():
+                kwargs = processors.registry[signal_name]['kwargs']
             processor_instance = processor_object(self.stock, signal_name, self.latest_signal_date, **kwargs)
-            process_handler_func = getattr(processor_instance, processors.factor_registry[signal_name]['handler'])
+            process_handler_func = getattr(processor_instance, processors.registry[signal_name]['handler'])
             exec_result_dict = process_handler_func()
             result_flag = exec_result_dict["flag"]
             self.counter_dict[result_flag] += 1
