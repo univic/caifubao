@@ -1,7 +1,7 @@
-from app.lib.signal_man.processors import moving_average
+from app.lib.opportunity_seeker.processors import moving_average
 
 registry = {
-    "MA_10_UPCROSS_20": {
+    "MA_LONG_10_UPCROSS_20_WHILE_120_UPWARD": {
         'processor_object': moving_average.MACrossSignalProcessor,
         'handler': 'run',
         'kwargs': {

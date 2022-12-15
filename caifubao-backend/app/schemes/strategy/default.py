@@ -7,8 +7,7 @@ class BasicStrategy(object):
     stock_select_pattern = ""
     stock_factor_list = []
     signal_list = []
-    opportunity_seeker_list_long = []
-    opportunity_seeker_list_short = []
+    opportunity_scanner_list = []
 
 
 class Strategy01(BasicStrategy):
@@ -22,5 +21,4 @@ class Strategy01(BasicStrategy):
     signal_list = [
         "MA_10_UPCROSS_20",
     ]
-    opportunity_seeker_list_long = []
-    opportunity_seeker_list_short = []
+    opportunity_scanner_list = []

@@ -61,7 +61,6 @@ class GeneralFactory(object):
         for processor_name in self.processor_exec_list:
             logger.info(f'Running {self.module_name} processor {processor_name}')
             processor_object = self.processor_registry.registry[processor_name]['processor_object']
-            kwargs = {}
             if 'kwargs' in self.processor_registry.registry[processor_name].keys():
                 kwargs = self.processor_registry.registry[processor_name]['kwargs']
                 processor_instance = processor_object(self.stock, processor_name, self.latest_analysis_date, **kwargs)
@@ -69,7 +68,7 @@ class GeneralFactory(object):
                 exec_result_dict = process_handler_func()
                 result_flag = exec_result_dict["flag"]
                 self.counter_dict[result_flag] += 1
-                logger.info(f'Signal processor {processor_name} exec result: {result_flag} {exec_result_dict["msg"]}')
+                logger.info(f'{self.module_name} processor {processor_name} exec result: {result_flag} {exec_result_dict["msg"]}')
 
 
 class GeneralProcessor(object):
@@ -101,12 +100,10 @@ class GeneralProcessor(object):
         pass
 
     def exec(self):
-        self.generate_signal()
-
-    def after_exec(self):
+        # Customizing here
         pass
 
-    def generate_signal(self, *args, **kwargs):
+    def after_exec(self):
         pass
 
     def update_freshness_meta(self):
