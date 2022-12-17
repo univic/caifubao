@@ -17,8 +17,10 @@ class Strategy01(BasicStrategy):
         "FQ_FACTOR",
         "MA_10",
         "MA_20",
+        "MA_120",
     ]
     signal_list = [
         "MA_10_UPCROSS_20",
+        "HFQ_PRICE_ABOVE_MA_120",
     ]
     opportunity_scanner_list = []

@@ -47,7 +47,7 @@ class GeneralFactory(object):
         self.latest_quote_date = trading_day_helper.read_freshness_meta(self.stock, 'daily_quote')
         for processor_name in self.processor_name_list:
             exec_flag = True
-            # if signal analysis has never happend, or analysis date is behind quote date, run the processor
+            # if analysis has never happend, or analysis date is behind quote date, run the processor
             self.latest_analysis_date = freshness_meta_helper.read_freshness_meta(self.stock, name=processor_name)
             if self.latest_analysis_date and self.latest_quote_date <= self.latest_analysis_date:
                 self.counter_dict['SKIP'] += 1
@@ -76,9 +76,9 @@ class GeneralProcessor(object):
     Base class for all the processors
     """
 
-    def __init__(self, stock, processor_unit_name, latest_process_date, *args, **kwargs):
+    def __init__(self, stock, processor_name, latest_process_date, *args, **kwargs):
         self.stock = stock
-        self.processor_unit_name = processor_unit_name
+        self.processor_name = processor_name
         self.processor_type = None
         self.most_recent_processor_unit_date = None
         self.latest_process_date = latest_process_date
@@ -108,7 +108,7 @@ class GeneralProcessor(object):
 
     def update_freshness_meta(self):
         latest_date = max(self.data_df.index)
-        freshness_meta_helper.upsert_freshness_meta(self.stock, self.processor_unit_name,
+        freshness_meta_helper.upsert_freshness_meta(self.stock, self.processor_name,
                                                     self.processor_type, latest_date)
 
     def perform_db_upsert(self):

@@ -8,5 +8,5 @@ class MALongCondition1(GeneralProcessor):
       - Found MA10 up cross MA20 signal
       - MA120 is going upward
     """
-    def __init__(self, stock, processor_unit_name, latest_process_date, *args, **kwargs):
-        super().__init__(stock, processor_unit_name, latest_process_date, *args, **kwargs)
+    def __init__(self, stock, processor_name, latest_process_date, *args, **kwargs):
+        super().__init__(stock, processor_name, latest_process_date, *args, **kwargs)
