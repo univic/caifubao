@@ -18,7 +18,7 @@ registry = {
         'handler': 'run',
         'kwargs': {
             'PRI_MA': "MA_120",  # Primary MA line
-            'CROSS_TYPE': 'ABOVE',  # price's relative position to primary MA line, ABOVE or BELOW
+            'RELATION_TYPE': 'ABOVE',  # price's relative position to primary MA line, ABOVE or BELOW
         },
         'factor_dependency': ['MA_120'],
         'type': 'continuous',

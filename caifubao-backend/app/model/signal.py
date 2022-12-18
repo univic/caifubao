@@ -29,5 +29,5 @@ class SpotSignalData(SignalData):
 
 
 class ContinuousSignalData(SignalData):
-    active_status = StringField()
+    # active_status = StringField()
     expire_date = StringField()

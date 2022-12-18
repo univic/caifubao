@@ -10,6 +10,13 @@ class TradingOpportunityProcessor(GeneralProcessor):
         pass
 
     def exec(self):
+        self.read_signal_data()
+        self.scan_trade_opportunities()
+
+    def read_signal_data(self):
+        pass
+
+    def scan_trade_opportunities(self):
         pass
 
 
