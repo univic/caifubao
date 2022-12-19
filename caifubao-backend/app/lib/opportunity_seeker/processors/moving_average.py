@@ -33,10 +33,25 @@ class LongTradeCondition1(TradingOpportunityProcessor):
         # set index
         signal_df_1.set_index("date", inplace=True)
         signal_df_2.set_index("date", inplace=True)
-
+        # add mark column
+        signal_df_1["MA_10_UPCROSS_20"] = True
+        signal_df_2["HFQ_PRICE_ABOVE_MA_120"] = False
+        # remove abundant columns
+        signal_df_1.drop(['_id', 'name', 'stock_code'], axis=1, inplace=True)
+        signal_df_2.drop(['_id', 'name', 'stock_code'], axis=1, inplace=True)
+        # merge df
+        self.data_df = pd.merge(signal_df_1, signal_df_2, how="outer", left_index=True, right_index=True)
 
     def scan_trade_opportunities(self):
-        pass
+        self.data_df["match_condition"] = (self.data_df["MA_10_UPCROSS_20"] & self.data_df["HFQ_PRICE_ABOVE_MA_120"])
+        opportunity_df = self.data_df[self.data_df["match_condition"] is True]
+        for i, row in opportunity_df.iterrows():
+            data = TradeOpportunity()
+            data.date = i
+            data.name = self.processor_name
+            data.stock_code = self.stock.code
+            data.direction = "LONG"
+            self.bulk_insert_list.append(data)
 
     def perform_db_upsert(self):
-        pass
+        TradeOpportunity.objects.insert(self.bulk_insert_list, load_bulk=False)
