@@ -80,7 +80,9 @@ class BasicBackTester(object):
             opportunity_seeker.run()
 
     def generate_trade_plan(self):
-        pass
+        logger.info(f'Generating trade plan')
+        for day in self.backtest_date_list:
+            pass
 
     def exec_trade_plan(self):
         pass
