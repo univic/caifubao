@@ -13,3 +13,7 @@ class PortfolioManager(object):
 
     def update_portfolio_info(self):
         pass
+
+    def check_trade_opportunities(self):
+        pass
+

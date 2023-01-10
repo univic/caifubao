@@ -12,4 +12,3 @@ class SignalMan(GeneralFactory):
         meta_type = 'signal_processor'
         processor_registry = processors.registry
         super().__init__(stock, module_name, meta_type, processor_registry, processor_name_list)
-

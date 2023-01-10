@@ -23,6 +23,4 @@ class Strategy01(BasicStrategy):
         "MA_10_UPCROSS_20",
         "HFQ_PRICE_ABOVE_MA_120",
     ]
-    opportunity_scanner_list = [
-        "LONG_MA10_UPCROSS_MA20_WHILE_MA120_UPWARD",
-    ]
+    opportunity_scanner_list = []
