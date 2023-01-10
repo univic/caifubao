@@ -83,7 +83,6 @@ class GeneralProcessor(object):
         self.most_recent_processor_unit_date = None
         self.latest_process_date = latest_process_date
         self.data_df = None
-        self.bulk_insert_list = []
         self.exec_result_dict = {
             "flag": "FINI",
             "msg": ""

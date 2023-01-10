@@ -23,3 +23,12 @@ class TradePlanner(object):
     def run(self):
         pass
 
+    def read_opportunity_data(self):
+        pass
+
+    def read_portfolio_list(self):
+        pass
+
+    def generate_trade_plan(self):
+        pass
+
