@@ -82,8 +82,9 @@ class FactorFactory(object):
             process_handler_func()
 
 
-# if __name__ == '__main__':
-#     from app.lib.db_tool import mongoengine_tool
-#     mongoengine_tool.connect_to_db()
-#     obj = FactorProcesser()
-#     obj.generate_factors("sh601166")
+if __name__ == '__main__':
+    # TODO: make it decoupled
+    from app.lib.db_tool import mongoengine_tool
+    mongoengine_tool.connect_to_db()
+    obj = FactorFactory()
+    obj.generate_factors("sh601166")

@@ -31,4 +31,3 @@ class TradePlanner(object):
 
     def generate_trade_plan(self):
         pass
-

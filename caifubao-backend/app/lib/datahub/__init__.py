@@ -24,3 +24,8 @@ class Datahub(object):
         except ServerSelectionTimeoutError:
             logger.error("Timed out when establishing DB connection")
             exit()
+
+
+if __name__ == '__init__':
+    instance = Datahub()
+    instance.initialize()
