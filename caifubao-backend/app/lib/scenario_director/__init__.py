@@ -18,6 +18,10 @@ logger = logging.getLogger()
 
 
 class ScenarioDirector(object):
+    """
+    Scenario director will organize the whole logic process,
+    it starts from scenario and turn into corresponding movement.
+    """
 
     def __init__(self, scenario_scheme_name):
         self.scenario_processor = None
@@ -49,6 +53,5 @@ class ScenarioDirector(object):
 
 
 if __name__ == '__main__':
-    obj_a = ScenarioDirector(scenario_scheme_name='BackTestScenario')
-    obj_a.run_scenario()
-
+    scenario_director = ScenarioDirector(scenario_scheme_name='BackTestScenarioScheme')
+    scenario_director.run_scenario()
