@@ -4,9 +4,10 @@ class BasicScenarioScheme(object):
     scenario_name = None
     scenario_type = None
     market_name = 'A股'
-    strategy_name = None
     portfolio_name = ""
-    test_start_date = None
+    start_date = None
+    end_date = None
+    current_date = None
 
 
 class BackTestScenarioScheme(BasicScenarioScheme):

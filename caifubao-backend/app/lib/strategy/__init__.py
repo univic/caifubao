@@ -1,14 +1,22 @@
 from app.model.stock import BasicStock
+from app.schemes import strategy as strategy_registry
 
 """
 how we deal with information and make effective decision?
 """
 
 
-class StrategyInterpreter(object):
+class StrategyDirecter(object):
 
-    def __init__(self, strategy_scheme):
-        self.strategy = strategy_scheme
+    def __init__(self, strategy_name):
+        self.strategy = None
+        self.strategy_name = strategy_name
+
+    def load_strategy_scheme(self):
+        """
+        load strategy according to the name provided by scenario strategy
+        """
+        self.strategy = getattr(strategy_registry, self.strategy_name)
 
     def get_stock_list(self):
         stock_obj_list = []

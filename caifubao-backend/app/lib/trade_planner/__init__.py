@@ -1,5 +1,5 @@
 import logging
-# from app.lib import GeneralFactory
+# from app.lib import GeneralWorker
 from app.lib.trade_planner import processors
 
 

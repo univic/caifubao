@@ -1,7 +1,7 @@
 import logging
 import datetime
 from app.lib.db_tool import mongoengine_tool
-from app.lib.strategy import StrategyInterpreter
+from app.lib.strategy import StrategyDirecter
 from app.lib.portfolio_manager import PortfolioManager
 from app.lib.factor_facotry import FactorFactory
 from app.lib.signal_man import SignalMan
@@ -18,7 +18,7 @@ class BasicBackTester(object):
         self.trading_day_list = []
         self.current_trading_day = None
         self.stock_list = []
-        self.strategy_interpreter = StrategyInterpreter(strategy)
+        self.strategy_interpreter = StrategyDirecter(strategy)
         self.portfolio_manager = PortfolioManager()
         self.backtest_date_list = None
 

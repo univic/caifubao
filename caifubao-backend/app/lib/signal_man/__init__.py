@@ -1,17 +1,17 @@
 import logging
-from app.lib import GeneralFactory
+from app.lib import GeneralWorker
 from app.lib.signal_man import processors
 
 
 logger = logging.getLogger()
 
 
-class SignalMan(GeneralFactory):
-    def __init__(self, stock, processor_name_list):
-        module_name = 'SignalMan'
-        meta_type = 'signal_processor'
-        processor_registry = processors.registry
-        super().__init__(stock, module_name, meta_type, processor_registry, processor_name_list)
+class SignalMan(GeneralWorker):
+    def __init__(self, scenario=None, strategy=None):
+        self.module_name = 'SignalMan'
+        self.meta_type = 'signal_processor'
+        self.processor_registry = processors.registry
+        super().__init__(scenario, strategy, self.module_name, self.meta_type, self.processor_registry)
 
 
 if __name__ == "__main__":

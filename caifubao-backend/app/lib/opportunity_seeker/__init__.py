@@ -1,12 +1,12 @@
 import logging
-from app.lib import GeneralFactory
+from app.lib import GeneralWorker
 from app.lib.opportunity_seeker import processors
 
 
 logger = logging.getLogger()
 
 
-class OpportunitySeeker(GeneralFactory):
+class OpportunitySeeker(GeneralWorker):
     def __init__(self, stock, processor_name_list):
         module_name = 'OpportunitySeeker'
         meta_type = 'opportunity'

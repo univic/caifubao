@@ -19,7 +19,7 @@ class BasicScenarioProcessor(object):
 
     def load_strategy_scheme(self):
         """
-        load strategy strategy according to the name provided by scenario strategy
+        load strategy according to the name provided by scenario strategy
         """
         self.strategy = getattr(strategy, self.scenario.strategy_name)
 
