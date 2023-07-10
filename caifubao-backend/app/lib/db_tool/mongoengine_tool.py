@@ -25,3 +25,30 @@ def connect_to_db(alias='default'):
 def disconnect_from_db(alias='default'):
     logger.info(f'Disconnecting database connection with alias {alias} in process {os.getpid()}')
     disconnect(alias=alias)
+
+
+class DBAdmin(object):
+
+    def __init__(self):
+        self.db_conn = None
+
+    def get_db_connection(self):
+        if self.db_conn:
+            pass
+        else:
+            self.connect_to_db()
+        return self.db_conn
+
+    def connect_to_db(self, alias='default'):
+        logger.info(f'Opening database connection with alias {alias} in process {os.getpid()}')
+        conn = connect(db=app_config.MONGODB_SETTINGS["db"],
+                       host=app_config.MONGODB_SETTINGS["host"],
+                       port=app_config.MONGODB_SETTINGS["port"],
+                       alias=alias)
+
+        self.db_conn = conn
+
+    @staticmethod
+    def disconnect_from_db(alias='default'):
+        logger.info(f'Disconnecting database connection with alias {alias} in process {os.getpid()}')
+        disconnect(alias=alias)
