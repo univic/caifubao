@@ -95,9 +95,10 @@ class GeneralWorker(object):
     def go_exec(self):
         logger.info(f'{self.module_name} - running exec units')
         for exec_unit in self.exec_unit_list:
+            stock = exec_unit.target_stock
             processor = exec_unit.processor
             processor_name = general_utils.get_class_name(processor)
-            logger.info(f'{self.module_name} - processor {exec_unit.processor} - target {stock} - analyte {exec_unit.analyte}')
+            logger.info(f'{self.module_name} - processor {exec_unit.processor} - target {stock.code}/{stock.name} - analyte {exec_unit.analyte}')
             if exec_unit.kwargs:
                 kwargs = exec_unit.kwargs
                 # TODO: TO BE DONE BELOW
