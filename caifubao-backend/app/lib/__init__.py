@@ -42,7 +42,7 @@ class GeneralWorker(object):
 
     def exec(self):
         self.generate_exec_plan()
-        self.run_processors()
+        self.go_exec()
         logger.info(f'{self.module_name} processors run finished for {self.stock.name}, '
                     f'{self.counter_dict["FINI"]} finished, '
                     f'{self.counter_dict["SKIP"]} skipped.')
@@ -102,7 +102,7 @@ class GeneralWorker(object):
             if exec_unit.kwargs:
                 kwargs = exec_unit.kwargs
                 # TODO: TO BE DONE BELOW
-                processor_instance = processor(self.stock, processor_name, self.latest_analysis_date, **kwargs)
+                processor_instance = processor(exec_unit)
                 process_handler_func = getattr(processor_instance, exec_unit.handler_func)
                 exec_result_dict = process_handler_func()
                 result_flag = exec_result_dict["flag"]
@@ -110,33 +110,19 @@ class GeneralWorker(object):
                 logger.info(
                     f'{self.module_name} processor {processor_name} exec result: {result_flag} {exec_result_dict["msg"]}')
 
-    def run_processors(self):
-        logger.info(f'Running {self.module_name} processors for {self.stock.code} - {self.stock.name}')
-        for processor_name in self.processor_exec_list:
-            logger.info(f'Running {self.module_name} processor {processor_name}')
-            processor_object = self.processor_registry.registry[processor_name]['processor_object']
-            if 'kwargs' in self.processor_registry.registry[processor_name].keys():
-                kwargs = self.processor_registry.registry[processor_name]['kwargs']
-                processor_instance = processor_object(self.stock, processor_name, self.latest_analysis_date, **kwargs)
-                process_handler_func = getattr(processor_instance, self.processor_registry.registry[processor_name]['handler'])
-                exec_result_dict = process_handler_func()
-                result_flag = exec_result_dict["flag"]
-                self.counter_dict[result_flag] += 1
-                logger.info(f'{self.module_name} processor {processor_name} exec result: {result_flag} {exec_result_dict["msg"]}')
-
-
 class GeneralProcessor(object):
     """
     Base class for all the processors
     """
 
-    def __init__(self, stock, processor_name, latest_process_date, *args, **kwargs):
-        self.stock = stock
-        self.processor_name = processor_name
-        self.processor_type = None
-        self.most_recent_processor_unit_date = None
-        self.latest_process_date = latest_process_date
-        self.data_df = None
+    def __init__(self, exec_unit, *args, **kwargs):
+        # self.stock = exec_unit.stock
+        # self.processor = exec_unit.processor
+        # self.processor_name = general_utils.get_class_name(processor)
+        # self.processor_type = exec_unit.processor_type
+        # self.most_recent_processor_unit_date = None
+        # # self.latest_process_date = latest_process_date
+        # self.data_df = None
         self.exec_result_dict = {
             "flag": "FINI",
             "msg": ""
