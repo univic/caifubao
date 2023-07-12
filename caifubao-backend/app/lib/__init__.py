@@ -110,9 +110,12 @@ class GeneralWorker(object):
                 logger.info(
                     f'{self.module_name} processor {processor_name} exec result: {result_flag} {exec_result_dict["msg"]}')
 
+
 class GeneralProcessor(object):
     """
     Base class for all the processors
+    input: an exec unit
+    output: a result dict, contains result code and msg
     """
 
     def __init__(self, exec_unit, *args, **kwargs):
@@ -122,8 +125,8 @@ class GeneralProcessor(object):
         # self.processor_type = exec_unit.processor_type
         # self.most_recent_processor_unit_date = None
         # # self.latest_process_date = latest_process_date
-        # self.data_df = None
-        self.exec_result_dict = {
+        self.data_df = None
+        self.exec_result_dict: dict = {
             "flag": "FINI",
             "msg": ""
         }
@@ -144,6 +147,9 @@ class GeneralProcessor(object):
         pass
 
     def after_exec(self):
+        pass
+
+    def get_source_data(self):
         pass
 
     def update_freshness_meta(self):
