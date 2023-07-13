@@ -16,13 +16,12 @@ class GeneralExecUnit(object):
 
 
 class GeneralWorker(object):
-    def __init__(self, scenario, strategy, module_name, meta_type, processor_registry):
+    def __init__(self, module_name, processor_registry):
         self.module_name = module_name
-        self.meta_type = meta_type
         self.processor_registry = processor_registry
         self.processor_list = []
-        self.scenario = scenario
-        self.strategy = strategy
+        self.scenario = None
+        self.strategy = None
         self.counter_dict = {
             'FINI': 0,
             'SKIP': 0,
@@ -30,7 +29,7 @@ class GeneralWorker(object):
         }
         self.stock_list = []
         self.exec_unit_list = []
-        logger.info(f'Initializing {self.module_name}')
+        logger.info(f'Module {self.module_name} is initializing')
 
     def run(self):
         self.before_exec()
@@ -43,7 +42,7 @@ class GeneralWorker(object):
     def exec(self):
         self.generate_exec_plan()
         self.go_exec()
-        logger.info(f'{self.module_name} processors run finished for {self.stock.name}, '
+        logger.info(f'{self.module_name} processors run finished, '
                     f'{self.counter_dict["FINI"]} finished, '
                     f'{self.counter_dict["SKIP"]} skipped.')
 
@@ -61,7 +60,7 @@ class GeneralWorker(object):
         latest_quote_date = trading_day_helper.read_freshness_meta(target_stock, 'daily_quote')
         for processor_name in self.processor_list:
             exec_flag = True
-            # if analysis had never happend, or analysis date is behind quote date, run the processor
+            # if analysis had never happened, or analysis date is behind quote date, run the processor
             latest_analysis_date = freshness_meta_helper.read_freshness_meta(target_stock, name=processor_name)
             if latest_analysis_date and latest_quote_date <= self.latest_analysis_date:
                 self.counter_dict['SKIP'] += 1

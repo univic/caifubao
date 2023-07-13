@@ -23,22 +23,23 @@ class ScenarioDirector(object):
     it starts from scenario and turn into corresponding movement.
     """
 
-    def __init__(self, scenario_name):
-        # self.scenario_processor = None
-        # self.portfolio = None
+    def __init__(self):
+        self.module_name = 'ScenarioDirector'
         self.scenario = None
-        self.scenario_name = scenario_name
+        self.scenario_name = None
+        logger.info(f'Module {self.module_name} is initializing')
 
-    def load_scenario(self):
+    def load_scenario(self, scenario_name):
         """
         load the strategy class according to the strategy name provided by user
         """
+        self.scenario_name = scenario_name
         self.scenario = getattr(scenario_schemes, self.scenario_name)
+        logger.info(f'Module {self.module_name} - Scenario {scenario_name} loaded')
 
-    @staticmethod
-    def get_scenario(scenario_name):
-        scenario = getattr(scenario_schemes, scenario_name)
-        return scenario
+    # def get_scenario(self, scenario_name):
+    #     self.load_scenario(scenario_name)
+    #     return self.scenario
 
     # def load_scenario_processor(self):
     #     """
@@ -57,5 +58,5 @@ class ScenarioDirector(object):
     #     obj.exec_scheme()
 
 
-if __name__ == '__main__':
-    scenario_director = ScenarioDirector(scenario_name='BackTestScenario')
+scenario_director = ScenarioDirector()
+

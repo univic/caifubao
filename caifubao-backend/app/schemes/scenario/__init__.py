@@ -1,6 +1,6 @@
 
 
-class BasicScenarioScheme(object):
+class Default(object):
     scenario_name = None
     scenario_type = None
     market_name = 'A股'
@@ -10,7 +10,7 @@ class BasicScenarioScheme(object):
     current_date = None
 
 
-class BackTestScenarioScheme(BasicScenarioScheme):
+class BackTest(Default):
     scenario_name = "backtest"
     scenario_type = "backtest"
     scenario_processor_name = 'BackTestScenarioProcessor'
@@ -19,7 +19,7 @@ class BackTestScenarioScheme(BasicScenarioScheme):
     start_date = "2016-01-01"
 
 
-class RealOperationScenarioScheme(BasicScenarioScheme):
+class RealOperation(Default):
     scenario_name = "real_operation"
     scenario_type = "real"
     strategy_name = "Strategy01"

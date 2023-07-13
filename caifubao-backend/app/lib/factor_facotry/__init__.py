@@ -60,7 +60,7 @@ class FactorFactory(object):
         self.latest_quote_date = self.quote_df.index[-1]
 
     def generate_exec_plan(self):
-        # Check meta data and determine whether to run the processor
+        # Check metadata and determine whether to run the processor
         for factor_name in self.factor_name_list:
             self.latest_factor_date = freshness_meta_helper.read_freshness_meta(self.stock, factor_name)
             if not self.latest_factor_date or self.latest_quote_date > self.latest_factor_date:

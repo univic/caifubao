@@ -7,29 +7,15 @@ from app.conf import app_config
 
 logger = logging.getLogger()
 
-db = MongoEngine()
 
-
-def db_init(app):
-    db.init_app(app)
-
-
-def connect_to_db(alias='default'):
-    logger.info(f'Opening database connection with alias {alias} in process {os.getpid()}')
-    connect(db=app_config.MONGODB_SETTINGS["db"],
-            host=app_config.MONGODB_SETTINGS["host"],
-            port=app_config.MONGODB_SETTINGS["port"],
-            alias=alias)
-
-
-def disconnect_from_db(alias='default'):
-    logger.info(f'Disconnecting database connection with alias {alias} in process {os.getpid()}')
-    disconnect(alias=alias)
+# def db_init(app):
+#     db.init_app(app)
 
 
 class DBAdmin(object):
 
     def __init__(self):
+        db = MongoEngine()
         self.db_conn = None
 
     def get_db_connection(self):
@@ -52,3 +38,6 @@ class DBAdmin(object):
     def disconnect_from_db(alias='default'):
         logger.info(f'Disconnecting database connection with alias {alias} in process {os.getpid()}')
         disconnect(alias=alias)
+
+
+db_admin = DBAdmin()

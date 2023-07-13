@@ -1,3 +1,4 @@
+import logging
 from app.model.stock import BasicStock
 from app.schemes import strategy as strategy_registry
 
@@ -5,18 +6,24 @@ from app.schemes import strategy as strategy_registry
 how we deal with information and make effective decision?
 """
 
+logger = logging.getLogger()
+
 
 class StrategyDirecter(object):
 
-    def __init__(self, strategy_name):
+    def __init__(self):
         self.strategy = None
-        self.strategy_name = strategy_name
+        self.strategy_name = None
+        self.module_name = 'StrategyDirecter'
+        logger.info(f'Module {self.module_name} is initializing')
 
-    def load_strategy_scheme(self):
+    def load_strategy(self, strategy_name):
         """
         load strategy according to the name provided by scenario strategy
         """
-        self.strategy = getattr(strategy_registry, self.strategy_name)
+        self.strategy_name = strategy_name
+        self.strategy = getattr(strategy_registry, strategy_name)
+        logger.info(f'Module {self.module_name} - Strategy {strategy_name} loaded')
 
     def get_stock_list(self):
         stock_obj_list = []
@@ -52,3 +59,5 @@ class StrategyDirecter(object):
     def parse_opportunity_seeker(self):
         pass
 
+
+strategy_director = StrategyDirecter()
