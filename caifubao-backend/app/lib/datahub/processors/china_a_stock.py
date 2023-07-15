@@ -20,12 +20,9 @@ class ChinaAStock(object):
         self.market_code = "ZH-A"
         self.today = datetime.date.today()
         self.most_recent_trading_day = None
-        mongoengine_tool.connect_to_db()
         self.market = FinanceMarket.objects(name="A股").first()
         self.trade_calendar = self.market.trade_calendar
 
-    # def __del__(self):
-    #     mongoengine_tool.disconnect_from_db()
 
     def initialize(self):
 
@@ -460,12 +457,6 @@ class ChinaAStock(object):
             stock_task_ok_flag = True
         if stock_task_ok_flag and index_task_ok_flag:
             logger.info(f'Stock Market {self.market.name} - Scheduled data update task check OK')
-
-    def data_integrity_self_check(self):
-        pass
-
-    def perform_factor_process(self):
-        pass
 
 
 if __name__ == '__main__':

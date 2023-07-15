@@ -1,9 +1,10 @@
-
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 class Default(object):
     scenario_name = None
     scenario_type = None
-    market_name = 'A股'
+    market_code_list: list = ['China_A_Stock', ]
     portfolio_name = ""
     start_date = None
     end_date = None

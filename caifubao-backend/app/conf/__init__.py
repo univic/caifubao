@@ -24,7 +24,13 @@ class BaseConfig(object):
         'MAX_PWD_LENGTH': 32,
     }
     DATAHUB_SETTINGS = {
-        'TASK_SCAN_INTERVAL': 5,      # in minutes
+        # 'TASK_SCAN_INTERVAL': 5,      # in minutes
+    }
+    TASK_CONTROLLER_SETTINGS = {
+        'DEFAULT_TASK_QUEUE_NUM': 3,
+        'MAX_TASK_QUEUE_NUM': 5,
+        'TASK_EXEC_INTERVAL': 0.5,     # in seconds
+        'TASK_SCAN_INTERVAL': 60,      # in seconds
     }
 
 

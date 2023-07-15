@@ -8,7 +8,7 @@ from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc
 from app.utilities.progress_bar import progress_bar
 from app.lib.datahub.data_source.interface import baostock_interface as baostock_if
 from app.lib.task_controller.common import convert_dict_to_kwarg, check_task_uniqueness, \
-    exec_datahub_task, convert_kwarg_to_dict
+    exec_task, convert_kwarg_to_dict
 from app.utilities import trading_day_helper
 
 logger = logging.getLogger()
@@ -81,7 +81,7 @@ class DatahubTask(object):
     def exec_task(self, item):
         # result = {"code": "GOOD"}
         self.before_task_exec(item)
-        result = exec_datahub_task(item)
+        result = exec_task(item)
         self.after_task_exec(item)
         return result
 
