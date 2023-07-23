@@ -31,9 +31,10 @@ def data_retriever_init():
 
 
 class Queue(object):
-    def __init__(self, name):
+    def __init__(self, name: str, attributes: dict = None):
         self.name: str = name
         self.queue: list = []
+        self.attributes: dict = attributes
         logger.info(f'TaskController - Creating task queue: {self.name}, process PID {os.getpid()}')
 
     def add_task(self):
@@ -45,6 +46,7 @@ class Queue(object):
 
     def get_queue_length(self):
         pass
+
 
 class TaskQueueController(object):
     def __init__(self):
@@ -62,16 +64,14 @@ class TaskQueueController(object):
         """
         self.setup_queue("default")
 
-    def setup_queue(self, name):
+    def setup_queue(self, name, attributes: dict = None):
         """
         setup a new queue
         :return:
         """
-        queue = Queue(name)
-        self.task_queues[name] = {
-            "queue_object": queue,
-            "interface": None
-        }
+        queue = Queue(name, attributes)
+        self.task_queues[name] = queue
+        return queue
 
     def consume_queue(self):
         pass
@@ -92,15 +92,23 @@ class TaskQueueController(object):
             if hasattr(task, find_queue_by):
                 queue_founded = False
                 for queue in self.task_queues:
-                    if queue[find_queue_by] == getattr(task, find_queue_by):
+                    # if corresponding queue exists, put the task into it
+                    if hasattr(queue, find_queue_by) and queue[find_queue_by] == getattr(task, find_queue_by):
                         q = queue
                         queue_founded = True
+                    else:
+                        # if no queue matches the attribute, create a new queue
+                        queue_name = getattr(task, find_queue_by)
+                        queue_attr = {
+                            find_queue_by: getattr(task, find_queue_by)
+                        }
+                        q = self.setup_queue(queue_name, queue_attr)
                 # if no queue matches the attribute, put the task into default queue
                 if not queue_founded:
-                    q = self.task_queues["default"]["queue_object"]
+                    q = self.task_queues["default"]
             # if exec_unit does not have the corresponding attribute, put the task into default queue
             else:
-                q = self.task_queues["default"]["queue_object"]
+                q = self.task_queues["default"]
             q.add_task(task)
 
 
