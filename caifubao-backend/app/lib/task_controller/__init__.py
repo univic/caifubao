@@ -35,14 +35,16 @@ class Queue(object):
         self.name: str = name
         self.queue: list = []
         self.attributes: dict = attributes
+        self.task_exec_interval: float = app_config.TASK_CONTROLLER_SETTINGS["TASK_EXEC_INTERVAL"]
         logger.info(f'TaskController - Creating task queue: {self.name}, process PID {os.getpid()}')
 
-    def add_task(self):
-        pass
+    def add_task(self, task):
+        self.queue.append(task)
 
     def dispatch(self):
         for task in self.queue:
             result = exec_task(task)
+            time.sleep(self.task_exec_interval)
 
     def get_queue_length(self):
         pass
@@ -54,7 +56,6 @@ class TaskQueueController(object):
         self.task_queues: dict = {}
         self.queue_num: int = app_config.TASK_CONTROLLER_SETTINGS["DEFAULT_TASK_QUEUE_NUM"]
         self.max_queue_num: int = app_config.TASK_CONTROLLER_SETTINGS["MAX_TASK_QUEUE_NUM"]
-        self.task_exec_interval: float = app_config.TASK_CONTROLLER_SETTINGS["TASK_EXEC_INTERVAL"]
         self.initialize()
 
     def initialize(self):
@@ -114,12 +115,9 @@ class TaskQueueController(object):
 
 class TaskController(object):
 
-    def __init__(self, runner_name='General'):
-        self.runner_name = runner_name
-        self.db_alias = runner_name
-        self.task_obj = Task
+    def __init__(self):
         self.task_list = []
-        self.task_list_length = 0
+        self.task_list_length: int = 0
         self.task_scan_interval = app_config.TASK_CONTROLLER_SETTINGS["TASK_SCAN_INTERVAL"]
         self.continue_scan = True
         self.task_queue_controller = None
@@ -131,26 +129,24 @@ class TaskController(object):
         self.task_queue_controller = TaskQueueController()
         self.check_historical_tasks()
 
-    def check_historical_tasks(self):
+    @staticmethod
+    def check_historical_tasks():
         logger.info(f'TaskController - Checking historical tasks')
         # Check obsolete tasks
-        task_list = self.task_obj.objects(status='CRTD', valid_before=datetime.datetime.now())
+        task_list = Task.objects(status='CRTD', valid_before__lte=datetime.datetime.now())
         task_list_len = task_list.count()
+        logger.info(f'TaskController - Found {task_list_len} obsolete tasks, all of those tasks will be deactivated')
         for task in task_list:
             task.status = 'ABORT'
             task.exec_msg = 'Cancelled by TaskController due to task validation expired'
             task.processed_at = datetime.datetime.now()
             task.save()
-        if task_list_len == 0:
-            logger.info(f'TaskController - Found {task_list_len} obsolete tasks')
-        else:
-            logger.info(f'TaskController - Found {task_list_len} obsolete tasks, all of them had been deactivated')
 
     def dispatch(self):
 
         # if nothing goes wrong check new tasks regularly
         while self.continue_scan:
-            logger.info(f'TaskController - Scanning tasks by interval {self.task_scan_interval} minutes')
+            logger.info(f'TaskController - Scanning tasks by interval {self.task_scan_interval} seconds')
             self.get_task_list()
             self.task_list_length = len(self.task_list)
             if self.task_list_length > 0:
@@ -158,40 +154,38 @@ class TaskController(object):
                             f'next scan in {self.task_scan_interval} minutes')
                 self.exec_task_list()
             else:
-                logger.info(f'TaskController - No new task，next scan in {self.task_scan_interval} minutes')
-            time_to_wait = self.task_scan_interval * 60
+                logger.info(f'TaskController - No new task，next scan in {self.task_scan_interval} seconds')
+            time_to_wait = self.task_scan_interval
             time.sleep(time_to_wait)
 
     def get_task_list(self):
         # get task list and calculate list length
-        self.task_list = self.task_obj.objects(status='CRTD')  # Slice here to limit task number
+        self.task_list = Task.objects(status='CRTD')  # Slice here to limit task number
         return self.task_list
 
     def exec_task_list(self):
         self.task_queue_controller.add_tasks(self.task_list)
-        prog_bar = progress_bar()
-        counter = {
-            "COMP": 0,
-            "WARN": 0,
-            "FAIL": 0,
-            "ERR": 0,
-        }
-        for i, item in enumerate(self.task_list):
-            result = self.exec_task(item)
-            if result['code'] == 'GOOD':
-                counter["COMP"] += 1
-            elif result['code'] == 'WARN':
-                counter["WARN"] += 1
-            elif result['code'] == 'ERR':
-                counter["ERR"] += 1
-            else:
-                counter["FAIL"] += 1
-            prog_bar(i, self.task_list_length)
-        logger.info(f'{self.runner_name} task worker - Processed {self.task_list_length} tasks, '
-                    f'{counter["COMP"]} success, {counter["WARN"]} completed with warning, {counter["FAIL"]} failed, '
-                    f'{counter["ERR"]} encountered error. ')
-
-
+        # prog_bar = progress_bar()
+        # counter = {
+        #     "COMP": 0,
+        #     "WARN": 0,
+        #     "FAIL": 0,
+        #     "ERR": 0,
+        # }
+        # for i, item in enumerate(self.task_list):
+        #     result = self.exec_task(item)
+        #     if result['code'] == 'GOOD':
+        #         counter["COMP"] += 1
+        #     elif result['code'] == 'WARN':
+        #         counter["WARN"] += 1
+        #     elif result['code'] == 'ERR':
+        #         counter["ERR"] += 1
+        #     else:
+        #         counter["FAIL"] += 1
+        #     prog_bar(i, self.task_list_length)
+        # logger.info(f'{self.runner_name} task worker - Processed {self.task_list_length} tasks, '
+        #             f'{counter["COMP"]} success, {counter["WARN"]} completed with warning, {counter["FAIL"]} failed, '
+        #             f'{counter["ERR"]} encountered error. ')
 
     def create_task(self, name, package, module, obj, handler, interface, task_args_list=None, task_kwarg_dict=None, **extra_kw):
         new_task = self.task_obj()
@@ -209,3 +203,6 @@ class TaskController(object):
             logger.debug(f'{self.runner_name} task worker - Data retrieve task {new_task.name} created')
         else:
             logger.debug(f'{self.runner_name} task worker - Found duplicate data retrieve task {new_task.name}')
+
+
+task_controller = TaskController()
