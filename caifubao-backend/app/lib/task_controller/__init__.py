@@ -36,14 +36,28 @@ class Queue(object):
         self.queue: list = []
         self.attributes: dict = attributes
         self.task_exec_interval: float = app_config.TASK_CONTROLLER_SETTINGS["TASK_EXEC_INTERVAL"]
+        self.task_scan_interval = app_config.TASK_CONTROLLER_SETTINGS["TASK_SCAN_INTERVAL"]
         logger.info(f'TaskController - Creating task queue: {self.name}, process PID {os.getpid()}')
 
     def add_task(self, task):
+        logger.info(f'TaskController - Adding task {task.name} to queue: {self.name}')
         self.queue.append(task)
 
     def dispatch(self):
-        for task in self.queue:
-            result = exec_task(task)
+        logger.info(f'TaskController - Queue {self.name} dispatched')
+        continue_flag = True
+        while continue_flag:
+            self.consume_queue()
+            time.sleep(self.task_scan_interval)
+
+    def consume_queue(self):
+        queue_length = len(self.queue)
+        # Execute first task in the queue, until all the tasks had been popped out
+        while queue_length > 0:
+            logger.info(f'TaskController - Queue {self.name} - Found {queue_length} tasks, running')
+            result = exec_task(self.queue[0])
+            self.queue.pop(0)
+            queue_length = len(self.queue)
             time.sleep(self.task_exec_interval)
 
     def get_queue_length(self):
@@ -120,14 +134,9 @@ class TaskController(object):
         self.task_list_length: int = 0
         self.task_scan_interval = app_config.TASK_CONTROLLER_SETTINGS["TASK_SCAN_INTERVAL"]
         self.continue_scan = True
-        self.task_queue_controller = None
+        self.task_queue_controller = TaskQueueController()
         logger.info(f'TaskController is initializing')
         logger.info(f'TaskController - process PID {os.getpid()}')
-        self.initialize()
-
-    def initialize(self):
-        self.task_queue_controller = TaskQueueController()
-        self.check_historical_tasks()
 
     @staticmethod
     def check_historical_tasks():
@@ -143,6 +152,7 @@ class TaskController(object):
             task.save()
 
     def dispatch(self):
+        self.check_historical_tasks()
 
         # if nothing goes wrong check new tasks regularly
         while self.continue_scan:
@@ -150,9 +160,9 @@ class TaskController(object):
             self.get_task_list()
             self.task_list_length = len(self.task_list)
             if self.task_list_length > 0:
-                logger.info(f'TaskController - Found {self.task_list_length} task(s) and executing, '
+                self.task_queue_controller.add_tasks(self.task_list)
+                logger.info(f'TaskController - Added {self.task_list_length} task(s) to the queue, '
                             f'next scan in {self.task_scan_interval} minutes')
-                self.exec_task_list()
             else:
                 logger.info(f'TaskController - No new task，next scan in {self.task_scan_interval} seconds')
             time_to_wait = self.task_scan_interval
@@ -162,30 +172,6 @@ class TaskController(object):
         # get task list and calculate list length
         self.task_list = Task.objects(status='CRTD')  # Slice here to limit task number
         return self.task_list
-
-    def exec_task_list(self):
-        self.task_queue_controller.add_tasks(self.task_list)
-        # prog_bar = progress_bar()
-        # counter = {
-        #     "COMP": 0,
-        #     "WARN": 0,
-        #     "FAIL": 0,
-        #     "ERR": 0,
-        # }
-        # for i, item in enumerate(self.task_list):
-        #     result = self.exec_task(item)
-        #     if result['code'] == 'GOOD':
-        #         counter["COMP"] += 1
-        #     elif result['code'] == 'WARN':
-        #         counter["WARN"] += 1
-        #     elif result['code'] == 'ERR':
-        #         counter["ERR"] += 1
-        #     else:
-        #         counter["FAIL"] += 1
-        #     prog_bar(i, self.task_list_length)
-        # logger.info(f'{self.runner_name} task worker - Processed {self.task_list_length} tasks, '
-        #             f'{counter["COMP"]} success, {counter["WARN"]} completed with warning, {counter["FAIL"]} failed, '
-        #             f'{counter["ERR"]} encountered error. ')
 
     def create_task(self, name, package, module, obj, handler, interface, task_args_list=None, task_kwarg_dict=None, **extra_kw):
         new_task = self.task_obj()

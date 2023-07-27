@@ -30,7 +30,7 @@ class BaseConfig(object):
         'DEFAULT_TASK_QUEUE_NUM': 3,
         'MAX_TASK_QUEUE_NUM': 5,
         'TASK_EXEC_INTERVAL': 0.5,     # in seconds
-        'TASK_SCAN_INTERVAL': 60,      # in seconds
+        'TASK_SCAN_INTERVAL': 10,      # in seconds
     }
 
 
