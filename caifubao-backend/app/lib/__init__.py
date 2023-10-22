@@ -31,42 +31,15 @@ class GeneralWorker(object):
         self.exec_unit_list = []
         logger.info(f'Module {self.module_name} is initializing')
 
-    def run(self):
-        self.before_exec()
-        self.exec()
-        self.after_exec()
-
     def before_exec(self):
         pass
 
-    def exec(self):
-        self.generate_exec_plan()
-        self.go_exec()
-        logger.info(f'{self.module_name} processors run finished, '
-                    f'{self.counter_dict["FINI"]} finished, '
-                    f'{self.counter_dict["SKIP"]} skipped.')
-
-    def after_exec(self):
+    def get_todo_list(self):
+        """
+        get a list which contains what should be processed,
+        :return:
+        """
         pass
-
-    def get_target_list(self):
-        pass
-
-    def get_analyte_list(self):
-        analyte_list = []
-        return analyte_list
-
-    def check_last_analysis_date(self, target_stock, item_name):
-        latest_quote_date = trading_day_helper.read_freshness_meta(target_stock, 'daily_quote')
-        for processor_name in self.processor_list:
-            exec_flag = True
-            # if analysis had never happened, or analysis date is behind quote date, run the processor
-            latest_analysis_date = freshness_meta_helper.read_freshness_meta(target_stock, name=processor_name)
-            if latest_analysis_date and latest_quote_date <= self.latest_analysis_date:
-                self.counter_dict['SKIP'] += 1
-                exec_flag = False
-                logger.info(f'{self.module_name} processor {processor_name} skipped')
-            return exec_flag
 
     def generate_exec_plan(self):
         """
@@ -91,7 +64,7 @@ class GeneralWorker(object):
 
         # Check metadata and determine whether to run the processor
 
-    def go_exec(self):
+    def commit_tasks(self):
         logger.info(f'{self.module_name} - running exec units')
         for exec_unit in self.exec_unit_list:
             stock = exec_unit.target_stock
@@ -108,6 +81,34 @@ class GeneralWorker(object):
                 self.counter_dict[result_flag] += 1
                 logger.info(
                     f'{self.module_name} processor {processor_name} exec result: {result_flag} {exec_result_dict["msg"]}')
+
+    def after_exec(self):
+        pass
+
+    def run(self):
+        self.before_exec()
+        self.generate_exec_plan()
+        self.commit_tasks()
+        logger.info(f'{self.module_name} processors run finished, '
+                    f'{self.counter_dict["FINI"]} finished, '
+                    f'{self.counter_dict["SKIP"]} skipped.')
+        self.after_exec()
+
+    def get_analyte_list(self):
+        analyte_list = []
+        return analyte_list
+
+    def check_last_analysis_date(self, target_stock, item_name):
+        latest_quote_date = trading_day_helper.read_freshness_meta(target_stock, 'daily_quote')
+        for processor_name in self.processor_list:
+            exec_flag = True
+            # if analysis had never happened, or analysis date is behind quote date, run the processor
+            latest_analysis_date = freshness_meta_helper.read_freshness_meta(target_stock, name=processor_name)
+            if latest_analysis_date and latest_quote_date <= self.latest_analysis_date:
+                self.counter_dict['SKIP'] += 1
+                exec_flag = False
+                logger.info(f'{self.module_name} processor {processor_name} skipped')
+            return exec_flag
 
 
 class GeneralProcessor(object):
