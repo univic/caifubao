@@ -3,9 +3,9 @@
 # Date: 2022-03-11
 
 import datetime
-from mongoengine import StringField, EmbeddedDocumentListField, DateTimeField, ListField, \
+from mongoengine import Document, StringField, EmbeddedDocumentListField, DateTimeField, ListField, \
     EmbeddedDocument, IntField
-from app.lib.db_tool.mongoengine_tool import db
+# from app.lib.db_tool.mongoengine_tool import db
 
 
 class KwArg(EmbeddedDocument):
@@ -13,7 +13,7 @@ class KwArg(EmbeddedDocument):
     arg = StringField()
 
 
-class DatahubTaskDoc(db.Document):
+class DatahubTaskDoc(Document):
     """
     status: CRTD-created, PEND-pending, FAIL-failed, COMP-completed
     """

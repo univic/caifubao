@@ -6,7 +6,7 @@ from app.lib.datahub.data_source.handler import zh_a_data
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock, StockDailyQuote
 from app.model.data_retrive import DatahubTaskDoc
 from app.lib.db_tool import mongoengine_tool
-from app.lib.task_controller import akshare_datahub_task, baostock_datahub_task, scheduled_datahub_task
+# from app.lib.task_controller import akshare_datahub_task, baostock_datahub_task, scheduled_datahub_task
 from app.utilities.progress_bar import progress_bar
 from app.utilities import trading_day_helper
 

@@ -1,9 +1,9 @@
-from mongoengine import StringField, EmbeddedDocumentListField, DateTimeField, ReferenceField, ListField, \
+from mongoengine import Document, StringField, EmbeddedDocumentListField, DateTimeField, ReferenceField, ListField, \
     EmbeddedDocument, FloatField, IntField, EmbeddedDocumentField, GenericLazyReferenceField
-from app.lib.db_tool.mongoengine_tool import db
+from app.lib.db_tool.mongoengine_tool import db_admin
 
 
-class StockExchange(db.Document):
+class StockExchange(Document):
     name = StringField()
     code = StringField()
     region = StringField()
@@ -24,7 +24,7 @@ class MarketOverview(EmbeddedDocument):
     circulating_turnover_rate = FloatField()
 
 
-class FinanceMarket(db.Document):
+class FinanceMarket(Document):
     name = StringField()
     code = StringField()
     exchange = ReferenceField(StockExchange)
@@ -33,7 +33,7 @@ class FinanceMarket(db.Document):
     overview = EmbeddedDocumentListField(MarketOverview)
 
 
-class StockDailyQuote(db.Document):
+class StockDailyQuote(Document):
     meta = {
         'allow_inheritance': True,
         'indexes': [
@@ -103,7 +103,7 @@ class DataFreshnessMeta(EmbeddedDocument):
     fq_factor = DateTimeField()
 
 
-class BasicStock(db.Document):
+class BasicStock(Document):
     """
     type:
     """

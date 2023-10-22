@@ -40,4 +40,4 @@ class Task(Document):
     priority = IntField(default=5)
     status = StringField(default='CRTD')
     exec_result = StringField()
-    exec_msg = message = StringField()
+    exec_msg = StringField()
