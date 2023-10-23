@@ -25,6 +25,9 @@ class StrategyDirecter(object):
         self.strategy = getattr(strategy_registry, strategy_name)
         logger.info(f'Module {self.module_name} - Strategy {strategy_name} loaded')
 
+    def get_market_list(self):
+        pass
+
     def get_stock_list(self):
         stock_obj_list = []
         if self.strategy.stock_scope == "single":
