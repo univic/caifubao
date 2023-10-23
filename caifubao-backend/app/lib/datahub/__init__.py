@@ -10,7 +10,7 @@ from app.lib.datahub import processors
 from pymongo.errors import ServerSelectionTimeoutError
 from app.lib.scenario_director import scenario_director
 from app.lib.strategy import strategy_director
-from app.lib.task_controller import data_retriever_init
+from app.lib.task_controller import task_controller
 
 logger = logging.getLogger()
 
@@ -35,13 +35,30 @@ class Datahub(GeneralWorker):
         module_name = 'Datahub'
         processor_registry = processors.registry
         super().__init__(module_name, processor_registry)
+        self.market_list = []
+        self.exec_plan_list = []
 
     def get_todo_list(self):
-        market_list = scenario_director.
+        market_list = strategy_director.get_market_list()
 
     def generate_exec_plan(self):
-        processor_dict = self.processor_registry['ChinaAStock']
-        processor = processor_dict['processor_object']
+        for market_name in self.market_list:
+            processor_dict = self.processor_registry[market_name]
+            processor = processor_dict['processor_object']
+            exec_plan_item = {
+                "name": market_name,
+                "processor": processor
+            }
+            self.exec_plan_list.append(exec_plan_item)
+
+    def commit_tasks(self):
+        for item in self.exec_plan_list:
+            task_controller.create_task(name="",
+                                        package="",
+                                        module="",
+                                        obj="",
+                                        handler="",
+                                        interface="")
 
 
 if __name__ == '__init__':

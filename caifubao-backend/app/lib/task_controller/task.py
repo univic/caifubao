@@ -255,22 +255,22 @@ class ScheduledDatahubTask(DatahubTask):
                              task_kwarg_dict=kw_dict,
                              scheduled_time=next_run_time)
 
-    def create_task(self, name, package, module, obj, handler, interface,
-                    task_args_list=None, task_kwarg_dict=None, **extra_kw):
-        new_task = self.task_obj()
-        new_task.scheduled_process_time = extra_kw["scheduled_time"]
-        new_task.name = name
-        new_task.callback_package = package
-        new_task.callback_module = module
-        new_task.callback_object = obj
-        new_task.callback_handler = handler
-        new_task.callback_interface = interface
-        new_task.repeat = extra_kw["repeat"]
-        new_task.args = task_args_list
-        if task_kwarg_dict:
-            new_task.kwargs = convert_dict_to_kwarg(task_kwarg_dict)
-        if check_task_uniqueness(new_task, task_kwarg_dict):
-            new_task.save()
-            logger.debug(f'Scheduled datahub task {new_task.name} created')
-        else:
-            logger.debug(f'Found duplicate task {new_task.name}')
+    # def create_task(self, name, package, module, obj, handler, interface,
+    #                 task_args_list=None, task_kwarg_dict=None, **extra_kw):
+    #     new_task = self.task_obj()
+    #     new_task.scheduled_process_time = extra_kw["scheduled_time"]
+    #     new_task.name = name
+    #     new_task.callback_package = package
+    #     new_task.callback_module = module
+    #     new_task.callback_object = obj
+    #     new_task.callback_handler = handler
+    #     new_task.callback_interface = interface
+    #     new_task.repeat = extra_kw["repeat"]
+    #     new_task.args = task_args_list
+    #     if task_kwarg_dict:
+    #         new_task.kwargs = convert_dict_to_kwarg(task_kwarg_dict)
+    #     if check_task_uniqueness(new_task, task_kwarg_dict):
+    #         new_task.save()
+    #         logger.debug(f'Scheduled datahub task {new_task.name} created')
+    #     else:
+    #         logger.debug(f'Found duplicate task {new_task.name}')

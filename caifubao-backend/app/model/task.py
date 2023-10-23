@@ -24,8 +24,7 @@ class Task(Document):
     callback_object = StringField()
     callback_handler = StringField(required=True)
     callback_interface = StringField()
-    args = ListField(StringField())
-    kwargs = EmbeddedDocumentListField('KwArg')
+    priority = IntField(default=5)
     # if not designated, task will be executed immediately
     scheduled_process_time = DateTimeField()
     # after that time the task will no longer be executed and be set as ABORT status
@@ -34,10 +33,11 @@ class Task(Document):
     repeat_duration = StringField()
     repeat_amount = IntField()
     repeat_ends_at = DateTimeField()
+    args = ListField(StringField())
+    kwargs = EmbeddedDocumentListField('KwArg')
+    status = StringField(default='CRTD')
     created_at = DateTimeField(default=datetime.datetime.now())
     processed_at = DateTimeField()
     completed_at = DateTimeField()
-    priority = IntField(default=5)
-    status = StringField(default='CRTD')
     exec_result = StringField()
     exec_msg = StringField()

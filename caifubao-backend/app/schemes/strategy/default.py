@@ -1,7 +1,7 @@
 
 class BasicStrategy(object):
     code = None
-    market_name = "A股"
+    market_list = ["ChinaAStock"]
     stock_scope = "single"            # single | list | pattern | full
     stock_code_list = []
     stock_select_pattern = ""

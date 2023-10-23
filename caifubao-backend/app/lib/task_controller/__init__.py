@@ -5,7 +5,7 @@ import datetime
 from multiprocessing import Process
 from app.conf import app_config
 from app.model.task import Task
-from app.lib.task_controller.common import exec_task
+from app.lib.task_controller.common import exec_task, convert_dict_to_kwarg, check_task_uniqueness
 
 # akshare_datahub_task = AkshareDatahubTask()
 # baostock_datahub_task = BaostockDatahubTask()
@@ -14,20 +14,20 @@ from app.lib.task_controller.common import exec_task
 logger = logging.getLogger()
 
 
-def data_retriever_init():
-    logger.info(f'Starting data retriever processes, master process id {os.getpid()}')
-    p1 = Process(target=akshare_datahub_task.dispatch)
-    p1.start()
-    p2 = Process(target=baostock_datahub_task.dispatch)
-    p2.start()
-    p3 = Process(target=scheduled_datahub_task.dispatch)
-    p3.start()
+# def data_retriever_init():
+# logger.info(f'Starting data retriever processes, master process id {os.getpid()}')
+# p1 = Process(target=akshare_datahub_task.dispatch)
+# p1.start()
+# p2 = Process(target=baostock_datahub_task.dispatch)
+# p2.start()
+# p3 = Process(target=scheduled_datahub_task.dispatch)
+# p3.start()
 
-    # p.apply_async(akshare_data_retriever.dispatch)
-    # p.apply_async(baostock_data_retriever.dispatch)
-    # p.apply_async(scheduled_data_retriever.dispatch)
-    # p.close()
-    # p.join()
+# p.apply_async(akshare_data_retriever.dispatch)
+# p.apply_async(baostock_data_retriever.dispatch)
+# p.apply_async(scheduled_data_retriever.dispatch)
+# p.close()
+# p.join()
 
 
 class Queue(object):
@@ -173,18 +173,28 @@ class TaskController(object):
         self.task_list = Task.objects(status='CRTD')  # Slice here to limit task number
         return self.task_list
 
-    def create_task(self, name, package, module, obj, handler, interface, task_args_list=None, task_kwarg_dict=None, **extra_kw):
-        new_task = self.task_obj()
+    def create_task(self, name, desc, callback_package, callback_module, callback_object, callback_handler,
+                    callback_interface, priority: int, scheduled_process_time=None, valid_before=None,
+                    repeat_duration=None, repeat_amount: int = None, repeat_ends_at=None,
+                    args_list: list = None, kwarg_dict=None, **extra_kw):
+        new_task = Task()
         new_task.name = name
-        new_task.callback_package = package
-        new_task.callback_module = module
-        new_task.callback_object = obj
-        new_task.callback_handler = handler
-        new_task.callback_interface = interface
-        new_task.args = task_args_list
-        if task_kwarg_dict:
-            new_task.kwargs = convert_dict_to_kwarg(task_kwarg_dict)
-        if check_task_uniqueness(new_task, task_kwarg_dict):
+        new_task.desc = desc
+        new_task.callback_package = callback_package
+        new_task.callback_module = callback_module
+        new_task.callback_object = callback_object
+        new_task.callback_handler = callback_handler
+        new_task.callback_interface = callback_interface
+        new_task.priority = priority
+        new_task.scheduled_process_time = scheduled_process_time
+        new_task.valid_before = valid_before
+        new_task.repeat_duration = repeat_duration
+        new_task.repeat_amount = repeat_amount
+        new_task.repeat_ends_at = repeat_ends_at
+        new_task.args = args_list
+        if kwarg_dict:
+            new_task.kwargs = convert_dict_to_kwarg(kwarg_dict)
+        if check_task_uniqueness(new_task, kwarg_dict):
             new_task.save()
             logger.debug(f'{self.runner_name} task worker - Data retrieve task {new_task.name} created')
         else:
