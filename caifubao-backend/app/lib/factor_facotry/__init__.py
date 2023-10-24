@@ -4,7 +4,7 @@ from app.model.stock import BasicStock, StockDailyQuote
 from app.lib.factor_facotry import processors
 from app.utilities import trading_day_helper, freshness_meta_helper
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class FactorFactory(object):

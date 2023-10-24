@@ -1,6 +1,6 @@
 from mongoengine import Document, StringField, EmbeddedDocumentListField, DateTimeField, ReferenceField, ListField, \
     EmbeddedDocument, FloatField, IntField, EmbeddedDocumentField, GenericLazyReferenceField
-from app.lib.db_tool.mongoengine_tool import db_admin
+from app.lib.db_watcher.mongoengine_tool import db_watcher
 
 
 class StockExchange(Document):

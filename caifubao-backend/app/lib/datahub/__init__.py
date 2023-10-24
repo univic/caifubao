@@ -12,7 +12,7 @@ from app.lib.scenario_director import scenario_director
 from app.lib.strategy import strategy_director
 from app.lib.task_controller import task_controller
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 # class Datahub(object):
@@ -38,8 +38,17 @@ class Datahub(GeneralWorker):
         self.market_list = []
         self.exec_plan_list = []
 
+    def start(self):
+        self.get_todo_list()
+        self.get_todo_list()
+        self.generate_exec_plan()
+        self.commit_tasks()
+
     def get_todo_list(self):
-        market_list = strategy_director.get_market_list()
+        self.market_list = strategy_director.get_market_list()
+        if not self.market_list:
+            logger.error(f"{self.module_name} - Initialization failed, no market was found")
+            exit()
 
     def generate_exec_plan(self):
         for market_name in self.market_list:
@@ -47,21 +56,22 @@ class Datahub(GeneralWorker):
             processor = processor_dict['processor_object']
             exec_plan_item = {
                 "name": market_name,
-                "processor": processor
+                "processor": processor,
+                "module": processor_dict['module'],
+                "handler": processor_dict['handler']
             }
             self.exec_plan_list.append(exec_plan_item)
 
     def commit_tasks(self):
         for item in self.exec_plan_list:
-            task_controller.create_task(name="",
-                                        package="",
-                                        module="",
-                                        obj="",
-                                        handler="",
-                                        interface="")
+            task_controller.create_task(name=f"Initialize market {item['name']}",
+                                        callback_package="datahub",
+                                        callback_module=item['module'],
+                                        callback_object="ChinaAStock",
+                                        callback_handler=item['handler'],
+                                        )
 
 
 if __name__ == '__init__':
     instance = Datahub()
-    # instance.run()
-    instance.initialize()
+    instance.start()

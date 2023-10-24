@@ -39,7 +39,13 @@ def create_logger(log_file='stellaris.log'):
     file_handler.setFormatter(formatter)
 
     # Attach the handlers to the logger
-    logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
+    # the if statement doesn't work for some unknown reason
+    if logging.handlers.RotatingFileHandler not in logger.handlers:
+        logger.addHandler(file_handler)
+    if logging.StreamHandler not in logger.handlers:
+        logger.addHandler(console_handler)
+
+    # stop propagting to root logger
+    logger.propagate = False
 
     return logger

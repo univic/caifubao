@@ -3,7 +3,7 @@ import logging
 from app.lib.trade_planner import processors
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class TradePlanner(object):

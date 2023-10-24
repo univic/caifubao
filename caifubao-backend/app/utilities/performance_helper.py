@@ -1,7 +1,7 @@
 import time
 import logging
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 def func_performance_timer(func):

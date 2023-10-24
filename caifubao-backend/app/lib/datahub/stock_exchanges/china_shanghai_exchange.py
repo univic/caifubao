@@ -3,7 +3,7 @@ import logging
 from app.model.market_info import StockExchange
 from app.lib.datahub.remote_data.interface import akshare as akshare_interface
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class ShanghaiExchange(object):

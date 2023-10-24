@@ -2,7 +2,7 @@ import logging
 from app.utilities import general_utils, trading_day_helper, freshness_meta_helper
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class GeneralExecUnit(object):
@@ -29,7 +29,7 @@ class GeneralWorker(object):
         }
         self.stock_list = []
         self.exec_unit_list = []
-        logger.info(f'Module {self.module_name} is initializing')
+        logger.info(f'{self.module_name} is initializing')
 
     def before_exec(self):
         pass

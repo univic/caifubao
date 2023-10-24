@@ -4,7 +4,7 @@ import datetime
 import baostock as bs
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 # class BaostockConn(object):

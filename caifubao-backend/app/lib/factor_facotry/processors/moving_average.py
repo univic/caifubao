@@ -4,7 +4,7 @@ from app.utilities import freshness_meta_helper
 from app.model.factor import FactorDataEntry
 from app.lib.factor_facotry.processors.factor_processor import FactorProcessor
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class MovingAverageFactorProcessor(FactorProcessor):

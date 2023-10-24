@@ -3,7 +3,7 @@ from app.lib import GeneralWorker
 from app.lib.signal_man import processors
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class SignalMan(GeneralWorker):

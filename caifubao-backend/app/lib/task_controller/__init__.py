@@ -11,7 +11,7 @@ from app.lib.task_controller.common import exec_task, convert_dict_to_kwarg, che
 # baostock_datahub_task = BaostockDatahubTask()
 # scheduled_datahub_task = ScheduledDatahubTask()
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 # def data_retriever_init():
@@ -91,7 +91,7 @@ class TaskQueueController(object):
     def consume_queue(self):
         pass
 
-    def add_tasks(self, task_list: list, find_queue_by="interface"):
+    def add_tasks_to_queue(self, task_list: list, find_queue_by="interface"):
         self.distribute_tasks_to_queue(task_list, find_queue_by)
 
     def distribute_tasks_to_queue(self, task_list: list, find_queue_by):
@@ -125,6 +125,7 @@ class TaskQueueController(object):
             else:
                 q = self.task_queues["default"]
             q.add_task(task)
+            logger.info(f"Adding task {task.name} to queue {q.name}")
 
 
 class TaskController(object):
@@ -160,7 +161,7 @@ class TaskController(object):
             self.get_task_list()
             self.task_list_length = len(self.task_list)
             if self.task_list_length > 0:
-                self.task_queue_controller.add_tasks(self.task_list)
+                self.task_queue_controller.add_tasks_to_queue(self.task_list)
                 logger.info(f'TaskController - Added {self.task_list_length} task(s) to the queue, '
                             f'next scan in {self.task_scan_interval} minutes')
             else:
@@ -173,8 +174,8 @@ class TaskController(object):
         self.task_list = Task.objects(status='CRTD')  # Slice here to limit task number
         return self.task_list
 
-    def create_task(self, name, desc, callback_package, callback_module, callback_object, callback_handler,
-                    callback_interface, priority: int, scheduled_process_time=None, valid_before=None,
+    def create_task(self, name, callback_package, callback_module, callback_object, callback_handler, desc=None,
+                    callback_interface=None, priority: int = 5, scheduled_process_time=None, valid_before=None,
                     repeat_duration=None, repeat_amount: int = None, repeat_ends_at=None,
                     args_list: list = None, kwarg_dict=None, **extra_kw):
         new_task = Task()
@@ -196,9 +197,13 @@ class TaskController(object):
             new_task.kwargs = convert_dict_to_kwarg(kwarg_dict)
         if check_task_uniqueness(new_task, kwarg_dict):
             new_task.save()
-            logger.debug(f'{self.runner_name} task worker - Data retrieve task {new_task.name} created')
+            logger.debug(f'TaskController - task {new_task.name} created')
         else:
-            logger.debug(f'{self.runner_name} task worker - Found duplicate data retrieve task {new_task.name}')
+            logger.debug(f'TaskController - Found duplicate task {new_task.name}')
+
+        # Add new task to queue
+        self.task_queue_controller.add_tasks_to_queue([new_task])
+
 
 
 task_controller = TaskController()

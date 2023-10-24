@@ -6,7 +6,7 @@ from app.schemes import strategy as strategy_registry
 how we deal with information and make effective decision?
 """
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class StrategyDirecter(object):
@@ -15,7 +15,7 @@ class StrategyDirecter(object):
         self.strategy = None
         self.strategy_name = None
         self.module_name = 'StrategyDirecter'
-        logger.info(f'Module {self.module_name} is initializing')
+        logger.info(f'{self.module_name} is initializing')
 
     def load_strategy(self, strategy_name):
         """
@@ -23,10 +23,11 @@ class StrategyDirecter(object):
         """
         self.strategy_name = strategy_name
         self.strategy = getattr(strategy_registry, strategy_name)
-        logger.info(f'Module {self.module_name} - Strategy {strategy_name} loaded')
+        logger.info(f'{self.module_name} - Strategy {strategy_name} loaded')
 
     def get_market_list(self):
-        pass
+        market_list = self.strategy.market_list
+        return market_list
 
     def get_stock_list(self):
         stock_obj_list = []
@@ -64,3 +65,4 @@ class StrategyDirecter(object):
 
 
 strategy_director = StrategyDirecter()
+

@@ -5,14 +5,14 @@ from mongoengine import connect, disconnect
 from app.conf import app_config
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 # def db_init(app):
 #     db.init_app(app)
 
 
-class DBAdmin(object):
+class DBWatcher(object):
 
     def __init__(self):
         db = MongoEngine()
@@ -40,4 +40,4 @@ class DBAdmin(object):
         disconnect(alias=alias)
 
 
-db_admin = DBAdmin()
+db_watcher = DBWatcher()

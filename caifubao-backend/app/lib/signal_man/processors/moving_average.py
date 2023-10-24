@@ -5,7 +5,7 @@ from app.model.factor import FactorDataEntry
 from app.model.signal import SpotSignalData
 from app.lib import GeneralProcessor
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class MACrossSignalProcessor(GeneralProcessor):

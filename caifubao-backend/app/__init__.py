@@ -3,11 +3,11 @@
 # Date: 2022-02-13
 
 
-from app.utilities.logger import create_logger
+import logging
 from app.lib.dispatcher import MainDispatcher
 
 
-logger = create_logger()
+logger = logging.getLogger(__name__)
 
 
 def create_app():

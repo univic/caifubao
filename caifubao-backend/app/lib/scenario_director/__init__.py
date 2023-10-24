@@ -6,7 +6,7 @@ from app.lib.scenario_director import scenario_processors
 how would you like the world to turn?
 """
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 # load scenario
 

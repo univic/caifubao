@@ -6,7 +6,7 @@ from app.utilities import trading_day_helper
 from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc, KwArg
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 def exec_task(task):

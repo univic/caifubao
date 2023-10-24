@@ -4,6 +4,9 @@
 
 
 from app import create_app
+from app.utilities.logger import create_logger
+
+logger = create_logger()
 
 
 if __name__ == '__main__':

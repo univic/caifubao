@@ -4,12 +4,13 @@
 
 
 import logging
+from app.lib.strategy import strategy_director
 from app.lib.datahub import Datahub
 from app.lib import web_server
-from app.lib.db_tool import mongoengine_tool
+from app.lib.db_watcher.mongoengine_tool import db_watcher
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class MainDispatcher(object):
@@ -23,17 +24,19 @@ class MainDispatcher(object):
         # Main Sequence Start
 
         # Establish DB Connection
+        db_watcher.connect_to_db()
 
         # Start Web Server
         # web_server.create_web_app()
 
         # Load Scenario and Strategy
+        strategy_director.load_strategy("Strategy01")
 
         # Start Task Controller
 
         # Start Datahub
         datahub = Datahub()
-        datahub.initialize()
+        datahub.start()
 
         # Start Factor Factory
 

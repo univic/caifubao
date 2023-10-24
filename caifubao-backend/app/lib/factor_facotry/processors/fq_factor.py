@@ -7,7 +7,7 @@ from app.utilities import trading_day_helper
 from app.model.stock import StockDailyQuote, BasicStock
 from app.lib.factor_facotry.processors.factor_processor import FactorProcessor
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class FQFactorProcessor(FactorProcessor):

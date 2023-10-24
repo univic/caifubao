@@ -2,7 +2,7 @@ import re
 import logging
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 def add_market_prefix(stock_code):

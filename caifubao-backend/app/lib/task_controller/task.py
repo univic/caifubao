@@ -11,7 +11,7 @@ from app.lib.task_controller.common import convert_dict_to_kwarg, check_task_uni
     exec_task, convert_kwarg_to_dict
 from app.utilities import trading_day_helper
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class DatahubTask(object):

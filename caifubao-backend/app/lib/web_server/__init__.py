@@ -9,7 +9,7 @@ from app.conf import app_config
 from app.api import register_blueprint
 from app.extensions import config_extensions
 
-logger = create_logger()
+# logger = create_logger()
 
 
 def create_web_app():

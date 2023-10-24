@@ -1,6 +1,6 @@
 import logging
 import datetime
-from app.lib.db_tool import mongoengine_tool
+from app.lib.db_watcher import mongoengine_tool
 from app.lib.strategy import StrategyDirecter
 from app.lib.portfolio_manager import PortfolioManager
 from app.lib.factor_facotry import FactorFactory
@@ -8,7 +8,7 @@ from app.lib.signal_man import SignalMan
 from app.lib.opportunity_seeker import OpportunitySeeker
 from app.utilities import trading_day_helper
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class BasicBackTester(object):

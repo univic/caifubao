@@ -4,7 +4,7 @@ import datetime
 from app.model.stock import FinanceMarket, DataFreshnessMeta, StockDailyQuote
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.now()):

@@ -3,7 +3,7 @@ from app.lib import GeneralWorker
 from app.lib.opportunity_seeker import processors
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class OpportunitySeeker(GeneralWorker):

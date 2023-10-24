@@ -5,7 +5,7 @@ from app.lib.datahub.data_source import interface
 from app.utilities import trading_day_helper, performance_helper, stock_code_helper
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 def get_a_stock_trade_date_hist():
