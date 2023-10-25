@@ -18,6 +18,9 @@ class DBWatcher(object):
         db = MongoEngine()
         self.db_conn = None
 
+    def initialize(self):
+        logger.info(f'DBWatcher - Initializing')
+
     def get_db_connection(self):
         if self.db_conn:
             pass

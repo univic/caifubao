@@ -9,7 +9,7 @@ def create_logger(log_file='stellaris.log'):
     pwd = os.getcwd()
     # Create logger
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     # Create a standard formatter
     formatter = logging.Formatter('%(asctime)s - %(name)s:%(lineno)s - %(levelname)s - %(message)s')

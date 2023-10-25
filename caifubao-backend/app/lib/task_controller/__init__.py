@@ -2,7 +2,7 @@ import os
 import time
 import logging
 import datetime
-from multiprocessing import Process
+from multiprocessing import Process, Pool
 from app.conf import app_config
 from app.model.task import Task
 from app.lib.task_controller.common import exec_task, convert_dict_to_kwarg, check_task_uniqueness
@@ -40,11 +40,11 @@ class Queue(object):
         logger.info(f'TaskController - Creating task queue: {self.name}, process PID {os.getpid()}')
 
     def add_task(self, task):
-        logger.info(f'TaskController - Adding task {task.name} to queue: {self.name}')
         self.queue.append(task)
+        logger.info(f'TaskController - Added task {task.name} to queue: {self.name}')
 
     def dispatch(self):
-        logger.info(f'TaskController - Queue {self.name} dispatched')
+        logger.info(f'TaskController - Queue {self.name} dispatched, process PID {os.getpid()}')
         continue_flag = True
         while continue_flag:
             self.consume_queue()
@@ -65,18 +65,24 @@ class Queue(object):
 
 
 class TaskQueueController(object):
+    """
+    TaskQueueController is in charge of queue management, such as initial queue setup, task distribution
+    """
     def __init__(self):
-        logger.info(f'TaskController - TaskQueueController is initializing')
+
         self.task_queues: dict = {}
         self.queue_num: int = app_config.TASK_CONTROLLER_SETTINGS["DEFAULT_TASK_QUEUE_NUM"]
         self.max_queue_num: int = app_config.TASK_CONTROLLER_SETTINGS["MAX_TASK_QUEUE_NUM"]
-        self.initialize()
+        self.process_pool = None
 
     def initialize(self):
         """
         create a default queue
         :return:
         """
+        logger.info(f'TaskController - TaskQueueController is initializing')
+        self.process_pool = Pool(4)
+        logger.info(f'TaskController - Process pool ready, parent process PID {os.getpid()}')
         self.setup_queue("default")
 
     def setup_queue(self, name, attributes: dict = None):
@@ -86,7 +92,17 @@ class TaskQueueController(object):
         """
         queue = Queue(name, attributes)
         self.task_queues[name] = queue
+        # p = Process(target=queue.dispatch)
+        # p.start()
+        self.process_pool.apply_async(queue.dispatch, error_callback=self.err_callback)
+        # self.process_pool.close()
+        # self.process_pool.join()
+
         return queue
+
+    @staticmethod
+    def err_callback(err):
+        print(err)
 
     def consume_queue(self):
         pass
@@ -125,7 +141,7 @@ class TaskQueueController(object):
             else:
                 q = self.task_queues["default"]
             q.add_task(task)
-            logger.info(f"Adding task {task.name} to queue {q.name}")
+            logger.info(f"Added task {task.name} to queue: {q.name}")
 
 
 class TaskController(object):
@@ -174,6 +190,9 @@ class TaskController(object):
         self.task_list = Task.objects(status='CRTD')  # Slice here to limit task number
         return self.task_list
 
+    def initialize(self):
+        self.task_queue_controller.initialize()
+
     def create_task(self, name, callback_package, callback_module, callback_object, callback_handler, desc=None,
                     callback_interface=None, priority: int = 5, scheduled_process_time=None, valid_before=None,
                     repeat_duration=None, repeat_amount: int = None, repeat_ends_at=None,
@@ -195,15 +214,13 @@ class TaskController(object):
         new_task.args = args_list
         if kwarg_dict:
             new_task.kwargs = convert_dict_to_kwarg(kwarg_dict)
-        if check_task_uniqueness(new_task, kwarg_dict):
+        if check_task_uniqueness(new_task):
             new_task.save()
             logger.debug(f'TaskController - task {new_task.name} created')
+            # Add new task to queue
+            self.task_queue_controller.add_tasks_to_queue([new_task])
         else:
             logger.debug(f'TaskController - Found duplicate task {new_task.name}')
-
-        # Add new task to queue
-        self.task_queue_controller.add_tasks_to_queue([new_task])
-
 
 
 task_controller = TaskController()

@@ -3,7 +3,7 @@ import datetime
 import hashlib
 from importlib import import_module
 from app.utilities import trading_day_helper
-from app.model.data_retrive import DatahubTaskDoc, ScheduledDatahubTaskDoc, KwArg
+from app.model.task import Task
 
 
 logger = logging.getLogger(__name__)
@@ -92,11 +92,10 @@ def convert_kwarg_to_dict(kwarg_doc_list):
     return kwarg_dict
 
 
-def generate_task_uid(task_obj, kwarg_dict):
+def generate_task_uid(task_obj):
     """
     generate hash uid according to the attributes of the object
     :param task_obj:
-    :param kwarg_dict:
     :return:
     """
     obj_str = str(task_obj.name + task_obj.callback_package + task_obj.callback_module + task_obj.callback_handler)
@@ -104,22 +103,22 @@ def generate_task_uid(task_obj, kwarg_dict):
     kwargs_str = ""
     args_str = ""
     # convert datetime to str
-    if isinstance(task_obj, ScheduledDatahubTaskDoc):
+    if hasattr(task_obj, 'scheduled_process_time') and task_obj.scheduled_process_time:
         datetime_str = datetime.datetime.strftime(task_obj.scheduled_process_time, "%Y%m%d%H%M%S")
     if task_obj.args:
         args_str = "-".join(task_obj.args)
     # convert kwarg_dict to str
-    if kwarg_dict:
-        for item in kwarg_dict.items():
+    if task_obj.kwargs:
+        for item in task_obj.kwargs.items():
             kwargs_str += str(item[0]) + str(item[1])
     hash_str = obj_str + args_str + kwargs_str + datetime_str
     uid = hashlib.md5(hash_str.encode(encoding='UTF-8')).hexdigest()
     return uid
 
 
-def check_task_uniqueness(task_obj, kwarg_dict):
-    task_obj.uid = generate_task_uid(task_obj, kwarg_dict)
-    task_query = DatahubTaskDoc.objects(uid=task_obj.uid, status='CRTD').first()
+def check_task_uniqueness(task_obj):
+    task_obj.uid = generate_task_uid(task_obj)
+    task_query = Task.objects(uid=task_obj.uid, status='CRTD').first()
     if task_query:
         return False
     else:
