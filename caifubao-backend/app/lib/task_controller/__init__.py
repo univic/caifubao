@@ -2,9 +2,10 @@ import os
 import time
 import logging
 import datetime
-from multiprocessing import Process, Pool
+from multiprocessing import Pool
 from app.conf import app_config
 from app.model.task import Task
+from app.lib.db_watcher.mongoengine_tool import db_watcher
 from app.lib.task_controller.common import exec_task, convert_dict_to_kwarg, check_task_uniqueness
 
 # akshare_datahub_task = AkshareDatahubTask()
@@ -44,14 +45,19 @@ class Queue(object):
         logger.info(f'TaskController - Added task {task.name} to queue: {self.name}')
 
     def dispatch(self):
+        db_watcher.connect_to_db()
         logger.info(f'TaskController - Queue {self.name} dispatched, process PID {os.getpid()}')
         continue_flag = True
         while continue_flag:
             self.consume_queue()
+            logger.info(
+                f'TaskController - Task queue {self.name} cleared, wait {self.task_scan_interval} for next scan')
             time.sleep(self.task_scan_interval)
 
     def consume_queue(self):
+        self.queue = Task.objects(status='CRTD', queue=self.name).order_by('-scheduled_time')
         queue_length = len(self.queue)
+        logger.info(f'TaskController - Task queue {self.name} length is {queue_length}')
         # Execute first task in the queue, until all the tasks had been popped out
         while queue_length > 0:
             logger.info(f'TaskController - Queue {self.name} - Found {queue_length} tasks, running')
@@ -59,6 +65,7 @@ class Queue(object):
             self.queue.pop(0)
             queue_length = len(self.queue)
             time.sleep(self.task_exec_interval)
+
 
     def get_queue_length(self):
         pass
@@ -95,8 +102,6 @@ class TaskQueueController(object):
         # p = Process(target=queue.dispatch)
         # p.start()
         self.process_pool.apply_async(queue.dispatch, error_callback=self.err_callback)
-        # self.process_pool.close()
-        # self.process_pool.join()
 
         return queue
 
@@ -140,6 +145,8 @@ class TaskQueueController(object):
             # if exec_unit does not have the corresponding attribute, put the task into default queue
             else:
                 q = self.task_queues["default"]
+            task.queue = q.name
+            task.save()
             q.add_task(task)
             logger.info(f"Added task {task.name} to queue: {q.name}")
 

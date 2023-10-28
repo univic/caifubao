@@ -25,6 +25,7 @@ class Task(Document):
     callback_handler = StringField(required=True)
     callback_interface = StringField()
     priority = IntField(default=5)
+    queue = StringField()
     # if not designated, task will be executed immediately
     scheduled_process_time = DateTimeField()
     # after that time the task will no longer be executed and be set as ABORT status
