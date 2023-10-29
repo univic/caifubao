@@ -4,9 +4,7 @@ import datetime
 import traceback
 from app.lib.datahub.data_source.handler import zh_a_data
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock, StockDailyQuote
-from app.model.data_retrive import DatahubTaskDoc
-from app.lib.db_watcher import mongoengine_tool
-# from app.lib.task_controller import akshare_datahub_task, baostock_datahub_task, scheduled_datahub_task
+from app.lib.task_controller import task_controller
 from app.utilities.progress_bar import progress_bar
 from app.utilities import trading_day_helper
 
@@ -22,13 +20,19 @@ class ChinaAStock(object):
         self.most_recent_trading_day = None
         self.market = FinanceMarket.objects(name="A股").first()
         self.trade_calendar = self.market.trade_calendar
+        self.result: dict = {
+            'code': "GOOD",
+            'message': "",
+        }
 
     def initialize(self):
 
         self.check_market_data_existence()
-        self.check_scheduled_task()
+        self.check_trade_calendar_integrity()
+        # self.check_scheduled_task()
         # self.check_index_data_integrity(allow_update=True)
         # self.check_stock_data_integrity(allow_update=True)
+        return self.result
 
     def check_market_data_existence(self):
         # check the existence of basic market data
@@ -41,7 +45,6 @@ class ChinaAStock(object):
             self.market = new_market
         else:
             logger.info(f'Stock Market {self.market.name} - Local market data check OK')
-        self.check_trade_calendar_integrity()
 
     def check_trade_calendar_integrity(self):
         if self.market.trade_calendar:
@@ -66,9 +69,8 @@ class ChinaAStock(object):
         status = self.check_data_integrity(obj_name='index',
                                            local_data_list=local_index_list,
                                            remote_data_df=remote_index_list,
-                                           task_handler=akshare_datahub_task,
                                            hist_handler='get_hist_index_quote_data',
-                                           new_obj_handler=self.handle_new_index,
+                                           new_obj_handler=self.handle_new_stock,
                                            allow_update=allow_update)
         return status
 
@@ -78,13 +80,12 @@ class ChinaAStock(object):
         status = self.check_data_integrity(obj_name='stock',
                                            local_data_list=local_stock_list,
                                            remote_data_df=remote_stock_list,
-                                           task_handler=baostock_datahub_task,
                                            hist_handler='get_hist_stock_quote_data',
                                            new_obj_handler=self.handle_new_stock,
                                            allow_update=allow_update)
         return status
 
-    def check_data_integrity(self, obj_name, local_data_list, remote_data_df, task_handler,
+    def check_data_integrity(self, obj_name, local_data_list, remote_data_df,
                              hist_handler, new_obj_handler, allow_update=False, bulk_insert=False):
         logger.info(f'Stock Market {self.market.name} - '
                     f'Checking local {obj_name} data integrity, data update: {allow_update}')
@@ -135,15 +136,14 @@ class ChinaAStock(object):
                                                               quote_date, save_quote=save_quote)
                             new_quote_instance_list.append(new_quote)
                         elif flag in ["INC", "FULL"]:
-                            self.handle_get_hist_quote_data(stock_obj=stock_obj, task_handler=task_handler,
-                                                            hist_quote_handler=hist_handler)
+                            self.handle_get_hist_quote_data(stock_obj=stock_obj, hist_quote_handler=hist_handler)
 
                         upd_counter_dict[flag] += 1
                 else:
                     check_counter_dict["NEW"] += 1
                     if allow_update:
                         # create absent stock index and create data retrieve task.
-                        new_obj_handler(code=code, name=name)
+                        new_obj_handler(category="stock", code=code, name=name)
                         upd_counter_dict["NEW"] += 1
                 prog_bar(i, remote_data_num)
             if bulk_insert:
@@ -205,43 +205,41 @@ class ChinaAStock(object):
             update_flag = "FULL"
         return update_flag
 
-    def handle_new_stock(self, code, name):
-        logger.debug(f'Stock Market {self.market.name} - Initializing local stock data for {code}-{name}')
-        new_stock_obj = IndividualStock()
-        task_name = f'GET FULL QUOTE FOR STOCK {code}-{name}'
-        handler = 'get_hist_stock_quote_data'
+    def handle_new_stock(self, category, code, name):
+        """
+        handle new stock or index, will create a master data and a task, which get its quote data
+        :param category: stock or index
+        :param code:
+        :param name:
+        :return:
+        """
+        logger.info(f'Stock Market {self.market.name} - Initializing local stock data for {code}-{name}')
+        new_stock_obj = None
+        task_name = ""
+        handler = ""
+        if category == 'stock':
+            new_stock_obj = IndividualStock()
+            task_name = f'GET FULL QUOTE FOR STOCK {code}-{name}'
+            handler = 'get_hist_stock_quote_data'
+        elif category == 'index':
+            new_stock_obj = StockIndex()
+            task_name = f'GET FULL QUOTE FOR STOCK INDEX {code}-{name}'
+            handler = 'get_hist_index_quote_data'
+        else:
+            logger.error(f'Stock Market {self.market.name} - Invalid category {category}')
         new_stock_obj.code = code
         new_stock_obj.name = name
         new_stock_obj.market = self.market
         new_stock_obj.save()
-        data_retrieve_kwarg = {
+        task_kwarg = {
             'code': code
         }
-        baostock_datahub_task.create_task(name=task_name,
-                                          package='datahub',
-                                          module='markets',
-                                          obj='zh_a_stock_market',
-                                          handler=handler,
-                                          task_kwarg_dict=data_retrieve_kwarg)
-
-    def handle_new_index(self, code, name):
-        logger.debug(f'Stock Market {self.market.name} - Initializing local index data for {code}-{name}')
-        new_stock_obj = StockIndex()
-        task_name = f'GET FULL QUOTE FOR STOCK INDEX {code}-{name}'
-        handler = 'get_hist_index_quote_data'
-        new_stock_obj.code = code
-        new_stock_obj.name = name
-        new_stock_obj.market = self.market
-        new_stock_obj.save()
-        data_retrieve_kwarg = {
-            'code': code
-        }
-        akshare_datahub_task.create_task(name=task_name,
-                                         package='datahub',
-                                         module='markets',
-                                         obj='zh_a_stock_market',
-                                         handler=handler,
-                                         task_kwarg_dict=data_retrieve_kwarg)
+        task_controller.create_task(name=task_name,
+                                    callback_package='datahub',
+                                    callback_module='processors',
+                                    callback_object='ChinaAStock',
+                                    callback_handler=handler,
+                                    kwargs=task_kwarg)
 
     @staticmethod
     def handle_new_quote(stock_obj, col_name_list, quote_row, quote_date=None, save_quote=False):
@@ -258,7 +256,7 @@ class ChinaAStock(object):
         stock_obj.save()
         return new_quote
 
-    def handle_get_hist_quote_data(self, stock_obj, task_handler, hist_quote_handler, force_upd=False):
+    def handle_get_hist_quote_data(self, stock_obj, hist_quote_handler, force_upd=False):
         start_date = None
         most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_obj, 'daily_quote')
         if most_recent_quote_date:
@@ -267,17 +265,17 @@ class ChinaAStock(object):
             task_name = f'Get quote data from {start_date_str}for {stock_obj.code}-{stock_obj.name}'
         else:
             task_name = f'Get full quote data for {stock_obj.code}-{stock_obj.name}'
-        data_retrieve_kwarg = {
+        kwarg_dict = {
             'code': stock_obj.code,
         }
         if start_date:
-            data_retrieve_kwarg['start_date'] = start_date.strftime('%Y-%m-%d')
-        task_handler.create_task(name=task_name,
-                                 package='datahub',
-                                 module='markets',
-                                 obj='zh_a_stock_market',
-                                 handler=hist_quote_handler,
-                                 task_kwarg_dict=data_retrieve_kwarg)
+            kwarg_dict['start_date'] = start_date.strftime('%Y-%m-%d')
+        task_controller.create_task(name=task_name,
+                                    callback_package='datahub',
+                                    callback_module='markets',
+                                    callback_object='zh_a_stock_market',
+                                    callback_handler=hist_quote_handler,
+                                    kwargs=kwarg_dict)
 
     # @performance_helper.func_performance_timer
     def get_hist_stock_quote_data(self, code, start_date=None, force_insert=False, bulk_insert=True):
@@ -402,67 +400,65 @@ class ChinaAStock(object):
             stock_obj.name = curr_name
             stock_obj.save()
 
-    def check_scheduled_task(self):
-        # check the existence of index task
-        index_task_ok_flag = False
-        stock_task_ok_flag = False
-        run_hour = 18
-        task_num = DatahubTaskDoc.objects(status="CRTD",
-                                          name__startswith="Check index data integrity").count()
-        data_retrieve_kwarg = {
-            'allow_update': 'True'
-        }
-        if task_num == 0:
-            logger.info(f'Stock Market {self.market.name} - Initializing scheduled index data integrity task')
-            if trading_day_helper.is_trading_day(self.trade_calendar):
-                next_run_time = datetime.datetime.now()
-            else:
-                next_run_time = trading_day_helper.next_trading_day(self.trade_calendar)
-            next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
-            scheduled_datahub_task.create_task(
-                name=trading_day_helper.update_title_date_str('Check index data integrity', next_run_time),
-                package='datahub',
-                module='markets',
-                obj='zh_a_stock_market',
-                interface='akshare',
-                handler='check_index_data_integrity',
-                repeat='T-DAY',
-                scheduled_time=next_run_time,
-                task_kwarg_dict=data_retrieve_kwarg)
-        else:
-            index_task_ok_flag = True
-        # check the existence of stock task
-        task_num = DatahubTaskDoc.objects(status="CRTD",
-                                          name__startswith="Check stock data integrity").count()
-        if task_num == 0:
-            logger.info(f'Stock Market {self.market.name} - Initializing scheduled stock data integrity task')
-            if trading_day_helper.is_trading_day(self.trade_calendar):
-                next_run_time = datetime.datetime.now()
-            else:
-                next_run_time = trading_day_helper.next_trading_day(self.trade_calendar)
-            next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
-
-            scheduled_datahub_task.create_task(
-                name=trading_day_helper.update_title_date_str('Check stock data integrity', next_run_time),
-                package='datahub',
-                module='markets',
-                obj='zh_a_stock_market',
-                interface='akshare',
-                handler='check_stock_data_integrity',
-                repeat='T-DAY',
-                scheduled_time=next_run_time,
-                task_kwarg_dict=data_retrieve_kwarg)
-        else:
-            stock_task_ok_flag = True
-        if stock_task_ok_flag and index_task_ok_flag:
-            logger.info(f'Stock Market {self.market.name} - Scheduled data update task check OK')
+    # def check_scheduled_task(self):
+    #     # check the existence of index task
+    #     index_task_ok_flag = False
+    #     stock_task_ok_flag = False
+    #     run_hour = 18
+    #     task_num = DatahubTaskDoc.objects(status="CRTD",
+    #                                       name__startswith="Check index data integrity").count()
+    #     data_retrieve_kwarg = {
+    #         'allow_update': 'True'
+    #     }
+    #     if task_num == 0:
+    #         logger.info(f'Stock Market {self.market.name} - Initializing scheduled index data integrity task')
+    #         if trading_day_helper.is_trading_day(self.trade_calendar):
+    #             next_run_time = datetime.datetime.now()
+    #         else:
+    #             next_run_time = trading_day_helper.next_trading_day(self.trade_calendar)
+    #         next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
+    #         scheduled_datahub_task.create_task(
+    #             name=trading_day_helper.update_title_date_str('Check index data integrity', next_run_time),
+    #             package='datahub',
+    #             module='markets',
+    #             obj='zh_a_stock_market',
+    #             interface='akshare',
+    #             handler='check_index_data_integrity',
+    #             repeat='T-DAY',
+    #             scheduled_time=next_run_time,
+    #             task_kwarg_dict=data_retrieve_kwarg)
+    #     else:
+    #         index_task_ok_flag = True
+    #     # check the existence of stock task
+    #     task_num = DatahubTaskDoc.objects(status="CRTD",
+    #                                       name__startswith="Check stock data integrity").count()
+    #     if task_num == 0:
+    #         logger.info(f'Stock Market {self.market.name} - Initializing scheduled stock data integrity task')
+    #         if trading_day_helper.is_trading_day(self.trade_calendar):
+    #             next_run_time = datetime.datetime.now()
+    #         else:
+    #             next_run_time = trading_day_helper.next_trading_day(self.trade_calendar)
+    #         next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
+    #
+    #         scheduled_datahub_task.create_task(
+    #             name=trading_day_helper.update_title_date_str('Check stock data integrity', next_run_time),
+    #             package='datahub',
+    #             module='markets',
+    #             obj='zh_a_stock_market',
+    #             interface='akshare',
+    #             handler='check_stock_data_integrity',
+    #             repeat='T-DAY',
+    #             scheduled_time=next_run_time,
+    #             task_kwarg_dict=data_retrieve_kwarg)
+    #     else:
+    #         stock_task_ok_flag = True
+    #     if stock_task_ok_flag and index_task_ok_flag:
+    #         logger.info(f'Stock Market {self.market.name} - Scheduled data update task check OK')
 
 
 if __name__ == '__main__':
-    from app.lib.db_tool import mongoengine_tool
     from app.lib.datahub.data_source import interface
     interface.baostock_interface.establish_baostock_conn()
-    mongoengine_tool.connect_to_db()
     obj = ChinaAStock()
     o = obj.get_hist_index_quote_data(code="sh000061", force_insert=True, bulk_insert=False)
     print(o)

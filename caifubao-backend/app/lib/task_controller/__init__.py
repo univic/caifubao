@@ -2,11 +2,14 @@ import os
 import time
 import logging
 import datetime
+import traceback
 from multiprocessing import Pool
+from importlib import import_module
 from app.conf import app_config
 from app.model.task import Task
+from app.utilities import trading_day_helper
 from app.lib.db_watcher.mongoengine_tool import db_watcher
-from app.lib.task_controller.common import exec_task, convert_dict_to_kwarg, check_task_uniqueness
+from app.lib.task_controller.common import convert_kwarg_to_dict, convert_dict_to_kwarg, check_task_uniqueness
 
 # akshare_datahub_task = AkshareDatahubTask()
 # baostock_datahub_task = BaostockDatahubTask()
@@ -45,30 +48,90 @@ class Queue(object):
         logger.info(f'TaskController - Added task {task.name} to queue: {self.name}')
 
     def dispatch(self):
-        db_watcher.connect_to_db()
-        logger.info(f'TaskController - Queue {self.name} dispatched, process PID {os.getpid()}')
-        continue_flag = True
-        while continue_flag:
-            self.consume_queue()
-            logger.info(
-                f'TaskController - Task queue {self.name} cleared, wait {self.task_scan_interval} for next scan')
-            time.sleep(self.task_scan_interval)
+        try:
+            db_watcher.connect_to_db()
+            logger.info(f'TaskController - Queue {self.name} dispatched, process PID {os.getpid()}')
+            continue_flag = True
+            while continue_flag:
+                self.consume_queue()
+                logger.info(
+                    f'TaskController - Task queue {self.name} cleared, wait {self.task_scan_interval} '
+                    f'seconds for next scan')
+                time.sleep(self.task_scan_interval)
+        except Exception as e:
+            # print(traceback.format_exception(e))
+            logger.error(traceback.print_exception(e))
+            # Rethrow the exception to master process
+            raise e
 
     def consume_queue(self):
-        self.queue = Task.objects(status='CRTD', queue=self.name).order_by('-scheduled_time')
+        self.queue = list(Task.objects(status='CRTD', queue=self.name).order_by('-scheduled_time'))
         queue_length = len(self.queue)
         logger.info(f'TaskController - Task queue {self.name} length is {queue_length}')
         # Execute first task in the queue, until all the tasks had been popped out
         while queue_length > 0:
             logger.info(f'TaskController - Queue {self.name} - Found {queue_length} tasks, running')
-            result = exec_task(self.queue[0])
+            result = self.exec_task(self.queue[0])
             self.queue.pop(0)
             queue_length = len(self.queue)
             time.sleep(self.task_exec_interval)
 
+    def exec_task(self, task):
+        obj = getattr(import_module(f'app.lib.{task.callback_package}.{task.callback_module}'),
+                      task.callback_object)
+        instance = obj()
+        kwarg_dict = convert_kwarg_to_dict(task.kwargs)
+        func = getattr(instance, task.callback_handler)
+        task.processed_at = datetime.datetime.now()
+        result = func(*task.args, **kwarg_dict)
+        if result and result['code']:
+            if result['code'] == 'GOOD':
+                task.completed_at = datetime.datetime.now()
+                task.status = 'COMP'
+            elif result['code'] == 'WARN':
+                task.completed_at = datetime.datetime.now()
+                task.status = 'COMP'
+                task.message = result['message']
+            elif result['code'] == 'ERR':
+                task.status = 'ERR'
+                task.message = result['message']
+            else:
+                task.status = 'FAIL'
+                task.message = result['message']
+            self.handle_repeat_task(task)
+            task.save()
+            logger.info(f"TaskController - Queue {self.name} - Task '{task.name}>' completed successfully")
+        else:
+            logger.error(f"TaskController - Queue {self.name} - Task '{task.name}>' did not return valid result info\n"
+                         f"callback_module: {task.callback_module}\n"
+                         f"callback_package: {task.callback_package}\n"
+                         f"callback_object: {task.callback_object}\n"
+                         f"callback_handler: {task.callback_handler}\n")
+        return result
 
-    def get_queue_length(self):
-        pass
+    def handle_repeat_task(self, task):
+        if task.repeat_duration:
+            if task.repeat_duration == 'T-DAY':
+                trade_calendar = trading_day_helper.get_a_stock_market_trade_calendar()
+                curr_run_time = task.scheduled_process_time
+                next_run_time = trading_day_helper.next_trading_day(trade_calendar)
+                next_run_time += datetime.timedelta(hours=curr_run_time.hour,
+                                                    minutes=curr_run_time.minute,
+                                                    seconds=curr_run_time.second)
+            else:
+                next_run_time = None
+            # create task
+            kw_dict = convert_kwarg_to_dict(task.kwargs)
+            task_controller.create_task(name=trading_day_helper.update_title_date_str(task.name, next_run_time),
+                                        callback_package=task.callback_package,
+                                        callback_module=task.callback_module,
+                                        callback_object=task.callback_object,
+                                        callback_handler=task.callback_handler,
+                                        callback_interface=task.callback_interface,
+                                        repeat_duration=task.repeat_duration,
+                                        args_list=task.args,
+                                        kwargs=kw_dict,
+                                        scheduled_process_time=next_run_time)
 
 
 class TaskQueueController(object):
@@ -107,12 +170,13 @@ class TaskQueueController(object):
 
     @staticmethod
     def err_callback(err):
-        print(err)
+        logger.error(f"TaskQueueController - Error occurred in queue: {err}")
+        # traceback.print_exc(err)
 
     def consume_queue(self):
         pass
 
-    def add_tasks_to_queue(self, task_list: list, find_queue_by="interface"):
+    def add_tasks_to_queue(self, task_list: list, find_queue_by="callback_interface"):
         self.distribute_tasks_to_queue(task_list, find_queue_by)
 
     def distribute_tasks_to_queue(self, task_list: list, find_queue_by):
@@ -125,26 +189,22 @@ class TaskQueueController(object):
         for task in task_list:
             q = None
             # if exec_unit have the corresponding attribute, then try to find the queue
-            if hasattr(task, find_queue_by):
-                queue_founded = False
-                for queue in self.task_queues:
-                    # if corresponding queue exists, put the task into it
-                    if hasattr(queue, find_queue_by) and queue[find_queue_by] == getattr(task, find_queue_by):
-                        q = queue
-                        queue_founded = True
-                    else:
-                        # if no queue matches the attribute, create a new queue
-                        queue_name = getattr(task, find_queue_by)
-                        queue_attr = {
-                            find_queue_by: getattr(task, find_queue_by)
-                        }
-                        q = self.setup_queue(queue_name, queue_attr)
-                # if no queue matches the attribute, put the task into default queue
-                if not queue_founded:
-                    q = self.task_queues["default"]
-            # if exec_unit does not have the corresponding attribute, put the task into default queue
+            if hasattr(task, find_queue_by) and getattr(task, find_queue_by) in self.task_queues.keys():
+                q = self.task_queues[getattr(task, find_queue_by)]
+                # queue_founded = False
+            # if no queue matches the attribute, try create a new queue
+            elif hasattr(task, find_queue_by) and getattr(task, find_queue_by):
+                queue_name = getattr(task, find_queue_by)
+                queue_attr = {
+                    find_queue_by: getattr(task, find_queue_by)
+                }
+                q = self.setup_queue(queue_name, queue_attr)
+            # if task does not come with attr to determine its queue, put the task into default queue
             else:
-                q = self.task_queues["default"]
+                if "default" in self.task_queues.keys():
+                    q = self.task_queues["default"]
+                else:
+                    logger.error("TaskQueueController - Default queue not found")
             task.queue = q.name
             task.save()
             q.add_task(task)
@@ -203,7 +263,7 @@ class TaskController(object):
     def create_task(self, name, callback_package, callback_module, callback_object, callback_handler, desc=None,
                     callback_interface=None, priority: int = 5, scheduled_process_time=None, valid_before=None,
                     repeat_duration=None, repeat_amount: int = None, repeat_ends_at=None,
-                    args_list: list = None, kwarg_dict=None, **extra_kw):
+                    args_list: list = None, kwargs: dict = None, **extra_kw):
         new_task = Task()
         new_task.name = name
         new_task.desc = desc
@@ -219,8 +279,8 @@ class TaskController(object):
         new_task.repeat_amount = repeat_amount
         new_task.repeat_ends_at = repeat_ends_at
         new_task.args = args_list
-        if kwarg_dict:
-            new_task.kwargs = convert_dict_to_kwarg(kwarg_dict)
+        if kwargs:
+            new_task.kwargs = convert_dict_to_kwarg(kwargs)
         if check_task_uniqueness(new_task):
             new_task.save()
             logger.debug(f'TaskController - task {new_task.name} created')

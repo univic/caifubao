@@ -114,9 +114,9 @@ class DatahubTask(object):
         new_task.args = task_args_list
         if task_kwarg_dict:
             new_task.kwargs = convert_dict_to_kwarg(task_kwarg_dict)
-        if check_task_uniqueness(new_task, task_kwarg_dict):
+        if check_task_uniqueness(new_task):
             new_task.save()
-            logger.debug(f'{self.runner_name} task worker - Data retrieve task {new_task.name} created')
+            logger.debug(f'{self.runner_name} task worker -   ask {new_task.name} created')
         else:
             logger.debug(f'{self.runner_name} task worker - Found duplicate data retrieve task {new_task.name}')
 
@@ -243,7 +243,7 @@ class ScheduledDatahubTask(DatahubTask):
             else:
                 next_run_time = None
             # create task
-            kw_dict = convert_kwarg_to_dict(item.kwargs)
+            kw_dict = item.kwargs
             self.create_task(name=trading_day_helper.update_title_date_str(item.name, next_run_time),
                              package=item.callback_package,
                              module=item.callback_module,
