@@ -1,5 +1,5 @@
 import os
-import time
+import time, threading
 import logging
 import datetime
 import traceback
@@ -16,22 +16,6 @@ from app.lib.task_controller.common import convert_kwarg_to_dict, convert_dict_t
 # scheduled_datahub_task = ScheduledDatahubTask()
 
 logger = logging.getLogger(__name__)
-
-
-# def data_retriever_init():
-# logger.info(f'Starting data retriever processes, master process id {os.getpid()}')
-# p1 = Process(target=akshare_datahub_task.dispatch)
-# p1.start()
-# p2 = Process(target=baostock_datahub_task.dispatch)
-# p2.start()
-# p3 = Process(target=scheduled_datahub_task.dispatch)
-# p3.start()
-
-# p.apply_async(akshare_data_retriever.dispatch)
-# p.apply_async(baostock_data_retriever.dispatch)
-# p.apply_async(scheduled_data_retriever.dispatch)
-# p.close()
-# p.join()
 
 
 class Queue(object):
@@ -144,6 +128,7 @@ class TaskQueueController(object):
         self.queue_num: int = app_config.TASK_CONTROLLER_SETTINGS["DEFAULT_TASK_QUEUE_NUM"]
         self.max_queue_num: int = app_config.TASK_CONTROLLER_SETTINGS["MAX_TASK_QUEUE_NUM"]
         self.process_pool = None
+        self.thread_pool = {}
 
     def initialize(self):
         """
@@ -164,7 +149,12 @@ class TaskQueueController(object):
         self.task_queues[name] = queue
         # p = Process(target=queue.dispatch)
         # p.start()
-        self.process_pool.apply_async(queue.dispatch, error_callback=self.err_callback)
+        if queue.attributes["module"] == "datahub":
+            logger.info(f'TaskQueueController - Setting up queue in new thread')
+            t = threading.Thread(target=queue.dispatch, name=queue.name)
+        else:
+            logger.info(f'TaskQueueController - Setting up queue in new process')
+            self.process_pool.apply_async(queue.dispatch, error_callback=self.err_callback)
 
         return queue
 
@@ -196,7 +186,8 @@ class TaskQueueController(object):
             elif hasattr(task, find_queue_by) and getattr(task, find_queue_by):
                 queue_name = getattr(task, find_queue_by)
                 queue_attr = {
-                    find_queue_by: getattr(task, find_queue_by)
+                    find_queue_by: getattr(task, find_queue_by),
+                    "module": task.callback_module
                 }
                 q = self.setup_queue(queue_name, queue_attr)
             # if task does not come with attr to determine its queue, put the task into default queue
