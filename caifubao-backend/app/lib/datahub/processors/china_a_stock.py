@@ -19,7 +19,7 @@ class ChinaAStock(object):
         self.today = datetime.date.today()
         self.most_recent_trading_day = None
         self.market = FinanceMarket.objects(name="A股").first()
-        self.trade_calendar = self.market.trade_calendar
+        self.trade_calendar = None
         self.result: dict = {
             'code': "GOOD",
             'message': "",
@@ -30,14 +30,14 @@ class ChinaAStock(object):
         self.check_market_data_existence()
         self.check_trade_calendar_integrity()
         # self.check_scheduled_task()
-        # self.check_index_data_integrity(allow_update=True)
+        self.check_index_data_integrity(allow_update=True)
         # self.check_stock_data_integrity(allow_update=True)
         return self.result
 
     def check_market_data_existence(self):
         # check the existence of basic market data
         if not self.market:
-            logger.info(f'Stock Market {self.market.name} - Local market data not found, initializing')
+            logger.info(f'Stock Market {self.market_name} - Local market data not found, initializing')
             new_market = FinanceMarket()
             new_market.name = self.market_name
             new_market.code = self.market_code
@@ -66,29 +66,27 @@ class ChinaAStock(object):
 
         local_index_list = StockIndex.objects(market=self.market)
         remote_index_list = zh_a_data.get_zh_a_stock_index_spot()
-        status = self.check_data_integrity(obj_name='index',
+        status = self.check_data_integrity(obj_type='index',
                                            local_data_list=local_index_list,
                                            remote_data_df=remote_index_list,
                                            hist_handler='get_hist_index_quote_data',
-                                           new_obj_handler=self.handle_new_stock,
                                            allow_update=allow_update)
         return status
 
     def check_stock_data_integrity(self, allow_update=False):
         local_stock_list = IndividualStock.objects(market=self.market)
         remote_stock_list = zh_a_data.get_zh_a_stock_spot()
-        status = self.check_data_integrity(obj_name='stock',
+        status = self.check_data_integrity(obj_type='stock',
                                            local_data_list=local_stock_list,
                                            remote_data_df=remote_stock_list,
                                            hist_handler='get_hist_stock_quote_data',
-                                           new_obj_handler=self.handle_new_stock,
                                            allow_update=allow_update)
         return status
 
-    def check_data_integrity(self, obj_name, local_data_list, remote_data_df,
-                             hist_handler, new_obj_handler, allow_update=False, bulk_insert=False):
+    def check_data_integrity(self, obj_type, local_data_list, remote_data_df,
+                             hist_handler, allow_update=False, bulk_insert=False):
         logger.info(f'Stock Market {self.market.name} - '
-                    f'Checking local {obj_name} data integrity, data update: {allow_update}')
+                    f'Checking local {obj_type} data integrity, data update: {allow_update}')
         status_code = "GOOD"
         status_msg = ""
         check_counter_dict = {
@@ -143,14 +141,14 @@ class ChinaAStock(object):
                     check_counter_dict["NEW"] += 1
                     if allow_update:
                         # create absent stock index and create data retrieve task.
-                        new_obj_handler(category="stock", code=code, name=name)
+                        self.handle_new_stock(obj_type=obj_type, code=code, name=name)
                         upd_counter_dict["NEW"] += 1
                 prog_bar(i, remote_data_num)
             if bulk_insert:
                 # do bulk insert
                 StockDailyQuote.objects.insert(new_quote_instance_list, load_bulk=False)
             msg_str = (f'Stock Market {self.market.name} - '
-                       f'Checked {local_data_num} local {obj_name} data with {remote_data_num} remote data，'
+                       f'Checked {local_data_num} local {obj_type} data with {remote_data_num} remote data，'
                        f'- Up to date:          {check_counter_dict["GOOD"]} '
                        f'- One day behind:    {check_counter_dict["UPD"]} '
                        f'- Need incremental update: {check_counter_dict["INC"]}'
@@ -159,7 +157,7 @@ class ChinaAStock(object):
             logger.info(msg_str)
             status_msg += msg_str
             if allow_update:
-                msg_str = (f'Stock Market {self.market.name} - update attempt for {obj_name} data are as follows: '
+                msg_str = (f'Stock Market {self.market.name} - update attempt for {obj_type} data are as follows: '
                            f'- Update with spot data:  {upd_counter_dict["UPD"]} '
                            f'- Incremental update: {upd_counter_dict["INC"]}'
                            f'- Get full quote data:  {upd_counter_dict["FULL"]} '
@@ -168,7 +166,7 @@ class ChinaAStock(object):
                 logger.info(msg_str)
                 status_msg += msg_str
             else:
-                msg_str = f'Stock Market {self.market.name} - no update attempt was made for {obj_name} data.'
+                msg_str = f'Stock Market {self.market.name} - no update attempt was made for {obj_type} data.'
                 logger.info(msg_str)
                 status_msg += msg_str
         else:
@@ -176,7 +174,7 @@ class ChinaAStock(object):
                 for i, remote_stock_item in remote_data_df.iterrows():
                     code = remote_stock_item['code']
                     name = remote_stock_item['name']
-                    new_obj_handler(code=code, name=name)
+                    self.handle_new_stock(obj_type=obj_type, code=code, name=name)
                     prog_bar(i, remote_data_num)
         status = {"code": status_code,
                   "msg": status_msg}
@@ -205,28 +203,28 @@ class ChinaAStock(object):
             update_flag = "FULL"
         return update_flag
 
-    def handle_new_stock(self, category, code, name):
+    def handle_new_stock(self, obj_type, code, name):
         """
         handle new stock or index, will create a master data and a task, which get its quote data
-        :param category: stock or index
+        :param obj_type: stock or index
         :param code:
         :param name:
         :return:
         """
-        logger.info(f'Stock Market {self.market.name} - Initializing local stock data for {code}-{name}')
+        logger.info(f'Stock Market {self.market.name} - Initializing local data for {code}-{name}')
         new_stock_obj = None
         task_name = ""
         handler = ""
-        if category == 'stock':
+        if obj_type == 'stock':
             new_stock_obj = IndividualStock()
             task_name = f'GET FULL QUOTE FOR STOCK {code}-{name}'
             handler = 'get_hist_stock_quote_data'
-        elif category == 'index':
+        elif obj_type == 'index':
             new_stock_obj = StockIndex()
             task_name = f'GET FULL QUOTE FOR STOCK INDEX {code}-{name}'
             handler = 'get_hist_index_quote_data'
         else:
-            logger.error(f'Stock Market {self.market.name} - Invalid category {category}')
+            logger.error(f'Stock Market {self.market.name} - Invalid category {obj_type}')
         new_stock_obj.code = code
         new_stock_obj.name = name
         new_stock_obj.market = self.market

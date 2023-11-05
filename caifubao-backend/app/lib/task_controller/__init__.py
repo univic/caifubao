@@ -3,7 +3,8 @@ import time, threading
 import logging
 import datetime
 import traceback
-from multiprocessing import Pool
+import multiprocessing
+from multiprocessing import Pool, Manager
 from importlib import import_module
 from app.conf import app_config
 from app.model.task import Task
@@ -16,6 +17,8 @@ from app.lib.task_controller.common import convert_kwarg_to_dict, convert_dict_t
 # scheduled_datahub_task = ScheduledDatahubTask()
 
 logger = logging.getLogger(__name__)
+LOCK = threading.Lock()
+# TASK_QUEUE_DICT = Manager().dict()
 
 
 class Queue(object):
@@ -25,15 +28,16 @@ class Queue(object):
         self.attributes: dict = attributes
         self.task_exec_interval: float = app_config.TASK_CONTROLLER_SETTINGS["TASK_EXEC_INTERVAL"]
         self.task_scan_interval = app_config.TASK_CONTROLLER_SETTINGS["TASK_SCAN_INTERVAL"]
-        logger.info(f'TaskController - Creating task queue: {self.name}, process PID {os.getpid()}')
+        logger.info(f'TaskController - Creating task queue: {self.name}, process PID {os.getpid()}, '
+                    f'thread {threading.current_thread().name}')
 
     def add_task(self, task):
         self.queue.append(task)
         logger.info(f'TaskController - Added task {task.name} to queue: {self.name}')
 
-    def dispatch(self):
+    def dispatch(self, task_queues=None):
         try:
-            db_watcher.connect_to_db()
+            db_watcher.get_db_connection()
             logger.info(f'TaskController - Queue {self.name} dispatched, process PID {os.getpid()}')
             continue_flag = True
             while continue_flag:
@@ -124,7 +128,7 @@ class TaskQueueController(object):
     """
     def __init__(self):
 
-        self.task_queues: dict = {}
+        self.task_queues = None
         self.queue_num: int = app_config.TASK_CONTROLLER_SETTINGS["DEFAULT_TASK_QUEUE_NUM"]
         self.max_queue_num: int = app_config.TASK_CONTROLLER_SETTINGS["MAX_TASK_QUEUE_NUM"]
         self.process_pool = None
@@ -135,26 +139,39 @@ class TaskQueueController(object):
         create a default queue
         :return:
         """
+
         logger.info(f'TaskController - TaskQueueController is initializing')
         self.process_pool = Pool(4)
+        self.task_queues = Manager().dict()
         logger.info(f'TaskController - Process pool ready, parent process PID {os.getpid()}')
-        self.setup_queue("default")
+        default_queue_attrs = {
+            "module": "datahub"
+        }
+        self.setup_queue("default", default_queue_attrs)
 
     def setup_queue(self, name, attributes: dict = None):
         """
         setup a new queue
         :return:
         """
+        use_new_process = False
+        if len(self.task_queues) == 0:
+            use_new_process = True
+        else:
+            pass
         queue = Queue(name, attributes)
-        self.task_queues[name] = queue
+
         # p = Process(target=queue.dispatch)
         # p.start()
-        if queue.attributes["module"] == "datahub":
+        if use_new_process:
+            with LOCK:
+                logger.info(f'TaskQueueController - Setting up queue in new process')
+                self.task_queues[name] = queue
+                self.process_pool.apply_async(queue.dispatch, error_callback=self.err_callback)
+        else:
             logger.info(f'TaskQueueController - Setting up queue in new thread')
             t = threading.Thread(target=queue.dispatch, name=queue.name)
-        else:
-            logger.info(f'TaskQueueController - Setting up queue in new process')
-            self.process_pool.apply_async(queue.dispatch, error_callback=self.err_callback)
+            t.start()
 
         return queue
 
@@ -176,30 +193,39 @@ class TaskQueueController(object):
         :param:
         :return:
         """
-        for task in task_list:
-            q = None
-            # if exec_unit have the corresponding attribute, then try to find the queue
-            if hasattr(task, find_queue_by) and getattr(task, find_queue_by) in self.task_queues.keys():
-                q = self.task_queues[getattr(task, find_queue_by)]
-                # queue_founded = False
-            # if no queue matches the attribute, try create a new queue
-            elif hasattr(task, find_queue_by) and getattr(task, find_queue_by):
-                queue_name = getattr(task, find_queue_by)
-                queue_attr = {
-                    find_queue_by: getattr(task, find_queue_by),
-                    "module": task.callback_module
-                }
-                q = self.setup_queue(queue_name, queue_attr)
-            # if task does not come with attr to determine its queue, put the task into default queue
-            else:
-                if "default" in self.task_queues.keys():
-                    q = self.task_queues["default"]
+        # determine whether current process is subprocess
+        if multiprocessing.current_process().name == 'MainProcess':
+            is_subprocess = False
+        else:
+            is_subprocess = True
+
+        if is_subprocess:
+            pass
+        else:
+            for task in task_list:
+                q = None
+                # if exec_unit have the corresponding attribute, then try to find the queue
+                if hasattr(task, find_queue_by) and getattr(task, find_queue_by) in self.task_queues.keys():
+                    q = self.task_queues[getattr(task, find_queue_by)]
+                    # queue_founded = False
+                # if no queue matches the attribute, try create a new queue
+                elif hasattr(task, find_queue_by) and getattr(task, find_queue_by):
+                    queue_name = getattr(task, find_queue_by)
+                    queue_attr = {
+                        find_queue_by: getattr(task, find_queue_by),
+                        "module": task.callback_module
+                    }
+                    q = self.setup_queue(queue_name, queue_attr)
+                # if task does not come with attr to determine its queue, put the task into default queue
                 else:
-                    logger.error("TaskQueueController - Default queue not found")
-            task.queue = q.name
-            task.save()
-            q.add_task(task)
-            logger.info(f"Added task {task.name} to queue: {q.name}")
+                    if "default" in self.task_queues.keys():
+                        q = self.task_queues["default"]
+                    else:
+                        logger.error("TaskQueueController - Default queue not found")
+                task.queue = q.name
+                task.save()
+                q.add_task(task)
+                logger.info(f"Added task {task.name} to queue: {q.name}")
 
 
 class TaskController(object):
