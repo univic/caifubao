@@ -14,35 +14,21 @@ from app.lib.task_controller import task_controller
 logger = logging.getLogger(__name__)
 
 
-class MainDispatcher(object):
+class MainSession(object):
 
-    def __init__(self):
+    def __init__(self, scenario):
         pass
 
     @staticmethod
     def dispatch():
 
+        pass
+
         # Main Sequence Start
 
         # Establish DB Connection
-        db_watcher.initialize()
-        db_watcher.connect_to_db()
-
-        # Start Web Server
-        # web_server.create_web_app()
-
-        # Load Scenario and Strategy
-        strategy_director.load_strategy("Strategy01")
-
-        # Start Task Controller
-        task_controller.initialize()
-
-
-        # Start Datahub
-        datahub = Datahub()
-        datahub.start()
-        while True:
-            pass
+        # db_watcher.initialize()
+        # db_watcher.connect_to_db()
 
         # Start Factor Factory
 

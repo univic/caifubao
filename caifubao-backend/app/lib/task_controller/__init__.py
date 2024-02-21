@@ -133,20 +133,24 @@ class TaskQueueController(object):
         self.max_queue_num: int = app_config.TASK_CONTROLLER_SETTINGS["MAX_TASK_QUEUE_NUM"]
         self.process_pool = None
         self.thread_pool = {}
+        self.use_multi_processing = False
+        self.use_multi_threading = False
 
     def initialize(self):
         """
         create a default queue
         :return:
         """
-
         logger.info(f'TaskController - TaskQueueController is initializing')
-        self.process_pool = Pool(4)
-        self.task_queues = Manager().dict()
-        logger.info(f'TaskController - Process pool ready, parent process PID {os.getpid()}')
         default_queue_attrs = {
             "module": "datahub"
         }
+        if self.use_multi_processing:
+            self.process_pool = Pool(4)
+            self.task_queues = Manager().dict()
+            logger.info(f'TaskController - Process pool ready, parent process PID {os.getpid()}')
+        else:
+            pass
         self.setup_queue("default", default_queue_attrs)
 
     def setup_queue(self, name, attributes: dict = None):
@@ -154,26 +158,29 @@ class TaskQueueController(object):
         setup a new queue
         :return:
         """
-        use_new_process = False
-        if len(self.task_queues) == 0:
-            use_new_process = True
-        else:
-            pass
-        queue = Queue(name, attributes)
+        if self.use_multi_processing:
+            use_new_process = False
+            if len(self.task_queues) == 0:
+                use_new_process = True
+            else:
+                pass
+            queue = Queue(name, attributes)
 
-        # p = Process(target=queue.dispatch)
-        # p.start()
-        if use_new_process:
-            with LOCK:
-                logger.info(f'TaskQueueController - Setting up queue in new process')
-                self.task_queues[name] = queue
-                self.process_pool.apply_async(queue.dispatch, error_callback=self.err_callback)
+            # p = Process(target=queue.dispatch)
+            # p.start()
+            if use_new_process:
+                with LOCK:
+                    logger.info(f'TaskQueueController - Setting up queue in new process')
+                    self.task_queues[name] = queue
+                    self.process_pool.apply_async(queue.dispatch, error_callback=self.err_callback)
+            else:
+                logger.info(f'TaskQueueController - Setting up queue in new thread')
+                t = threading.Thread(target=queue.dispatch, name=queue.name)
+                t.start()
+            return queue
         else:
-            logger.info(f'TaskQueueController - Setting up queue in new thread')
-            t = threading.Thread(target=queue.dispatch, name=queue.name)
-            t.start()
-
-        return queue
+            queue = Queue(name, attributes)
+            return queue
 
     @staticmethod
     def err_callback(err):

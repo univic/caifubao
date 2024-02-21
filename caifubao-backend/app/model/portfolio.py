@@ -3,12 +3,8 @@ from mongoengine import Document, StringField, EmbeddedDocumentListField, DateTi
 
 
 class Portfolio(Document):
-    pass
+    name = StringField()
 
 
 class PortfolioTransaction(Document):
-    pass
-
-
-class PortfolioNetworth(Document):
     pass
