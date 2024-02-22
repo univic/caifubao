@@ -9,6 +9,7 @@ from app.lib.task_controller import task_controller
 from app.lib.db_watcher.mongoengine_tool import db_watcher
 # from app.lib.dispatcher import MainDispatcher
 from app.lib.strategy import strategy_director
+from app.lib.scenario_director import scenario_director
 
 
 logger = logging.getLogger(__name__)

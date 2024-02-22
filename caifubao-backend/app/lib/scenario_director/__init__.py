@@ -23,10 +23,12 @@ class ScenarioDirector(object):
     it starts from scenario and turn into corresponding movement.
     """
 
-    def __init__(self):
+    def __init__(self, scenario_name, strategy_name, portfolio_name):
         self.module_name = 'ScenarioDirector'
         self.scenario = None
-        self.scenario_name = None
+        self.scenario_name = scenario_name
+        self.strategy_name = strategy_name
+        self.portfolio_name = portfolio_name
         logger.info(f'Module {self.module_name} is initializing')
 
     def load_scenario(self, scenario_name):
