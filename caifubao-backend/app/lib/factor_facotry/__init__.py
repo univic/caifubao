@@ -2,19 +2,17 @@ import logging
 import pandas as pd
 from app.model.stock import BasicStock, StockDailyQuote
 from app.lib.factor_facotry import processors
+from app.lib import GeneralWorker
 from app.utilities import trading_day_helper, freshness_meta_helper
 
 logger = logging.getLogger(__name__)
 
 
-class FactorFactory(object):
-    def __init__(self, stock, factor_name_list, quote_df=None):
-        logger.info('Initializing factor factory')
-        self.stock = stock
-        self.quote_df = quote_df
-        self.latest_quote_date = None
-        self.latest_factor_date = None
-        self.factor_name_list = factor_name_list
+class FactorFactory(GeneralWorker):
+    def __init__(self, strategy_director, scenario):
+
+        # get class name
+        super().__init__(scenario, strategy_director)
         self.factor_processor_list = []
         self.factor_processor_exec_list = []
         self.counter_dict = {
@@ -28,6 +26,12 @@ class FactorFactory(object):
 
     def after_exec(self):
         pass
+
+    def get_todo(self):
+        stock_list = self.scenario
+
+    def get_stock_list(self):
+        self.stock_list = self.strategy_director.get_stock_list()
 
     def run_factor_factory(self):
 

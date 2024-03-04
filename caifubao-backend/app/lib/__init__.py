@@ -16,11 +16,11 @@ class GeneralExecUnit(object):
 
 
 class GeneralWorker(object):
-    def __init__(self, module_name, processor_registry):
-        self.module_name = module_name
-        self.processor_registry = processor_registry
+    def __init__(self, scenario, strategy):
+        self.module_name = self.__class__.__name__
+        self.processor_registry = None
         self.processor_list = []
-        self.scenario = None
+        self.scenario = scenario
         self.strategy = None
         self.counter_dict = {
             'FINI': 0,
@@ -31,14 +31,17 @@ class GeneralWorker(object):
         self.exec_unit_list = []
         logger.info(f'{self.module_name} is initializing')
 
-    def before_exec(self):
+    def before_run(self):
         pass
 
-    def get_todo_list(self):
+    def get_todo(self):
         """
         get a list which contains what should be processed,
         :return:
         """
+        pass
+
+    def run_todo(self):
         pass
 
     def generate_exec_plan(self):
@@ -82,7 +85,7 @@ class GeneralWorker(object):
                 logger.info(
                     f'{self.module_name} processor {processor_name} exec result: {result_flag} {exec_result_dict["msg"]}')
 
-    def after_exec(self):
+    def after_run(self):
         pass
 
     def run(self):
@@ -92,11 +95,7 @@ class GeneralWorker(object):
         logger.info(f'{self.module_name} processors run finished, '
                     f'{self.counter_dict["FINI"]} finished, '
                     f'{self.counter_dict["SKIP"]} skipped.')
-        self.after_exec()
 
-    def get_analyte_list(self):
-        analyte_list = []
-        return analyte_list
 
     def check_last_analysis_date(self, target_stock, item_name):
         latest_quote_date = trading_day_helper.read_freshness_meta(target_stock, 'daily_quote')

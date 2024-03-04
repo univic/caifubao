@@ -2,7 +2,10 @@
 
 class PortfolioManager(object):
 
-    def __init__(self, portfolio_id):
+    def __init__(self):
+        pass
+
+    def load_portfolio(self, portfolio_name):
         pass
 
     # def check_trade_opportunities(self):
