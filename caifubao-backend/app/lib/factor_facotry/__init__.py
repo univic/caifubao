@@ -33,7 +33,7 @@ class FactorFactory(GeneralWorker):
     def get_stock_list(self):
         self.stock_list = self.strategy_director.get_stock_list()
 
-    def run_factor_factory(self):
+    def run(self):
 
         self.read_quote_data()
         self.generate_exec_plan()

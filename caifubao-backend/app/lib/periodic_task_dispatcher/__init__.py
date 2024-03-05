@@ -10,23 +10,24 @@ logger = logging.getLogger(__name__)
 
 class PeriodicTaskDispatcher(object):
 
-    def __init__(self):
+    def __init__(self, strategy_director, portfolio_manager, scenario):
         # get class name
         self.module_name = self.__class__.__name__
+        self.strategy_director = strategy_director
+        self.portfolio_manager = portfolio_manager
+        self.scenario = scenario
         self.current_date = None
         self.current_time = None
         self.is_trading_day: bool = True
 
-    def run(self, strategy_director, portfolio_manager, current_date):
+    def run(self):
         self.generate_factors()
         self.generate_signals()
         self.generate_trade_plan()
 
     def generate_factors(self):
-        for stock in self.stock_list:
-            stock_factor_name_list = self.strategy_director.get_stock_factor_list()
             factor_factory = FactorFactory(stock, stock_factor_name_list)
-            factor_factory.run_factor_factory()
+            factor_factory.run()
 
     def generate_signals(self):
         logger.info(f'Preparing to generate signals')
