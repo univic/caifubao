@@ -16,12 +16,16 @@ class GeneralExecUnit(object):
 
 
 class GeneralWorker(object):
-    def __init__(self, scenario, strategy):
+    def __init__(self, strategy_director, portfolio_manager, scenario):
         self.module_name = self.__class__.__name__
         self.processor_registry = None
         self.processor_list = []
+        self.strategy_director = strategy_director
+        self.portfolio_manager = portfolio_manager
         self.scenario = scenario
         self.strategy = None
+        self.current_day = None
+        self.todo_list: list = []
         self.counter_dict = {
             'FINI': 0,
             'SKIP': 0,

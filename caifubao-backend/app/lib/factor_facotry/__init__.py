@@ -1,4 +1,5 @@
 import logging
+import itertools
 import pandas as pd
 from app.model.stock import BasicStock, StockDailyQuote
 from app.lib.factor_facotry import processors
@@ -9,12 +10,12 @@ logger = logging.getLogger(__name__)
 
 
 class FactorFactory(GeneralWorker):
-    def __init__(self, strategy_director, scenario):
+    def __init__(self, strategy_director, portfolio_manager, scenario):
 
         # get class name
-        super().__init__(scenario, strategy_director)
-        self.factor_processor_list = []
-        self.factor_processor_exec_list = []
+        super().__init__(strategy_director, portfolio_manager, scenario)
+        self.factor_processor_list:list = []
+        self.factor_processor_exec_list:list = []
         self.counter_dict = {
             'FINI': 0,
             'SKIP': 0,
@@ -28,10 +29,13 @@ class FactorFactory(GeneralWorker):
         pass
 
     def get_todo(self):
-        stock_list = self.scenario
-
-    def get_stock_list(self):
-        self.stock_list = self.strategy_director.get_stock_list()
+        stock_list = self.strategy_director.get_stock_list()
+        factor_list: list = self.strategy_director.get_factor_list()
+        factor_rule_list = self.strategy_director.get_factor_rule_list()
+        if len(factor_rule_list) == 1 and factor_rule_list[0] == "*":
+            self.todo_list = itertools.product(stock_list, factor_list)
+        else:
+            logger.error("Unsupported factor rule")
 
     def run(self):
 

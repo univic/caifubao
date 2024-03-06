@@ -37,9 +37,13 @@ class StrategyDirecter(object):
                 stock_obj_list.append(stock_obj)
         return stock_obj_list
 
-    def get_stock_factor_list(self):
-        stock_factor_list = self.strategy.stock_factor_list
-        return stock_factor_list
+    def get_factor_list(self):
+        factor_list = self.strategy.factor_list
+        return factor_list
+
+    def get_factor_rule_list(self):
+        factor_rule_list = self.strategy.factor_rule_list
+        return factor_rule_list
 
     def get_signal_list(self):
         signal_list = self.strategy.signal_list

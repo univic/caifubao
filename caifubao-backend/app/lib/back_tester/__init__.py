@@ -35,6 +35,7 @@ class BasicBackTester(object):
         self.end_date = None
         self.backtest_periodic_task_list = None
         self.current_trading_day = None
+        self.backtest_name: str = ""
         logger.info(f'Module {self.module_name} is initializing')
 
     def run(self):
@@ -43,14 +44,18 @@ class BasicBackTester(object):
 
         # insert a backtest record
         backtest_record = BackTest()
-        backtest_record.name = f"{self.strategy_name}-{self.start_date}-{self.end_date}"
+        backtest_record.name = self.backtest_name
         backtest_record.strategy = self.strategy_name
         backtest_record.start_date = self.start_date
         backtest_record.end_date = self.end_date
         backtest_record.save()
 
+        self.scenario.backtest_name = self.backtest_name
+
         self.get_backtest_periodic_task()
-        self.periodic_task_dispatcher = PeriodicTaskDispatcher()
+        self.periodic_task_dispatcher = PeriodicTaskDispatcher(strategy_director=self.strategy_director,
+                                                               portfolio_manager=self.portfolio_manager,
+                                                               scenario=self.scenario)
         task_list_len = len(self.backtest_periodic_task_list)
 
         # update start time
@@ -79,6 +84,8 @@ class BasicBackTester(object):
         # update end date if no value is provided
         if not self.end_date:
             self.end_date = datetime.datetime.strftime(datetime.datetime.now(), '%Y-%m-%d')
+
+        self.backtest_name = f"{self.strategy_name}-{self.start_date}-{self.end_date}"
 
         self.scenario = ScenarioDirector()
         self.scenario.is_backtest = True

@@ -7,11 +7,12 @@ logger = logging.getLogger(__name__)
 
 
 class SignalMan(GeneralWorker):
-    def __init__(self, scenario=None, strategy=None):
+    def __init__(self, strategy_director, portfolio_manager, scenario):
+
         self.module_name = 'SignalMan'
         self.meta_type = 'signal_processor'
         self.processor_registry = processors.registry
-        super().__init__(scenario, strategy, self.module_name, self.meta_type, self.processor_registry)
+        super().__init__(strategy_director, portfolio_manager, scenario)
 
 
 if __name__ == "__main__":

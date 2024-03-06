@@ -4,7 +4,7 @@ from mongoengine import Document, StringField, EmbeddedDocumentListField, DateTi
 
 
 class BackTest(Document):
-    name = StringField()
+    name = StringField(unique=True)
     strategy = StringField()
     start_date = DateTimeField()
     end_date = DateTimeField()

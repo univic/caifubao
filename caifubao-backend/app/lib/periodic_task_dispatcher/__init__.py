@@ -26,8 +26,9 @@ class PeriodicTaskDispatcher(object):
         self.generate_trade_plan()
 
     def generate_factors(self):
-            factor_factory = FactorFactory(stock, stock_factor_name_list)
-            factor_factory.run()
+        logger.info(f'Preparing to generate factors')
+        factor_factory = FactorFactory(strategy_director=self.strategy_director, scenario=self.scenario)
+        factor_factory.run()
 
     def generate_signals(self):
         logger.info(f'Preparing to generate signals')
@@ -44,7 +45,7 @@ class PeriodicTaskDispatcher(object):
             opportunity_seeker.run()
 
     def generate_trade_plan(self):
-        pass
+        logger.info(f'Determing trading plans')
 
     def exec_trade_plan(self):
-        pass
+        logger.info(f'Trying to make some money')

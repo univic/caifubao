@@ -19,6 +19,7 @@ class Strategy01(BasicStrategy):
         "MA_20",
         "MA_120",
     ]
+    factor_rule_list = ['*']               # * - calculate every factor for every stock
     signal_list = [
         "MA_10_UPCROSS_20",
         "HFQ_PRICE_ABOVE_MA_120",
