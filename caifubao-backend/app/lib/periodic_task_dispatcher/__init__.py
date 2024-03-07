@@ -27,22 +27,24 @@ class PeriodicTaskDispatcher(object):
 
     def generate_factors(self):
         logger.info(f'Preparing to generate factors')
-        factor_factory = FactorFactory(strategy_director=self.strategy_director, scenario=self.scenario)
+        factor_factory = FactorFactory(strategy_director=self.strategy_director,
+                                       portfolio_manager=self.portfolio_manager,
+                                       scenario=self.scenario)
         factor_factory.run()
 
     def generate_signals(self):
         logger.info(f'Preparing to generate signals')
-        stock_signal_name_list = self.strategy_director.get_signal_list()
-        for stock in self.stock_list:
-            signal_man = SignalMan(stock, stock_signal_name_list)
-            signal_man.run()
+        signal_man = SignalMan(strategy_director=self.strategy_director,
+                               portfolio_manager=self.portfolio_manager,
+                               scenario=self.scenario)
+        signal_man.run()
 
     def find_trade_opportunities(self):
         logger.info(f'Looking for trade opportunities')
-        opportunity_scanner_name_list = self.strategy_director.get_opportunity_scanner_list()
-        for stock in self.stock_list:
-            opportunity_seeker = OpportunitySeeker(stock, opportunity_scanner_name_list)
-            opportunity_seeker.run()
+        opportunity_seeker = OpportunitySeeker(strategy_director=self.strategy_director,
+                                               portfolio_manager=self.portfolio_manager,
+                                               scenario=self.scenario)
+        opportunity_seeker.run()
 
     def generate_trade_plan(self):
         logger.info(f'Determing trading plans')

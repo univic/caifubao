@@ -7,12 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 class OpportunitySeeker(GeneralWorker):
-    def __init__(self, stock, processor_name_list):
-        module_name = 'OpportunitySeeker'
+    def __init__(self, strategy_director, portfolio_manager, scenario):
+        self.module_name = self.__class__.__name__
         meta_type = 'opportunity'
-        super().__init__(stock=stock,
-                         module_name=module_name,
-                         meta_type=meta_type,
-                         processor_registry=processors,
-                         processor_name_list=processor_name_list
-                         )
+        super().__init__(strategy_director, portfolio_manager, scenario)
