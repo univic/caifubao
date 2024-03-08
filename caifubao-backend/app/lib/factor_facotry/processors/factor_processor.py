@@ -32,7 +32,10 @@ class FactorProcessor(object):
 
     def update_freshness_meta(self):
         last_factor_date = self.quote_df.index[-1]
-        freshness_meta_helper.upsert_freshness_meta(self.stock, self.factor_name, 'factor', last_factor_date)
+        freshness_meta_helper.upsert_freshness_meta(stock_code=self.stock.code,
+                                                    meta_type='factor',
+                                                    name=self.factor_name,
+                                                    dt=last_factor_date)
 
     def read_existing_factors(self):
         pass

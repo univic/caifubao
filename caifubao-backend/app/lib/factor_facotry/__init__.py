@@ -17,34 +17,48 @@ class FactorFactory(GeneralWorker):
         self.factor_processor_list:list = []
         self.factor_processor_exec_list:list = []
         self.counter_dict = {
+            'TODO': 0,
             'FINI': 0,
             'SKIP': 0,
             'ERR': 0,
         }
-
-    def before_exec(self):
-        pass
-
-    def after_exec(self):
-        pass
 
     def get_todo(self):
         stock_list = self.strategy_director.get_stock_list()
         factor_list: list = self.strategy_director.get_factor_list()
         factor_rule_list = self.strategy_director.get_factor_rule_list()
         if len(factor_rule_list) == 1 and factor_rule_list[0] == "*":
+            # Obtain the Cartesian product of two lists
             self.todo_list = itertools.product(stock_list, factor_list)
         else:
             logger.error("Unsupported factor rule")
 
     def run(self):
+        self.get_todo()
+        for todo_item in self.todo_list:
+            skip_flag = self.check_metadata(todo_item)
+            if not skip_flag:
+                self.run_processor()
 
-        self.read_quote_data()
-        self.generate_exec_plan()
-        self.run_processors()
-        logger.info(f'Factor generated for {self.stock.name}, '
+        logger.info(f'Factor generation complete, '
                     f'{self.counter_dict["FINI"]} finished, '
                     f'{self.counter_dict["SKIP"]} skipped.')
+
+    def check_metadata(self, todo_item):
+        skip_flag = False
+        stock_code = todo_item[0]
+        factor_name = todo_item[1]
+        latest_quote_date = freshness_meta_helper.read_freshness_meta(stock_code, 'quote', 'daily-quote')
+        latest_factor_date = freshness_meta_helper.read_freshness_meta(stock_code, 'factor', factor_name)
+        if not latest_factor_date or latest_quote_date > latest_factor_date:
+            self.counter_dict['TODO'] += 1
+        else:
+            self.counter_dict['SKIP'] += 1
+            skip_flag = True
+        return skip_flag
+
+    def run_processor(self):
+        self.read_quote_data()
 
     def read_quote_data(self):
         if not self.quote_df:
@@ -67,16 +81,6 @@ class FactorFactory(GeneralWorker):
         self.quote_df.set_index("date", inplace=True)
         self.latest_quote_date = self.quote_df.index[-1]
 
-    def generate_exec_plan(self):
-        # Check metadata and determine whether to run the processor
-        for factor_name in self.factor_name_list:
-            self.latest_factor_date = freshness_meta_helper.read_freshness_meta(self.stock, factor_name)
-            if not self.latest_factor_date or self.latest_quote_date > self.latest_factor_date:
-                self.factor_processor_exec_list.append(factor_name)
-                self.counter_dict['FINI'] += 1
-            else:
-                self.counter_dict['SKIP'] += 1
-
     def run_processors(self):
         logger.info(f'Running factor processors for {self.stock.code} - {self.stock.name}')
         for factor_name in self.factor_processor_exec_list:
@@ -91,8 +95,4 @@ class FactorFactory(GeneralWorker):
 
 
 if __name__ == '__main__':
-    # TODO: make it decoupled
-    from app.lib.db_tool import mongoengine_tool
-    mongoengine_tool.connect_to_db()
-    obj = FactorFactory()
-    obj.generate_factors("sh601166")
+    pass
