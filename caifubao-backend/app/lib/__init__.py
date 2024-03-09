@@ -31,6 +31,7 @@ class GeneralWorker(object):
             'SKIP': 0,
             'ERR': 0,
         }
+        self.stock_obj = None
         self.stock_list = []
         self.exec_unit_list = []
         logger.info(f'{self.module_name} is initializing')
@@ -100,18 +101,17 @@ class GeneralWorker(object):
                     f'{self.counter_dict["FINI"]} finished, '
                     f'{self.counter_dict["SKIP"]} skipped.')
 
-
-    def check_last_analysis_date(self, target_stock, item_name):
-        latest_quote_date = trading_day_helper.read_freshness_meta(target_stock, 'daily_quote')
-        for processor_name in self.processor_list:
-            exec_flag = True
-            # if analysis had never happened, or analysis date is behind quote date, run the processor
-            latest_analysis_date = freshness_meta_helper.read_freshness_meta(target_stock, name=processor_name)
-            if latest_analysis_date and latest_quote_date <= self.latest_analysis_date:
-                self.counter_dict['SKIP'] += 1
-                exec_flag = False
-                logger.info(f'{self.module_name} processor {processor_name} skipped')
-            return exec_flag
+    # def check_last_analysis_date(self, target_stock, item_name):
+    #     latest_quote_date = trading_day_helper.read_freshness_meta(target_stock, 'daily_quote')
+    #     for processor_name in self.processor_list:
+    #         exec_flag = True
+    #         # if analysis had never happened, or analysis date is behind quote date, run the processor
+    #         latest_analysis_date = freshness_meta_helper.read_freshness_meta(target_stock, name=processor_name)
+    #         if latest_analysis_date and latest_quote_date <= self.latest_analysis_date:
+    #             self.counter_dict['SKIP'] += 1
+    #             exec_flag = False
+    #             logger.info(f'{self.module_name} processor {processor_name} skipped')
+    #         return exec_flag
 
 
 class GeneralProcessor(object):

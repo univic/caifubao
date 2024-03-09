@@ -1,7 +1,7 @@
 import re
 import logging
 import datetime
-from app.model.stock import FinanceMarket, DataFreshnessMeta, StockDailyQuote
+from app.model.stock import FinanceMarket, StockDailyQuote
 
 
 logger = logging.getLogger(__name__)
@@ -57,20 +57,20 @@ def next_trading_day(trade_calendar, given_time=datetime.datetime.now()):
     return t_day
 
 
-def update_freshness_meta(obj, freshness_field, freshness_value):
-    if obj.data_freshness_meta:
-        data_freshness_meta = obj.data_freshness_meta
-    else:
-        data_freshness_meta = DataFreshnessMeta()
-    data_freshness_meta[freshness_field] = freshness_value
-    obj.data_freshness_meta = data_freshness_meta
+# def update_freshness_meta(obj, freshness_field, freshness_value):
+#     if obj.data_freshness_meta:
+#         data_freshness_meta = obj.data_freshness_meta
+#     else:
+#         data_freshness_meta = DataFreshnessMeta()
+#     data_freshness_meta[freshness_field] = freshness_value
+#     obj.data_freshness_meta = data_freshness_meta
 
 
-def read_freshness_meta(obj, freshness_field):
-    freshness_value = None
-    if obj.data_freshness_meta:
-        freshness_value = obj.data_freshness_meta[freshness_field]
-    return freshness_value
+# def read_freshness_meta(obj, freshness_field):
+#     freshness_value = None
+#     if obj.data_freshness_meta:
+#         freshness_value = obj.data_freshness_meta[freshness_field]
+#     return freshness_value
 
 
 def is_trading_day(trade_calendar, given_time=datetime.datetime.now()):

@@ -3,7 +3,7 @@ import pandas as pd
 from app.lib.db_tool import mongoengine_tool
 from app.utilities.progress_bar import progress_bar
 from app.model.stock import StockIndex, IndividualStock, StockDailyQuote
-from app.utilities import trading_day_helper
+from app.utilities import trading_day_helper, freshness_meta_helper
 
 
 class DataIntegrityWatcher(object):
@@ -75,13 +75,15 @@ class DataIntegrityWatcher(object):
         self.after_check()
         self.output()
 
-    def check_data_freshness_meta(self, item):
+    def check_data_freshness_meta(self, stock_item):
         check_flag = "GOOD"
-        daily_quote_freshness_meta = trading_day_helper.read_freshness_meta(item, 'daily_quote')
-        latest_quote_date = trading_day_helper.determine_latest_quote_date(item)
+        daily_quote_freshness_meta = freshness_meta_helper.read_freshness_meta(stock_code=stock_item.code,
+                                                                          meta_type='quote',
+                                                                          name='daily_quote')
+        latest_quote_date = trading_day_helper.determine_latest_quote_date(stock_item)
         if daily_quote_freshness_meta != latest_quote_date:
             check_flag = "BAD"
-            self.abnormal_list.append(f'{item.code} - {item.name}: Data freshness meta does not match with quote data')
+            self.abnormal_list.append(f'{stock_item.code} - {stock_item.name}: Data freshness meta does not match with quote data')
         return check_flag
 
     def check_quote_data_continuity(self, item):

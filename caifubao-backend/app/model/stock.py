@@ -69,38 +69,38 @@ class StockDailyQuote(Document):
     low_hfq = FloatField()
 
 
-class DailyQuote(EmbeddedDocument):
-    meta = {
-        'allow_inheritance': True,
-        'indexes': [
-            '#date',
-        ]
-    }
-    date = DateTimeField()
-    open = FloatField()
-    close = FloatField()
-    previous_close = FloatField()
-    high = FloatField()
-    low = FloatField()
-    amplitude = FloatField()
-    change_rate = FloatField()
-    change_amount = FloatField()
-    turnover_rate = FloatField()
-    qfq_factor = FloatField()
-    hfq_factor = FloatField()
-    volume = IntField()
-    trade_amount = FloatField()
-    trade_status = IntField()    # 1 - 正常交易  0 - 停牌
-    peTTM = FloatField()         # 滚动市盈率
-    pbMRQ = FloatField()         # 市净率
-    psTTM = FloatField()         # 滚动市销率
-    pcfNcfTTM = FloatField()     # 滚动市现率
-    isST = IntField()    # 1 - 被ST  0 - 否
+# class DailyQuote(EmbeddedDocument):
+#     meta = {
+#         'allow_inheritance': True,
+#         'indexes': [
+#             '#date',
+#         ]
+#     }
+#     date = DateTimeField()
+#     open = FloatField()
+#     close = FloatField()
+#     previous_close = FloatField()
+#     high = FloatField()
+#     low = FloatField()
+#     amplitude = FloatField()
+#     change_rate = FloatField()
+#     change_amount = FloatField()
+#     turnover_rate = FloatField()
+#     qfq_factor = FloatField()
+#     hfq_factor = FloatField()
+#     volume = IntField()
+#     trade_amount = FloatField()
+#     trade_status = IntField()    # 1 - 正常交易  0 - 停牌
+#     peTTM = FloatField()         # 滚动市盈率
+#     pbMRQ = FloatField()         # 市净率
+#     psTTM = FloatField()         # 滚动市销率
+#     pcfNcfTTM = FloatField()     # 滚动市现率
+#     isST = IntField()    # 1 - 被ST  0 - 否
 
 
-class DataFreshnessMeta(EmbeddedDocument):
-    daily_quote = DateTimeField()
-    fq_factor = DateTimeField()
+# class DataFreshnessMeta(EmbeddedDocument):
+#     daily_quote = DateTimeField()
+#     fq_factor = DateTimeField()
 
 
 class BasicStock(Document):
@@ -119,7 +119,7 @@ class BasicStock(Document):
     exchange = ReferenceField(StockExchange)
     market = ReferenceField(FinanceMarket)
     daily_quote = EmbeddedDocumentListField('DailyQuote')
-    data_freshness_meta = EmbeddedDocumentField(DataFreshnessMeta)
+    # data_freshness_meta = EmbeddedDocumentField(DataFreshnessMeta)
     watch_level = IntField()
 
 

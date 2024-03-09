@@ -1,7 +1,6 @@
-from app.lib.db_tool import mongoengine_tool
 from app.utilities.progress_bar import progress_bar
 from app.model.stock import StockIndex, IndividualStock, StockDailyQuote
-from app.utilities import trading_day_helper
+from app.utilities import trading_day_helper, freshness_meta_helper
 
 
 def calibrate_daily_quote_meta():
@@ -33,7 +32,10 @@ def calibrate_daily_quote_meta():
     print("calibrating index data freshness meta")
     for i, stock_item in enumerate(stock_list):
         latest_quote = StockDailyQuote.objects(code=stock_item.code).order_by('-date').first()
-        curr_daily_quote_meta = trading_day_helper.read_freshness_meta(stock_item, 'daily_quote')
+        # curr_daily_quote_meta = trading_day_helper.read_freshness_meta(stock_item, 'daily_quote')
+        curr_daily_quote_meta = freshness_meta_helper.read_freshness_meta(stock_code=stock_item.code,
+                                                                          meta_type='quote',
+                                                                          name='daily_quote')
 
         if latest_quote:
             pass
@@ -49,7 +51,11 @@ def calibrate_daily_quote_meta():
         else:
             if curr_daily_quote_meta:
                 print(f"Removing invalid data freshness meta for {stock_item.code} - {stock_item.name}")
-                trading_day_helper.update_freshness_meta(stock_item, 'daily_quote', None)
+                # trading_day_helper.update_freshness_meta(stock_item, 'daily_quote', None)
+                freshness_meta_helper.upsert_freshness_meta(stock_code=stock_item.code,
+                                                            meta_type='quote',
+                                                            name='daily_quote',
+                                                            dt=None)
                 stock_item.save()
             else:
                 print(f"Skipping {stock_item.code} - {stock_item.name}")

@@ -6,7 +6,7 @@ from app.lib.datahub.data_source.handler import zh_a_data
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock, StockDailyQuote
 from app.lib.task_controller import task_controller
 from app.utilities.progress_bar import progress_bar
-from app.utilities import trading_day_helper
+from app.utilities import trading_day_helper, freshness_meta_helper
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +181,9 @@ class ChinaAStock(object):
         return status
 
     def check_data_freshness(self, stock_obj):
-        most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_obj, 'daily_quote')
+        most_recent_quote_date = freshness_meta_helper.read_freshness_meta(stock_code=stock_obj.code,
+                                                                           meta_type='quote',
+                                                                           name='daily_quote')
         if most_recent_quote_date:
             # determine time difference
             time_diff = trading_day_helper.determine_trading_date_diff(self.market.trade_calendar,
@@ -248,7 +250,11 @@ class ChinaAStock(object):
         new_quote.stock = stock_obj
         if quote_date:
             new_quote.date = quote_date
-        trading_day_helper.update_freshness_meta(stock_obj, 'daily_quote', quote_date)
+        # trading_day_helper.update_freshness_meta(stock_obj, 'daily_quote', quote_date)
+        freshness_meta_helper.upsert_freshness_meta(stock_code=stock_obj.code,
+                                                    meta_type='quote',
+                                                    name='daily_quote',
+                                                    dt=quote_date)
         if save_quote:
             new_quote.save()
         stock_obj.save()
@@ -256,7 +262,9 @@ class ChinaAStock(object):
 
     def handle_get_hist_quote_data(self, stock_obj, hist_quote_handler, force_upd=False):
         start_date = None
-        most_recent_quote_date = trading_day_helper.read_freshness_meta(stock_obj, 'daily_quote')
+        most_recent_quote_date = freshness_meta_helper.read_freshness_meta(stock_code=stock_obj.code,
+                                                                           meta_type='quote',
+                                                                           name='daily_quote')
         if most_recent_quote_date:
             start_date = trading_day_helper.next_trading_day(self.market.trade_calendar, most_recent_quote_date)
             start_date_str = start_date.strftime('%Y-%m-%d')
@@ -304,7 +312,11 @@ class ChinaAStock(object):
                         StockDailyQuote.objects.insert(bulk_insert_list, load_bulk=False)
                     # update data freshness meta data
                     date_of_quote = quote_df['date'].max()
-                    trading_day_helper.update_freshness_meta(stock_obj, 'daily_quote', date_of_quote)
+                    # trading_day_helper.update_freshness_meta(stock_obj, 'daily_quote', date_of_quote)
+                    freshness_meta_helper.upsert_freshness_meta(stock_code=stock_obj.code,
+                                                                meta_type='quote',
+                                                                name='daily_quote',
+                                                                dt=None)
                     stock_obj.save()
                 else:
                     status_code = 'FAIL'
@@ -363,7 +375,10 @@ class ChinaAStock(object):
                         StockDailyQuote.objects.insert(bulk_insert_list, load_bulk=False)
                     # update data freshness meta data
                     date_of_quote = quote_df['date'].max()
-                    trading_day_helper.update_freshness_meta(index_obj, 'daily_quote', date_of_quote)
+                    freshness_meta_helper.upsert_freshness_meta(stock_code=index_obj.code,
+                                                                meta_type='quote',
+                                                                name='daily_quote',
+                                                                dt=None)
                     index_obj.save(force_insert=force_insert)
                 else:
                     status_code = 'FAIL'

@@ -14,6 +14,7 @@ class FactorFactory(GeneralWorker):
 
         # get class name
         super().__init__(strategy_director, portfolio_manager, scenario)
+        self.stock_df = None
         self.factor_processor_list:list = []
         self.factor_processor_exec_list:list = []
         self.counter_dict = {
@@ -38,7 +39,8 @@ class FactorFactory(GeneralWorker):
         for todo_item in self.todo_list:
             skip_flag = self.check_metadata(todo_item)
             if not skip_flag:
-                self.run_processor()
+                stock_obj = BasicStock.objects(code=todo_item[0]).first()
+                self.run_processor(stock_obj)
 
         logger.info(f'Factor generation complete, '
                     f'{self.counter_dict["FINI"]} finished, '
@@ -48,7 +50,7 @@ class FactorFactory(GeneralWorker):
         skip_flag = False
         stock_code = todo_item[0]
         factor_name = todo_item[1]
-        latest_quote_date = freshness_meta_helper.read_freshness_meta(stock_code, 'quote', 'daily-quote')
+        latest_quote_date = freshness_meta_helper.read_freshness_meta(stock_code, 'quote', 'daily_quote')
         latest_factor_date = freshness_meta_helper.read_freshness_meta(stock_code, 'factor', factor_name)
         if not latest_factor_date or latest_quote_date > latest_factor_date:
             self.counter_dict['TODO'] += 1
@@ -57,15 +59,22 @@ class FactorFactory(GeneralWorker):
             skip_flag = True
         return skip_flag
 
-    def run_processor(self):
-        self.read_quote_data()
+    def run_processor(self, stock_obj):
+        # if new stock object is different from previous, then update quote df
+        if stock_obj != self.stock_obj:
+            self.stock_obj = stock_obj
+            self.read_quote_data(stock_obj)
+        logger.info(f'Running factor processor {} for {self.stock_obj.code} - {self.stock_obj.name}')
+        #TODO: finish this
 
-    def read_quote_data(self):
+    def read_quote_data(self, stock_obj):
         if not self.quote_df:
-            logger.info(f'Reading quote df for {self.stock.code} - {self.stock.name}')
+            logger.info(f'Reading quote df for {stock_obj.code} - {stock_obj.name}')
             # field_exclude_list = ['volume', 'trade_amount']
             field_exclude_list = []
-            most_recent_factor_date = trading_day_helper.read_freshness_meta(self.stock, 'fq_factor')
+            most_recent_factor_date = freshness_meta_helper.read_freshness_meta(stock_code=self.stock.code,
+                                                                                meta_type='factor',
+                                                                                name='fq_factor')
             if most_recent_factor_date:
                 quote_qs = StockDailyQuote.objects(code=self.stock.code,
                                                    date__gt=most_recent_factor_date) \
