@@ -8,5 +8,5 @@ class DataFreshnessMeta(Document):
     type = StringField()
     name = StringField()
     freshness_datetime = DateTimeField()
-    backtest_id = StringField()
+    backtest_name = StringField()
     created_at = DateTimeField(default=datetime.datetime.now())

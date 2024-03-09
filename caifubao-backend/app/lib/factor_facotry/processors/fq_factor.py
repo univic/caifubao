@@ -14,11 +14,12 @@ class FQFactorProcessor(FactorProcessor):
 
     def __init__(self, stock, quote_df, latest_factor_date, *args, **kwargs):
         super().__init__(stock, quote_df, latest_factor_date)
-        self.factor_name = 'FQ_FACTOR'
+        self.meta_name = 'FQ_FACTOR'
+        # TODO: fix this
 
     def perform_factor_calc(self):
 
-        raw_df = self.quote_df
+        raw_df = self.data_df
         # most_recent_factor_date = datetime.datetime(2022, 6, 20, 0, 0, 0)
         # if found existing factor, slice the df to reduce calculate work
         if self.most_recent_factor_date:

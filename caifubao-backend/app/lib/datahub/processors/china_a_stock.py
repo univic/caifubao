@@ -183,7 +183,7 @@ class ChinaAStock(object):
     def check_data_freshness(self, stock_obj):
         most_recent_quote_date = freshness_meta_helper.read_freshness_meta(stock_code=stock_obj.code,
                                                                            meta_type='quote',
-                                                                           name='daily_quote')
+                                                                           meta_name='daily_quote')
         if most_recent_quote_date:
             # determine time difference
             time_diff = trading_day_helper.determine_trading_date_diff(self.market.trade_calendar,
@@ -253,7 +253,7 @@ class ChinaAStock(object):
         # trading_day_helper.update_freshness_meta(stock_obj, 'daily_quote', quote_date)
         freshness_meta_helper.upsert_freshness_meta(stock_code=stock_obj.code,
                                                     meta_type='quote',
-                                                    name='daily_quote',
+                                                    meta_name='daily_quote',
                                                     dt=quote_date)
         if save_quote:
             new_quote.save()
@@ -264,7 +264,7 @@ class ChinaAStock(object):
         start_date = None
         most_recent_quote_date = freshness_meta_helper.read_freshness_meta(stock_code=stock_obj.code,
                                                                            meta_type='quote',
-                                                                           name='daily_quote')
+                                                                           meta_name='daily_quote')
         if most_recent_quote_date:
             start_date = trading_day_helper.next_trading_day(self.market.trade_calendar, most_recent_quote_date)
             start_date_str = start_date.strftime('%Y-%m-%d')

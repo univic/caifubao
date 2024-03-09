@@ -35,7 +35,7 @@ def calibrate_daily_quote_meta():
         # curr_daily_quote_meta = trading_day_helper.read_freshness_meta(stock_item, 'daily_quote')
         curr_daily_quote_meta = freshness_meta_helper.read_freshness_meta(stock_code=stock_item.code,
                                                                           meta_type='quote',
-                                                                          name='daily_quote')
+                                                                          meta_name='daily_quote')
 
         if latest_quote:
             pass
@@ -54,7 +54,7 @@ def calibrate_daily_quote_meta():
                 # trading_day_helper.update_freshness_meta(stock_item, 'daily_quote', None)
                 freshness_meta_helper.upsert_freshness_meta(stock_code=stock_item.code,
                                                             meta_type='quote',
-                                                            name='daily_quote',
+                                                            meta_name='daily_quote',
                                                             dt=None)
                 stock_item.save()
             else:

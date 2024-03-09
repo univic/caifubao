@@ -19,12 +19,12 @@ class GeneralWorker(object):
     def __init__(self, strategy_director, portfolio_manager, scenario):
         self.module_name = self.__class__.__name__
         self.processor_registry = None
-        self.processor_list = []
         self.strategy_director = strategy_director
         self.portfolio_manager = portfolio_manager
         self.scenario = scenario
         self.strategy = None
         self.current_day = None
+        self.backtest_name: str = ""
         self.todo_list: list = []
         self.counter_dict = {
             'FINI': 0,
@@ -32,8 +32,8 @@ class GeneralWorker(object):
             'ERR': 0,
         }
         self.stock_obj = None
-        self.stock_list = []
-        self.exec_unit_list = []
+        self.processor_instance = None
+        # self.exec_unit_list = []
         logger.info(f'{self.module_name} is initializing')
 
     def before_run(self):
@@ -44,9 +44,6 @@ class GeneralWorker(object):
         get a list which contains what should be processed,
         :return:
         """
-        pass
-
-    def run_todo(self):
         pass
 
     def generate_exec_plan(self):
@@ -94,7 +91,7 @@ class GeneralWorker(object):
         pass
 
     def run(self):
-        self.before_exec()
+        self.before_run()
         self.generate_exec_plan()
         self.commit_tasks()
         logger.info(f'{self.module_name} processors run finished, '
@@ -121,14 +118,17 @@ class GeneralProcessor(object):
     output: a result dict, contains result code and msg
     """
 
-    def __init__(self, exec_unit, *args, **kwargs):
-        # self.stock = exec_unit.stock
+    def __init__(self, stock_obj, scenario, input_df, *args, **kwargs):
+        self.stock_obj = stock_obj
         # self.processor = exec_unit.processor
         # self.processor_name = general_utils.get_class_name(processor)
         # self.processor_type = exec_unit.processor_type
         # self.most_recent_processor_unit_date = None
-        # # self.latest_process_date = latest_process_date
-        self.data_df = None
+        self.latest_process_date = None
+        self.data_df = input_df
+        self.meta_type = None
+        self.meta_name = None
+        self.scenario = scenario
         self.exec_result_dict: dict = {
             "flag": "FINI",
             "msg": ""
@@ -157,8 +157,11 @@ class GeneralProcessor(object):
 
     def update_freshness_meta(self):
         latest_date = max(self.data_df.index)
-        freshness_meta_helper.upsert_freshness_meta(self.stock, self.processor_name,
-                                                    self.processor_type, latest_date)
+        freshness_meta_helper.upsert_freshness_meta(stock_code=self.stock_obj.code,
+                                                    meta_type=self.meta_type,
+                                                    meta_name=self.meta_name,
+                                                    dt=latest_date,
+                                                    backtest_name=self.scenario.backtest_name)
 
     def perform_db_upsert(self):
         pass
