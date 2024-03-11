@@ -2,6 +2,7 @@
 class BasicStrategy(object):
     code = None
     market_list = ["ChinaAStock"]
+    tick_freq = ""                    # daily  | 60m  | 30m |  15m  |  5m
     stock_scope = "single"            # single | list | pattern | full
     stock_code_list = []
     stock_select_pattern = ""

@@ -118,14 +118,15 @@ class GeneralProcessor(object):
     output: a result dict, contains result code and msg
     """
 
-    def __init__(self, stock_obj, scenario, input_df, *args, **kwargs):
+    def __init__(self, stock_obj, scenario, processor_dict, input_df, *args, **kwargs):
         self.stock_obj = stock_obj
         # self.processor = exec_unit.processor
         # self.processor_name = general_utils.get_class_name(processor)
         # self.processor_type = exec_unit.processor_type
         # self.most_recent_processor_unit_date = None
         self.latest_process_date = None
-        self.data_df = input_df
+        self.processor_dict: dict = processor_dict
+        self.input_df = input_df
         self.meta_type = None
         self.meta_name = None
         self.scenario = scenario
@@ -138,7 +139,6 @@ class GeneralProcessor(object):
         self.before_exec()
         self.exec()
         self.perform_db_upsert()
-        self.update_freshness_meta()
         self.after_exec()
         return self.exec_result_dict
 
@@ -149,20 +149,20 @@ class GeneralProcessor(object):
         # Customizing here
         pass
 
-    def after_exec(self):
+    def determine_exec_mode(self):
         pass
 
-    def get_source_data(self):
+    def perform_db_upsert(self):
         pass
+        self.update_freshness_meta()
 
     def update_freshness_meta(self):
-        latest_date = max(self.data_df.index)
+        latest_date = max(self.input_df.index)
         freshness_meta_helper.upsert_freshness_meta(stock_code=self.stock_obj.code,
                                                     meta_type=self.meta_type,
                                                     meta_name=self.meta_name,
                                                     dt=latest_date,
                                                     backtest_name=self.scenario.backtest_name)
 
-    def perform_db_upsert(self):
+    def after_exec(self):
         pass
-

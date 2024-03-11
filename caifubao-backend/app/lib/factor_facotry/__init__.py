@@ -61,11 +61,15 @@ class FactorFactory(GeneralWorker):
 
     def get_processor_instance(self, factor_name):
         logger.info(f'Looking for {factor_name} factor processor for {self.stock_obj.code} - {self.stock_obj.name}')
-        processor_object = processors.factor_processor_registry[factor_name]['processor_object']
+        processor_dict = processors.factor_processor_registry[factor_name]
+        processor_object = processor_dict['processor_object']
         kwargs = {}
         if 'kwargs' in processors.factor_processor_registry[factor_name].keys():
             kwargs = processors.factor_processor_registry[factor_name]['kwargs']
-        processor_instance = processor_object(self.stock_obj, self.quote_df, self.latest_factor_date, **kwargs)
+        processor_instance = processor_object(stock_obj=self.stock_obj,
+                                              scenario=self.scenario,
+                                              input_df=self.quote_df,
+                                              processor_dict=processor_dict, **kwargs)
         # TODO: NOT necessarily that many arguments
         return processor_instance
 
@@ -109,7 +113,7 @@ class FactorFactory(GeneralWorker):
                                                                           meta_type='quote',
                                                                           meta_name='daily_quote')
         else:
-            latest_quote_date = self.scenario.current_date
+            latest_quote_date = self.scenario.current_datetime
         logger.info(f'Metadata for {self.stock_obj.code} - {self.stock_obj.name} - daily_quote : '
                     f'{latest_quote_date} ')
         latest_factor_date = freshness_meta_helper.read_freshness_meta(stock_code=stock_code,
