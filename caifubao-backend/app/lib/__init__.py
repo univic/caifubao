@@ -124,14 +124,19 @@ class GeneralProcessor(object):
         # self.processor_name = general_utils.get_class_name(processor)
         # self.processor_type = exec_unit.processor_type
         # self.most_recent_processor_unit_date = None
-        self.latest_process_date = None
+        self.most_recent_process_datetime = None
         self.processor_dict: dict = processor_dict
-        self.input_df = input_df
+
         self.meta_type = None
         self.meta_name = None
         self.scenario = scenario
+        self.backtest_name: str = ""
+        self.input_df = input_df
+        self.process_df = None
+        self.output_df = None
+        self.output_field_list: list = []
         self.exec_result_dict: dict = {
-            "flag": "FINI",
+            "code": "FINI",
             "msg": ""
         }
 
@@ -139,8 +144,8 @@ class GeneralProcessor(object):
         self.before_exec()
         self.exec()
         self.perform_db_upsert()
+        self.update_freshness_meta()
         self.after_exec()
-        return self.exec_result_dict
 
     def before_exec(self):
         pass
@@ -149,20 +154,24 @@ class GeneralProcessor(object):
         # Customizing here
         pass
 
-    def determine_exec_mode(self):
+    def determine_exec_range(self):
         pass
+
+    def set_exec_result_state(self, code, msg):
+        self.exec_result_dict['code'] = code     # FINI | SKIP | FAIL
+        self.exec_result_dict['msg'] = msg
 
     def perform_db_upsert(self):
+        # update database
         pass
-        self.update_freshness_meta()
 
     def update_freshness_meta(self):
-        latest_date = max(self.input_df.index)
+        latest_date = max(self.output_df.index)
         freshness_meta_helper.upsert_freshness_meta(stock_code=self.stock_obj.code,
                                                     meta_type=self.meta_type,
                                                     meta_name=self.meta_name,
                                                     dt=latest_date,
-                                                    backtest_name=self.scenario.backtest_name)
+                                                    backtest_name=self.backtest_name)
 
     def after_exec(self):
         pass

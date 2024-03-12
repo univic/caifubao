@@ -52,13 +52,13 @@ class MACrossSignalProcessor(GeneralProcessor):
 
     def perform_db_upsert(self):
         bulk_insert_list = []
-        if self.latest_process_date:
-            signal_df = self.data_df[(self.data_df['pri_up_cross_ref']), self.data_df.index > self.latest_process_date]
+        if self.most_recent_process_datetime:
+            signal_df = self.data_df[(self.data_df['pri_up_cross_ref']), self.data_df.index > self.most_recent_process_datetime]
         else:
             signal_df = self.data_df[(self.data_df['pri_up_cross_ref'])]
         for i, row in signal_df.iterrows():
             signal_data = SpotSignalData()
-            signal_data.name = self.latest_process_date
+            signal_data.name = self.most_recent_process_datetime
             signal_data.stock_code = self.stock.code
             signal_data.date = i
             bulk_insert_list.append(signal_data)

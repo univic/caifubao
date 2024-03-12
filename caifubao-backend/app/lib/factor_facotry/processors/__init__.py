@@ -8,12 +8,14 @@ factor_processor_registry = {
         'processor_object': fq_factor.FQFactorProcessor,
         'handler': 'run',
         'backtest_overall_anaylsis': True,
+        'partial_process_offset': 1,
     },
     "MA_10": {
         'name': "MA_10",
         'processor_object': moving_average.MovingAverageFactorProcessor,
         'handler': 'run',
         'backtest_overall_anaylsis': True,
+        'partial_process_offset': 10,
         'kwargs': {
             'MA': 10,
             }
@@ -23,6 +25,7 @@ factor_processor_registry = {
         'processor_object': moving_average.MovingAverageFactorProcessor,
         'handler': 'run',
         'backtest_overall_anaylsis': True,
+        'partial_process_offset': 20,
         'kwargs': {
             'MA': 20,
         }

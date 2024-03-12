@@ -78,6 +78,7 @@ class BasicBackTester(object):
 
     def exec_backtest_periodic_task(self, current_date):
         self.scenario.current_datetime = current_date
+        # TODO: UPDATE SCENARIO DATETIME DATA
         self.periodic_task_dispatcher.run(self.strategy_director, self.portfolio_manager, self.scenario)
 
     def before_run(self):

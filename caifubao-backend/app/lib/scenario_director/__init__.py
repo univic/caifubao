@@ -15,8 +15,10 @@ class ScenarioDirector(object):
         self.module_name = self.__class__.__name__
         logger.info(f'Module {self.module_name} is initializing')
         self.is_backtest: bool = False
-        self.real_datetime = None
+        self.real_world_datetime = None
+        self.real_world_most_recent_trading_datetime = None
         self.current_datetime = None
+        self.current_most_recent_trading_datetime = None
         self.backtest_name: str = ""
 
     # def load_scenario(self, scenario_name):

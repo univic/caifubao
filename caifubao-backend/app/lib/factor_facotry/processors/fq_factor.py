@@ -19,29 +19,32 @@ class FQFactorProcessor(FactorProcessor):
 
     def perform_factor_calc(self):
 
-        raw_df = self.input_df
+        # raw_df = self.input_df
         # most_recent_factor_date = datetime.datetime(2022, 6, 20, 0, 0, 0)
         # if found existing factor, slice the df to reduce calculate work
-        if self.most_recent_factor_date:
-            # get previous quote data to make cumprod possible
-            head_index = raw_df.index.get_loc(self.most_recent_factor_date) - 1
-            df = raw_df.iloc[head_index:][:]
-        else:
-            df = raw_df
+        # if self.most_recent_factor_date:
+        #     # get previous quote data to make cumprod possible
+        #     head_index = raw_df.index.get_loc(self.most_recent_factor_date) - 1
+        #     df = raw_df.iloc[head_index:][:]
+        #
+        # else:
+        #     df = raw_df
 
         # do the maths
-        df["fq_factor"] = (df["close"] / df["previous_close"]).cumprod()
-        df["close_hfq"] = (df["fq_factor"] * raw_df.iloc[0]['previous_close']).round(
+        self.process_df["fq_factor"] = (self.process_df["close"] / self.process_df["previous_close"]).cumprod()
+        self.process_df["close_hfq"] = (self.process_df["fq_factor"] * self.input_df.iloc[0]['previous_close']).round(
             decimals=4)
-        df["open_hfq"] = (df["open"] * (df["close_hfq"] / df["close"])).round(
+        self.process_df["open_hfq"] = (self.process_df["open"] * (self.process_df["close_hfq"] / self.process_df["close"])).round(
             decimals=4)
-        df["high_hfq"] = (df["high"] * (df["close_hfq"] / df["close"])).round(
+        self.process_df["high_hfq"] = (self.process_df["high"] * (self.process_df["close_hfq"] / self.process_df["close"])).round(
             decimals=4)
-        df["low_hfq"] = (df["low"] * (df["close_hfq"] / df["close"])).round(
+        self.process_df["low_hfq"] = (self.process_df["low"] * (self.process_df["close_hfq"] / self.process_df["close"])).round(
             decimals=4)
+        self.output_df = self.process_df
 
+    def perform_db_upsert(self):
         # update database
-        for i, row in df.iterrows():
+        for i, row in self.output_df.iterrows():
             field_list = ["fq_factor", "close_hfq", "open_hfq", "high_hfq", "low_hfq"]
             quote_obj = StockDailyQuote.objects(code=row["code"], date=i).first()
             for field in field_list:
