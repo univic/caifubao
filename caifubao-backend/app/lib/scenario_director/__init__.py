@@ -1,6 +1,6 @@
 import logging
 
-from app.lib.scenario_director import scenario_processors
+# from app.lib.scenario_director import scenario_processors
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +16,9 @@ class ScenarioDirector(object):
         logger.info(f'Module {self.module_name} is initializing')
         self.is_backtest: bool = False
         self.real_world_datetime = None
-        self.real_world_most_recent_trading_datetime = None
+        self.real_world_most_recent_trading_day = None
         self.current_datetime = None
-        self.current_most_recent_trading_datetime = None
+        self.current_most_recent_trading_day = None
         self.backtest_name: str = ""
 
     # def load_scenario(self, scenario_name):

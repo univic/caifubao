@@ -64,8 +64,8 @@ class BasicBackTester(object):
 
         logger.info(f'Starting periodic tasks, {task_list_len} tasks in total')
         prog_bar = progress_bar()
-        for i, t_day in enumerate(self.backtest_periodic_task_list):
-            self.exec_backtest_periodic_task(t_day)
+        for i, t in enumerate(self.backtest_periodic_task_list):
+            self.update_scenario_datetime(t)
             prog_bar(i, task_list_len)
 
         # update backtest record
@@ -75,11 +75,6 @@ class BasicBackTester(object):
         backtest_record.save()
 
         self.after_run()
-
-    def exec_backtest_periodic_task(self, current_date):
-        self.scenario.current_datetime = current_date
-        # TODO: UPDATE SCENARIO DATETIME DATA
-        self.periodic_task_dispatcher.run(self.strategy_director, self.portfolio_manager, self.scenario)
 
     def before_run(self):
         # update end date if no value is provided
@@ -96,6 +91,15 @@ class BasicBackTester(object):
 
         self.portfolio_manager = PortfolioManager()
         self.portfolio_manager.load_portfolio(self.portfolio_name)
+
+    def update_scenario_datetime(self, current_datetime):
+        self.scenario.real_world_datetime = datetime.datetime.now()
+        self.scenario.current_datetime = current_datetime
+
+    def exec_backtest_periodic_task(self):
+
+        # TODO: UPDATE SCENARIO DATETIME DATA
+        self.periodic_task_dispatcher.run(self.strategy_director, self.portfolio_manager, self.scenario)
 
     def after_run(self):
         pass

@@ -8,7 +8,7 @@ from app.lib import GeneralWorker
 from app.lib.datahub.data_source.handler import zh_a_data
 from app.lib.datahub import processors
 from pymongo.errors import ServerSelectionTimeoutError
-from app.lib.scenario_director import scenario_director
+# from app.lib.scenario_director import scenario_director
 from app.lib.strategy import strategy_director
 from app.lib.task_controller import task_controller
 
@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 #             exit()
 
 
-class Datahub(GeneralWorker):
+class Datahub(object):
     def __init__(self):
-        module_name = 'Datahub'
-        processor_registry = processors.registry
-        super().__init__(module_name, processor_registry)
+        self.module_name = 'Datahub'
+        self.processor_registry = processors.registry
+        # super().__init__(module_name, processor_registry)
         self.market_list = []
         self.exec_plan_list = []
 
@@ -45,7 +45,8 @@ class Datahub(GeneralWorker):
         self.commit_tasks()
 
     def get_todo_list(self):
-        self.market_list = strategy_director.get_market_list()
+        # self.market_list = strategy_director.get_market_list()
+        self.market_list = ["ChinaAStock"]
         if not self.market_list:
             logger.error(f"{self.module_name} - Initialization failed, no market was found")
             exit()

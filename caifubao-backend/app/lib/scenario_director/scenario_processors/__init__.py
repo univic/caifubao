@@ -25,7 +25,7 @@ class BasicScenarioProcessor(object):
 
     def load_portfolio(self):
         """
-        load strategy strategy according to the name provided by scenario strategy
+        load strategy according to the name provided by scenario strategy
         """
         # self.portfolio = getattr(strategy, self.scenario_scheme.strategy_name)
         pass
