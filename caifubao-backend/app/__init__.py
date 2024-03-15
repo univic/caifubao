@@ -27,7 +27,7 @@ def create_app():
     datahub.start()
 
     # Start Task Controller
-    task_controller.initialize()
+    # task_controller.initialize()
 
     # start a backtest
     backtester = BasicBackTester(portfolio_name="test_portfolio", strategy_name="Strategy01", start_date="2020-01-01")

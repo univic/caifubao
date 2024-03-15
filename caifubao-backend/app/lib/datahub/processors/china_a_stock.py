@@ -31,7 +31,7 @@ class ChinaAStock(object):
         self.check_trade_calendar_integrity()
         # self.check_scheduled_task()
         self.check_index_data_integrity(allow_update=True)
-        # self.check_stock_data_integrity(allow_update=True)
+        self.check_stock_data_integrity(allow_update=True)
         return self.result
 
     def check_market_data_existence(self):
@@ -234,12 +234,13 @@ class ChinaAStock(object):
         task_kwarg = {
             'code': code
         }
-        task_controller.create_task(name=task_name,
-                                    callback_package='datahub',
-                                    callback_module='processors',
-                                    callback_object='ChinaAStock',
-                                    callback_handler=handler,
-                                    kwargs=task_kwarg)
+        self.get_hist_index_quote_data(code=code)
+        # task_controller.create_task(name=task_name,
+        #                             callback_package='datahub',
+        #                             callback_module='processors',
+        #                             callback_object='ChinaAStock',
+        #                             callback_handler=handler,
+        #                             kwargs=task_kwarg)
 
     @staticmethod
     def handle_new_quote(stock_obj, col_name_list, quote_row, quote_date=None, save_quote=False):
@@ -274,21 +275,25 @@ class ChinaAStock(object):
         kwarg_dict = {
             'code': stock_obj.code,
         }
+        # logger.info(task_name)
         if start_date:
             kwarg_dict['start_date'] = start_date.strftime('%Y-%m-%d')
-        task_controller.create_task(name=task_name,
-                                    callback_package='datahub',
-                                    callback_module='markets',
-                                    callback_object='zh_a_stock_market',
-                                    callback_handler=hist_quote_handler,
-                                    kwargs=kwarg_dict)
+        func = getattr(self, hist_quote_handler)
+        func(code=stock_obj.code)
+
+        # task_controller.create_task(name=task_name,
+        #                             callback_package='datahub',
+        #                             callback_module='markets',
+        #                             callback_object='zh_a_stock_market',
+        #                             callback_handler=hist_quote_handler,
+        #                             kwargs=kwarg_dict)
 
     # @performance_helper.func_performance_timer
     def get_hist_stock_quote_data(self, code, start_date=None, force_insert=False, bulk_insert=True):
         status_code = "GOOD"
         status_msg = None
         try:
-            stock_obj = IndividualStock.objects(code=code).only('code', 'name', 'data_freshness_meta').first()
+            stock_obj = IndividualStock.objects(code=code).only('code', 'name').first()
             if stock_obj:
                 quote_df = zh_a_data.get_zh_a_stock_hist_daily_quote(code, start_date=start_date)
                 if not quote_df.empty:
@@ -315,8 +320,8 @@ class ChinaAStock(object):
                     # trading_day_helper.update_freshness_meta(stock_obj, 'daily_quote', date_of_quote)
                     freshness_meta_helper.upsert_freshness_meta(stock_code=stock_obj.code,
                                                                 meta_type='quote',
-                                                                name='daily_quote',
-                                                                dt=None)
+                                                                meta_name='daily_quote',
+                                                                dt=date_of_quote)
                     stock_obj.save()
                 else:
                     status_code = 'FAIL'
@@ -351,7 +356,7 @@ class ChinaAStock(object):
         status_code = "GOOD"
         status_msg = None
         try:
-            index_obj = StockIndex.objects(code=code).only('code', 'name', 'data_freshness_meta').first()
+            index_obj = StockIndex.objects(code=code).only('code', 'name').first()
             quote_df = zh_a_data.get_zh_a_index_hist_daily_quote(code, start_date=start_date)
             if index_obj:
                 if not quote_df.empty:
@@ -377,8 +382,8 @@ class ChinaAStock(object):
                     date_of_quote = quote_df['date'].max()
                     freshness_meta_helper.upsert_freshness_meta(stock_code=index_obj.code,
                                                                 meta_type='quote',
-                                                                name='daily_quote',
-                                                                dt=None)
+                                                                meta_name='daily_quote',
+                                                                dt=date_of_quote)
                     index_obj.save(force_insert=force_insert)
                 else:
                     status_code = 'FAIL'

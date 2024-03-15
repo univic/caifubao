@@ -41,7 +41,30 @@ class BasicBackTester(object):
     def run(self):
         logger.info(f'Running backtest, using strategy {self.strategy_name}')
         self.before_run()
+        self.main_sequence()
 
+
+
+        self.after_run()
+
+    def before_run(self):
+        # update end date if no value is provided
+        if not self.end_date:
+            self.end_date = datetime.datetime.strftime(datetime.datetime.now(), '%Y-%m-%d')
+
+        dt_str = datetime.datetime.strftime(datetime.datetime.now(), '%Y%m%d%H%M%S')
+        self.backtest_name = f"{self.strategy_name}-{self.start_date}-{self.end_date}-{dt_str}"
+
+        self.scenario = ScenarioDirector()
+        self.scenario.is_backtest = True
+
+        self.strategy_director = StrategyDirecter()
+        self.strategy_director.load_strategy(self.strategy_name)
+
+        self.portfolio_manager = PortfolioManager()
+        self.portfolio_manager.load_portfolio(self.portfolio_name)
+
+    def main_sequence(self):
         # insert a backtest record
         backtest_record = BackTest()
         backtest_record.name = self.backtest_name
@@ -62,7 +85,7 @@ class BasicBackTester(object):
         backtest_record.started_at = datetime.datetime.now()
         backtest_record.save()
 
-        logger.info(f'Starting periodic tasks, {task_list_len} tasks in total')
+        logger.info(f'Starting backtest ticks, {task_list_len} ticks in total')
         prog_bar = progress_bar()
         for i, t in enumerate(self.backtest_periodic_task_list):
             self.update_scenario_datetime(t)
@@ -73,24 +96,6 @@ class BasicBackTester(object):
         backtest_record.status = "FINI"
         backtest_record.exec_result = "SUCCESS"
         backtest_record.save()
-
-        self.after_run()
-
-    def before_run(self):
-        # update end date if no value is provided
-        if not self.end_date:
-            self.end_date = datetime.datetime.strftime(datetime.datetime.now(), '%Y-%m-%d')
-
-        self.backtest_name = f"{self.strategy_name}-{self.start_date}-{self.end_date}"
-
-        self.scenario = ScenarioDirector()
-        self.scenario.is_backtest = True
-
-        self.strategy_director = StrategyDirecter()
-        self.strategy_director.load_strategy(self.strategy_name)
-
-        self.portfolio_manager = PortfolioManager()
-        self.portfolio_manager.load_portfolio(self.portfolio_name)
 
     def update_scenario_datetime(self, current_datetime):
         self.scenario.real_world_datetime = datetime.datetime.now()
