@@ -78,7 +78,6 @@ class GeneralWorker(object):
             logger.info(f'{self.module_name} - processor {exec_unit.processor} - target {stock.code}/{stock.name} - analyte {exec_unit.analyte}')
             if exec_unit.kwargs:
                 kwargs = exec_unit.kwargs
-                # TODO: TO BE DONE BELOW
                 processor_instance = processor(exec_unit)
                 process_handler_func = getattr(processor_instance, exec_unit.handler_func)
                 exec_result_dict = process_handler_func()

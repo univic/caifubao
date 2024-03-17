@@ -4,6 +4,7 @@ import pandas as pd
 from app.model.stock import BasicStock, StockDailyQuote
 from app.lib.factor_facotry import processors
 from app.lib import GeneralWorker
+from app.lib.factor_facotry.processors import factor_processor_registry
 from app.utilities import trading_day_helper, freshness_meta_helper
 
 logger = logging.getLogger(__name__)
@@ -15,8 +16,9 @@ class FactorFactory(GeneralWorker):
         # get class name
         super().__init__(strategy_director, portfolio_manager, scenario)
         self.quote_df = None
-        self.factor_processor_list:list = []
-        self.factor_processor_exec_list:list = []
+        self.processor_registry = factor_processor_registry
+        self.factor_processor_list: list = []
+        self.factor_processor_exec_list: list = []
         self.counter_dict = {
             'TODO': 0,
             'FINI': 0,
@@ -41,17 +43,19 @@ class FactorFactory(GeneralWorker):
     def run(self):
         self.before_run()
         self.get_todo()
+        prev_stock_code = None
         for todo_item in self.todo_list:
-            stock_code = todo_item[0]
+            self.stock_obj = todo_item[0]
+            # if previous stock code is different from current one, reload the quote data
+            if prev_stock_code != self.stock_obj.code:
+                self.read_quote_data()
+            prev_stock_code = self.stock_obj.code
+
             factor_name = todo_item[1]
-            self.stock_obj = BasicStock.objects(code=stock_code).first()
+            processor_dict = self.processor_registry[factor_name]
+
             self.processor_instance = self.get_processor_instance(factor_name)
-            self.read_quote_data()
-            # skip_flag = self.check_metadata(stock_code, factor_name)
-            # if not skip_flag:
-            #     stock_obj = BasicStock.objects(code=todo_item[0]).first()
-            #     self.run_processor(stock_obj)
-            process_handler_func = getattr(self.processor_instance, self.processor_instance[factor_name]['handler'])
+            process_handler_func = getattr(self.processor_instance, processor_dict['handler'])
             logger.info(f'Doing factor analysis {factor_name} for {self.stock_obj.code} - {self.stock_obj.name}')
             process_handler_func()
 
@@ -70,7 +74,6 @@ class FactorFactory(GeneralWorker):
                                               scenario=self.scenario,
                                               input_df=self.quote_df,
                                               processor_dict=processor_dict, **kwargs)
-        # TODO: NOT necessarily that many arguments
         return processor_instance
 
     def read_quote_data(self):
@@ -78,15 +81,18 @@ class FactorFactory(GeneralWorker):
         # field_exclude_list = ['volume', 'trade_amount']
         field_exclude_list = []
         # if stock code remain unchanged, do not load quote df again
-        if not self.quote_df or self.quote_df.index[-1]['code'] != self.stock_obj.code:
-            quote_qs = StockDailyQuote.objects(code=self.stock_obj.code,
-                                               date__gt=self.current_day) \
-                .exclude(*field_exclude_list) \
-                .order_by('+date')
-            # convert to df
-            quote_json = quote_qs.as_pymongo()
-            self.quote_df = pd.DataFrame(quote_json)
-            self.quote_df.set_index("date", inplace=True)
+
+        # quote_qs = StockDailyQuote.objects(code=self.stock_obj.code,
+        #                                    date__gt=self.current_day) \
+        #     .exclude(*field_exclude_list) \
+        #     .order_by('+date')
+        quote_qs = StockDailyQuote.objects(code=self.stock_obj.code) \
+            .exclude(*field_exclude_list) \
+            .order_by('+date')
+        # convert to df
+        quote_json = quote_qs.as_pymongo()
+        self.quote_df = pd.DataFrame(quote_json)
+        self.quote_df.set_index("date", inplace=True)
 
         # most_recent_factor_date = freshness_meta_helper.read_freshness_meta(stock_code=self.stock_obj.code,
         #                                                                     meta_type='factor',

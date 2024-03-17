@@ -89,6 +89,7 @@ class BasicBackTester(object):
         prog_bar = progress_bar()
         for i, t in enumerate(self.backtest_periodic_task_list):
             self.update_scenario_datetime(t)
+            self.exec_backtest_periodic_task()
             prog_bar(i, task_list_len)
 
         # update backtest record
@@ -102,9 +103,7 @@ class BasicBackTester(object):
         self.scenario.current_datetime = current_datetime
 
     def exec_backtest_periodic_task(self):
-
-        # TODO: UPDATE SCENARIO DATETIME DATA
-        self.periodic_task_dispatcher.run(self.strategy_director, self.portfolio_manager, self.scenario)
+        self.periodic_task_dispatcher.run()
 
     def after_run(self):
         pass

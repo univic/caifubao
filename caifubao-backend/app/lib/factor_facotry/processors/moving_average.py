@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class MovingAverageFactorProcessor(FactorProcessor):
-
+    # TODO: fix this
     def __init__(self, stock, quote_df, latest_factor_date, *args, **kwargs):
         super().__init__(stock, quote_df, latest_factor_date)
         self.ma_days = kwargs['MA']

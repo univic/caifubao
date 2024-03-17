@@ -15,7 +15,10 @@ class FQFactorProcessor(FactorProcessor):
     def __init__(self, stock_obj, scenario, processor_dict, input_df, *args, **kwargs):
         super().__init__(stock_obj, scenario, processor_dict, input_df)
         self.meta_name = 'FQ_FACTOR'
-        # TODO: fix this
+        self.process_df = self.input_df
+
+    def exec(self):
+        self.perform_factor_calc()
 
     def perform_factor_calc(self):
 

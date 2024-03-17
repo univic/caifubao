@@ -16,7 +16,6 @@ def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.
 
 
 def determine_latest_quote_date(stock_obj, date_attribute='date'):
-    #TODO: use proper meta data
     res = None
     latest_quote_obj = StockDailyQuote.objects(code=stock_obj.code).order_by(f'-{date_attribute}').first()
     if latest_quote_obj:

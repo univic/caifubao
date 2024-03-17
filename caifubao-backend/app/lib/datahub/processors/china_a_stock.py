@@ -4,7 +4,8 @@ import datetime
 import traceback
 from app.lib.datahub.data_source.handler import zh_a_data
 from app.model.stock import FinanceMarket, StockIndex, IndividualStock, StockDailyQuote
-from app.lib.task_controller import task_controller
+# from app.lib.task_controller import task_controller
+from app.lib.datahub.data_source.interface.baostock_interface import BaostockInterfaceManager
 from app.utilities.progress_bar import progress_bar
 from app.utilities import trading_day_helper, freshness_meta_helper
 
@@ -25,12 +26,14 @@ class ChinaAStock(object):
             'message': "",
         }
 
-    def initialize(self):
+    def run(self):
 
         self.check_market_data_existence()
         self.check_trade_calendar_integrity()
         # self.check_scheduled_task()
-        self.check_index_data_integrity(allow_update=True)
+        # self.check_index_data_integrity(allow_update=True)
+        baostock_conn_mgr = BaostockInterfaceManager()
+        baostock_conn_mgr.establish_baostock_conn()
         self.check_stock_data_integrity(allow_update=True)
         return self.result
 

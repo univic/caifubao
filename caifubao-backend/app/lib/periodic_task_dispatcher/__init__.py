@@ -22,8 +22,8 @@ class PeriodicTaskDispatcher(object):
 
     def run(self):
         self.generate_factors()
-        self.generate_signals()
-        self.generate_trade_plan()
+        # self.generate_signals()
+        # self.generate_trade_plan()
 
     def generate_factors(self):
         logger.info(f'Preparing to generate factors')

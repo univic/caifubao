@@ -6,7 +6,7 @@ registry = {
         'module': 'processors.china_a_stock',
         'name': "ChinaAStock_daily",
         'processor_object': ChinaAStock,
-        'handler': 'initialize',
+        'handler': 'run',
         'backtest_overall_anaylsis': True,
     },
 }
