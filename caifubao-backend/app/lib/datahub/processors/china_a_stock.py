@@ -31,7 +31,7 @@ class ChinaAStock(object):
         self.check_market_data_existence()
         self.check_trade_calendar_integrity()
         # self.check_scheduled_task()
-        # self.check_index_data_integrity(allow_update=True)
+        self.check_index_data_integrity(allow_update=True)
         baostock_conn_mgr = BaostockInterfaceManager()
         baostock_conn_mgr.establish_baostock_conn()
         self.check_stock_data_integrity(allow_update=True)
@@ -184,7 +184,8 @@ class ChinaAStock(object):
         return status
 
     def check_data_freshness(self, stock_obj):
-        most_recent_quote_date = freshness_meta_helper.read_freshness_meta(stock_code=stock_obj.code,
+        most_recent_quote_date = freshness_meta_helper.read_freshness_meta(code=stock_obj.code,
+                                                                           object_type=stock_obj.object_type,
                                                                            meta_type='quote',
                                                                            meta_name='daily_quote')
         if most_recent_quote_date:
@@ -220,23 +221,27 @@ class ChinaAStock(object):
         new_stock_obj = None
         task_name = ""
         handler = ""
+        object_type = ""
         if obj_type == 'stock':
             new_stock_obj = IndividualStock()
+            object_type = "individual_stock"
             task_name = f'GET FULL QUOTE FOR STOCK {code}-{name}'
             handler = 'get_hist_stock_quote_data'
         elif obj_type == 'index':
             new_stock_obj = StockIndex()
+            object_type = "stock_index"
             task_name = f'GET FULL QUOTE FOR STOCK INDEX {code}-{name}'
             handler = 'get_hist_index_quote_data'
         else:
             logger.error(f'Stock Market {self.market.name} - Invalid category {obj_type}')
         new_stock_obj.code = code
         new_stock_obj.name = name
+        new_stock_obj.object_type = object_type
         new_stock_obj.market = self.market
         new_stock_obj.save()
-        task_kwarg = {
-            'code': code
-        }
+        # task_kwarg = {
+        #     'code': code
+        # }
         self.get_hist_index_quote_data(code=code)
         # task_controller.create_task(name=task_name,
         #                             callback_package='datahub',
@@ -255,7 +260,8 @@ class ChinaAStock(object):
         if quote_date:
             new_quote.date = quote_date
         # trading_day_helper.update_freshness_meta(stock_obj, 'daily_quote', quote_date)
-        freshness_meta_helper.upsert_freshness_meta(stock_code=stock_obj.code,
+        freshness_meta_helper.upsert_freshness_meta(code=stock_obj.code,
+                                                    object_type=stock_obj.object_type,
                                                     meta_type='quote',
                                                     meta_name='daily_quote',
                                                     dt=quote_date)
@@ -266,7 +272,8 @@ class ChinaAStock(object):
 
     def handle_get_hist_quote_data(self, stock_obj, hist_quote_handler, force_upd=False):
         start_date = None
-        most_recent_quote_date = freshness_meta_helper.read_freshness_meta(stock_code=stock_obj.code,
+        most_recent_quote_date = freshness_meta_helper.read_freshness_meta(code=stock_obj.code,
+                                                                           object_type=stock_obj.object_type,
                                                                            meta_type='quote',
                                                                            meta_name='daily_quote')
         if most_recent_quote_date:
@@ -321,7 +328,8 @@ class ChinaAStock(object):
                     # update data freshness meta data
                     date_of_quote = quote_df['date'].max()
                     # trading_day_helper.update_freshness_meta(stock_obj, 'daily_quote', date_of_quote)
-                    freshness_meta_helper.upsert_freshness_meta(stock_code=stock_obj.code,
+                    freshness_meta_helper.upsert_freshness_meta(code=stock_obj.code,
+                                                                object_type=stock_obj.object_type,
                                                                 meta_type='quote',
                                                                 meta_name='daily_quote',
                                                                 dt=date_of_quote)
@@ -383,7 +391,8 @@ class ChinaAStock(object):
                         StockDailyQuote.objects.insert(bulk_insert_list, load_bulk=False)
                     # update data freshness meta data
                     date_of_quote = quote_df['date'].max()
-                    freshness_meta_helper.upsert_freshness_meta(stock_code=index_obj.code,
+                    freshness_meta_helper.upsert_freshness_meta(code=index_obj.code,
+                                                                object_type=index_obj.object_type,
                                                                 meta_type='quote',
                                                                 meta_name='daily_quote',
                                                                 dt=date_of_quote)

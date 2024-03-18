@@ -166,7 +166,8 @@ class GeneralProcessor(object):
 
     def update_freshness_meta(self):
         latest_date = max(self.output_df.index)
-        freshness_meta_helper.upsert_freshness_meta(stock_code=self.stock_obj.code,
+        freshness_meta_helper.upsert_freshness_meta(code=self.stock_obj.code,
+                                                    object_type=self.stock_obj.object_type,
                                                     meta_type=self.meta_type,
                                                     meta_name=self.meta_name,
                                                     dt=latest_date,

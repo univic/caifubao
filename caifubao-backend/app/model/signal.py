@@ -16,10 +16,10 @@ class SignalData(Document):
         'allow_inheritance': True,
         # 'indexes': [
         #     '-date',
-        #     ('name', 'stock_code')
+        #     ('name', 'code')
         # ]
     }
-    name = StringField(unique_with=['date', 'stock_code'])
+    name = StringField(unique_with=['date', 'code'])
     date = DateTimeField()
     stock_code = StringField()
 

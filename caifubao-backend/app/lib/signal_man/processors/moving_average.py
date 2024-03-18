@@ -38,8 +38,8 @@ class MACrossSignalProcessor(GeneralProcessor):
         pri_ma_factor_df.rename(columns={"value": self.pri_ma}, inplace=True)
         ref_ma_factor_df.rename(columns={"value": self.ref_ma}, inplace=True)
         # remove abundant columns
-        pri_ma_factor_df.drop(['_id', 'name', 'stock_code'], axis=1, inplace=True)
-        ref_ma_factor_df.drop(['_id', 'name', 'stock_code'], axis=1, inplace=True)
+        pri_ma_factor_df.drop(['_id', 'name', 'code'], axis=1, inplace=True)
+        ref_ma_factor_df.drop(['_id', 'name', 'code'], axis=1, inplace=True)
 
         self.data_df = pd.merge(pri_ma_factor_df, ref_ma_factor_df, how="outer", left_index=True, right_index=True)
 

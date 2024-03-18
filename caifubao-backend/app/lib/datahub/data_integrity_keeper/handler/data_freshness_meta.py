@@ -33,7 +33,8 @@ def calibrate_daily_quote_meta():
     for i, stock_item in enumerate(stock_list):
         latest_quote = StockDailyQuote.objects(code=stock_item.code).order_by('-date').first()
         # curr_daily_quote_meta = trading_day_helper.read_freshness_meta(stock_item, 'daily_quote')
-        curr_daily_quote_meta = freshness_meta_helper.read_freshness_meta(stock_code=stock_item.code,
+        curr_daily_quote_meta = freshness_meta_helper.read_freshness_meta(code=stock_item.code,
+                                                                          object_type=stock_item.object_type,
                                                                           meta_type='quote',
                                                                           meta_name='daily_quote')
 
@@ -52,7 +53,8 @@ def calibrate_daily_quote_meta():
             if curr_daily_quote_meta:
                 print(f"Removing invalid data freshness meta for {stock_item.code} - {stock_item.name}")
                 # trading_day_helper.update_freshness_meta(stock_item, 'daily_quote', None)
-                freshness_meta_helper.upsert_freshness_meta(stock_code=stock_item.code,
+                freshness_meta_helper.upsert_freshness_meta(code=stock_item.code,
+                                                            object_type=stock_item.object_type,
                                                             meta_type='quote',
                                                             meta_name='daily_quote',
                                                             dt=None)

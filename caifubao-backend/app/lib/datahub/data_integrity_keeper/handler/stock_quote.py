@@ -77,9 +77,10 @@ class DataIntegrityWatcher(object):
 
     def check_data_freshness_meta(self, stock_item):
         check_flag = "GOOD"
-        daily_quote_freshness_meta = freshness_meta_helper.read_freshness_meta(stock_code=stock_item.code,
-                                                                          meta_type='quote',
-                                                                          meta_name='daily_quote')
+        daily_quote_freshness_meta = freshness_meta_helper.read_freshness_meta(code=stock_item.code,
+                                                                               object_type=stock_item.object_type,
+                                                                               meta_type='quote',
+                                                                               meta_name='daily_quote')
         latest_quote_date = trading_day_helper.determine_latest_quote_date(stock_item)
         if daily_quote_freshness_meta != latest_quote_date:
             check_flag = "BAD"

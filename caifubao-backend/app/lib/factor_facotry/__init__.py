@@ -94,7 +94,7 @@ class FactorFactory(GeneralWorker):
         self.quote_df = pd.DataFrame(quote_json)
         self.quote_df.set_index("date", inplace=True)
 
-        # most_recent_factor_date = freshness_meta_helper.read_freshness_meta(stock_code=self.stock_obj.code,
+        # most_recent_factor_date = freshness_meta_helper.read_freshness_meta(code=self.stock_obj.code,
         #                                                                     meta_type='factor',
         #                                                                     name='fq_factor')
         # if most_recent_factor_date:
@@ -115,14 +115,16 @@ class FactorFactory(GeneralWorker):
     def check_metadata(self, stock_code, factor_name):
         skip_flag = False
         if self.scenario.is_backtest:
-            latest_quote_date = freshness_meta_helper.read_freshness_meta(stock_code=stock_code,
+            latest_quote_date = freshness_meta_helper.read_freshness_meta(code=stock_code,
+                                                                          object_type=self.stock_obj.object_type,
                                                                           meta_type='quote',
                                                                           meta_name='daily_quote')
         else:
             latest_quote_date = self.scenario.current_datetime
         logger.info(f'Metadata for {self.stock_obj.code} - {self.stock_obj.name} - daily_quote : '
                     f'{latest_quote_date} ')
-        latest_factor_date = freshness_meta_helper.read_freshness_meta(stock_code=stock_code,
+        latest_factor_date = freshness_meta_helper.read_freshness_meta(code=stock_code,
+                                                                       object_type=self.stock_obj.object_type,
                                                                        meta_type='factor',
                                                                        meta_name=factor_name,
                                                                        backtest_name=self.backtest_name)

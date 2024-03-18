@@ -20,7 +20,8 @@ class FactorProcessor(GeneralProcessor):
         backtest_name = None
         if not self.processor_dict['backtest_overall_anaylsis']:
             self.backtest_name = self.scenario.backtest_name
-        self.most_recent_process_datetime = freshness_meta_helper.read_freshness_meta(stock_code=self.stock_obj.code,
+        self.most_recent_process_datetime = freshness_meta_helper.read_freshness_meta(code=self.stock_obj.code,
+                                                                                      object_type=self.stock_obj.object_type,
                                                                                       meta_type=self.meta_type,
                                                                                       meta_name=self.processor_dict['name'],
                                                                                       backtest_name=self.backtest_name)

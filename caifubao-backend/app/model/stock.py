@@ -124,6 +124,7 @@ class BasicStock(Document):
 
 
 class IndividualStock(BasicStock):
+    object_type = StringField(required=True, default="individual_stock")
     total_equity = IntField()
     outstanding_share = IntField()
     daily_quote_hfq = EmbeddedDocumentListField('DailyQuote')
@@ -131,7 +132,7 @@ class IndividualStock(BasicStock):
 
 
 class StockIndex(BasicStock):
-    pass
+    object_type = StringField(required=True, default="stock_index")
 
 
 class ValuationIndicator(EmbeddedDocument):

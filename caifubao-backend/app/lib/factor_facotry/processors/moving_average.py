@@ -34,7 +34,7 @@ class MovingAverageFactorProcessor(FactorProcessor):
 
         # update_freshness_meta
         latest_factor_date = max(self.quote_df.index)
-        freshness_meta_helper.upsert_freshness_meta(self.stock, self.factor_name, 'factor', latest_factor_date)
+        # freshness_meta_helper.upsert_freshness_meta(self.stock, self.factor_name, 'factor', latest_factor_date)
 
     def read_existing_factors(self):
         pass
