@@ -31,4 +31,3 @@ factor_processor_registry = {
         }
     }
 }
-

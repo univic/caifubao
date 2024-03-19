@@ -1,8 +1,8 @@
 import logging
 import datetime
 from app.lib.factor_facotry import FactorFactory
-from app.lib.signal_man import SignalMan
-from app.lib.opportunity_seeker import OpportunitySeeker
+# from app.lib.signal_man import SignalMan
+# from app.lib.opportunity_seeker import OpportunitySeeker
 
 
 logger = logging.getLogger(__name__)

@@ -17,9 +17,6 @@ class FQFactorProcessor(FactorProcessor):
         self.meta_name = 'FQ_FACTOR'
         self.process_df = self.input_df
 
-    def exec(self):
-        self.perform_factor_calc()
-
     def perform_factor_calc(self):
 
         # raw_df = self.input_df

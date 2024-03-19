@@ -80,7 +80,6 @@ class FactorFactory(GeneralWorker):
         logger.info(f'Reading quote df for {self.stock_obj.code} - {self.stock_obj.name}')
         # field_exclude_list = ['volume', 'trade_amount']
         field_exclude_list = []
-        # if stock code remain unchanged, do not load quote df again
 
         # quote_qs = StockDailyQuote.objects(code=self.stock_obj.code,
         #                                    date__gt=self.current_day) \
@@ -93,24 +92,6 @@ class FactorFactory(GeneralWorker):
         quote_json = quote_qs.as_pymongo()
         self.quote_df = pd.DataFrame(quote_json)
         self.quote_df.set_index("date", inplace=True)
-
-        # most_recent_factor_date = freshness_meta_helper.read_freshness_meta(code=self.stock_obj.code,
-        #                                                                     meta_type='factor',
-        #                                                                     name='fq_factor')
-        # if most_recent_factor_date:
-        #     quote_qs = StockDailyQuote.objects(code=self.stock.code,
-        #                                        date__gt=most_recent_factor_date) \
-        #         .exclude(*field_exclude_list) \
-        #         .order_by('+date')
-        # else:
-        #     quote_qs = StockDailyQuote.objects(code=self.stock.code) \
-        #         .exclude(*field_exclude_list) \
-        #         .order_by('+date')
-        # # convert to df
-        # quote_json = quote_qs.as_pymongo()
-        # self.quote_df = pd.DataFrame(quote_json)
-        # self.quote_df.set_index("date", inplace=True)
-        # self.latest_quote_date = self.quote_df.index[-1]
 
     def check_metadata(self, stock_code, factor_name):
         skip_flag = False

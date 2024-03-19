@@ -131,7 +131,7 @@ class GeneralProcessor(object):
         self.scenario = scenario
         self.backtest_name: str = ""
         self.input_df = input_df
-        self.process_df = None
+        self.process_df = input_df
         self.output_df = None
         self.output_field_list: list = []
         self.exec_result_dict: dict = {

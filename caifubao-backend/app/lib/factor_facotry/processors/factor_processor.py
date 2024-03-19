@@ -15,6 +15,12 @@ class FactorProcessor(GeneralProcessor):
         super().__init__(stock_obj, scenario, processor_dict, input_df, *args, **kwargs)
         self.meta_type = 'factor'
 
+    def exec(self):
+        self.perform_factor_calc()
+
+    def perform_factor_calc(self):
+        pass
+
     def determine_exec_range(self):
         # if overall analysis is not enabled, check latest process date by backtest name
         backtest_name = None

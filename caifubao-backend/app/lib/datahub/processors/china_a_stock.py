@@ -124,6 +124,7 @@ class ChinaAStock(object):
                 code = remote_stock_item['code']
                 name = remote_stock_item['name']
                 stock_obj = local_data_list(code=code).first()
+                prog_bar_msg: str = ""
                 if stock_obj:
                     # check the quote data freshness of each index
                     flag = self.check_data_freshness(stock_obj)
@@ -131,22 +132,25 @@ class ChinaAStock(object):
                     if allow_update:
                         self.perform_stock_name_check(stock_obj, name)
                         if flag == "UPD":
+                            prog_bar_msg = f"Updating quote info for {code} - {name} with spot data"
                             quote_date = self.most_recent_trading_day
                             save_quote = not bulk_insert
                             new_quote = self.handle_new_quote(stock_obj, remote_data_col_list, remote_stock_item,
                                                               quote_date, save_quote=save_quote)
                             new_quote_instance_list.append(new_quote)
                         elif flag in ["INC", "FULL"]:
-                            self.handle_get_hist_quote_data(stock_obj=stock_obj, hist_quote_handler=hist_handler)
+                            prog_bar_msg = f"Doing {flag} update for {code} - {name}"
+                            self.get_hist_quote_data(stock_obj=stock_obj, hist_quote_handler=hist_handler)
 
                         upd_counter_dict[flag] += 1
                 else:
+                    prog_bar_msg = f"Get quote info for new stock {code} - {name}"
                     check_counter_dict["NEW"] += 1
                     if allow_update:
                         # create absent stock index and create data retrieve task.
                         self.handle_new_stock(obj_type=obj_type, code=code, name=name)
                         upd_counter_dict["NEW"] += 1
-                prog_bar(i, remote_data_num)
+                prog_bar(i, remote_data_num, prog_bar_msg)
             if bulk_insert:
                 # do bulk insert
                 StockDailyQuote.objects.insert(new_quote_instance_list, load_bulk=False)
@@ -259,7 +263,6 @@ class ChinaAStock(object):
         new_quote.stock = stock_obj
         if quote_date:
             new_quote.date = quote_date
-        # trading_day_helper.update_freshness_meta(stock_obj, 'daily_quote', quote_date)
         freshness_meta_helper.upsert_freshness_meta(code=stock_obj.code,
                                                     object_type=stock_obj.object_type,
                                                     meta_type='quote',
@@ -270,8 +273,9 @@ class ChinaAStock(object):
         stock_obj.save()
         return new_quote
 
-    def handle_get_hist_quote_data(self, stock_obj, hist_quote_handler, force_upd=False):
+    def get_hist_quote_data(self, stock_obj, hist_quote_handler, force_upd=False):
         start_date = None
+        start_date_str = None
         most_recent_quote_date = freshness_meta_helper.read_freshness_meta(code=stock_obj.code,
                                                                            object_type=stock_obj.object_type,
                                                                            meta_type='quote',
@@ -289,7 +293,11 @@ class ChinaAStock(object):
         if start_date:
             kwarg_dict['start_date'] = start_date.strftime('%Y-%m-%d')
         func = getattr(self, hist_quote_handler)
-        func(code=stock_obj.code)
+        result = func(code=stock_obj.code, start_date=start_date_str)
+        if result["code"] != "GOOD":
+            logger.warning(f"Something goes wrong when "
+                           f"trying to get historic quote data for {stock_obj.code} - {stock_obj.name}\n"
+                           f"{result['message']}")
 
         # task_controller.create_task(name=task_name,
         #                             callback_package='datahub',
@@ -344,9 +352,9 @@ class ChinaAStock(object):
         except KeyError:
             status_code = 'FAIL'
             status_msg = 'the interface did not return valid dataframe, possibly due to no quote data'
-        except Exception as e:
-            status_code = 'ERR'
-            status_msg = ';'.join(traceback.format_exception(e))
+        # except Exception as e:
+        #     status_code = 'ERR'
+        #     status_msg = ';'.join(traceback.format_exception(e))
         status = {
             'code': status_code,
             'message': status_msg,
@@ -407,9 +415,9 @@ class ChinaAStock(object):
         except KeyError:
             status_code = 'FAIL'
             status_msg = 'the interface did not return valid dataframe, possibly due to no quote data'
-        except Exception as e:
-            status_code = 'ERR'
-            status_msg = ';'.join(traceback.format_exception(e))
+        # except Exception as e:
+        #     status_code = 'ERR'
+        #     status_msg = ';'.join(traceback.format_exception(e))
         status = {
             'code': status_code,
             'message': status_msg,
