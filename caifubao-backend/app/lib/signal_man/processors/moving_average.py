@@ -3,15 +3,15 @@ import pandas as pd
 from app.utilities import freshness_meta_helper
 from app.model.factor import FactorDataEntry
 from app.model.signal import SpotSignalData
-from app.lib import GeneralProcessor
+from app.lib.signal_man.processors.signal_processor import SignalProcessor
 
 logger = logging.getLogger(__name__)
 
 
-class MACrossSignalProcessor(GeneralProcessor):
-    def __init__(self, stock, signal_name, latest_process_date, *args, **kwargs):
-        super().__init__(stock, signal_name, latest_process_date)
-        self.backtest_overall_anaylsis = True
+class MACrossSignalProcessor(SignalProcessor):
+    def __init__(self, stock_obj, scenario, processor_dict, input_df, *args, **kwargs):
+        super().__init__(stock_obj, scenario, processor_dict, input_df, *args, **kwargs)
+        self.meta_name = processor_dict["name"]
         self.pri_ma = kwargs['PRI_MA']
         self.ref_ma = kwargs['REF_MA']
         self.cross_type = kwargs['CROSS_TYPE']
@@ -21,10 +21,10 @@ class MACrossSignalProcessor(GeneralProcessor):
         self.generate_signal()
 
     def read_factor_data(self):
-        logger.info(f'Reading factor data for {self.stock.code} - {self.stock.name}')
+        logger.info(f'Reading factor data for {self.stock_obj.code} - {self.stock_obj.name}')
         # queryset
-        pri_ma_factor_qs = FactorDataEntry.objects(stock_code=self.stock.code, name=self.pri_ma)
-        ref_ma_factor_qs = FactorDataEntry.objects(stock_code=self.stock.code, name=self.ref_ma)
+        pri_ma_factor_qs = FactorDataEntry.objects(stock_code=self.stock_obj.code, name=self.pri_ma)
+        ref_ma_factor_qs = FactorDataEntry.objects(stock_code=self.stock_obj.code, name=self.ref_ma)
         # convert queryset to json
         pri_ma_factor_query_json = pri_ma_factor_qs.as_pymongo()
         ref_ma_factor_query_json = ref_ma_factor_qs.as_pymongo()
@@ -72,4 +72,3 @@ class PriceMARelationProcessor(GeneralProcessor):
     """
     def __init__(self, stock, processor_name, latest_process_date, *args, **kwargs):
         super().__init__(stock, processor_name, latest_process_date, *args, **kwargs)
-        self.backtest_overall_anaylsis = False

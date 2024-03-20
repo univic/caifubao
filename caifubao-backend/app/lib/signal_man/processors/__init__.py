@@ -2,6 +2,7 @@ from app.lib.signal_man.processors import moving_average
 
 registry = {
     "MA_10_UPCROSS_20": {
+        'name': "MA_10_UPCROSS_20",
         'processor': moving_average.MACrossSignalProcessor,
         'handler_func': 'run',
         'kwargs': {
@@ -14,6 +15,7 @@ registry = {
         'quote_dependent': False,
     },
     "HFQ_PRICE_ABOVE_MA_120": {
+        'name': "HFQ_PRICE_ABOVE_MA_120",
         'processor': moving_average.PriceMARelationProcessor,
         'handler_func': 'run',
         'kwargs': {

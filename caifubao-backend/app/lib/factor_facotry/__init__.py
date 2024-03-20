@@ -1,11 +1,11 @@
 import logging
 import itertools
 import pandas as pd
-from app.model.stock import BasicStock, StockDailyQuote
+from app.model.stock import StockDailyQuote
 from app.lib.factor_facotry import processors
 from app.lib import GeneralWorker
 from app.lib.factor_facotry.processors import factor_processor_registry
-from app.utilities import trading_day_helper, freshness_meta_helper
+from app.utilities import freshness_meta_helper
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +15,8 @@ class FactorFactory(GeneralWorker):
 
         # get class name
         super().__init__(strategy_director, portfolio_manager, scenario)
-        self.quote_df = None
         self.processor_registry = factor_processor_registry
-        self.factor_processor_list: list = []
-        self.factor_processor_exec_list: list = []
+
         self.counter_dict = {
             'TODO': 0,
             'FINI': 0,
@@ -45,6 +43,7 @@ class FactorFactory(GeneralWorker):
         self.get_todo()
         prev_stock_code = None
         for todo_item in self.todo_list:
+            # TODO: need prog bar here
             self.stock_obj = todo_item[0]
             # if previous stock code is different from current one, reload the quote data
             if prev_stock_code != self.stock_obj.code:
@@ -53,28 +52,11 @@ class FactorFactory(GeneralWorker):
 
             factor_name = todo_item[1]
             processor_dict = self.processor_registry[factor_name]
+            self.run_processor(processor_dict)
 
-            self.processor_instance = self.get_processor_instance(factor_name)
-            process_handler_func = getattr(self.processor_instance, processor_dict['handler'])
-            logger.info(f'Doing factor analysis {factor_name} for {self.stock_obj.code} - {self.stock_obj.name}')
-            process_handler_func()
-
-        logger.info(f'Factor generation complete, '
-                    f'{self.counter_dict["FINI"]} finished, '
-                    f'{self.counter_dict["SKIP"]} skipped.')
-
-    def get_processor_instance(self, factor_name):
-        logger.info(f'Looking for {factor_name} factor processor for {self.stock_obj.code} - {self.stock_obj.name}')
-        processor_dict = processors.factor_processor_registry[factor_name]
-        processor_object = processor_dict['processor_object']
-        kwargs = {}
-        if 'kwargs' in processors.factor_processor_registry[factor_name].keys():
-            kwargs = processors.factor_processor_registry[factor_name]['kwargs']
-        processor_instance = processor_object(stock_obj=self.stock_obj,
-                                              scenario=self.scenario,
-                                              input_df=self.quote_df,
-                                              processor_dict=processor_dict, **kwargs)
-        return processor_instance
+        # logger.info(f'Factor generation complete, '
+        #             f'{self.counter_dict["FINI"]} finished, '
+        #             f'{self.counter_dict["SKIP"]} skipped.')
 
     def read_quote_data(self):
         logger.info(f'Reading quote df for {self.stock_obj.code} - {self.stock_obj.name}')
@@ -90,8 +72,8 @@ class FactorFactory(GeneralWorker):
             .order_by('+date')
         # convert to df
         quote_json = quote_qs.as_pymongo()
-        self.quote_df = pd.DataFrame(quote_json)
-        self.quote_df.set_index("date", inplace=True)
+        self.input_df = pd.DataFrame(quote_json)
+        self.input_df.set_index("date", inplace=True)
 
     def check_metadata(self, stock_code, factor_name):
         skip_flag = False
@@ -126,14 +108,14 @@ class FactorFactory(GeneralWorker):
 
     # def run_processors(self):
     #     logger.info(f'Running factor processors for {self.stock.code} - {self.stock.name}')
-    #     for factor_name in self.factor_processor_exec_list:
-    #         logger.info(f'Running factor processor {factor_name}')
-    #         processor_object = processors.factor_processor_registry[factor_name]['processor_object']
+    #     for processor_name in self.factor_processor_exec_list:
+    #         logger.info(f'Running factor processor {processor_name}')
+    #         processor_object = processors.factor_processor_registry[processor_name]['processor_object']
     #         kwargs = {}
-    #         if 'kwargs' in processors.factor_processor_registry[factor_name].keys():
-    #             kwargs = processors.factor_processor_registry[factor_name]['kwargs']
+    #         if 'kwargs' in processors.factor_processor_registry[processor_name].keys():
+    #             kwargs = processors.factor_processor_registry[processor_name]['kwargs']
     #         processor_instance = processor_object(self.stock, self.quote_df, self.latest_factor_date, **kwargs)
-    #         process_handler_func = getattr(processor_instance, processors.factor_processor_registry[factor_name]['handler'])
+    #         process_handler_func = getattr(processor_instance, processors.factor_processor_registry[processor_name]['handler'])
     #         process_handler_func()
 
 

@@ -17,7 +17,7 @@ class FQFactorProcessor(FactorProcessor):
         self.meta_name = 'FQ_FACTOR'
         self.process_df = self.input_df
 
-    def perform_factor_calc(self):
+    def perform_calc(self):
 
         # raw_df = self.input_df
         # most_recent_factor_date = datetime.datetime(2022, 6, 20, 0, 0, 0)
@@ -57,4 +57,4 @@ class FQFactorProcessor(FactorProcessor):
 #     mongoengine_tool.connect_to_db()
 #     stock_obj = BasicStock.objects(code="sh601166").first()
 #     obj = FQFactorProcessor(stock_obj)
-#     obj.perform_factor_calc()
+#     obj.perform_calc()

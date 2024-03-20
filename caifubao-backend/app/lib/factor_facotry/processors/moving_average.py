@@ -15,7 +15,7 @@ class MovingAverageFactorProcessor(FactorProcessor):
         self.factor_name = f'MA_{self.ma_days}'
         self.bulk_insert_list: list = []
 
-    def perform_factor_calc(self):
+    def perform_calc(self):
         self.process_df[self.factor_name] = talib.MA(self.process_df['close_hfq'],
                                                      timeperiod=self.ma_days)
 

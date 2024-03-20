@@ -26,6 +26,7 @@ class GeneralWorker(object):
         self.current_day = None
         self.backtest_name: str = ""
         self.todo_list: list = []
+        self.input_df = None
         self.counter_dict = {
             'FINI': 0,
             'SKIP': 0,
@@ -46,56 +47,83 @@ class GeneralWorker(object):
         """
         pass
 
-    def generate_exec_plan(self):
-        """
-        for each stock, iterate through all the processors and determine whether to exec compute/analysis
-        if so, assemble an exec unit and append it to wait list
-        :return:
-        """
-        for stock in self.stock_list:
-            analyte_list = self.get_analyte_list()
-            for item in analyte_list:
-                go_exec = self.check_last_analysis_date(stock, item)
-                if go_exec:
-                    exec_unit = GeneralExecUnit()
-                    exec_unit.target_stock = stock
-                    exec_unit.process_type = self.module_name
-                    exec_unit.analyte = item
-                    exec_unit.processor = self.processor_registry.registry[item]['processor']
-                    exec_unit.handler_func = self.processor_registry.registry[item]['handler_func']
-                    self.exec_unit_list.append(exec_unit)
-                else:
-                    pass
+    def exec_todo(self):
+        pass
 
-        # Check metadata and determine whether to run the processor
-
-    def commit_tasks(self):
-        logger.info(f'{self.module_name} - running exec units')
-        for exec_unit in self.exec_unit_list:
-            stock = exec_unit.target_stock
-            processor = exec_unit.processor
-            processor_name = general_utils.get_class_name(processor)
-            logger.info(f'{self.module_name} - processor {exec_unit.processor} - target {stock.code}/{stock.name} - analyte {exec_unit.analyte}')
-            if exec_unit.kwargs:
-                kwargs = exec_unit.kwargs
-                processor_instance = processor(exec_unit)
-                process_handler_func = getattr(processor_instance, exec_unit.handler_func)
-                exec_result_dict = process_handler_func()
-                result_flag = exec_result_dict["flag"]
-                self.counter_dict[result_flag] += 1
-                logger.info(
-                    f'{self.module_name} processor {processor_name} exec result: {result_flag} {exec_result_dict["msg"]}')
+    # def generate_exec_plan(self):
+    #     """
+    #     for each stock, iterate through all the processors and determine whether to exec compute/analysis
+    #     if so, assemble an exec unit and append it to wait list
+    #     :return:
+    #     """
+    #     for stock in self.stock_list:
+    #         analyte_list = self.get_analyte_list()
+    #         for item in analyte_list:
+    #             go_exec = self.check_last_analysis_date(stock, item)
+    #             if go_exec:
+    #                 exec_unit = GeneralExecUnit()
+    #                 exec_unit.target_stock = stock
+    #                 exec_unit.process_type = self.module_name
+    #                 exec_unit.analyte = item
+    #                 exec_unit.processor = self.processor_registry.registry[item]['processor']
+    #                 exec_unit.handler_func = self.processor_registry.registry[item]['handler_func']
+    #                 self.exec_unit_list.append(exec_unit)
+    #             else:
+    #                 pass
+    #
+    #     # Check metadata and determine whether to run the processor
+    #
+    # def commit_tasks(self):
+    #     logger.info(f'{self.module_name} - running exec units')
+    #     for exec_unit in self.exec_unit_list:
+    #         stock = exec_unit.target_stock
+    #         processor = exec_unit.processor
+    #         processor_name = general_utils.get_class_name(processor)
+    #         logger.info(f'{self.module_name} - processor {exec_unit.processor} - target {stock.code}/{stock.name} - analyte {exec_unit.analyte}')
+    #         if exec_unit.kwargs:
+    #             kwargs = exec_unit.kwargs
+    #             processor_instance = processor(exec_unit)
+    #             process_handler_func = getattr(processor_instance, exec_unit.handler_func)
+    #             exec_result_dict = process_handler_func()
+    #             result_flag = exec_result_dict["flag"]
+    #             self.counter_dict[result_flag] += 1
+    #             logger.info(
+    #                 f'{self.module_name} processor {processor_name} exec result: {result_flag} {exec_result_dict["msg"]}')
 
     def after_run(self):
         pass
 
     def run(self):
         self.before_run()
-        self.generate_exec_plan()
-        self.commit_tasks()
-        logger.info(f'{self.module_name} processors run finished, '
-                    f'{self.counter_dict["FINI"]} finished, '
-                    f'{self.counter_dict["SKIP"]} skipped.')
+        self.get_todo()
+        self.exec_todo()
+
+    def get_processor_instance(self, processor_name):
+        # logger.info(f'Looking for {processor_name} processor for {self.stock_obj.code} - {self.stock_obj.name}')
+        processor_dict = self.processor_registry[processor_name]
+        processor_object = processor_dict['processor_object']
+        kwargs = {}
+        if 'kwargs' in self.processor_registry[processor_name].keys():
+            kwargs = self.processor_registry[processor_name]['kwargs']
+        processor_instance = processor_object(stock_obj=self.stock_obj,
+                                              scenario=self.scenario,
+                                              input_df=self.input_df,
+                                              processor_dict=processor_dict, **kwargs)
+        return processor_instance
+
+    def run_processor(self, processor_dict):
+        processor_name = processor_dict["name"]
+        self.processor_instance = self.get_processor_instance(processor_name)
+        process_handler_func = getattr(self.processor_instance, processor_dict['handler'])
+        logger.info(f'Doing factor analysis {processor_name} for {self.stock_obj.code} - {self.stock_obj.name}')
+        process_handler_func()
+
+        # self.before_run()
+        # self.generate_exec_plan()
+        # self.commit_tasks()
+        # logger.info(f'{self.module_name} processors run finished, '
+        #             f'{self.counter_dict["FINI"]} finished, '
+        #             f'{self.counter_dict["SKIP"]} skipped.')
 
     # def check_last_analysis_date(self, target_stock, item_name):
     #     latest_quote_date = trading_day_helper.read_freshness_meta(target_stock, 'daily_quote')

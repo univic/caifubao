@@ -16,9 +16,9 @@ class FactorProcessor(GeneralProcessor):
         self.meta_type = 'factor'
 
     def exec(self):
-        self.perform_factor_calc()
+        self.perform_calc()
 
-    def perform_factor_calc(self):
+    def perform_calc(self):
         pass
 
     def determine_exec_range(self):
