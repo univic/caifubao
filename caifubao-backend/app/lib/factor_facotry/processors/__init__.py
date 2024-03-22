@@ -28,6 +28,16 @@ factor_processor_registry = {
         'partial_process_offset': 20,
         'kwargs': {
             'MA': 20,
+        },
+    },
+    "MA_120": {
+        'name': "MA_120",
+        'processor_object': moving_average.MovingAverageFactorProcessor,
+        'handler': 'run',
+        'backtest_overall_anaylsis': True,
+        'partial_process_offset': 120,
+        'kwargs': {
+            'MA': 120,
         }
     }
 }

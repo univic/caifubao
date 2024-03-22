@@ -13,3 +13,13 @@ class DevConfig(BaseConfig):
         'host': '127.0.0.1',
         'port': 27017,
     }
+    MAIL_CONFIG = {
+        "sender_email": "xyzhgwf@hotmail.com",
+        # "recipient_email_list": ["xyzhgwf@hotmail.com", "wangqi6981@outlook.com"],
+        "recipient_email_list": ["xyzhgwf@hotmail.com"],
+        "smtp_server_addr": "smtp.office365.com",
+        "smtp_port": 587,
+        "smtp_username": "xyzhgwf@hotmail.com",
+        "smtp_password": "995630g17",
+        "smtp_sender_display_name": "CAIFUBAO",
+    }

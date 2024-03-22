@@ -2,10 +2,10 @@
 # Author : univic
 
 
-from app.config.dev_config import DevConfig
+from app.conf import BaseConfig
 
 
-class ProductionConfig(DevConfig):
+class ProductionConfig(BaseConfig):
 
     # 生产环境下web端的url
     WEB_BASE_URL = ""

@@ -23,15 +23,15 @@ def create_app():
     db_watcher.connect_to_db()
 
     # # Start Datahub
-    datahub = Datahub()
-    datahub.start()
+    # datahub = Datahub()
+    # datahub.start()
 
     # Start Task Controller
     # task_controller.initialize()
 
     # start a backtest
-    # backtester = BasicBackTester(portfolio_name="test_portfolio", strategy_name="Strategy01", start_date="2020-01-01")
-    # backtester.run()
+    backtester = BasicBackTester(portfolio_name="test_portfolio", strategy_name="Strategy01", start_date="2020-01-01")
+    backtester.run()
 
     # Start web server
 
@@ -40,6 +40,3 @@ def create_app():
     # strategy_director.load_strategy("Strategy01")
 
     # MainDispatcher.dispatch()
-
-    while True:
-        pass

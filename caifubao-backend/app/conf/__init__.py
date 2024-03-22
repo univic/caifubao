@@ -32,6 +32,15 @@ class BaseConfig(object):
         'TASK_EXEC_INTERVAL': 0.5,     # in seconds
         'TASK_SCAN_INTERVAL': 10,      # in seconds
     }
+    MAIL_CONFIG = {
+        "sender_email": "",
+        "recipient_email_list": [],
+        "smtp_server_addr": "smtp.example.com",
+        "smtp_port": 587,
+        "smtp_username": "",
+        "smtp_password": "",
+        "smtp_sender_display_name": "",
+    }
 
 
 def get_config():
