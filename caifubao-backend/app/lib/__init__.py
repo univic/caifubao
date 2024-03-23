@@ -151,7 +151,7 @@ class GeneralProcessor(object):
         # self.processor_name = general_utils.get_class_name(processor)
         # self.processor_type = exec_unit.processor_type
         # self.most_recent_processor_unit_date = None
-        self.most_recent_process_datetime = None
+        self.most_recent_existing_data_dt = None
         self.processor_dict: dict = processor_dict
 
         self.meta_type = None
@@ -160,8 +160,14 @@ class GeneralProcessor(object):
         self.backtest_name: str = ""
         self.input_df = input_df
         self.process_df = input_df
+
+        # self.most_recent_existing_data_dt = None
+        # self.output_data_start_dt = None
+
         self.output_df = None
         self.output_field_list: list = []
+        self.db_document_object = None
+        self.bulk_insert_list: list = []
         self.exec_result_dict: dict = {
             "code": "FINI",
             "msg": ""
@@ -169,7 +175,8 @@ class GeneralProcessor(object):
 
     def run(self):
         self.before_exec()
-        self.exec()
+        self.perform_calc()
+        self.prepare_output()
         self.perform_db_upsert()
         self.update_freshness_meta()
         self.after_exec()
@@ -181,16 +188,56 @@ class GeneralProcessor(object):
         # Customizing here
         pass
 
-    def determine_exec_range(self):
+    def perform_calc(self):
         pass
+
+    def determine_exec_range(self):
+        # if overall analysis is not enabled, check latest process date by backtest name
+        backtest_name = None
+        if not self.processor_dict['backtest_overall_anaylsis']:
+            self.backtest_name = self.scenario.backtest_name
+        self.most_recent_existing_data_dt = freshness_meta_helper.read_freshness_meta(code=self.stock_obj.code,
+                                                                                      object_type=self.stock_obj.object_type,
+                                                                                      meta_type=self.meta_type,
+                                                                                      meta_name=self.processor_dict['name'],
+                                                                                      backtest_name=self.backtest_name)
+
+        # if no metadata was founded, do complete analysis
+        if not self.most_recent_existing_data_dt:
+            self.process_df = self.input_df
+
+        # if metadata time is behind current time, do partial analysis
+        elif self.most_recent_existing_data_dt < self.scenario.current_datetime:
+            head_index = (self.input_df.index.get_loc(self.most_recent_existing_data_dt) -
+                          self.processor_dict['partial_process_offset'])
+            self.process_df = self.input_df.iloc[head_index:][:]
+
+        elif self.most_recent_existing_data_dt == self.scenario.current_datetime:
+            # if metadata has same datetime, skip
+            self.set_exec_result_state('SKIP', 'skipped due to nothing to update')
+
+        else:
+            logger.error('Unidentified processing circumstance')
 
     def set_exec_result_state(self, code, msg):
         self.exec_result_dict['code'] = code     # FINI | SKIP | FAIL
         self.exec_result_dict['msg'] = msg
 
     def perform_db_upsert(self):
+        try:
+            # try bulk insert
+            self.db_document_object.objects.insert(self.bulk_insert_list, load_bulk=False)
         # update database
-        pass
+        except KeyError as e:
+            logger.warning(f"Key error when trying to bulk insert {e.with_traceback()}")
+        finally:
+            pass
+
+    def prepare_output(self, df):
+        head_index = df.index.get_loc(self.most_recent_existing_data_dt)
+        processed_df = df.iloc[head_index:][:]
+        return processed_df
+        
 
     def update_freshness_meta(self):
         latest_date = max(self.output_df.index)
