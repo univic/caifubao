@@ -20,6 +20,6 @@ class DevConfig(BaseConfig):
         "smtp_server_addr": "smtp.office365.com",
         "smtp_port": 587,
         "smtp_username": "xyzhgwf@hotmail.com",
-        "smtp_password": "995630g17",
+        "smtp_password": "pass",
         "smtp_sender_display_name": "CAIFUBAO",
     }
