@@ -18,6 +18,7 @@ class BasicBackTester(object):
     def __init__(self, portfolio_name, strategy_name, start_date, end_date=None):
         # get class name
         self.module_name = self.__class__.__name__
+        self.trade_calendar: list = []
 
         self.trading_day_list = []
 
@@ -43,11 +44,10 @@ class BasicBackTester(object):
         self.before_run()
         self.main_sequence()
 
-
-
         self.after_run()
 
     def before_run(self):
+        self.trade_calendar = self.strategy_director.get_market_trade_calendar()
         # update end date if no value is provided
         if not self.end_date:
             self.end_date = datetime.datetime.strftime(datetime.datetime.now(), '%Y-%m-%d')
@@ -56,7 +56,7 @@ class BasicBackTester(object):
         self.backtest_name = f"{self.strategy_name}-{self.start_date}-{self.end_date}-{dt_str}"
 
         self.scenario = ScenarioDirector()
-        self.scenario.is_backtest = True
+        self.scenario.activate_backtest_mode(backtest_name=self.backtest_name)
 
         self.strategy_director = StrategyDirecter()
         self.strategy_director.load_strategy(self.strategy_name)
@@ -88,7 +88,8 @@ class BasicBackTester(object):
         logger.info(f'Starting backtest ticks, {task_list_len} ticks in total')
         prog_bar = progress_bar()
         for i, t in enumerate(self.backtest_periodic_task_list):
-            self.update_scenario_datetime(t)
+            # TODO: CHANGE TIME TO 18 O'CLOCK
+            self.scenario.update_dt(trade_calendar=self.trade_calendar, backtest_current_datetime=t)
             self.exec_backtest_periodic_task()
             prog_bar(i, task_list_len)
 
@@ -98,9 +99,6 @@ class BasicBackTester(object):
         backtest_record.exec_result = "SUCCESS"
         backtest_record.save()
 
-    def update_scenario_datetime(self, current_datetime):
-        self.scenario.real_world_datetime = datetime.datetime.now()
-        self.scenario.current_datetime = current_datetime
 
     def exec_backtest_periodic_task(self):
         self.periodic_task_dispatcher.run()
@@ -111,8 +109,7 @@ class BasicBackTester(object):
     def get_backtest_periodic_task(self):
         start_date_str = self.start_date
         start_date = datetime.datetime.strptime(start_date_str, '%Y-%m-%d')
-        trade_calendar = trading_day_helper.get_a_stock_market_trade_calendar()
-        self.backtest_periodic_task_list = [date for date in trade_calendar if date >= start_date]
+        self.backtest_periodic_task_list = [date for date in self.trade_calendar if date >= start_date]
 
     def generate_backtest_report(self):
         pass

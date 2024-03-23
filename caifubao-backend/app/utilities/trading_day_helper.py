@@ -15,6 +15,35 @@ def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.
     return closest_avail_trading_day
 
 
+def determine_most_recent_previous_trading_dt(trade_calendar, given_time):
+    # rewrite on 20240323
+    if trade_calendar:
+        """
+        the lambda func return a tuple that make two comparison, the first comparison determines if the given time is 
+        less than the item being iterated and gives a boolean value. 
+        the second comparison determines the absolute difference of the time.
+        the min func then compare the key value that provided by the lambda func, in this case, False is prior to True.
+        """
+        closest_avail_trading_day = min(trade_calendar, key=lambda x: (x > given_time, abs(x - given_time)))
+    else:
+        closest_avail_trading_day = None
+    return closest_avail_trading_day
+
+def determine_most_recent_next_trading_dt(trade_calendar, given_time):
+    # rewrite on 20240323
+    if trade_calendar:
+        """
+        the lambda func return a tuple that make two comparison, the first comparison determines if the given time is 
+        less than the item being iterated and gives a boolean value. 
+        the second comparison determines the absolute difference of the time.
+        the min func then compare the key value that provided by the lambda func, in this case, False is prior to True.
+        """
+        closest_avail_trading_day = min(trade_calendar, key=lambda x: (x < given_time, abs(x - given_time)))
+    else:
+        closest_avail_trading_day = None
+    return closest_avail_trading_day
+
+
 def determine_latest_quote_date(stock_obj, date_attribute='date'):
     res = None
     latest_quote_obj = StockDailyQuote.objects(code=stock_obj.code).order_by(f'-{date_attribute}').first()
@@ -82,7 +111,7 @@ def is_trading_day(trade_calendar, given_time=datetime.datetime.now()):
 
 
 def get_a_stock_market_trade_calendar():
-    market = FinanceMarket.objects(name="A股").first()
+    market = FinanceMarket.objects(name="ChinaAStock").first()
     trade_calendar = market.trade_calendar
     return trade_calendar
 

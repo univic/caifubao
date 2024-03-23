@@ -15,11 +15,11 @@ logger = logging.getLogger(__name__)
 class ChinaAStock(object):
 
     def __init__(self):
-        self.market_name = "A股"
+        self.market_name = "ChinaAStock"
         self.market_code = "ZH-A"
         self.today = datetime.date.today()
         self.most_recent_trading_day = None
-        self.market = FinanceMarket.objects(name="A股").first()
+        self.market = FinanceMarket.objects(name="ChinaAStock").first()
         self.trade_calendar = None
         self.result: dict = {
             'code': "GOOD",

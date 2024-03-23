@@ -45,7 +45,7 @@ class Datahub(object):
         self.commit_tasks()
 
     def get_todo_list(self):
-        # self.market_list = strategy_director.get_market_list()
+        # self.market = strategy_director.get_market_name()
         self.market_list = self.processor_registry.keys()
         logger.info(f"{self.module_name} market list: {self.market_list}")
         if not self.market_list:

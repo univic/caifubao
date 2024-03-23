@@ -40,7 +40,6 @@ class FQFactorProcessor(FactorProcessor):
             decimals=4)
         self.process_df["low_hfq"] = (self.process_df["low"] * (self.process_df["close_hfq"] / self.process_df["close"])).round(
             decimals=4)
-        self.output_df = self.process_df
 
     def perform_db_upsert(self):
         # update database

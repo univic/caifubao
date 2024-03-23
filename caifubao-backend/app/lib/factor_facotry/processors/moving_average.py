@@ -19,9 +19,11 @@ class MovingAverageFactorProcessor(FactorProcessor):
         self.process_df[self.factor_name] = talib.MA(self.process_df['close_hfq'],
                                                      timeperiod=self.ma_days)
 
-        self.output_df = self.process_df[self.process_df[self.factor_name].notna()]
+        self.process_df = self.process_df[self.process_df[self.factor_name].notna()]
         # if self.latest_factor_date:
         #     self.output_df = self.output_df[self.output_df.index > self.latest_factor_date]
+
+    def prepare_bulk_insert_list(self):
         for i, row in self.output_df.iterrows():
             factor_data = self.db_document_object()
             factor_data.name = self.factor_name

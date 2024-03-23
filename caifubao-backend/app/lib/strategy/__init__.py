@@ -1,5 +1,6 @@
 import logging
 from app.model.stock import BasicStock
+from app.model.market_info import FinanceMarket
 from app.schemes import strategy as strategy_registry
 
 """
@@ -25,9 +26,17 @@ class StrategyDirecter(object):
         self.strategy = getattr(strategy_registry, strategy_name)
         logger.info(f'{self.module_name} - Strategy {strategy_name} loaded')
 
-    def get_market_list(self):
-        market_list = self.strategy.market_list
-        return market_list
+    def get_market_name(self):
+        market_name = self.strategy.market
+        return market_name
+
+    def get_market_object(self):
+        market = FinanceMarket.objects(name=self.strategy.market).first()
+        return market
+
+    def get_market_trade_calendar(self):
+        trade_calendar = self.strategy.market.trade_calendar
+        return trade_calendar
 
     def get_stock_list(self):
         stock_obj_list = []

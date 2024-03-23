@@ -1,4 +1,5 @@
 import logging
+import traceback
 from app.utilities import general_utils, trading_day_helper, freshness_meta_helper
 
 
@@ -174,11 +175,19 @@ class GeneralProcessor(object):
         }
 
     def run(self):
+        # prepare the input
         self.before_exec()
-        self.perform_calc()
-        self.prepare_output()
-        self.perform_db_upsert()
-        self.update_freshness_meta()
+        self.determine_exec_range()
+        if self.exec_result_dict["code"] != "SKIP":
+            self.perform_calc()
+            # get output_df that ready for db insert
+            self.prepare_output()
+            self.prepare_bulk_insert_list()
+            self.perform_db_upsert()
+            self.update_freshness_meta()
+        else:
+            logger.debug(f"{self.stock_obj.code}-{self.stock_obj.name} {self.meta_type}-{self.meta_name}"
+                         f" skipped due to already up to date")
         self.after_exec()
 
     def before_exec(self):
@@ -186,7 +195,7 @@ class GeneralProcessor(object):
 
     def exec(self):
         # Customizing here
-        pass
+        self.perform_calc()
 
     def perform_calc(self):
         pass
@@ -217,11 +226,19 @@ class GeneralProcessor(object):
             self.set_exec_result_state('SKIP', 'skipped due to nothing to update')
 
         else:
-            logger.error('Unidentified processing circumstance')
+            logger.error(f'Unidentified processing circumstance: most recent meta datetime greater than current time')
 
-    def set_exec_result_state(self, code, msg):
-        self.exec_result_dict['code'] = code     # FINI | SKIP | FAIL
-        self.exec_result_dict['msg'] = msg
+    def prepare_output(self):
+        if self.most_recent_existing_data_dt:
+            head_index = self.process_df.index.get_loc(self.most_recent_existing_data_dt)
+            self.output_df = self.process_df.iloc[head_index:][:]
+            logger.debug(f"{self.stock_obj.code}-{self.stock_obj.name} {self.meta_type}-{self.meta_name}"
+                         f" sliced output df from {self.most_recent_existing_data_dt}")
+        else:
+            self.output_df = self.process_df
+
+    def prepare_bulk_insert_list(self):
+        pass
 
     def perform_db_upsert(self):
         try:
@@ -229,15 +246,9 @@ class GeneralProcessor(object):
             self.db_document_object.objects.insert(self.bulk_insert_list, load_bulk=False)
         # update database
         except KeyError as e:
-            logger.warning(f"Key error when trying to bulk insert {e.with_traceback()}")
+            logger.warning(f"Key error when trying to bulk insert. traceback info: {traceback.format_exception(e)}")
         finally:
             pass
-
-    def prepare_output(self, df):
-        head_index = df.index.get_loc(self.most_recent_existing_data_dt)
-        processed_df = df.iloc[head_index:][:]
-        return processed_df
-        
 
     def update_freshness_meta(self):
         latest_date = max(self.output_df.index)
@@ -250,3 +261,7 @@ class GeneralProcessor(object):
 
     def after_exec(self):
         pass
+
+    def set_exec_result_state(self, code, msg):
+        self.exec_result_dict['code'] = code     # FINI | SKIP | FAIL
+        self.exec_result_dict['msg'] = msg

@@ -1,4 +1,6 @@
 import logging
+import datetime
+from app.utilities import trading_day_helper
 
 # from app.lib.scenario_director import scenario_processors
 
@@ -14,12 +16,39 @@ class ScenarioDirector(object):
     def __init__(self):
         self.module_name = self.__class__.__name__
         logger.info(f'Module {self.module_name} is initializing')
+
         self.is_backtest: bool = False
-        self.real_world_datetime = None
-        self.real_world_most_recent_trading_day = None
-        self.current_datetime = None
-        self.current_most_recent_trading_day = None
         self.backtest_name: str = ""
+        self.backtest_current_datetime = None
+        self.backtest_current_most_recent_trading_day = None
+        self.real_world_datetime = None
+        self.real_world_most_recent_trading_datetime = None
+        self.current_datetime = None
+        self.current_datetime_most_recent_trading_datetime = None
+
+    def activate_backtest_mode(self, backtest_name:str):
+        pass
+
+    def update_dt(self, trade_calendar, backtest_current_datetime=None):
+        self.real_world_datetime = datetime.datetime.now()
+        self.real_world_most_recent_trading_datetime = trading_day_helper.determine_most_recent_previous_trading_dt(
+            trade_calendar=trade_calendar,
+            given_time=self.real_world_datetime
+        )
+        if self.is_backtest:
+            if backtest_current_datetime:
+                self.backtest_current_datetime = backtest_current_datetime
+                self.current_datetime = backtest_current_datetime
+                self.backtest_current_most_recent_trading_day = trading_day_helper.determine_most_recent_previous_trading_dt(
+                    trade_calendar=trade_calendar,
+                    given_time=self.real_world_datetime
+                )
+                self.current_datetime_most_recent_trading_datetime = self.backtest_current_most_recent_trading_day
+            else:
+                logger.error(f'backtest time not filled')
+        else:
+            self.current_datetime = self.real_world_datetime
+            self.current_datetime_most_recent_trading_datetime = self.real_world_most_recent_trading_datetime
 
     # def load_scenario(self, scenario_name):
     #     """
