@@ -29,15 +29,17 @@ class PostOffice(object):
         self.msg_from: str = ""
         self.msg_to: str = ""
         self.msg_subject: str = ""
-        self.msg_content = ""
+        self.msg_content = MIMEText("")
+        self.msg_html_content = MIMEText("")
         self.msg_attachments_list: list = [{"path": "",
                                             "file_name": "",
                                             "mime": "",
                                             "file_extension": ""}]
 
-    def before_run(self, subject, msg_content, recipient_email_list=None, attachment_list=None):
+    def before_run(self, subject, msg_content, msg_html_content, recipient_email_list=None, attachment_list=None):
         self.msg_subject = subject
-        self.msg_content = MIMEText(msg_content)
+        self.msg_content = MIMEText(msg_content, 'plain', 'utf-8')
+        self.msg_html_content = MIMEText(msg_html_content, 'html', 'utf-8')
         if recipient_email_list:
             self.recipient_email_list = recipient_email_list
 
@@ -75,7 +77,8 @@ class PostOffice(object):
         self.msg["Subject"] = Header(self.msg_subject)
         self.msg["From"] = self.msg_from
         self.msg["To"] = self.msg_to
-        self.msg.attach(MIMEText('Hello World!', 'plain', 'utf-8'))
+        self.msg.attach(self.msg_content)
+        self.msg.attach(self.msg_html_content)
 
     def add_attachment(self, path):
         file_name, file_extension, mime_type = self.extract_mime_info(path)
@@ -88,8 +91,8 @@ class PostOffice(object):
             encoders.encode_base64(msg=mime)
             self.msg.attach(mime)
 
-    def send_mail(self, subject, msg_content, recipient_email_list=None, attachment_path_list=None):
-        self.before_run(subject, msg_content, recipient_email_list, attachment_path_list)
+    def send_mail(self, subject, msg_content, msg_html_content=None, recipient_email_list=None, attachment_path_list=None):
+        self.before_run(subject, msg_content, msg_html_content, recipient_email_list, attachment_path_list)
         self.connect_to_server()
         self.compose_msg()
         self.server.sendmail(self.sender_email, self.recipient_email_list, self.msg.as_string())
