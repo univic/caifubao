@@ -14,9 +14,3 @@ class SignalProcessor(GeneralProcessor):
     def __init__(self, stock_obj, scenario, processor_dict, input_df, *args, **kwargs):
         super().__init__(stock_obj, scenario, processor_dict, input_df, *args, **kwargs)
         self.meta_type = 'signal'
-
-    def exec(self):
-        self.perform_calc()
-
-    def perform_calc(self):
-        pass

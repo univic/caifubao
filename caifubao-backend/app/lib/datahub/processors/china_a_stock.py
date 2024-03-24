@@ -31,7 +31,7 @@ class ChinaAStock(object):
         self.check_market_data_existence()
         self.check_trade_calendar_integrity()
         # self.check_scheduled_task()
-        self.check_index_data_integrity(allow_update=True)
+        # self.check_index_data_integrity(allow_update=True)
         baostock_conn_mgr = BaostockInterfaceManager()
         baostock_conn_mgr.establish_baostock_conn()
         self.check_stock_data_integrity(allow_update=True)
@@ -79,9 +79,11 @@ class ChinaAStock(object):
     def check_stock_data_integrity(self, allow_update=False):
         local_stock_list = IndividualStock.objects(market=self.market)
         remote_stock_list = zh_a_data.get_zh_a_stock_spot()
+        bj_re_pattern = r"[48][0-9]{5}"
+        filtered_stock_df = remote_stock_list[~remote_stock_list["代码"].str.match(bj_re_pattern)]
         status = self.check_data_integrity(obj_type='stock',
                                            local_data_list=local_stock_list,
-                                           remote_data_df=remote_stock_list,
+                                           remote_data_df=filtered_stock_df,
                                            hist_handler='get_hist_stock_quote_data',
                                            allow_update=allow_update)
         return status

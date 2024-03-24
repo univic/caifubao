@@ -1,6 +1,7 @@
 .idea
 app/conf/dev_config.py
 app/conf/production_config.py
+app/lib/cartographer/render.html
 app/data/db
 app/__pycache__
 __pycache__

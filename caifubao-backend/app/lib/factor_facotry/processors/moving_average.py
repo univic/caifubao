@@ -18,7 +18,6 @@ class MovingAverageFactorProcessor(FactorProcessor):
     def perform_calc(self):
         self.process_df[self.factor_name] = talib.MA(self.process_df['close_hfq'],
                                                      timeperiod=self.ma_days)
-
         self.process_df = self.process_df[self.process_df[self.factor_name].notna()]
         # if self.latest_factor_date:
         #     self.output_df = self.output_df[self.output_df.index > self.latest_factor_date]
@@ -27,6 +26,8 @@ class MovingAverageFactorProcessor(FactorProcessor):
         for i, row in self.output_df.iterrows():
             factor_data = self.db_document_object()
             factor_data.name = self.factor_name
+            factor_data.stock = self.stock_obj
+            factor_data.stock_name = self.stock_obj.name
             factor_data.stock_code = self.stock_obj.code
             factor_data.value = row[self.factor_name]
             factor_data.date = i

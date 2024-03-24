@@ -1,7 +1,7 @@
 import logging
 import itertools
 from app.lib import GeneralWorker
-from app.lib.signal_man import processors
+from app.lib.signal_man.processors import registry
 
 
 logger = logging.getLogger(__name__)
@@ -9,19 +9,18 @@ logger = logging.getLogger(__name__)
 
 class SignalMan(GeneralWorker):
     def __init__(self, strategy_director, portfolio_manager, scenario):
-
+        super().__init__(strategy_director, portfolio_manager, scenario)
         # get class name
         self.module_name = 'SignalMan'
         self.meta_type = 'signal_processor'
-        self.processor_registry = processors.registry
-        super().__init__(strategy_director, portfolio_manager, scenario)
+        self.processor_registry = registry
 
     def before_run(self):
         pass
 
     def get_todo(self):
         stock_list = self.strategy_director.get_stock_list()
-        signal_list = self.strategy_director.get_signal_list
+        signal_list = self.strategy_director.get_signal_list()
         self.todo_list = itertools.product(stock_list, signal_list)
 
     def exec_todo(self):
@@ -35,7 +34,6 @@ class SignalMan(GeneralWorker):
         self.before_run()
         self.get_todo()
         self.exec_todo()
-
 
 
 if __name__ == "__main__":

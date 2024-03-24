@@ -38,16 +38,14 @@ class FactorFactory(GeneralWorker):
         else:
             logger.error("Unsupported factor rule")
 
-    def run(self):
-        self.before_run()
-        self.get_todo()
+    def exec_todo(self):
         prev_stock_code = None
         for todo_item in self.todo_list:
             # TODO: need prog bar here
             self.stock_obj = todo_item[0]
             # if previous stock code is different from current one, reload the quote data
             if prev_stock_code != self.stock_obj.code:
-                self.read_quote_data()
+                self.prepare_input_df()
             prev_stock_code = self.stock_obj.code
 
             factor_name = todo_item[1]
@@ -58,7 +56,7 @@ class FactorFactory(GeneralWorker):
         #             f'{self.counter_dict["FINI"]} finished, '
         #             f'{self.counter_dict["SKIP"]} skipped.')
 
-    def read_quote_data(self):
+    def prepare_input_df(self):
         logger.info(f'Reading quote df for {self.stock_obj.code} - {self.stock_obj.name}')
         # field_exclude_list = ['volume', 'trade_amount']
         field_exclude_list = []
@@ -75,36 +73,36 @@ class FactorFactory(GeneralWorker):
         self.input_df = pd.DataFrame(quote_json)
         self.input_df.set_index("date", inplace=True)
 
-    def check_metadata(self, stock_code, factor_name):
-        skip_flag = False
-        if self.scenario.is_backtest:
-            latest_quote_date = freshness_meta_helper.read_freshness_meta(code=stock_code,
-                                                                          object_type=self.stock_obj.object_type,
-                                                                          meta_type='quote',
-                                                                          meta_name='daily_quote')
-        else:
-            latest_quote_date = self.scenario.current_datetime
-        logger.info(f'Metadata for {self.stock_obj.code} - {self.stock_obj.name} - daily_quote : '
-                    f'{latest_quote_date} ')
-        latest_factor_date = freshness_meta_helper.read_freshness_meta(code=stock_code,
-                                                                       object_type=self.stock_obj.object_type,
-                                                                       meta_type='factor',
-                                                                       meta_name=factor_name,
-                                                                       backtest_name=self.backtest_name)
-        logger.info(f'Metadata for {self.stock_obj.code} - {self.stock_obj.name} - {factor_name} : '
-                    f'{latest_factor_date} ')
-        if not latest_factor_date or latest_quote_date > latest_factor_date:
-            self.counter_dict['TODO'] += 1
-        else:
-            self.counter_dict['SKIP'] += 1
-            skip_flag = True
-        return skip_flag
+    # def check_metadata(self, stock_code, factor_name):
+    #     skip_flag = False
+    #     if self.scenario.is_backtest:
+    #         latest_quote_date = freshness_meta_helper.read_freshness_meta(code=stock_code,
+    #                                                                       object_type=self.stock_obj.object_type,
+    #                                                                       meta_type='quote',
+    #                                                                       meta_name='daily_quote')
+    #     else:
+    #         latest_quote_date = self.scenario.current_datetime
+    #     logger.info(f'Metadata for {self.stock_obj.code} - {self.stock_obj.name} - daily_quote : '
+    #                 f'{latest_quote_date} ')
+    #     latest_factor_date = freshness_meta_helper.read_freshness_meta(code=stock_code,
+    #                                                                    object_type=self.stock_obj.object_type,
+    #                                                                    meta_type='factor',
+    #                                                                    meta_name=factor_name,
+    #                                                                    backtest_name=self.backtest_name)
+    #     logger.info(f'Metadata for {self.stock_obj.code} - {self.stock_obj.name} - {factor_name} : '
+    #                 f'{latest_factor_date} ')
+    #     if not latest_factor_date or latest_quote_date > latest_factor_date:
+    #         self.counter_dict['TODO'] += 1
+    #     else:
+    #         self.counter_dict['SKIP'] += 1
+    #         skip_flag = True
+    #     return skip_flag
 
     # def run_processor(self, stock_obj):
     #     # if new stock object is different from previous, then update quote df
     #     if stock_obj != self.stock_obj:
     #         self.stock_obj = stock_obj
-    #         self.read_quote_data(stock_obj)
+    #         self.prepare_input_df(stock_obj)
 
     # def run_processors(self):
     #     logger.info(f'Running factor processors for {self.stock.code} - {self.stock.name}')

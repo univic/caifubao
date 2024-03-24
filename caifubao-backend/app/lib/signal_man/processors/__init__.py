@@ -1,10 +1,12 @@
 from app.lib.signal_man.processors import moving_average
 
+
 registry = {
     "MA_10_UPCROSS_20": {
         'name': "MA_10_UPCROSS_20",
-        'processor': moving_average.MACrossSignalProcessor,
-        'handler_func': 'run',
+        'processor_object': moving_average.MACrossSignalProcessor,
+        'handler': 'run',
+        'backtest_overall_anaylsis': True,
         'kwargs': {
             'PRI_MA': "MA_10",        # Primary MA line
             'REF_MA': "MA_20",        # MA line for reference
@@ -16,8 +18,9 @@ registry = {
     },
     "HFQ_PRICE_ABOVE_MA_120": {
         'name': "HFQ_PRICE_ABOVE_MA_120",
-        'processor': moving_average.PriceMARelationProcessor,
-        'handler_func': 'run',
+        'processor_object': moving_average.PriceMARelationProcessor,
+        'handler': 'run',
+        'backtest_overall_anaylsis': True,
         'kwargs': {
             'PRI_MA': "MA_120",  # Primary MA line
             'CROSS_TYPE': 'ABOVE',  # price's relative position to primary MA line, ABOVE or BELOW

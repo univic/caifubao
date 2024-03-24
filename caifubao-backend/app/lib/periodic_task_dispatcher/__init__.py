@@ -1,7 +1,7 @@
 import logging
 import datetime
 from app.lib.factor_facotry import FactorFactory
-# from app.lib.signal_man import SignalMan
+from app.lib.signal_man import SignalMan
 # from app.lib.opportunity_seeker import OpportunitySeeker
 
 
@@ -22,18 +22,18 @@ class PeriodicTaskDispatcher(object):
 
     def run(self):
         self.generate_factors()
-        # self.generate_signals()
+        self.generate_signals()
         # self.generate_trade_plan()
 
     def generate_factors(self):
-        logger.info(f'Preparing to generate factors')
+        logger.info(f'Preparing for factor generation')
         factor_factory = FactorFactory(strategy_director=self.strategy_director,
                                        portfolio_manager=self.portfolio_manager,
                                        scenario=self.scenario)
         factor_factory.run()
 
     def generate_signals(self):
-        logger.info(f'Preparing to generate signals')
+        logger.info(f'Preparing for signal generation')
         signal_man = SignalMan(strategy_director=self.strategy_director,
                                portfolio_manager=self.portfolio_manager,
                                scenario=self.scenario)

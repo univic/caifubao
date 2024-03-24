@@ -1,5 +1,6 @@
 from mongoengine import DynamicDocument, StringField, EmbeddedDocumentListField, DateTimeField, ReferenceField, ListField, \
     EmbeddedDocument, FloatField, IntField, EmbeddedDocumentField
+from app.model.stock import BasicStock
 
 
 class FactorDataEntry(DynamicDocument):
@@ -13,7 +14,9 @@ class FactorDataEntry(DynamicDocument):
         ]
     }
     name = StringField()
-    stock_code = StringField(unique_with=['date', 'name'])
+    stock = ReferenceField(BasicStock)
+    stock_name = StringField()
+    stock_code = StringField()
     category = StringField()
     date = DateTimeField()
     value = FloatField()

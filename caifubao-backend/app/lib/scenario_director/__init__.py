@@ -20,18 +20,18 @@ class ScenarioDirector(object):
         self.is_backtest: bool = False
         self.backtest_name: str = ""
         self.backtest_current_datetime = None
-        self.backtest_current_most_recent_trading_day = None
+        self.backtest_prev_complete_trading_day = None
         self.real_world_datetime = None
-        self.real_world_most_recent_trading_datetime = None
+        self.real_world_prev_complete_trading_day = None
         self.current_datetime = None
-        self.current_datetime_most_recent_trading_datetime = None
+        self.current_datetime_prev_complete_trading_day = None
 
     def activate_backtest_mode(self, backtest_name:str):
         pass
 
     def update_dt(self, trade_calendar, backtest_current_datetime=None):
         self.real_world_datetime = datetime.datetime.now()
-        self.real_world_most_recent_trading_datetime = trading_day_helper.determine_most_recent_previous_trading_dt(
+        self.real_world_prev_complete_trading_day = trading_day_helper.determine_most_recent_previous_complete_trading_day(
             trade_calendar=trade_calendar,
             given_time=self.real_world_datetime
         )
@@ -39,16 +39,16 @@ class ScenarioDirector(object):
             if backtest_current_datetime:
                 self.backtest_current_datetime = backtest_current_datetime
                 self.current_datetime = backtest_current_datetime
-                self.backtest_current_most_recent_trading_day = trading_day_helper.determine_most_recent_previous_trading_dt(
+                self.backtest_prev_complete_trading_day = trading_day_helper.determine_most_recent_previous_complete_trading_day(
                     trade_calendar=trade_calendar,
                     given_time=self.real_world_datetime
                 )
-                self.current_datetime_most_recent_trading_datetime = self.backtest_current_most_recent_trading_day
+                self.current_datetime_prev_complete_trading_day = self.backtest_prev_complete_trading_day
             else:
                 logger.error(f'backtest time not filled')
         else:
             self.current_datetime = self.real_world_datetime
-            self.current_datetime_most_recent_trading_datetime = self.real_world_most_recent_trading_datetime
+            self.current_datetime_prev_complete_trading_day = self.real_world_prev_complete_trading_day
 
     # def load_scenario(self, scenario_name):
     #     """

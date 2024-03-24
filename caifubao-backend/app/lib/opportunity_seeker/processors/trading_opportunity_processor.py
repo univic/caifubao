@@ -9,7 +9,3 @@ class TradingOpportunityProcessor(GeneralProcessor):
         self.processor_type = 'OpportunityScanner'
         pass
 
-    def exec(self):
-        pass
-
-

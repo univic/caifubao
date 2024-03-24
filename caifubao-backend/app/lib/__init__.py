@@ -38,6 +38,12 @@ class GeneralWorker(object):
         # self.exec_unit_list = []
         logger.info(f'{self.module_name} is initializing')
 
+    def run(self):
+        self.before_run()
+        self.get_todo()
+        self.exec_todo()
+        self.after_run()
+
     def before_run(self):
         pass
 
@@ -51,6 +57,50 @@ class GeneralWorker(object):
     def exec_todo(self):
         pass
 
+    def after_run(self):
+        pass
+
+    def prepare_input_df(self):
+        pass
+
+    def get_processor_instance(self, processor_name):
+        # logger.info(f'Looking for {processor_name} processor for {self.stock_obj.code} - {self.stock_obj.name}')
+        processor_dict = self.processor_registry[processor_name]
+        processor_object = processor_dict['processor_object']
+        kwargs = {}
+        if 'kwargs' in self.processor_registry[processor_name].keys():
+            kwargs = self.processor_registry[processor_name]['kwargs']
+        processor_instance = processor_object(stock_obj=self.stock_obj,
+                                              scenario=self.scenario,
+                                              input_df=self.input_df,
+                                              processor_dict=processor_dict, **kwargs)
+        return processor_instance
+
+    def run_processor(self, processor_dict):
+        processor_name = processor_dict["name"]
+        self.processor_instance = self.get_processor_instance(processor_name)
+        process_handler_func = getattr(self.processor_instance, processor_dict['handler'])
+        # logger.info(f'Doing factor analysis {processor_name} for {self.stock_obj.code} - {self.stock_obj.name}')
+        process_handler_func()
+
+    # self.before_run()
+    # self.generate_exec_plan()
+    # self.commit_tasks()
+    # logger.info(f'{self.module_name} processors run finished, '
+    #             f'{self.counter_dict["FINI"]} finished, '
+    #             f'{self.counter_dict["SKIP"]} skipped.')
+
+    # def check_last_analysis_date(self, target_stock, item_name):
+    #     latest_quote_date = trading_day_helper.read_freshness_meta(target_stock, 'daily_quote')
+    #     for processor_name in self.processor_list:
+    #         exec_flag = True
+    #         # if analysis had never happened, or analysis date is behind quote date, run the processor
+    #         latest_analysis_date = freshness_meta_helper.read_freshness_meta(target_stock, name=processor_name)
+    #         if latest_analysis_date and latest_quote_date <= self.latest_analysis_date:
+    #             self.counter_dict['SKIP'] += 1
+    #             exec_flag = False
+    #             logger.info(f'{self.module_name} processor {processor_name} skipped')
+    #         return exec_flag
     # def generate_exec_plan(self):
     #     """
     #     for each stock, iterate through all the processors and determine whether to exec compute/analysis
@@ -91,53 +141,6 @@ class GeneralWorker(object):
     #             logger.info(
     #                 f'{self.module_name} processor {processor_name} exec result: {result_flag} {exec_result_dict["msg"]}')
 
-    def after_run(self):
-        pass
-
-    def run(self):
-        self.before_run()
-        self.get_todo()
-        self.exec_todo()
-
-    def get_processor_instance(self, processor_name):
-        # logger.info(f'Looking for {processor_name} processor for {self.stock_obj.code} - {self.stock_obj.name}')
-        processor_dict = self.processor_registry[processor_name]
-        processor_object = processor_dict['processor_object']
-        kwargs = {}
-        if 'kwargs' in self.processor_registry[processor_name].keys():
-            kwargs = self.processor_registry[processor_name]['kwargs']
-        processor_instance = processor_object(stock_obj=self.stock_obj,
-                                              scenario=self.scenario,
-                                              input_df=self.input_df,
-                                              processor_dict=processor_dict, **kwargs)
-        return processor_instance
-
-    def run_processor(self, processor_dict):
-        processor_name = processor_dict["name"]
-        self.processor_instance = self.get_processor_instance(processor_name)
-        process_handler_func = getattr(self.processor_instance, processor_dict['handler'])
-        logger.info(f'Doing factor analysis {processor_name} for {self.stock_obj.code} - {self.stock_obj.name}')
-        process_handler_func()
-
-        # self.before_run()
-        # self.generate_exec_plan()
-        # self.commit_tasks()
-        # logger.info(f'{self.module_name} processors run finished, '
-        #             f'{self.counter_dict["FINI"]} finished, '
-        #             f'{self.counter_dict["SKIP"]} skipped.')
-
-    # def check_last_analysis_date(self, target_stock, item_name):
-    #     latest_quote_date = trading_day_helper.read_freshness_meta(target_stock, 'daily_quote')
-    #     for processor_name in self.processor_list:
-    #         exec_flag = True
-    #         # if analysis had never happened, or analysis date is behind quote date, run the processor
-    #         latest_analysis_date = freshness_meta_helper.read_freshness_meta(target_stock, name=processor_name)
-    #         if latest_analysis_date and latest_quote_date <= self.latest_analysis_date:
-    #             self.counter_dict['SKIP'] += 1
-    #             exec_flag = False
-    #             logger.info(f'{self.module_name} processor {processor_name} skipped')
-    #         return exec_flag
-
 
 class GeneralProcessor(object):
     """
@@ -146,7 +149,7 @@ class GeneralProcessor(object):
     output: a result dict, contains result code and msg
     """
 
-    def __init__(self, stock_obj, scenario, processor_dict, input_df, *args, **kwargs):
+    def __init__(self, stock_obj, scenario, processor_dict, input_df=None, *args, **kwargs):
         self.stock_obj = stock_obj
         # self.processor = exec_unit.processor
         # self.processor_name = general_utils.get_class_name(processor)
@@ -175,10 +178,13 @@ class GeneralProcessor(object):
         }
 
     def run(self):
+        logger.info(f'Running {self.meta_type} processor {self.meta_name} '
+                    f'for {self.stock_obj.code}-{self.stock_obj.name}')
         # prepare the input
         self.before_exec()
         self.determine_exec_range()
         if self.exec_result_dict["code"] != "SKIP":
+            self.prepare_input()
             self.perform_calc()
             # get output_df that ready for db insert
             self.prepare_output()
@@ -197,6 +203,9 @@ class GeneralProcessor(object):
         # Customizing here
         self.perform_calc()
 
+    def prepare_input(self):
+        pass
+
     def perform_calc(self):
         pass
 
@@ -211,22 +220,21 @@ class GeneralProcessor(object):
                                                                                       meta_name=self.processor_dict['name'],
                                                                                       backtest_name=self.backtest_name)
 
-        # if no metadata was founded, do complete analysis
-        if not self.most_recent_existing_data_dt:
-            self.process_df = self.input_df
-
-        # if metadata time is behind current time, do partial analysis
-        elif self.most_recent_existing_data_dt < self.scenario.current_datetime:
-            head_index = (self.input_df.index.get_loc(self.most_recent_existing_data_dt) -
-                          self.processor_dict['partial_process_offset'])
-            self.process_df = self.input_df.iloc[head_index:][:]
-
-        elif self.most_recent_existing_data_dt == self.scenario.current_datetime:
+        if self.most_recent_existing_data_dt == self.scenario.current_datetime_prev_complete_trading_day:
             # if metadata has same datetime, skip
             self.set_exec_result_state('SKIP', 'skipped due to nothing to update')
+        elif self.input_df and not self.input_df.empty:
+            # if no metadata was founded, do complete analysis
+            if not self.most_recent_existing_data_dt:
+                self.process_df = self.input_df
 
-        else:
-            logger.error(f'Unidentified processing circumstance: most recent meta datetime greater than current time')
+            # if metadata time is behind current time, do partial analysis
+            elif self.most_recent_existing_data_dt < self.scenario.current_datetime_prev_complete_trading_day:
+                head_index = (self.input_df.index.get_loc(self.most_recent_existing_data_dt) -
+                              self.processor_dict['partial_process_offset'])
+                self.process_df = self.input_df.iloc[head_index:][:]
+            else:
+                logger.error(f'Unidentified processing circumstance: most recent meta datetime greater than current time')
 
     def prepare_output(self):
         if self.most_recent_existing_data_dt:

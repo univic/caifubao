@@ -18,9 +18,10 @@ class BasicBackTester(object):
     def __init__(self, portfolio_name, strategy_name, start_date, end_date=None):
         # get class name
         self.module_name = self.__class__.__name__
+        logger.info(f'Module {self.module_name} is initializing')
         self.trade_calendar: list = []
 
-        self.trading_day_list = []
+        self.trading_dt_list = []
 
         self.stock_list = []
         self.scenario = None
@@ -37,7 +38,6 @@ class BasicBackTester(object):
         self.backtest_periodic_task_list = None
         self.current_trading_day = None
         self.backtest_name: str = ""
-        logger.info(f'Module {self.module_name} is initializing')
 
     def run(self):
         logger.info(f'Running backtest, using strategy {self.strategy_name}')
@@ -47,7 +47,6 @@ class BasicBackTester(object):
         self.after_run()
 
     def before_run(self):
-        self.trade_calendar = self.strategy_director.get_market_trade_calendar()
         # update end date if no value is provided
         if not self.end_date:
             self.end_date = datetime.datetime.strftime(datetime.datetime.now(), '%Y-%m-%d')
@@ -60,6 +59,7 @@ class BasicBackTester(object):
 
         self.strategy_director = StrategyDirecter()
         self.strategy_director.load_strategy(self.strategy_name)
+        self.trade_calendar = self.strategy_director.get_market_trade_calendar()
 
         self.portfolio_manager = PortfolioManager()
         self.portfolio_manager.load_portfolio(self.portfolio_name)
@@ -90,7 +90,7 @@ class BasicBackTester(object):
         for i, t in enumerate(self.backtest_periodic_task_list):
             # TODO: CHANGE TIME TO 18 O'CLOCK
             self.scenario.update_dt(trade_calendar=self.trade_calendar, backtest_current_datetime=t)
-            self.exec_backtest_periodic_task()
+            self.periodic_task_dispatcher.run()
             prog_bar(i, task_list_len)
 
         # update backtest record
@@ -98,10 +98,6 @@ class BasicBackTester(object):
         backtest_record.status = "FINI"
         backtest_record.exec_result = "SUCCESS"
         backtest_record.save()
-
-
-    def exec_backtest_periodic_task(self):
-        self.periodic_task_dispatcher.run()
 
     def after_run(self):
         pass

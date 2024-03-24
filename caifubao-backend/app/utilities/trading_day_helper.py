@@ -15,7 +15,7 @@ def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.
     return closest_avail_trading_day
 
 
-def determine_most_recent_previous_trading_dt(trade_calendar, given_time):
+def determine_most_recent_previous_complete_trading_day(trade_calendar, given_time):
     # rewrite on 20240323
     if trade_calendar:
         """
@@ -28,6 +28,7 @@ def determine_most_recent_previous_trading_dt(trade_calendar, given_time):
     else:
         closest_avail_trading_day = None
     return closest_avail_trading_day
+
 
 def determine_most_recent_next_trading_dt(trade_calendar, given_time):
     # rewrite on 20240323
