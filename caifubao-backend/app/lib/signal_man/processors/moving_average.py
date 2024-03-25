@@ -53,7 +53,7 @@ class MACrossSignalProcessor(SignalProcessor):
     def prepare_bulk_insert_list(self):
         for i, row in self.output_df.iterrows():
             signal_data = self.db_document_object()
-            signal_data.name = self.most_recent_existing_data_dt
+            signal_data.name = self.processor_dict["name"]
             signal_data.stock = self.stock_obj
             signal_data.stock_name = self.stock_obj.name
             signal_data.stock_code = self.stock_obj.code

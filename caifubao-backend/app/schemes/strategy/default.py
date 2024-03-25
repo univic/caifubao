@@ -25,4 +25,5 @@ class Strategy01(BasicStrategy):
         "MA_10_UPCROSS_20",
         # "HFQ_PRICE_ABOVE_MA_120",
     ]
+    # TODO: FINISH THIS
     opportunity_scanner_list = []

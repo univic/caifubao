@@ -11,12 +11,9 @@ class SignalMan(GeneralWorker):
     def __init__(self, strategy_director, portfolio_manager, scenario):
         super().__init__(strategy_director, portfolio_manager, scenario)
         # get class name
-        self.module_name = 'SignalMan'
-        self.meta_type = 'signal_processor'
+        # self.module_name = self.__class__.__name__
+        self.meta_type = 'signal'
         self.processor_registry = registry
-
-    def before_run(self):
-        pass
 
     def get_todo(self):
         stock_list = self.strategy_director.get_stock_list()
@@ -29,11 +26,6 @@ class SignalMan(GeneralWorker):
             signal_name = todo_item[1]
             processor_dict = self.processor_registry[signal_name]
             self.run_processor(processor_dict)
-
-    def run(self):
-        self.before_run()
-        self.get_todo()
-        self.exec_todo()
 
 
 if __name__ == "__main__":

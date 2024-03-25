@@ -1,6 +1,7 @@
 import logging
 import traceback
-from app.utilities import general_utils, trading_day_helper, freshness_meta_helper
+import pandas as pd
+from app.utilities import trading_day_helper, freshness_meta_helper
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ class GeneralWorker(object):
         self.current_day = None
         self.backtest_name: str = ""
         self.todo_list: list = []
-        self.input_df = None
+        self.input_df = pd.DataFrame()
         self.counter_dict = {
             'FINI': 0,
             'SKIP': 0,
@@ -149,7 +150,7 @@ class GeneralProcessor(object):
     output: a result dict, contains result code and msg
     """
 
-    def __init__(self, stock_obj, scenario, processor_dict, input_df=None, *args, **kwargs):
+    def __init__(self, stock_obj, scenario, processor_dict, input_df, *args, **kwargs):
         self.stock_obj = stock_obj
         # self.processor = exec_unit.processor
         # self.processor_name = general_utils.get_class_name(processor)
@@ -223,7 +224,7 @@ class GeneralProcessor(object):
         if self.most_recent_existing_data_dt == self.scenario.current_datetime_prev_complete_trading_day:
             # if metadata has same datetime, skip
             self.set_exec_result_state('SKIP', 'skipped due to nothing to update')
-        elif self.input_df and not self.input_df.empty:
+        elif not self.input_df.empty:
             # if no metadata was founded, do complete analysis
             if not self.most_recent_existing_data_dt:
                 self.process_df = self.input_df
@@ -259,7 +260,8 @@ class GeneralProcessor(object):
             pass
 
     def update_freshness_meta(self):
-        latest_date = max(self.output_df.index)
+        # latest_date = max(self.output_df.index)
+        latest_date = self.scenario.current_datetime_prev_complete_trading_day
         freshness_meta_helper.upsert_freshness_meta(code=self.stock_obj.code,
                                                     object_type=self.stock_obj.object_type,
                                                     meta_type=self.meta_type,

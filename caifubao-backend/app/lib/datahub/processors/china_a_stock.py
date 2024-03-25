@@ -31,7 +31,7 @@ class ChinaAStock(object):
         self.check_market_data_existence()
         self.check_trade_calendar_integrity()
         # self.check_scheduled_task()
-        # self.check_index_data_integrity(allow_update=True)
+        self.check_index_data_integrity(allow_update=True)
         baostock_conn_mgr = BaostockInterfaceManager()
         baostock_conn_mgr.establish_baostock_conn()
         self.check_stock_data_integrity(allow_update=True)
