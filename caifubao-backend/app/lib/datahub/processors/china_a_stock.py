@@ -297,7 +297,7 @@ class ChinaAStock(object):
         func = getattr(self, hist_quote_handler)
         result = func(code=stock_obj.code, start_date=start_date_str)
         if result["code"] != "GOOD":
-            logger.warning(f"Something goes wrong when "
+            logger.warning(f"Something went wrong when "
                            f"trying to get historic quote data for {stock_obj.code} - {stock_obj.name}\n"
                            f"{result['message']}")
 

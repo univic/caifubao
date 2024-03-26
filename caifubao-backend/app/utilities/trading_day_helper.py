@@ -24,6 +24,9 @@ def determine_most_recent_previous_complete_trading_day(trade_calendar, given_ti
         the second comparison determines the absolute difference of the time.
         the min func then compare the key value that provided by the lambda func, in this case, False is prior to True.
         """
+        divide_hour = 3
+        if given_time.hour < divide_hour:
+            given_time = given_time - datetime.timedelta(days=1)
         closest_avail_trading_day = min(trade_calendar, key=lambda x: (x > given_time, abs(x - given_time)))
     else:
         closest_avail_trading_day = None
