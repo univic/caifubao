@@ -1,7 +1,9 @@
 import logging
-from app.lib.factor_facotry import FactorFactory
+from app.lib.datahub import Datahub
 from app.lib.signal_man import SignalMan
+from app.lib.factor_facotry import FactorFactory
 from app.lib.opportunity_seeker import OpportunitySeeker
+from app.lib.db_watcher.mongoengine_tool import db_watcher
 
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,9 @@ class PeriodicTaskDispatcher(object):
         self.is_trading_day: bool = True
 
     def run(self):
+        db_watcher.get_db_connection()
+        datahub = Datahub()
+        datahub.start()
         self.generate_factors()
         self.generate_signals()
         # self.find_trade_opportunities()

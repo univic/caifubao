@@ -15,7 +15,7 @@ def determine_closest_trading_date(trade_calendar, given_time=datetime.datetime.
     return closest_avail_trading_day
 
 
-def determine_most_recent_previous_complete_trading_day(trade_calendar, given_time):
+def determine_most_recent_previous_complete_trading_day(trade_calendar, given_time, divide_hour=3):
     # rewrite on 20240323
     if trade_calendar:
         """
@@ -24,7 +24,6 @@ def determine_most_recent_previous_complete_trading_day(trade_calendar, given_ti
         the second comparison determines the absolute difference of the time.
         the min func then compare the key value that provided by the lambda func, in this case, False is prior to True.
         """
-        divide_hour = 3
         if given_time.hour < divide_hour:
             given_time = given_time - datetime.timedelta(days=1)
         closest_avail_trading_day = min(trade_calendar, key=lambda x: (x > given_time, abs(x - given_time)))
@@ -46,6 +45,17 @@ def determine_most_recent_next_trading_dt(trade_calendar, given_time):
     else:
         closest_avail_trading_day = None
     return closest_avail_trading_day
+
+
+def determine_the_next_trading_day_end(trade_calendar, given_time=datetime.datetime.now(), end_hour=15):
+    dt = None
+    if trade_calendar:
+        if given_time.hour > end_hour:
+            dt = determine_most_recent_next_trading_dt(trade_calendar, given_time)
+        else:
+            dt = determine_most_recent_previous_complete_trading_day(trade_calendar, given_time, divide_hour=0)
+        dt = dt.replace(hour=end_hour)
+    return dt
 
 
 def determine_latest_quote_date(stock_obj, date_attribute='date'):
@@ -128,6 +138,12 @@ def convert_date_to_datetime(date):
     return dt
 
 
+def measure_time_difference(dt1, dt2):
+    time_diff = dt2 - dt1
+    time_diff_s = time_diff.total_seconds()
+    return time_diff_s
+
+
 def update_title_date_str(title_str, date):
     pattern = r"[0-9]{8}"
     date_str = date.strftime('%Y%m%d')
@@ -139,3 +155,13 @@ def update_title_date_str(title_str, date):
         new_str = title_str + ' ' + date_str
         return new_str
 
+
+def get_current_date_str():
+    current_date = datetime.date.today()
+    date_str = current_date.strftime('%Y%m%d')
+    return date_str
+
+
+# if __name__ ==  '__main__':
+#     s = get_current_date_str()
+#     print(s)

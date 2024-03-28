@@ -36,7 +36,7 @@ class PostOffice(object):
                                             "mime": "",
                                             "file_extension": ""}]
 
-    def before_run(self, subject, msg_content, msg_html_content, recipient_email_list=None, attachment_list=None):
+    def before_run(self, subject, msg_content, msg_html_content=None, recipient_email_list=None, attachment_list=None):
         self.msg_subject = subject
         self.msg_content = MIMEText(msg_content, 'plain', 'utf-8')
         self.msg_html_content = MIMEText(msg_html_content, 'html', 'utf-8')
@@ -100,6 +100,9 @@ class PostOffice(object):
 
     def after_run(self):
         pass
+
+
+post_office = PostOffice()
 
 
 if __name__ == "__main__":
