@@ -43,8 +43,10 @@ class RealOperationAgent(object):
                 self.after_run()
                 daily_report_maker.add_content('summary', 'Real operation tick successfully completed.')
             except Exception as e:
-                daily_report_maker.add_content('summary', f'Real operation tick encountered following exception: \r\n'
-                                                          f'{traceback.format_exception(e)}')
+                msg_text = f'Real operation tick encountered following exception: \r\n' \
+                           f'{traceback.format_exception(e)}'
+                daily_report_maker.add_content('summary', msg_text)
+                logger.error(msg_text)
             logger.info(f'Scheduled run completed.')
             next_run_wait_time = self.determine_next_run_wait_time()
             time.sleep(next_run_wait_time)
