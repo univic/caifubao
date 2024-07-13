@@ -1,6 +1,6 @@
 import os
 import logging
-from flask_mongoengine import MongoEngine
+# from flask_mongoengine import MongoEngine
 from mongoengine import connect, disconnect
 from app.conf import app_config
 
@@ -15,11 +15,11 @@ logger = logging.getLogger(__name__)
 class DBWatcher(object):
 
     def __init__(self):
-        db = MongoEngine()
         self.db_conn = None
 
     def initialize(self):
         logger.info(f'DBWatcher - Initializing')
+        # db preset
 
     def get_db_connection(self):
         if self.db_conn:

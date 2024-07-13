@@ -1,6 +1,6 @@
 
 from app.conf import app_config
-from app.lib.db_tool.pymongo_tool import get_mongo_client
+from app.lib.db_watcher.pymongo_tool import get_mongo_client
 
 
 def create_ts_collection():
@@ -26,9 +26,9 @@ def create_ts_collection():
         print("Created time-series collection stock_daily_quote.")
 
 
-def run_setup():
+def check_setup():
     create_ts_collection()
 
 
-if __name__ == '__main__':
-    run_setup()
+# if __name__ == '__main__':
+#     check_setup()
