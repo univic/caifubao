@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+from dataclasses import dataclass, field
+from collections.abc import Callable
+from typing import Any
+
+from app.lib.utilities import job_run_helper
+
+
+TARGET_INDEX = "index"
+TARGET_STOCK = "stock"
+TARGET_ALL = "all"
+
+
+@dataclass(frozen=True)
+class QuoteJobMetadata:
+    job_name: str
+    job_family: str
+    trigger: str
+    source: str
+    scheduled_at: datetime.datetime | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+def _load_default_runtime() -> Any:
+    from app.lib.db_watcher.mongoengine_tool import mongo_watcher
+    from app.lib.datahub import Datahub
+
+    mongo_watcher.get_db_connection()
+    return Datahub()
+
+
+def _normalize_summary(target: str, summary: dict[str, Any], include_factors: bool):
+    return {
+        "target": target,
+        "include_factors": include_factors,
+        "status": summary.get("status"),
+        "failed_phase": summary.get("failed_phase"),
+        "pulled_total": summary.get("pulled_total", 0),
+        "written_total": summary.get("written_total", 0),
+        "phase_stats": summary.get("phase_stats", {}),
+    }
+
+
+def run_quote_job(
+    target: str,
+    *,
+    include_factors: bool = False,
+    datahub_factory: Callable[[], Any] | None = None,
+    job_metadata: QuoteJobMetadata | None = None,
+) -> dict[str, Any]:
+    datahub = datahub_factory() if datahub_factory else _load_default_runtime()
+    job_run = None
+    if job_metadata:
+        from app.lib.utilities.job_run_helper import JobRunContext, create_job_run
+
+        job_run = create_job_run(
+            JobRunContext(
+                job_name=job_metadata.job_name,
+                job_family=job_metadata.job_family,
+                trigger=job_metadata.trigger,
+                source=job_metadata.source,
+                scheduled_at=job_metadata.scheduled_at,
+                target=target,
+                include_factors=include_factors,
+                extra=job_metadata.extra,
+            )
+        )
+
+    try:
+        if target == TARGET_INDEX:
+            summary = datahub.start_index_job()
+            result = _normalize_summary(TARGET_INDEX, summary, include_factors=False)
+        elif target == TARGET_STOCK:
+            runner = (
+                datahub.start_stock_job
+                if include_factors
+                else datahub.start_stock_quote_job
+            )
+            summary = runner()
+            result = _normalize_summary(
+                TARGET_STOCK, summary, include_factors=include_factors
+            )
+        else:
+            results = [
+                _normalize_summary(
+                    TARGET_INDEX, datahub.start_index_job(), include_factors=False
+                ),
+            ]
+            stock_runner = (
+                datahub.start_stock_job
+                if include_factors
+                else datahub.start_stock_quote_job
+            )
+            results.append(
+                _normalize_summary(
+                    TARGET_STOCK,
+                    stock_runner(),
+                    include_factors=include_factors,
+                )
+            )
+            result = {
+                "target": TARGET_ALL,
+                "include_factors": include_factors,
+                "results": results,
+                "status": "SUCCESS"
+                if all(item["status"] == "SUCCESS" for item in results)
+                else "FAILED",
+                "pulled_total": sum(item["pulled_total"] for item in results),
+                "written_total": sum(item["written_total"] for item in results),
+            }
+        if job_run:
+            job_run_helper.finish_job_run(
+                job_run,
+                status=result.get("status", "SUCCESS"),
+                summary=result,
+            )
+        return result
+    except Exception as exc:
+        if job_run:
+            job_run_helper.finish_job_run(
+                job_run,
+                status="FAILED",
+                summary={"target": target, "include_factors": include_factors},
+                error_message=str(exc),
+            )
+        raise
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run datahub quote update jobs without relying on scheduler timing."
+    )
+    parser.add_argument(
+        "--target",
+        choices=(TARGET_INDEX, TARGET_STOCK, TARGET_ALL),
+        default=TARGET_STOCK,
+        help="Quote update target. Defaults to stock.",
+    )
+    parser.add_argument(
+        "--include-factors",
+        action="store_true",
+        help="For stock/all targets, also run FQ and MA factor phases after stock quotes.",
+    )
+    parser.add_argument(
+        "--job-name",
+        default=job_run_helper.DEFAULT_QUOTE_JOB_NAME,
+        help="Job run name recorded in datahub_job_runs.",
+    )
+    parser.add_argument(
+        "--job-family",
+        default=job_run_helper.DEFAULT_QUOTE_JOB_FAMILY,
+        help="Logical job family recorded in datahub_job_runs.",
+    )
+    parser.add_argument(
+        "--trigger",
+        default=job_run_helper.DEFAULT_QUOTE_JOB_TRIGGER,
+        help="Trigger type recorded in datahub_job_runs.",
+    )
+    parser.add_argument(
+        "--source",
+        default=job_run_helper.DEFAULT_QUOTE_JOB_SOURCE,
+        help="Source recorded in datahub_job_runs.",
+    )
+    parser.add_argument(
+        "--scheduled-hour",
+        type=int,
+        default=job_run_helper.DEFAULT_QUOTE_JOB_HOUR,
+        help="Scheduled hour in the configured timezone for cron/startup recording.",
+    )
+    parser.add_argument(
+        "--scheduled-minute",
+        type=int,
+        default=job_run_helper.DEFAULT_QUOTE_JOB_MINUTE,
+        help="Scheduled minute in the configured timezone for cron/startup recording.",
+    )
+    parser.add_argument(
+        "--scheduled-timezone",
+        default=job_run_helper.BEIJING_TZ_NAME,
+        help="Timezone used to derive scheduled_at when running as cron/startup.",
+    )
+    parser.add_argument(
+        "--scheduled-at",
+        default=None,
+        help="Optional explicit scheduled_at timestamp in ISO format.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    scheduled_at = None
+    if args.scheduled_at:
+        scheduled_at = job_run_helper.normalize_datetime(
+            datetime.datetime.fromisoformat(args.scheduled_at)
+        )
+    elif args.trigger in {"cron", "startup"}:
+        scheduled_at = job_run_helper.compute_daily_schedule_at(
+            args.scheduled_hour,
+            args.scheduled_minute,
+            timezone_name=args.scheduled_timezone,
+        )
+    else:
+        scheduled_at = job_run_helper.utc_now_naive()
+
+    job_metadata = QuoteJobMetadata(
+        job_name=args.job_name,
+        job_family=args.job_family,
+        trigger=args.trigger,
+        source=args.source,
+        scheduled_at=scheduled_at,
+    )
+    result = run_quote_job(
+        args.target,
+        include_factors=args.include_factors,
+        job_metadata=job_metadata,
+    )
+    print(json.dumps(result, default=str, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

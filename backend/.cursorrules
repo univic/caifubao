@@ -1,0 +1,394 @@
+# Caifubao 后端 - Cursor AI 开发规则
+
+## 技术栈
+
+- **语言**: Python 3.12+
+- **框架**: Flask 3.1+
+- **ORM**: MongoEngine 0.29+
+- **任务调度**: APScheduler 3.11+
+- **数据源**: akshare, baostock
+- **容器化**: Docker
+- **部署**: K3S (Kubernetes)
+
+## 项目结构
+
+```
+backend/
+├── app/                    # 应用主目录
+│   ├── api/               # API 接口
+│   │   └── v1/          # API v1 版本
+│   ├── conf/              # 配置文件
+│   │   ├── __init__.py           # 基础配置
+│   │   ├── dev_config.py         # 开发环境配置
+│   │   ├── production_config.py   # 生产环境配置
+│   │   └── flask_security_config.py  # Flask 安全配置
+│   ├── core/              # 核心功能
+│   ├── lib/               # 核心库
+│   │   ├── datahub/           # 数据获取模块
+│   │   │   ├── data_integrity_keeper/  # 数据完整性检查
+│   │   │   ├── data_source/          # 数据源接口
+│   │   │   └── processors/          # 数据处理器
+│   │   ├── db_watcher/        # 数据库监控
+│   │   ├── task_controller/    # 任务控制器
+│   │   ├── messenger/          # 消息通知
+│   │   ├── factor_factory/     # 因子工厂
+│   │   ├── opportunity_seeker/ # 机会发现
+│   │   ├── portfolio_manager/  # 投资组合管理
+│   │   ├── report_maker/       # 报告生成
+│   │   ├── scenario_director/  # 场景导演
+│   │   ├── signal_man/        # 信号管理
+│   │   ├── strategy/          # 策略引擎
+│   │   ├── trade_agent/       # 交易代理
+│   │   ├── trade_operator/     # 交易操作
+│   │   ├── trade_planner/      # 交易规划
+│   │   ├── web_server/        # Web 服务
+│   │   ├── flask_security.py   # Flask 安全
+│   │   └── jwt_extended.py    # JWT 扩展
+│   ├── model/             # 数据模型 (MongoEngine)
+│   │   ├── backtest.py
+│   │   ├── data_freshness.py
+│   │   ├── factor.py
+│   │   ├── market_info.py
+│   │   ├── portfolio.py
+│   │   ├── signal.py
+│   │   ├── stock.py
+│   │   ├── task.py
+│   │   ├── trade_opportunity.py
+│   │   ├── trade_plan.py
+│   │   ├── user_model.py
+│   │   └── user_role.py
+│   ├── schemes/           # 数据方案
+│   │   ├── factors/
+│   │   ├── scenario/
+│   │   ├── signals/
+│   │   └── strategy/
+│   ├── test/              # 测试
+│   ├── utilities/         # 工具函数
+│   │   ├── logger_utils.py        # 日志工具
+│   │   ├── trading_day_helper.py  # 交易日辅助
+│   │   └── ...
+│   ├── extensions.py      # Flask 扩展
+│   └── __init__.py      # 应用工厂
+├── Dockerfile            # Docker 镜像构建
+├── docker-entrypoint.sh  # Docker 容器启动脚本
+├── dev-entrypoint.sh     # 本地开发启动脚本
+├── main.py             # 应用入口
+├── requirements.txt     # Python 依赖
+└── setup.py            # 安装配置
+```
+
+## 代码规范
+
+### Python 规范
+- 遵循 PEP 8 编码规范
+- 使用类型注解 (Type Hints)
+- 编写文档字符串 (Docstrings)
+- 最大行长度：120 字符
+- 使用 f-string 进行字符串格式化
+
+### 命名规范
+- 类名：PascalCase (如 `Datahub`)
+- 函数名：snake_case (如 `get_stock_data`)
+- 变量名：snake_case (如 `stock_code`)
+- 常量：UPPER_SNAKE_CASE (如 `MAX_RETRY_COUNT`)
+- 私有方法：_snake_case (如 `_internal_method`)
+
+### 导入顺序
+```python
+# 1. 标准库
+import os
+import sys
+from datetime import datetime
+
+# 2. 第三方库
+from flask import Flask
+from mongoengine import Document, StringField
+
+# 3. 本地模块
+from app.utilities.logger_utils import create_logger
+from app.model.stock import Stock
+```
+
+## 数据库规范
+
+### MongoEngine 模型
+- 继承自 `Document` 或 `EmbeddedDocument`
+- 字段使用类型注解
+- 添加索引以提高查询性能
+- 使用 `required=True` 标记必填字段
+
+```python
+from mongoengine import Document, StringField, DateTimeField, IntField
+from datetime import datetime
+
+class Stock(Document):
+    """
+    股票信息模型
+    """
+    stock_code = StringField(required=True, unique=True)
+    stock_name = StringField(required=True)
+    created_at = DateTimeField(default=datetime.now)
+
+    meta = {
+        'collection': 'stocks',
+        'indexes': [
+            'stock_code',
+        ]
+    }
+```
+
+### 数据库操作
+- 使用 MongoEngine ORM 进行数据库操作
+- 避免直接使用 PyMongo
+- 使用事务处理复杂操作
+- 合理使用索引
+
+## API 开发规范
+
+### RESTful API
+- 使用标准 HTTP 方法 (GET, POST, PUT, DELETE)
+- 使用语义化的 URL 路径
+- 返回统一的响应格式
+- 使用 HTTP 状态码
+
+### 响应格式
+```python
+{
+    "code": 200,
+    "message": "success",
+    "data": {}
+}
+```
+
+### 错误处理
+- 使用自定义异常类
+- 统一错误响应格式
+- 记录错误日志
+
+```python
+from app.utilities.exceptions import CustomError
+
+@app.errorhandler(CustomError)
+def handle_custom_error(error):
+    return jsonify({
+        'code': error.code,
+        'message': error.message
+    }), error.status_code
+```
+
+## 定时任务规范
+
+### APScheduler 配置
+- 使用 MongoDBJobStore 持久化任务
+- 任务定义在 `app/lib/datahub/`
+- 使用 CronTrigger 定义触发器
+- 任务函数必须是模块级别的
+
+```python
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.mongodb import MongoDBJobStore
+from apscheduler.triggers.cron import CronTrigger
+
+jobstore = MongoDBJobStore(
+    host=app_config.MONGODB_HOST,
+    port=app_config.MONGODB_PORT,
+    database=app_config.MONGODB_DB,
+    collection='apscheduler_jobs'
+)
+
+scheduler = BackgroundScheduler(jobstores={'default': jobstore})
+
+scheduler.add_job(
+    'app.lib.datahub:scheduled_job',
+    trigger=CronTrigger(hour=18, minute=0),
+    id='datahub_daily_job',
+    name='Daily datahub job at 18:00',
+    replace_existing=True
+)
+```
+
+### 任务开发
+- 任务函数必须是模块级别的
+- 添加错误处理和日志记录
+- 使用交易日判断
+- 避免长时间运行的任务
+
+## 配置管理
+
+### 环境变量
+- 使用 `.env` 文件配置环境变量
+- 敏感信息必须使用环境变量
+- 不要在代码中硬编码配置
+- 使用 `python-dotenv` 加载环境变量
+
+### 配置类
+- 使用类继承管理不同环境配置
+- 基础配置在 `app/conf/__init__.py`
+- 开发配置在 `app/conf/dev_config.py`
+- 生产配置在 `app/conf/production_config.py`
+
+```python
+class BaseConfig:
+    """基础配置类"""
+    MONGODB_HOST = os.getenv('MONGODB_HOST')
+    MONGODB_PORT = int(os.getenv('MONGODB_PORT', 27017))
+    MONGODB_NAME = os.getenv('MONGODB_NAME')
+    MONGODB_USER = os.getenv('MONGODB_USER')
+    MONGODB_PASS = os.getenv('MONGODB_PASS')
+```
+
+## 日志规范
+
+### 日志配置
+- 使用 `app/utilities/logger_utils.py` 创建日志器
+- 日志文件存储在 `app/log/` 目录
+- 自动创建日志目录
+- 避免重复日志输出
+
+### 日志级别
+- DEBUG: 调试信息
+- INFO: 一般信息
+- WARNING: 警告信息
+- ERROR: 错误信息
+- CRITICAL: 严重错误
+
+```python
+from app.utilities.logger_utils import create_logger
+
+logger = create_logger('my_module')
+
+logger.info('Application started')
+logger.error('Failed to connect to database', exc_info=True)
+```
+
+## Docker 规范
+
+### Dockerfile
+- 使用多阶段构建优化镜像大小
+- 使用 `python:3.12-slim` 基础镜像
+- 镜像大小应保持在 650MB 以下
+- 使用 `.dockerignore` 排除不必要的文件
+
+### 构建优化
+- 使用 `--no-cache-dir` 安装依赖
+- 清理构建缓存和临时文件
+- 保留 `*.dist-info` 以支持包元数据
+- 精确复制必要的文件
+
+### 启动脚本
+- `docker-entrypoint.sh` - Docker 容器启动
+- `dev-entrypoint.sh` - 本地开发启动
+- 优雅关闭处理
+- 同时启动 datahub 和 Flask 应用
+
+## 开发流程
+
+### 本地开发
+```bash
+# 1. 创建虚拟环境
+/Users/wenfengzhong/.pyenv/versions/3.12.12/bin/python -m venv venv312
+
+# 2. 激活虚拟环境
+source venv312/bin/activate
+
+# 3. 安装依赖
+pip install -r requirements.txt
+
+# 4. 配置环境变量
+cp .env.example .env
+# 编辑 .env 文件
+
+# 5. 启动应用
+./dev-entrypoint.sh
+```
+
+### Docker 开发
+```bash
+# 1. 构建镜像
+docker build -t caifubao-backend .
+
+# 2. 运行容器
+./docker-run.sh
+```
+
+### 测试
+```bash
+# 运行单元测试
+pytest
+
+# 运行特定测试
+pytest app/test/test_trading_day_helper.py
+
+# 生成覆盖率报告
+pytest --cov=app --cov-report=html
+```
+
+## 性能优化
+
+### 数据库优化
+- 合理使用索引
+- 使用聚合管道优化查询
+- 避免深度嵌套查询
+- 使用连接池
+
+### 缓存策略
+- 使用 Redis 缓存热点数据
+- 缓存计算结果
+- 设置合理的过期时间
+
+### 异步处理
+- 使用任务队列处理耗时操作
+- 使用 APScheduler 执行定时任务
+- 避免阻塞主线程
+
+## 安全规范
+
+### 认证和授权
+- 使用 JWT 进行用户认证
+- 实现基于角色的访问控制 (RBAC)
+- 敏感操作需要二次验证
+- 定期刷新 token
+
+### 数据安全
+- 加密存储敏感信息
+- 使用 HTTPS 传输数据
+- 输入验证和过滤
+- 防止 SQL/NoSQL 注入
+
+### 依赖安全
+- 定期更新依赖包
+- 使用 `pip-audit` 检查安全漏洞
+- 使用固定版本号
+
+## 常见问题
+
+### 虚拟环境
+- 路径：`backend/venv312`
+- Python 版本：3.12.12
+- 创建命令：`/Users/wenfengzhong/.pyenv/versions/3.12.12/bin/python -m venv venv312`
+
+### 端口配置
+- Flask 默认端口：8000
+- MongoDB 默认端口：27017
+- 通过环境变量 `FLASK_PORT` 配置
+
+### 日志目录
+- 路径：`backend/app/log/`
+- 自动创建（如果不存在）
+- 日志文件：`stellaris.log`
+
+### 环境变量
+- 必需：`MONGODB_HOST`, `MONGODB_NAME`, `MONGODB_USER`, `MONGODB_PASS`
+- 可选：`MONGODB_PORT`, `APP_ENV`, `FLASK_HOST`, `FLASK_PORT`, `FLASK_DEBUG`
+- 配置文件：`.env` (本地), `.env.docker.example` (Docker)
+
+## 注意事项
+
+- 不要提交 `.env` 文件到代码仓库
+- 使用 `.gitignore` 排除敏感文件
+- 定期备份数据库
+- 监控应用性能和错误
+- 遵循 Python 最佳实践
+- 编写单元测试和集成测试
+- 保持代码简洁和可维护性
+- 定期重构和优化代码

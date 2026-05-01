@@ -1,0 +1,13 @@
+# -*- coding: utf-8 -*-
+# Author : univic
+# Date: 2021-02-03
+
+from flask_security import MongoEngineUserDatastore, Security
+from app.lib.db_watcher.mongoengine_tool import db
+from app.model.user_role import UserRole
+from app.model.user_model import User
+
+
+def init_flask_security(app):
+    user_datastore = MongoEngineUserDatastore(db, User, UserRole)
+    Security(app, user_datastore)

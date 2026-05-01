@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: caifubao-example
+  labels:
+    name: caifubao-example
+    app: caifubao
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: caifubao-example-dev
+  labels:
+    name: caifubao-example-dev
+    app: caifubao

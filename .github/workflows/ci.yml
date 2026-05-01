@@ -1,0 +1,267 @@
+# .github/workflows/ci.yml
+name: CI - Test & Quality Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+env:
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.12'
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ==================== Backend Tests ====================
+  backend-test:
+    name: Backend Tests (Python 3.12)
+    runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "echo 'db.runCommand(\"ping\").ok' | mongosh localhost:27017/test --quiet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-mock pytest-asyncio
+        env:
+          MONGODB_HOST: localhost
+          MONGODB_PORT: 27017
+      
+      - name: Run backend tests
+        run: |
+          cd backend
+          pip install setuptools
+          pip install -r requirements.txt
+          PYTHONPATH=. python -m pytest app/test/ -v --cov=app --cov-report=xml --cov-report=term-missing
+        env:
+          MONGODB_HOST: localhost
+          MONGODB_PORT: 27017
+          APP_ENV: test
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./backend/coverage.xml
+          flags: backend
+
+  # ==================== Frontend Tests ====================
+  frontend-test:
+    name: Frontend Tests (Node 20)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+      
+      - name: Run frontend tests
+        run: |
+          cd frontend
+          npm run test:run
+      
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm run build
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          directory: ./frontend/coverage
+          flags: frontend
+
+  # ==================== Backend Lint ====================
+  backend-lint:
+    name: Backend Lint (Ruff)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Ruff
+        run: pip install ruff
+      
+      - name: Run Ruff
+        run: |
+          ruff check backend/
+          ruff format --check backend/
+
+  # ==================== Frontend Lint ====================
+  frontend-lint:
+    name: Frontend Lint (ESLint)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Install dependencies
+        run: cd frontend && npm ci
+      
+      - name: Run ESLint
+        run: cd frontend && npm run lint
+
+  # ==================== Datahub Lint ====================
+  datahub-lint:
+    name: Datahub Lint (Ruff)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Ruff
+        run: pip install ruff
+      
+      - name: Run Ruff
+        run: |
+          ruff check datahub/
+          ruff format --check datahub/
+
+  # ==================== Dockerfile Syntax Check ====================
+  dockerfile-check:
+    name: Dockerfile Syntax Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Check Backend Dockerfile
+        run: |
+          echo "Checking backend/Dockerfile..."
+          docker buildx build --check -f ./backend/Dockerfile ./backend
+          echo "Backend Dockerfile is valid"
+      
+      - name: Check Datahub Dockerfile
+        run: |
+          echo "Checking datahub/Dockerfile..."
+          docker buildx build --check -f ./datahub/Dockerfile ./datahub
+          echo "Datahub Dockerfile is valid"
+      
+      - name: Check Frontend Dockerfile
+        run: |
+          echo "Checking frontend/Dockerfile..."
+          docker buildx build --check -f ./frontend/Dockerfile ./frontend
+          echo "Frontend Dockerfile is valid"
+      
+      - name: Summary
+        run: |
+          echo "All Dockerfiles are valid!"
+
+  kustomize-check:
+    name: Kustomize Render Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.30.0'
+
+      - name: Render example development overlay
+        run: kubectl kustomize k8s/overlays/example-development > /tmp/caifubao-example-dev.yaml
+
+      - name: Render example production overlay
+        run: kubectl kustomize k8s/overlays/example-production > /tmp/caifubao-example-prod.yaml
+
+  # ==================== Required Checks ====================
+  required-checks:
+    name: Required Checks
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend-test, backend-lint, frontend-lint, datahub-lint, dockerfile-check, kustomize-check]
+    if: always()
+    
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [ "${{ needs.backend-test.result }}" != "success" ]; then
+            echo "Backend tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.frontend-test.result }}" != "success" ]; then
+            echo "Frontend tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.backend-lint.result }}" != "success" ]; then
+            echo "Backend lint failed"
+            exit 1
+          fi
+          if [ "${{ needs.frontend-lint.result }}" != "success" ]; then
+            echo "Frontend lint failed"
+            exit 1
+          fi
+          if [ "${{ needs.datahub-lint.result }}" != "success" ]; then
+            echo "Datahub lint failed"
+            exit 1
+          fi
+          if [ "${{ needs.dockerfile-check.result }}" != "success" ]; then
+            echo "Dockerfile check failed"
+            exit 1
+          fi
+          if [ "${{ needs.kustomize-check.result }}" != "success" ]; then
+            echo "Kustomize check failed"
+            exit 1
+          fi
+          echo "All required checks passed!"

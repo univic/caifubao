@@ -1,0 +1,57 @@
+# -*- coding: utf-8 -*-
+# Author : univic
+# Date: 2022-03-11
+
+import datetime
+from mongoengine import (
+    Document,
+    StringField,
+    EmbeddedDocumentListField,
+    DateTimeField,
+    ListField,
+    EmbeddedDocument,
+    IntField,
+)
+# from app.lib.db_tool.mongoengine_tool import db
+
+
+class KwArg(EmbeddedDocument):
+    keyword = StringField()
+    arg = StringField()
+
+    def __eq__(self, other):
+        if not isinstance(other, KwArg):
+            return False
+        return self.keyword == other.keyword and self.arg == other.arg
+
+    def __repr__(self):
+        return f"KwArg(keyword={self.keyword!r}, arg={self.arg!r})"
+
+
+class DatahubTaskDoc(Document):
+    """
+    status: CRTD-created, PEND-pending, FAIL-failed, COMP-completed
+    """
+
+    uid = StringField(required=True)
+    name = StringField(required=True)
+    callback_package = StringField(required=True)
+    callback_module = StringField(required=True)
+    callback_object = StringField()
+    callback_handler = StringField(required=True)
+    callback_interface = StringField()
+    args = ListField(StringField())
+    kwargs = EmbeddedDocumentListField("KwArg")
+    created_at = DateTimeField(default=datetime.datetime.now())
+    processed_at = DateTimeField()
+    completed_at = DateTimeField()
+    priority = IntField(default=5)
+    status = StringField(default="CRTD")
+    message = StringField()
+
+    meta = {"allow_inheritance": True}
+
+
+class ScheduledDatahubTaskDoc(DatahubTaskDoc):
+    scheduled_process_time = DateTimeField(required=True)
+    repeat = StringField()

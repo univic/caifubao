@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: caifubao-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${DEV_MONGODB_PASS}
+      MONGO_INITDB_DATABASE: ${DEV_MONGODB_NAME}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - caifubao-network
+
+  backend:
+    build: .
+    image: caifubao-backend:latest
+    container_name: caifubao-backend
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+    environment:
+      MONGODB_HOST: mongodb
+      MONGODB_PORT: 27017
+      MONGODB_NAME: ${DEV_MONGODB_NAME}
+      MONGODB_USER: root
+      MONGODB_PASS: ${DEV_MONGODB_PASS}
+      APP_ENV: ${APP_ENV}
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      SECURITY_PASSWORD_SALT: ${SECURITY_PASSWORD_SALT}
+      SECURITY_PASSWORD_HASH: ${SECURITY_PASSWORD_HASH}
+      SMTP_SENDER_EMAIL: ${SMTP_SENDER_EMAIL}
+      SMTP_SENDER_PASSWORD: ${SMTP_SENDER_PASSWORD}
+      BARK_URL: ${BARK_URL}
+      FLASK_HOST: 0.0.0.0
+      FLASK_PORT: 8000
+      FLASK_DEBUG: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_logs:/app/app/log
+    networks:
+      - caifubao-network
+
+volumes:
+  mongodb_data:
+    driver: local
+  backend_logs:
+    driver: local
+
+networks:
+  caifubao-network:
+    driver: bridge

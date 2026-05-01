@@ -1,0 +1,2 @@
+class PrerequisiteCheckException(Exception):
+    pass

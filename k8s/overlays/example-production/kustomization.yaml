@@ -1,0 +1,51 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: caifubao-example
+
+resources:
+- ../../base
+- ingress.yaml
+
+configMapGenerator:
+- name: backend-config
+  literals:
+  - MONGODB_HOST=mongodb-service
+  - MONGODB_PORT=27017
+  - MONGODB_NAME=caifubao
+  - MONGODB_USER=root
+  - ENVIRONMENT=PRODUCTION
+  - FLASK_HOST=0.0.0.0
+  - FLASK_PORT=8000
+  - FLASK_DEBUG=false
+- name: frontend-config
+  literals:
+  - VITE_API_BASE_URL=/api
+
+secretGenerator:
+- name: backend-secret
+  literals:
+  - MONGODB_PASSWORD=change-me-example
+  - SECRET_KEY=change-me-production-secret
+  - JWT_SECRET_KEY=change-me-production-jwt-secret
+  - SECURITY_PASSWORD_SALT=change-me-production-password-salt
+- name: datahub-secret
+  literals:
+  - MONGODB_PASSWORD=change-me-example
+- name: mongodb-secret
+  literals:
+  - MONGODB_ROOT_PASSWORD=change-me-example
+
+images:
+- name: caifubao-backend
+  newName: registry.example.com/your-org/caifubao-backend
+  newTag: prod
+- name: caifubao-frontend
+  newName: registry.example.com/your-org/caifubao-frontend
+  newTag: prod
+- name: caifubao-datahub
+  newName: registry.example.com/your-org/caifubao-datahub
+  newTag: prod
+
+patches:
+- path: backend-secret-env-patch.yaml

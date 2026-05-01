@@ -1,0 +1,221 @@
+/* Caifubao Frontend - Global Styles */
+
+:root {
+  /* Primary Colors */
+  --color-primary: #7170ff;
+  --color-primary-light: #828fff;
+  --color-primary-dark: #5e6ad2;
+  
+  /* Success/Up */
+  --color-success: #67c23a;
+  --color-success-light: #85ce61;
+  --color-up: #f56c6c;  /* Red for price up */
+  
+  /* Danger/Down */
+  --color-danger: #f56c6c;
+  --color-danger-light: #f78989;
+  --color-down: #67c23a;  /* Green for price down */
+  
+  /* Warning */
+  --color-warning: #e6a23c;
+  
+  /* Info */
+  --color-info: #909399;
+  
+  /* Background */
+  --color-bg-page: #eef2f7;
+  --color-bg-card: #ffffff;
+  --color-bg-sidebar: #0f172a;
+  --color-bg-header: rgba(255, 255, 255, 0.82);
+  
+  /* Text */
+  --color-text-primary: #303133;
+  --color-text-regular: #606266;
+  --color-text-secondary: #909399;
+  --color-text-placeholder: #c0c4cc;
+  
+  /* Border */
+  --color-border: rgba(15, 23, 42, 0.12);
+  --color-border-light: rgba(15, 23, 42, 0.08);
+  --color-border-lighter: rgba(15, 23, 42, 0.05);
+
+  /* Shadows */
+  --box-shadow-light: 0 12px 30px rgba(15, 23, 42, 0.08);
+  --box-shadow-elevated: 0 24px 60px rgba(15, 23, 42, 0.12);
+  
+  /* Layout */
+  --topbar-height: 72px;
+  --header-height: 72px;
+  --sidebar-width: 210px;
+  --sidebar-collapsed-width: 64px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter Variable', 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/* Utility Classes */
+.text-up {
+  color: var(--color-up) !important;
+}
+
+.text-down {
+  color: var(--color-down) !important;
+}
+
+.text-primary {
+  color: var(--color-primary) !important;
+}
+
+.text-success {
+  color: var(--color-success) !important;
+}
+
+.text-danger {
+  color: var(--color-danger) !important;
+}
+
+.text-warning {
+  color: var(--color-warning) !important;
+}
+
+.text-muted {
+  color: var(--color-text-secondary) !important;
+}
+
+/* Card Component */
+.card {
+  background: var(--color-bg-card);
+  border-radius: 16px;
+  border: 1px solid var(--color-border-lighter);
+  box-shadow: var(--box-shadow-light);
+  padding: 20px;
+}
+
+/* Page Container */
+.page-container {
+  padding: 20px;
+}
+
+/* Page Header */
+.page-header {
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  
+  .page-title {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--color-text-primary);
+  }
+  
+  .page-desc {
+    font-size: 14px;
+    color: var(--color-text-secondary);
+  }
+}
+
+/* Flex Utilities */
+.flex {
+  display: flex;
+}
+
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.flex-wrap {
+  flex-wrap: wrap;
+}
+
+.gap-10 {
+  gap: 10px;
+}
+
+.gap-20 {
+  gap: 20px;
+}
+
+/* Grid */
+.grid {
+  display: grid;
+}
+
+.grid-cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.grid-cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.grid-cols-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 768px) {
+  .grid-cols-2,
+  .grid-cols-3,
+  .grid-cols-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-page);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary);
+}

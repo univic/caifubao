@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caifubao-backend
+  labels:
+    app: caifubao-backend
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: caifubao-backend
+  template:
+    metadata:
+      labels:
+        app: caifubao-backend
+    spec:
+      containers:
+      - name: backend
+        image: caifubao-backend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: MONGODB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_HOST
+        - name: MONGODB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_PORT
+        - name: MONGODB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_NAME
+        - name: MONGODB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_USER
+        - name: MONGODB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: MONGODB_PASSWORD
+        - name: APP_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: ENVIRONMENT
+        - name: FLASK_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: FLASK_HOST
+        - name: FLASK_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: FLASK_PORT
+        - name: FLASK_DEBUG
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: FLASK_DEBUG
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 3
+      imagePullSecrets:
+      - name: registry-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: caifubao-backend-service
+  labels:
+    app: caifubao-backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+  selector:
+    app: caifubao-backend
