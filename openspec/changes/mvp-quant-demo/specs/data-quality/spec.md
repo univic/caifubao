@@ -1,34 +1,32 @@
-# Data Quality
+## ADDED Requirements
 
-## Overview
+### Requirement: Data Quality Summary
 
-The data quality experience verifies whether the market data pipeline is healthy enough for the MVP demo.
+The system SHALL expose a data quality summary for the supported active A-share universe.
 
-## Rules
+#### Scenario: User opens data quality page
 
-- Summary covers supported active A-share stocks only.
-- BSE stocks and unsupported symbols are excluded from the denominator.
-- Quote freshness is required for a stock to be considered healthy.
-- FQ and MA freshness are evaluated against the latest quote date.
-- If quote data lags the expected latest trading day, FQ and MA should be treated as blocked by quote freshness rather than independent factor failures.
-- MA windows that are not yet applicable to a newly listed stock must not be treated as abnormal.
+- **GIVEN** quote, FQ factor, MA factor, and freshness metadata exists
+- **WHEN** the frontend requests data quality
+- **THEN** the backend SHALL return overall status, latest quote date, generated time, and coverage metrics.
 
-## Outcomes
+### Requirement: Freshness State Classification
 
-- Show overall status, latest quote date, generated time, and coverage cards.
-- Show a freshness detail table with quote, FQ, and MA freshness.
-- Distinguish `missing`, `stale`, `ahead`, and `not applicable` cases in the UI.
-- Distinguish factor states that are blocked by stale quote data so downstream systems can pause analysis for the correct reason.
+The data quality summary SHALL distinguish missing, stale, ahead, not-applicable, and blocked-by-quote states.
 
-## Backend Boundary
+#### Scenario: Quote data is stale
 
-- `backend` reads Mongo and computes the summary.
-- `datahub` owns the quote/factor/freshness records.
-- `frontend` only renders the API response.
+- **GIVEN** quote data lags the expected latest trading day
+- **WHEN** FQ or MA freshness is evaluated
+- **THEN** the factor state SHALL be reported as blocked by quote freshness
+- **AND** SHALL NOT be counted as an independent factor failure.
 
-## Acceptance Criteria
+### Requirement: Supported Universe Filtering
 
-- New listings with insufficient history do not fail MA coverage.
-- BSE symbols are excluded from the data quality denominator.
-- Generated time is displayed in the application timezone.
-- FQ and MA coverage do not report independent abnormal coverage when quote data is stale.
+The data quality denominator SHALL include only supported active A-share stocks.
+
+#### Scenario: Unsupported symbols exist
+
+- **GIVEN** BSE or unsupported symbols exist in stock master data
+- **WHEN** coverage metrics are calculated
+- **THEN** those symbols SHALL be excluded from the denominator.

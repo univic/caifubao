@@ -1,72 +1,44 @@
-# OpenClaw Data Access
+## ADDED Requirements
 
-## Overview
+### Requirement: OpenClaw Read-only API Contract
 
-OpenClaw is a downstream consumer of caifubao data. The next phase should make caifubao a reliable data provider for OpenClaw investment analysis by exposing stable, documented, read-only APIs for quotes, factors, signals, and data freshness.
+The backend SHALL expose stable read-only APIs for OpenClaw data access.
 
-## Role Boundary
+#### Scenario: OpenClaw fetches market data
 
-- `datahub` produces and refreshes quotes, factors, signals, freshness, and quality metadata.
-- `backend` exposes stable API contracts and lightweight aggregation for downstream consumers.
-- `frontend` remains a human-facing UI and is not the integration surface for OpenClaw.
-- OpenClaw consumes caifubao APIs and performs its own investment analysis downstream.
+- **GIVEN** OpenClaw has a valid service token
+- **WHEN** it requests supported stocks, daily quotes, factors, signals, or quality metadata
+- **THEN** the backend SHALL return stable API payloads
+- **AND** SHALL NOT expose raw Mongo collection structures.
 
-## Required Data Domains
+### Requirement: OpenClaw Authentication
 
-- Stock master data: code, name, exchange/market, active status, supported data capabilities, listing metadata when available.
-- Quotes: daily OHLCV, volume, turnover-related fields when available, and adjusted prices.
-- Factors: FQ factor, HFQ/QFQ prices, MA factors, and future MVP-safe derived factors.
-- Signals: dated signal list, signal name/type/direction/strength, reason, factor snapshot, source freshness.
-- Data quality: expected trading date, latest available quote date, freshness status, and blocked-by-quote factor state.
+OpenClaw SHALL authenticate with a dedicated service token and read-only scope.
 
-## API Expectations
+#### Scenario: Token scope is checked
 
-- APIs must be read-only for OpenClaw in the MVP phase.
-- Prefer a dedicated integration namespace such as `/api/integrations/openclaw/*` so service-to-service contracts do not drift with human-facing UI APIs.
-- Responses must use stable field names and avoid leaking raw Mongo collection structure.
-- List endpoints should support date ranges, symbol filters, pagination, and predictable ordering.
-- Responses that depend on market data must include data freshness or generated time.
-- Missing, stale, not applicable, and blocked-by-quote states must be explicit rather than inferred from null values.
+- **GIVEN** a request includes `Authorization: Bearer <token>`
+- **WHEN** the token is revoked, expired, disabled, or missing `openclaw:data-read`
+- **THEN** the backend SHALL reject the request with a stable 401 or 403 response.
 
-## Operational Expectations
+### Requirement: Data Freshness Metadata
 
-- Quote and factor refresh jobs must be observable through job run records.
-- Downstream consumers must be able to tell whether data is current enough before analysis.
-- Backfills should be triggered operationally by caifubao maintainers, not by OpenClaw directly.
-- API failures should return actionable error messages and stable status codes.
+OpenClaw API responses that depend on market data SHALL include freshness metadata.
 
-## Security And Access
+#### Scenario: Downstream analysis checks readiness
 
-- OpenClaw access should use authenticated backend APIs, not direct Mongo credentials.
-- OpenClaw should authenticate with a dedicated service token sent as `Authorization: Bearer <token>`.
-- The token must represent a service identity, not a normal interactive user session.
-- MVP should start with one read-only scope, `openclaw:data-read`.
-- The scope model should leave room for narrower future scopes such as `stocks:read`, `quotes:read`, `factors:read`, `signals:read`, and `quality:read`.
-- Tokens must be stored hashed, not in plaintext.
-- A token record should include at least `id`, `name`, `token_hash`, `scopes`, `status`, `expires_at`, `created_at`, `last_used_at`, and `last_used_ip`.
-- Revoked, expired, disabled, or scope-mismatched tokens must be rejected with stable 401 or 403 responses.
-- The first integration should be read-only and should not expose admin, collection-write, backfill, data mutation, or scheduler-trigger endpoints.
-- Backend should log each accepted OpenClaw request with token id, request id, endpoint, status code, remote address, and data date or data-as-of when available.
-- Responses should include a request id, and data responses should include data-as-of or generated-at metadata so OpenClaw can audit analysis inputs.
-- Rate limits should be applied per service token once usage volume becomes material; MVP can define the contract before enforcing strict limits.
+- **GIVEN** OpenClaw receives data from caifubao
+- **WHEN** quote or factor data is missing, stale, not applicable, or blocked by quote freshness
+- **THEN** that state SHALL be explicit in the response
+- **AND** OpenClaw SHALL be able to decide whether analysis should proceed.
 
-## Authentication Non-goals
+### Requirement: Integration Non-goals
 
-- Do not reuse normal user JWTs for OpenClaw service-to-service access.
-- Do not give OpenClaw direct Mongo credentials.
-- Do not require full OAuth/OIDC client-credential flow in the MVP unless a later security review explicitly asks for it.
-- Do not allow OpenClaw tokens to trigger quote updates, factor recomputation, backfills, or administrative operations.
+The OpenClaw integration SHALL NOT provide mutation or operational control endpoints in the MVP.
 
-## Non-goals
+#### Scenario: OpenClaw attempts operational action
 
-- Do not embed OpenClaw investment analysis logic inside caifubao.
-- Do not expose Mongo collections directly as the public contract.
-- Do not introduce a new microservice solely for OpenClaw in the MVP phase.
-- Do not add real-time streaming or minute-level data unless explicitly scoped later.
-
-## Acceptance Criteria
-
-- OpenClaw can fetch supported stocks, daily quotes, latest factors, signals, and freshness from backend APIs.
-- OpenClaw can determine whether analysis should proceed or pause due to stale quote/factor data.
-- API responses include enough metadata to reproduce which data date and generated time were used.
-- The integration contract is documented in OpenSpec before implementation work begins.
+- **GIVEN** OpenClaw is a downstream data consumer
+- **WHEN** it needs refreshed or backfilled data
+- **THEN** caifubao maintainers SHALL trigger those operations
+- **AND** OpenClaw SHALL NOT receive direct Mongo credentials, scheduler triggers, data mutation endpoints, or admin access.
