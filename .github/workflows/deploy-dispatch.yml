@@ -1,9 +1,6 @@
 name: Dispatch Private Deploy
 
 on:
-  workflow_run:
-    workflows: ["Build Backend Image", "Build Frontend Image", "Build Datahub Image"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       service:
