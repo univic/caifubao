@@ -93,6 +93,97 @@ BARK_URL=https://your.bark.url
 
 ## 运行方式
 
+### 快速开发反馈流
+
+推荐优先使用仓库根目录的 `Makefile`，这样可以减少“改代码-启动服务-看效果”的手动步骤。
+
+#### 1. 准备本地配置
+
+```bash
+cp .env.example .env.local
+```
+
+`.env.local` 已被 `.gitignore` 忽略，可以放本机私有配置。启动时会从这个文件读取 MongoDB、Flask 和前端 mock 配置。
+
+根目录 `.env.example` 是推荐的本地开发主模板。`backend/.env.example` 和 `datahub/.env.example` 仅用于单独进入对应服务目录运行时参考；日常整仓开发优先使用根目录 `.env.local`。前端 Vite 已配置为读取仓库根目录 env，因此不需要维护 `frontend/.env.local`。
+
+#### 2. 纯前端快速看评分实验页
+
+如果只想调整和确认评分实验页面，不需要启动后端或连接 MongoDB。把 `.env.local` 里的开关改成：
+
+```bash
+VITE_USE_MOCK_API=true
+```
+
+然后运行：
+
+```bash
+cd frontend
+npm run dev
+```
+
+访问：
+
+```text
+http://127.0.0.1:5173/score-experiments
+```
+
+这会使用前端内置 mock `ScoreExperiment` 数据，适合快速反馈 UI、布局、字段展示和交互文案。
+
+#### 3. 本地 API + 演示数据
+
+如果要验证真实 backend API 和前端联调，先确认 `.env.local` 指向本地 MongoDB，然后写入一组稳定的评分实验演示数据：
+
+```bash
+make seed-score-demo
+make dev
+```
+
+`make seed-score-demo` 会生成：
+
+- `score_demo_candidate`
+- `score_demo_baseline`
+- 多个 `StockScorePrediction`
+- 一个 `Demo Score Experiment`
+
+`make dev` 会同时启动 backend 和 frontend，并打印当前连接的 MongoDB：
+
+```text
+Mongo=<host>:<port>/<db>
+Frontend mock API=<true|false>
+```
+
+#### 4. 线上 dev 库联调
+
+如需连接线上 dev MongoDB，不要把真实配置提交到仓库。只修改本机 `.env.local`：
+
+```bash
+MONGODB_HOST=<dev-mongo-host>
+MONGODB_PORT=27017
+MONGODB_NAME=<dev-db-name>
+MONGODB_USER=<dev-user>
+MONGODB_PASS=<dev-password>
+VITE_USE_MOCK_API=false
+```
+
+连接线上 dev 库时，评分实验建议使用独立 `model_version`，例如：
+
+```text
+score_exp_20260502_v1
+```
+
+避免覆盖现有 `score_v2_202604` 的预测结果。
+
+#### 5. 常用检查命令
+
+```bash
+make check
+make test-backend
+make test-frontend
+```
+
+当前 `make check` 会跑评分实验相关后端测试，以及前端 lint/build。
+
 ### 本地开发
 
 #### 1. 创建虚拟环境

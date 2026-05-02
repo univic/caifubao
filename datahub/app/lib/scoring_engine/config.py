@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from copy import deepcopy
+
 SUPPORTED_HORIZONS = (5, 20, 60)
 DEFAULT_MODEL_VERSION = "score_v2_202604"
 
@@ -65,3 +67,35 @@ def get_horizon_config(horizon: int) -> dict:
     if horizon not in SCORING_CONFIG:
         raise ValueError(f"Unsupported scoring horizon: {horizon}")
     return SCORING_CONFIG[horizon]
+
+
+def get_effective_horizon_config(
+    horizon: int, override_config: dict | None = None
+) -> dict:
+    config = deepcopy(get_horizon_config(horizon))
+    if not override_config:
+        return config
+
+    horizon_override = (
+        override_config.get(str(horizon)) or override_config.get(horizon) or {}
+    )
+    if not isinstance(horizon_override, dict):
+        return config
+
+    weights_override = horizon_override.get("weights")
+    if weights_override is None:
+        known_weight_keys = set(config.get("weights", {}).keys())
+        weights_override = {
+            key: value
+            for key, value in horizon_override.items()
+            if key in known_weight_keys
+        }
+
+    for key, value in horizon_override.items():
+        if key == "weights" or key in config.get("weights", {}):
+            continue
+        config[key] = value
+
+    if isinstance(weights_override, dict):
+        config["weights"].update(weights_override)
+    return config

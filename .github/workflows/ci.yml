@@ -17,11 +17,70 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ==================== Backend Tests ====================
+  changes:
+    name: Detect Changed Areas
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      datahub: ${{ steps.filter.outputs.datahub }}
+      docker: ${{ steps.filter.outputs.docker }}
+      k8s: ${{ steps.filter.outputs.k8s }}
+      openspec: ${{ steps.filter.outputs.openspec }}
+      ci: ${{ steps.filter.outputs.ci }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed files
+        id: filter
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            CHANGED_FILES="$(git diff --name-only "$PR_BASE_SHA" "$PR_HEAD_SHA")"
+          elif [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            CHANGED_FILES="$(git diff --name-only "$PUSH_BEFORE_SHA" "$CURRENT_SHA")"
+          else
+            CHANGED_FILES="$(git show --pretty='' --name-only "$CURRENT_SHA")"
+          fi
+
+          printf '%s\n' "$CHANGED_FILES"
+
+          set_output() {
+            local name="$1"
+            local pattern="$2"
+            if printf '%s\n' "$CHANGED_FILES" | grep -Eq "$pattern"; then
+              echo "$name=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$name=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+
+          set_output backend '^(backend/|Makefile$|scripts/seed_score_demo\.py$|\.github/workflows/ci\.yml$)'
+          set_output frontend '^(frontend/|\.env\.example$|Makefile$|\.github/workflows/ci\.yml$)'
+          set_output datahub '^(datahub/|backend/app/model/|backend/app/utilities/|\.github/workflows/ci\.yml$)'
+          set_output docker '^(backend/Dockerfile|datahub/Dockerfile|frontend/Dockerfile|\.github/workflows/ci\.yml$)'
+          set_output k8s '^(k8s/|\.github/workflows/ci\.yml$)'
+          set_output openspec '^(openspec/|\.github/workflows/ci\.yml$)'
+          set_output ci '^\.github/workflows/ci\.yml$'
+
   backend-test:
     name: Backend Tests (Python 3.12)
     runs-on: ubuntu-latest
-    
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+
     services:
       mongodb:
         image: mongo:7.0
@@ -32,184 +91,162 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-      
+          cache-dependency-path: backend/requirements.txt
+
       - name: Install dependencies
         run: |
           cd backend
           pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
           pip install pytest pytest-cov pytest-mock pytest-asyncio
-        env:
-          MONGODB_HOST: localhost
-          MONGODB_PORT: 27017
-      
+
       - name: Run backend tests
         run: |
           cd backend
-          pip install setuptools
-          pip install -r requirements.txt
           PYTHONPATH=. python -m pytest app/test/ -v --cov=app --cov-report=xml --cov-report=term-missing
         env:
           MONGODB_HOST: localhost
           MONGODB_PORT: 27017
           APP_ENV: test
-      
+
       - name: Upload coverage to Codecov
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
         uses: codecov/codecov-action@v4
         with:
           file: ./backend/coverage.xml
           flags: backend
 
-  # ==================== Frontend Tests ====================
-  frontend-test:
-    name: Frontend Tests (Node 20)
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-      
-      - name: Install dependencies
-        run: |
-          cd frontend
-          npm ci
-      
-      - name: Run frontend tests
-        run: |
-          cd frontend
-          npm run test:run
-      
-      - name: Build frontend
-        run: |
-          cd frontend
-          npm run build
-      
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          directory: ./frontend/coverage
-          flags: frontend
-
-  # ==================== Backend Lint ====================
   backend-lint:
     name: Backend Lint (Ruff)
     runs-on: ubuntu-latest
-    
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      
+
       - name: Install Ruff
         run: pip install ruff
-      
+
       - name: Run Ruff
         run: |
           ruff check backend/
           ruff format --check backend/
 
-  # ==================== Frontend Lint ====================
-  frontend-lint:
-    name: Frontend Lint (ESLint)
+  frontend-check:
+    name: Frontend Lint, Test, Build (Node 20)
     runs-on: ubuntu-latest
-    
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
-      
+
       - name: Install dependencies
         run: cd frontend && npm ci
-      
+
       - name: Run ESLint
         run: cd frontend && npm run lint
 
-  # ==================== Datahub Lint ====================
+      - name: Run frontend tests
+        run: cd frontend && npm run test:run
+
+      - name: Build frontend
+        run: cd frontend && npm run build
+
+      - name: Upload coverage to Codecov
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+        uses: codecov/codecov-action@v4
+        with:
+          directory: ./frontend/coverage
+          flags: frontend
+
   datahub-lint:
     name: Datahub Lint (Ruff)
     runs-on: ubuntu-latest
-    
+    needs: changes
+    if: needs.changes.outputs.datahub == 'true'
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      
+
       - name: Install Ruff
         run: pip install ruff
-      
+
       - name: Run Ruff
         run: |
           ruff check datahub/
           ruff format --check datahub/
 
-  # ==================== Dockerfile Syntax Check ====================
   dockerfile-check:
     name: Dockerfile Syntax Check
     runs-on: ubuntu-latest
-    
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
+
       - name: Check Backend Dockerfile
         run: |
           echo "Checking backend/Dockerfile..."
           docker buildx build --check -f ./backend/Dockerfile ./backend
           echo "Backend Dockerfile is valid"
-      
+
       - name: Check Datahub Dockerfile
         run: |
           echo "Checking datahub/Dockerfile..."
           docker buildx build --check -f ./datahub/Dockerfile ./datahub
           echo "Datahub Dockerfile is valid"
-      
+
       - name: Check Frontend Dockerfile
         run: |
           echo "Checking frontend/Dockerfile..."
           docker buildx build --check -f ./frontend/Dockerfile ./frontend
           echo "Frontend Dockerfile is valid"
-      
+
       - name: Summary
-        run: |
-          echo "All Dockerfiles are valid!"
+        run: echo "All Dockerfiles are valid!"
 
   kustomize-check:
     name: Kustomize Render Check
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.k8s == 'true'
 
     steps:
       - name: Checkout repository
@@ -226,42 +263,53 @@ jobs:
       - name: Render example production overlay
         run: kubectl kustomize k8s/overlays/example-production > /tmp/caifubao-example-prod.yaml
 
-  # ==================== Required Checks ====================
+  openspec-check:
+    name: OpenSpec Validate
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.openspec == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install OpenSpec
+        run: npm install -g @fission-ai/openspec
+
+      - name: Validate mvp-quant-demo
+        run: openspec validate mvp-quant-demo --strict
+
   required-checks:
     name: Required Checks
     runs-on: ubuntu-latest
-    needs: [backend-test, frontend-test, backend-lint, frontend-lint, datahub-lint, dockerfile-check, kustomize-check]
+    needs: [changes, backend-test, backend-lint, frontend-check, datahub-lint, dockerfile-check, kustomize-check, openspec-check]
     if: always()
-    
+
     steps:
-      - name: Check all jobs passed
+      - name: Check all jobs passed or were skipped
         run: |
-          if [ "${{ needs.backend-test.result }}" != "success" ]; then
-            echo "Backend tests failed"
-            exit 1
-          fi
-          if [ "${{ needs.frontend-test.result }}" != "success" ]; then
-            echo "Frontend tests failed"
-            exit 1
-          fi
-          if [ "${{ needs.backend-lint.result }}" != "success" ]; then
-            echo "Backend lint failed"
-            exit 1
-          fi
-          if [ "${{ needs.frontend-lint.result }}" != "success" ]; then
-            echo "Frontend lint failed"
-            exit 1
-          fi
-          if [ "${{ needs.datahub-lint.result }}" != "success" ]; then
-            echo "Datahub lint failed"
-            exit 1
-          fi
-          if [ "${{ needs.dockerfile-check.result }}" != "success" ]; then
-            echo "Dockerfile check failed"
-            exit 1
-          fi
-          if [ "${{ needs.kustomize-check.result }}" != "success" ]; then
-            echo "Kustomize check failed"
-            exit 1
-          fi
-          echo "All required checks passed!"
+          set -euo pipefail
+
+          check_result() {
+            local job_name="$1"
+            local result="$2"
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              echo "$job_name failed with result: $result"
+              exit 1
+            fi
+          }
+
+          check_result "Backend tests" "${{ needs.backend-test.result }}"
+          check_result "Backend lint" "${{ needs.backend-lint.result }}"
+          check_result "Frontend checks" "${{ needs.frontend-check.result }}"
+          check_result "Datahub lint" "${{ needs.datahub-lint.result }}"
+          check_result "Dockerfile check" "${{ needs.dockerfile-check.result }}"
+          check_result "Kustomize check" "${{ needs.kustomize-check.result }}"
+          check_result "OpenSpec check" "${{ needs.openspec-check.result }}"
+
+          echo "All required checks passed or were skipped because their paths did not change."

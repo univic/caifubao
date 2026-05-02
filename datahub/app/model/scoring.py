@@ -9,6 +9,7 @@ from mongoengine import (
     DictField,
     FloatField,
     IntField,
+    ListField,
     ReferenceField,
     StringField,
 )
@@ -121,3 +122,40 @@ class StockScorePrediction(db.Document):
     def save(self, *args, **kwargs):
         self.updated_at = datetime.datetime.now(datetime.UTC)
         return super(StockScorePrediction, self).save(*args, **kwargs)
+
+
+class ScoreExperiment(db.Document):
+    """
+    Research experiment for comparing scoring model versions and factor weights.
+    """
+
+    name = StringField(required=True)
+    description = StringField()
+    model_version = StringField(required=True)
+    baseline_model_version = StringField()
+    start_date = DateTimeField(required=True)
+    end_date = DateTimeField(required=True)
+    horizons = ListField(IntField(choices=[5, 20, 60]), default=lambda: [5, 20, 60])
+    config = DictField()
+    status = StringField(
+        choices=["CREATED", "RUNNING", "COMPLETED", "FAILED"], default="CREATED"
+    )
+    report = DictField()
+    error_msg = StringField()
+    created_at = DateTimeField(default=lambda: datetime.datetime.now(datetime.UTC))
+    updated_at = DateTimeField()
+    completed_at = DateTimeField()
+
+    meta = {
+        "collection": "score_experiments",
+        "indexes": [
+            "-created_at",
+            "model_version",
+            "baseline_model_version",
+            ("status", "-created_at"),
+        ],
+    }
+
+    def save(self, *args, **kwargs):
+        self.updated_at = datetime.datetime.now(datetime.UTC)
+        return super(ScoreExperiment, self).save(*args, **kwargs)

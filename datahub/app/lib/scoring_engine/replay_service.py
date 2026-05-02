@@ -13,9 +13,11 @@ class ScoreReplayService:
         self,
         scoring_service: StockScoringService | None = None,
         model_version: str = DEFAULT_MODEL_VERSION,
+        scoring_config: dict | None = None,
     ):
         self.scoring_service = scoring_service or StockScoringService(
-            model_version=model_version
+            model_version=model_version,
+            scoring_config=scoring_config,
         )
 
     def backfill_predictions(

@@ -15,7 +15,7 @@ from app.lib.scoring_engine.components import (
 from app.lib.scoring_engine.config import (
     DEFAULT_MODEL_VERSION,
     SUPPORTED_HORIZONS,
-    get_horizon_config,
+    get_effective_horizon_config,
 )
 from app.model.factor import StockFactorDaily
 from app.model.scoring import StockScorePrediction
@@ -41,6 +41,7 @@ class StockScoringService:
         signal_model=StockSignalDaily,
         prediction_model=StockScorePrediction,
         model_version: str = DEFAULT_MODEL_VERSION,
+        scoring_config: dict | None = None,
     ):
         self.stock_model = stock_model
         self.quote_model = quote_model
@@ -48,6 +49,7 @@ class StockScoringService:
         self.signal_model = signal_model
         self.prediction_model = prediction_model
         self.model_version = model_version
+        self.scoring_config = scoring_config or {}
         self.market = FinanceMarket.objects(name="ChinaAStock").first()
         self.calendar = self.market.trade_calendar if self.market else []
 
@@ -127,7 +129,7 @@ class StockScoringService:
     ):
         """Calculate one horizon-specific prediction for a stock."""
         date = normalize_date(date)
-        config = get_horizon_config(horizon)
+        config = self._get_horizon_config(horizon)
         existing = self._find_existing_prediction(stock.code, date, horizon)
         if existing is not None and not replace and not dry_run:
             return existing
@@ -238,7 +240,7 @@ class StockScoringService:
         return prediction
 
     def _build_blocked_prediction(self, stock, date, horizon, target_date, reason):
-        config = get_horizon_config(horizon)
+        config = self._get_horizon_config(horizon)
         return {
             "stock": stock,
             "stock_code": stock.code,
@@ -302,6 +304,9 @@ class StockScoringService:
         ]
         penalties = [risk_penalty(quote, risk_quotes, weights["risk_penalty"])]
         return components, penalties
+
+    def _get_horizon_config(self, horizon: int) -> dict:
+        return get_effective_horizon_config(horizon, self.scoring_config)
 
     def _calculate_score(self, components: list, penalties: list) -> float:
         score = sum(item["contribution"] for item in components)

@@ -1,37 +1,39 @@
-# Signals MVP
+## ADDED Requirements
 
-## Overview
+### Requirement: Standard Signal Model
 
-The MVP signal layer turns existing factor data into a small set of readable trading signals. 
+The signal layer SHALL store new daily signals in `StockSignalDaily`.
 
-## Architectural Direction
+#### Scenario: Datahub generates a moving-average signal
 
-- **Data Model**: All new signals must use `StockSignalDaily` (defined in `backend/app/model/signal.py`). Legacy `SignalData` is deprecated.
-- **Computation**: Signal generation is the responsibility of `datahub`. `backend` provides read-only access.
-- **Standardization**: Signals must include `direction` (BULLISH/BEARISH), `signal_type`, and a `factor_snapshot` for explainability.
+- **GIVEN** current quote and MA factor data exists
+- **WHEN** datahub detects a supported signal
+- **THEN** it SHALL write a `StockSignalDaily` record
+- **AND** include direction, signal type, strength, reason, factor snapshot, and source freshness.
 
-## Initial Signal Set
+### Requirement: MVP Signal Set
 
-- `MA10_CROSS_MA20` (Bullish): MA 10 crossing above MA 20.
-- `PRICE_ABOVE_MA60` (Bullish): Close price above MA 60.
-- `MA20_ABOVE_MA60` (Bullish): MA 20 above MA 60 trend state.
+The MVP signal set SHALL be small, stable, and explainable.
 
-## Current Implementation Status
+#### Scenario: Supported signals are generated
 
-- [x] **Core Model**: `StockSignalDaily` implemented.
-- [x] **Infrastructure**: `MovingAverageSignalService` in `datahub` for bulk processing.
-- [x] **Signal 1**: `MA10_CROSS_MA20` implemented in `datahub`.
-- [x] **APIs**: User API (`/api/signals`) and OpenClaw API (`/api/v1/integrations/openclaw/signals`) implemented.
+- **GIVEN** MA factor data exists for a stock
+- **WHEN** signal generation runs
+- **THEN** it SHALL support `MA10_CROSS_MA20`
+- **AND** leave room for `PRICE_ABOVE_MA60` and `MA20_ABOVE_MA60`.
 
-## Gaps and Missing Features
+### Requirement: Signal Read APIs
 
-- [ ] **Signal 2**: Implement `PRICE_ABOVE_MA60` logic in `datahub`.
-- [ ] **Signal 3**: Implement `MA20_ABOVE_MA60` logic in `datahub`.
-- [ ] **Processor Migration**: Refactor or deprecate `backend/app/lib/signal_man` to avoid logic duplication.
-- [ ] **Data Pipeline**: Ensure `datahub` runs signal updates automatically after daily factor calculation.
+The backend SHALL provide read-only access to generated signals.
 
-## Acceptance Criteria
+#### Scenario: User views signals
 
-- Signals can be computed from current factor data in `datahub`.
-- The signal page shows a dated list with direction and reason.
-- The MVP signal set is small, stable, and explainable via snapshots.
+- **GIVEN** dated `StockSignalDaily` records exist
+- **WHEN** the frontend requests `/api/signals`
+- **THEN** the backend SHALL return a dated list with direction, strength, reason, price snapshot, factor snapshot, and freshness data.
+
+#### Scenario: OpenClaw reads signals
+
+- **GIVEN** OpenClaw has a valid read token
+- **WHEN** it requests the OpenClaw signals endpoint
+- **THEN** the backend SHALL return the same signal facts through the integration contract.
