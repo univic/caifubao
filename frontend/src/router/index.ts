@@ -81,6 +81,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Signals/SignalsView.vue')
       },
       {
+        path: 'score-experiments',
+        name: 'ScoreExperiments',
+        component: () => import('@/views/ScoreExperiments/ScoreExperimentsView.vue')
+      },
+      {
         path: 'indices',
         name: 'Indices',
         component: () => import('@/views/Indices/IndicesView.vue')

@@ -50,6 +50,11 @@
         <el-icon><Bell /></el-icon>
         <template #title>信号与机会</template>
       </el-menu-item>
+
+      <el-menu-item index="/score-experiments">
+        <el-icon><DataLine /></el-icon>
+        <template #title>评分实验</template>
+      </el-menu-item>
       
       <el-sub-menu v-if="userStore.isAdmin" index="/admin">
         <template #title>
@@ -66,7 +71,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
-import { DataAnalysis, DataBoard, TrendCharts, Cpu, Bell, Setting, Coin, Monitor, PieChart } from '@element-plus/icons-vue'
+import { DataAnalysis, DataBoard, TrendCharts, Cpu, Bell, Setting, Coin, Monitor, PieChart, DataLine } from '@element-plus/icons-vue'
 
 defineProps<{
   collapsed: boolean

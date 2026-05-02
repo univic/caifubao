@@ -7,7 +7,7 @@ import logging
 from flask import Blueprint, jsonify, request
 
 from app.model.stock import IndividualStock, StockIndex, StockDailyQuote
-from app.model.scoring import StockDailyScore
+from app.model.scoring import StockScorePrediction
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,36 @@ def _to_number(value, default=0.0):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _parse_horizon(value, default=5):
+    try:
+        horizon = int(value)
+    except (TypeError, ValueError):
+        horizon = default
+    return horizon if horizon in {5, 20, 60} else default
+
+
+def _serialize_score_summary(score_doc):
+    if score_doc is None:
+        return {
+            "score": 0.0,
+            "rank": None,
+            "percentile": None,
+            "recommendation": "NONE",
+            "status": None,
+            "verification": {},
+            "model_version": None,
+        }
+    return {
+        "score": score_doc.score,
+        "rank": score_doc.rank,
+        "percentile": score_doc.percentile,
+        "recommendation": score_doc.recommendation,
+        "status": score_doc.status,
+        "verification": score_doc.verification or {},
+        "model_version": score_doc.model_version,
+    }
 
 
 def _serialize_index(code, fallback_name):
@@ -232,6 +262,7 @@ def get_comprehensive_data():
     """Return comprehensive OHLCV and Scoring data."""
     asset_type = request.args.get("type", "stock")
     date_str = request.args.get("date")
+    primary_horizon = _parse_horizon(request.args.get("horizon"), default=5)
 
     if date_str:
         try:
@@ -256,18 +287,22 @@ def get_comprehensive_data():
     codes = list(asset_map.keys())
 
     # 2. Fetch Quotes for this date
-    quotes = StockDailyQuote.objects(code={"$in": codes}, date=target_date)
+    quotes = StockDailyQuote.objects(code__in=codes, date=target_date)
     quote_map = {q.code: q for q in quotes}
 
-    # 3. Fetch Scores for this date
-    scores = StockDailyScore.objects(stock_code={"$in": codes}, date=target_date)
-    score_map = {s.stock_code: s for s in scores}
+    # 3. Fetch multi-horizon scores for this date
+    scores = StockScorePrediction.objects(stock_code__in=codes, date=target_date)
+    score_map = {(s.stock_code, s.horizon): s for s in scores}
 
     # 4. Merge and Calculate Ranks
     items = []
     for code in codes:
         q = quote_map.get(code)
-        s = score_map.get(code)
+        horizon_scores = {
+            str(horizon): _serialize_score_summary(score_map.get((code, horizon)))
+            for horizon in (5, 20, 60)
+        }
+        primary_score = horizon_scores[str(primary_horizon)]
 
         items.append(
             {
@@ -282,21 +317,23 @@ def get_comprehensive_data():
                     "change_rate": _to_number(q.change_rate) if q else None,
                 },
                 "evaluation": {
-                    "score": s.score if s else 0.0,  # Default to 0 for ranking
-                    "recommendation": s.recommendation if s else "NONE",
-                    "basis": s.scoring_basis if s else {},
-                    "status": s.status if s else None,
-                    "profit_percentage_t5": s.profit_percentage_t5 if s else None,
-                    "max_profit_percentage": s.max_profit_percentage if s else None,
-                    "is_effective": s.is_effective if s else None,
+                    "primary_horizon": primary_horizon,
+                    "score": primary_score["score"],
+                    "rank": primary_score["rank"],
+                    "percentile": primary_score["percentile"],
+                    "recommendation": primary_score["recommendation"],
+                    "status": primary_score["status"],
+                    "verification": primary_score["verification"],
+                    "model_version": primary_score["model_version"],
+                    "scores": horizon_scores,
                 },
             }
         )
 
-    # Sort by score descending to assign rank
+    # Sort by selected horizon score descending for the market table.
     items.sort(key=lambda x: x["evaluation"]["score"], reverse=True)
     for i, item in enumerate(items):
-        item["evaluation"]["rank"] = i + 1
+        item["evaluation"]["display_rank"] = i + 1
 
     return (
         jsonify(

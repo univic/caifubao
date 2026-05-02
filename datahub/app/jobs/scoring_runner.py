@@ -7,6 +7,7 @@ import json
 from app.lib.db_watcher.mongoengine_tool import mongo_watcher
 from app.lib.scoring_engine.calibration_report import ScoreCalibrationReport
 from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
+from app.lib.scoring_engine.experiment_service import ScoreExperimentService
 from app.lib.scoring_engine.replay_service import ScoreReplayService
 from app.lib.scoring_engine.scoring_service import StockScoringService
 from app.lib.scoring_engine.verification_service import ScoreVerificationService
@@ -69,6 +70,19 @@ def run_report(args):
         print(f"Calibration report: {result}")
 
 
+def run_experiment(args):
+    mongo_watcher.get_db_connection()
+    service = ScoreExperimentService()
+    result = service.run_experiment(
+        experiment_id=args.experiment_id,
+        backfill=not args.skip_backfill,
+        verify=not args.skip_verify,
+        replace=args.replace,
+        dry_run=args.dry_run,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+
+
 def add_common_options(
     parser, include_date=False, include_range=False, include_horizon=True
 ):
@@ -112,6 +126,15 @@ def main():
     p_report.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
     p_report.add_argument("--format", choices=["json", "text"], default="json")
 
+    p_experiment = subparsers.add_parser(
+        "experiment", help="Run a stored score experiment"
+    )
+    p_experiment.add_argument("--id", dest="experiment_id", required=True)
+    p_experiment.add_argument("--skip-backfill", action="store_true")
+    p_experiment.add_argument("--skip-verify", action="store_true")
+    p_experiment.add_argument("--replace", action="store_true")
+    p_experiment.add_argument("--dry-run", action="store_true")
+
     args = parser.parse_args()
 
     if args.command == "run":
@@ -122,6 +145,8 @@ def main():
         run_verification(args)
     elif args.command == "report":
         run_report(args)
+    elif args.command == "experiment":
+        run_experiment(args)
     else:
         parser.print_help()
 

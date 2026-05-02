@@ -17,6 +17,8 @@ from app.api.v1.integrations.openclaw import (
 )
 from app.api.v1.market import market_bp
 from app.api.v1.quotes import quotes_bp
+from app.api.v1.scores import scores_bp
+from app.api.v1.score_experiments import score_experiments_bp
 from app.api.v1.signals import signals_bp
 
 
@@ -29,6 +31,8 @@ def register_blueprint(app: Flask):
     app.register_blueprint(datahub_status_bp)
     app.register_blueprint(data_quality_bp)
     app.register_blueprint(quotes_bp)
+    app.register_blueprint(scores_bp)
+    app.register_blueprint(score_experiments_bp)
     app.register_blueprint(signals_bp)
     register_openclaw_routes()
     app.register_blueprint(openclaw_bp)

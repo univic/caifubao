@@ -417,15 +417,84 @@ Backfill and reports must avoid look-ahead bias:
 - Tests must fail if a scoring component uses future price data.
 - Reports must distinguish `prediction_date` ranges from `verification_quote_date` ranges.
 
+### 8.6 Score Experiments
+
+Score experiments provide a research workspace for comparing factor combinations, scoring configurations, and model versions.
+
+MVP model:
+
+- `ScoreExperiment`
+- Mongo collection: `score_experiments`
+
+Required fields:
+
+- `name`: Human-readable experiment name.
+- `description`: Optional research note.
+- `model_version`: Candidate scoring model version.
+- `baseline_model_version`: Optional baseline model version for comparison.
+- `start_date`: Prediction date range start.
+- `end_date`: Prediction date range end.
+- `horizons`: List of horizons, each one of `5`, `20`, `60`.
+- `config`: Dict snapshot of factor weights, thresholds, or experiment parameters.
+- `status`: `CREATED`, `RUNNING`, `COMPLETED`, or `FAILED`.
+- `report`: Aggregated metrics generated from verified `StockScorePrediction` records.
+- `error_msg`: Failure details when status is `FAILED`.
+- `created_at`, `updated_at`, `completed_at`.
+
+The first implementation aggregates already-generated and verified predictions for the selected `model_version`. This allows the research UI to compare model versions and stored factor-weight configurations immediately. A later datahub runner should use the same `ScoreExperiment.config` to regenerate historical predictions under a new `model_version`.
+
+Implemented datahub runner:
+
+```bash
+python -m app.jobs.scoring_runner experiment \
+  --id <score_experiment_id> \
+  --replace
+```
+
+The experiment runner loads the stored `ScoreExperiment`, applies `config` as horizon-specific scoring overrides, backfills predictions under `model_version`, verifies them, and writes calibration reports back to the experiment record. `--dry-run`, `--skip-backfill`, and `--skip-verify` are available for safer research iteration.
+
+Minimum report shape per horizon:
+
+- `overall`: aggregate sample count, average score, average target return, average max return, average drawdown, hit rate, and stop-loss hit rate.
+- `score_buckets`: metrics for `0-20`, `20-40`, `40-60`, `60-80`, and `80-100`.
+- `top_n`: metrics for daily `top_10`, `top_30`, and `top_50`.
+- `component_summary`: metrics grouped by explanation component id.
+- `false_positives`: high-score samples with negative target return.
+- `false_negatives`: low-score samples with strong max return.
+- `baseline`: same report for `baseline_model_version` when provided.
+- `comparison`: metric deltas between candidate and baseline.
+
 ## 9. Backend APIs
 
 Backend APIs should expose score data as a stable read contract, not raw Mongo documents.
 
-Recommended endpoints:
+Implemented MVP read endpoints:
 
-- `GET /api/scores?date=YYYY-MM-DD&horizon=5&limit=50`
-- `GET /api/scores/{stock_code}?horizon=5|20|60&from=YYYY-MM-DD&to=YYYY-MM-DD`
+- `GET /api/scores?horizon=5&date=YYYY-MM-DD&limit=50`
+  - Returns the score ranking for one horizon and evaluation date.
+  - If `date` is omitted, the backend returns the latest available scoring date for the selected horizon.
+  - Supported filters: `model_version`, `min_score`, `recommendation`, `status`, `limit`, and `offset`.
+- `GET /api/scores/{stock_code}?horizon=5&from=YYYY-MM-DD&to=YYYY-MM-DD`
+  - Returns one stock's score history for one horizon.
+  - Supported filters: `model_version`, `limit`, and `offset`.
 - `GET /api/scores/{stock_code}/{date}/explanation?horizon=5`
+  - Returns the selected prediction with structured `explanation` and `input_snapshot`.
+
+The first read API migration uses `StockScorePrediction` as the source of truth. New backend consumers should not read `StockDailyScore`.
+
+Implemented experiment endpoints:
+
+- `GET /api/score-experiments`
+  - Lists recent score experiments with saved config and report snapshots.
+- `POST /api/score-experiments`
+  - Creates an experiment and, by default, immediately aggregates verified predictions into a report.
+- `GET /api/score-experiments/{id}`
+  - Returns one experiment.
+- `POST /api/score-experiments/{id}/run`
+  - Rebuilds the report from current verified prediction data.
+
+Recommended next endpoints:
+
 - `GET /api/scores/performance?horizon=5&from=YYYY-MM-DD&to=YYYY-MM-DD`
 - `GET /api/market/comprehensive?date=YYYY-MM-DD&type=stock&horizon=5`
 
@@ -443,6 +512,13 @@ Recommended endpoints:
   }
 }
 ```
+
+OpenClaw recommendation endpoints must also read `StockScorePrediction`:
+
+- `GET /api/v1/integrations/openclaw/recommendations/daily?horizon=5`
+- `GET /api/v1/integrations/openclaw/recommendations/performance?horizon=5`
+
+The legacy T+5 response fields from `StockDailyScore` are deprecated. Downstream integrations should read `horizon`, `rank`, `percentile`, `explanation`, `input_snapshot`, and `verification`.
 
 ## 10. Frontend Requirements
 
@@ -464,6 +540,13 @@ Dashboard:
 
 - Show top `Score5` recommendations by default.
 - Show score effectiveness summary once enough verified records exist.
+
+Score experiment view:
+
+- Create an experiment with candidate model version, optional baseline version, date range, horizons, and JSON factor-weight config.
+- List previous experiments and rerun report generation.
+- Display overall metrics, baseline deltas, score-bucket performance, Top-N performance, and component-level performance by horizon.
+- The view is research-first and should prioritize dense comparison tables over marketing-style presentation.
 
 ## 11. Performance and Review Metrics
 
@@ -488,9 +571,13 @@ These metrics are for calibration and operational trust. They are not a substitu
 - [ ] Every prediction stores structured explanation components, penalties, input snapshot, and model version.
 - [ ] Verification updates `PENDING` and `TRACKING` predictions for 5, 20, and 60 trading day horizons.
 - [ ] Verified records include target return, max return, min return, drawdown, quote count, and effectiveness flag.
-- [ ] Historical backfill can replay scoring for past dates without reading future data.
+- [x] Historical experiment replay can apply stored factor config overrides and regenerate predictions under a selected model version.
 - [ ] Calibration reports summarize score quality by horizon, model version, score bucket, Top-N group, and component contribution.
+- [x] Score experiments store model version, baseline, date range, horizons, factor config, and generated report snapshots.
 - [ ] Look-ahead bias guardrail tests cover historical scoring replay.
-- [ ] Backend exposes score list, stock score history, explanation, performance, and market comprehensive score summaries.
+- [x] Backend exposes score list, stock score history, explanation, and market comprehensive score summaries from `StockScorePrediction`.
+- [x] Backend exposes score experiment creation, listing, retrieval, rerun, and comparison reports.
+- [ ] Backend exposes first-party score performance summaries.
+- [x] Frontend provides a research page for score experiments with config input and horizon-level report tables.
 - [ ] Frontend can rank by horizon and inspect why a stock received its score.
 - [ ] Missing quote/factor/signal data results in explicit `BLOCKED` or `INSUFFICIENT_DATA` status instead of silent zero scores.
