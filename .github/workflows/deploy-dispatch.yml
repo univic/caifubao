@@ -198,7 +198,7 @@ jobs:
               ;;
           esac
 
-          if printf '%s\n' "$CHANGED_FILES" | rg -q "$PATTERN"; then
+          if printf '%s\n' "$CHANGED_FILES" | grep -E -q "$PATTERN"; then
             echo "should_dispatch=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_dispatch=false" >> "$GITHUB_OUTPUT"

@@ -35,7 +35,7 @@ jobs:
 
           printf '%s\n' "$CHANGED_FILES"
 
-          if printf '%s\n' "$CHANGED_FILES" | rg -q '^(backend/|\.github/workflows/backend-publish\.yml$)'; then
+          if printf '%s\n' "$CHANGED_FILES" | grep -E -q '^(backend/|\.github/workflows/backend-publish\.yml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
