@@ -26,16 +26,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ env.SOURCE_SHA }}
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Detect datahub changes
         id: changes
         run: |
-          if git rev-parse "${SOURCE_SHA}^" >/dev/null 2>&1; then
-            CHANGED_FILES="$(git diff --name-only "${SOURCE_SHA}^" "${SOURCE_SHA}")"
-          else
-            CHANGED_FILES="$(git show --pretty='' --name-only "${SOURCE_SHA}")"
-          fi
+          CHANGED_FILES="$(git diff-tree --no-commit-id --name-only -r -m "${SOURCE_SHA}" | sort -u)"
 
           printf '%s\n' "$CHANGED_FILES"
 
