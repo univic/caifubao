@@ -55,6 +55,11 @@
         <el-icon><DataLine /></el-icon>
         <template #title>评分实验</template>
       </el-menu-item>
+
+      <el-menu-item index="/portfolio">
+        <el-icon><Wallet /></el-icon>
+        <template #title>组合管理</template>
+      </el-menu-item>
       
       <el-sub-menu v-if="userStore.isAdmin" index="/admin">
         <template #title>
@@ -71,7 +76,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
-import { DataAnalysis, DataBoard, TrendCharts, Cpu, Bell, Setting, Coin, Monitor, PieChart, DataLine } from '@element-plus/icons-vue'
+import { DataAnalysis, DataBoard, TrendCharts, Cpu, Bell, Setting, Coin, Monitor, PieChart, DataLine, Wallet } from '@element-plus/icons-vue'
 
 defineProps<{
   collapsed: boolean
