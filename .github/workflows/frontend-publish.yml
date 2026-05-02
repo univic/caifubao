@@ -139,7 +139,48 @@ jobs:
       - name: Write publish summary
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ steps.changes.outputs.changed }}" = "true" ]; then
-            echo "Frontend image published for ${SOURCE_SHA}" >> "$GITHUB_STEP_SUMMARY"
+            case "$SOURCE_BRANCH" in
+              develop)
+                TARGET_ENVIRONMENT="development"
+                CHANNEL_TAG="develop"
+                ;;
+              main)
+                TARGET_ENVIRONMENT="production"
+                CHANNEL_TAG="prod, latest"
+                ;;
+              *)
+                TARGET_ENVIRONMENT="unsupported"
+                CHANNEL_TAG="none"
+                ;;
+            esac
+
+            echo "::notice title=Frontend image published::environment=${TARGET_ENVIRONMENT}, image_tag=${{ steps.image-tag.outputs.immutable_tag }}, source_sha=${SOURCE_SHA}, private_workflow=frontend-deploy.yml"
+
+            {
+              echo "## Frontend Image Published"
+              echo ""
+              echo "- Service: \`frontend\`"
+              echo "- Private deploy workflow: \`Deploy Frontend\` / \`frontend-deploy.yml\`"
+              echo "- Target environment: \`${TARGET_ENVIRONMENT}\`"
+              echo "- Source branch: \`${SOURCE_BRANCH}\`"
+              echo "- Source SHA: \`${SOURCE_SHA}\`"
+              echo "- Immutable image tag: \`${{ steps.image-tag.outputs.immutable_tag }}\`"
+              echo "- Channel tag(s): \`${CHANNEL_TAG}\`"
+              echo "- Private dispatch repository: \`${{ env.DEFAULT_PRIVATE_REPOSITORY }}\`"
+              echo ""
+              echo "### Manual Private Deploy"
+              echo ""
+              echo "\`\`\`bash"
+              echo "gh workflow run frontend-deploy.yml --repo ${{ env.DEFAULT_PRIVATE_REPOSITORY }} --ref main \\"
+              echo "  -f environment=${TARGET_ENVIRONMENT} \\"
+              echo "  -f mode=deploy \\"
+              echo "  -f image_tag=${{ steps.image-tag.outputs.immutable_tag }} \\"
+              echo "  -f public_repository=${GITHUB_REPOSITORY} \\"
+              echo "  -f public_ref=${SOURCE_SHA} \\"
+              echo "  -f bootstrap=false \\"
+              echo "  -f skip_ingress=true"
+              echo "\`\`\`"
+            } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "No frontend changes detected for ${SOURCE_SHA}; skipped image publish." >> "$GITHUB_STEP_SUMMARY"
           fi
