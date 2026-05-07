@@ -51,7 +51,6 @@ images:
 patches:
 - path: backend-secret-env-patch.yaml
 - path: backend-secret-override.yaml
-- path: datahub-production-secret-override.yaml
 - target:
     group: apps
     version: v1
@@ -59,9 +58,20 @@ patches:
     name: caifubao-datahub
   patch: |-
     - op: replace
+      path: /spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
+      value: prod-mongodb-pass-secret
+    - op: replace
+      path: /spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
+      value: PROD_MONGODB_PASS
+    - op: replace
       path: /spec/template/spec/imagePullSecrets
       value:
       - name: ccr-secret
+    - op: add
+      path: /spec/template/spec/nodeSelector
+      value:
+        class: compute
+        provider: tencent
 - target:
     group: batch
     version: v1
@@ -69,9 +79,20 @@ patches:
     name: caifubao-datahub-quote-index
   patch: |-
     - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
+      value: prod-mongodb-pass-secret
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
+      value: PROD_MONGODB_PASS
+    - op: replace
       path: /spec/jobTemplate/spec/template/spec/imagePullSecrets
       value:
       - name: ccr-secret
+    - op: add
+      path: /spec/jobTemplate/spec/template/spec/nodeSelector
+      value:
+        class: compute
+        provider: tencent
 - target:
     group: batch
     version: v1
@@ -79,9 +100,20 @@ patches:
     name: caifubao-datahub-quote-stock
   patch: |-
     - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
+      value: prod-mongodb-pass-secret
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
+      value: PROD_MONGODB_PASS
+    - op: replace
       path: /spec/jobTemplate/spec/template/spec/imagePullSecrets
       value:
       - name: ccr-secret
+    - op: add
+      path: /spec/jobTemplate/spec/template/spec/nodeSelector
+      value:
+        class: compute
+        provider: tencent
 - target:
     group: batch
     version: v1
@@ -89,9 +121,20 @@ patches:
     name: caifubao-datahub-signal
   patch: |-
     - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
+      value: prod-mongodb-pass-secret
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
+      value: PROD_MONGODB_PASS
+    - op: replace
       path: /spec/jobTemplate/spec/template/spec/imagePullSecrets
       value:
       - name: ccr-secret
+    - op: add
+      path: /spec/jobTemplate/spec/template/spec/nodeSelector
+      value:
+        class: compute
+        provider: tencent
 - target:
     group: batch
     version: v1
@@ -99,6 +142,17 @@ patches:
     name: caifubao-datahub-scoring
   patch: |-
     - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
+      value: prod-mongodb-pass-secret
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
+      value: PROD_MONGODB_PASS
+    - op: replace
       path: /spec/jobTemplate/spec/template/spec/imagePullSecrets
       value:
       - name: ccr-secret
+    - op: add
+      path: /spec/jobTemplate/spec/template/spec/nodeSelector
+      value:
+        class: compute
+        provider: tencent
