@@ -42,6 +42,11 @@
             <span>行情查询</span>
           </el-menu-item>
 
+          <el-menu-item index="/data-quality">
+            <el-icon><DataAnalysis /></el-icon>
+            <span>数据质量</span>
+          </el-menu-item>
+
           <el-menu-item index="/backtest">
             <el-icon><Cpu /></el-icon>
             <span>回测</span>
@@ -125,6 +130,11 @@
           <span>行情查询</span>
         </el-menu-item>
 
+        <el-menu-item index="/data-quality">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>数据质量</span>
+        </el-menu-item>
+
         <el-menu-item index="/backtest">
           <el-icon><Cpu /></el-icon>
           <span>回测</span>
@@ -150,6 +160,7 @@ import {
   ArrowDown,
   Bell,
   Cpu,
+  DataAnalysis,
   DataBoard,
   Grid,
   Menu,

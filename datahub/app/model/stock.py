@@ -49,6 +49,7 @@ class StockDailyQuote(Document):
         "allow_inheritance": True,
         "indexes": [
             {"fields": ["code", "-date"], "unique": True},
+            ("date", "code"),
             "code",
             "#date",
         ],

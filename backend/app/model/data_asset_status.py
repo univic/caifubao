@@ -32,6 +32,7 @@ class DataAssetStatus(Document):
                 "fields": ["code", "object_type", "asset_type", "asset_name"],
                 "unique": True,
             },
+            ("object_type", "asset_type", "asset_name", "status", "code"),
             ("asset_type", "asset_name", "-latest_data_date"),
             ("code", "asset_type"),
             "status",
