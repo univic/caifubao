@@ -6,6 +6,7 @@ namespace: caifubao-example
 resources:
 - ../../base
 - ingress.yaml
+- datahub-cronjobs.yaml
 
 configMapGenerator:
 - name: backend-config

@@ -5,6 +5,7 @@ namespace: caifubao-example-dev
 
 resources:
 - ../../base
+- ../example-production/datahub-cronjobs.yaml
 
 configMapGenerator:
 - name: backend-config
@@ -42,3 +43,6 @@ images:
 - name: caifubao-datahub
   newName: registry.example.com/your-org/caifubao-datahub
   newTag: develop
+
+patches:
+- path: suspend-cronjobs.yaml
