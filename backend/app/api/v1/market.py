@@ -11,6 +11,7 @@ from mongoengine import Q
 
 from app.model.data_asset_status import DataAssetStatus
 from app.model.stock import IndividualStock, StockIndex, StockDailyQuote
+
 try:
     from app.model.scoring import StockScorePrediction
 except ImportError:  # pragma: no cover - compatibility with older dev images
@@ -357,9 +358,7 @@ def _resolve_market_target_date(asset_type, date_str):
     return latest_date or datetime.datetime.now()
 
 
-def _serialize_market_item(
-    code, name, quote, score_map, primary_horizon, display_rank
-):
+def _serialize_market_item(code, name, quote, score_map, primary_horizon, display_rank):
     horizon_scores = {
         str(horizon): _serialize_score_summary(score_map.get((code, horizon)))
         for horizon in (5, 20, 60)
