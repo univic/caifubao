@@ -27,7 +27,7 @@
               placeholder="选择日期"
               :clearable="false"
               class="linear-picker"
-              @change="fetchData"
+              @change="resetAndFetch"
             />
           </div>
         </div>
@@ -36,15 +36,15 @@
 
     <!-- Main Content -->
     <div class="content-container">
-      <el-tabs v-model="activeTab" class="linear-tabs" @tab-change="fetchData">
+      <el-tabs v-model="activeTab" class="linear-tabs" @tab-change="resetAndFetch">
         <el-tab-pane label="股票 (Stocks)" name="stock">
           <!-- Desktop Table View -->
           <div class="desktop-view" v-loading="loading">
-            <el-table :data="filteredData" class="linear-table" style="width: 100%">
+            <el-table :data="tableData" class="linear-table" style="width: 100%">
               <el-table-column label="排名" width="70" align="center">
                 <template #default="{ row }">
-                  <span class="rank-text" :class="{ 'top-rank': row.evaluation.rank <= 3 }">
-                    #{{ row.evaluation.rank }}
+                  <span class="rank-text" :class="{ 'top-rank': row.evaluation.display_rank <= 3 }">
+                    #{{ row.evaluation.display_rank }}
                   </span>
                 </template>
               </el-table-column>
@@ -99,8 +99,8 @@
               <el-table-column label="评分依据" min-width="200">
                 <template #default="{ row }">
                   <div class="basis-tags">
-                    <span v-for="tag in row.evaluation.basis.signals" :key="tag" class="basis-tag signal">{{ tag }}</span>
-                    <span v-for="tag in row.evaluation.basis.trend" :key="tag" class="basis-tag trend">{{ tag }}</span>
+                    <span v-for="tag in row.evaluation.basis?.signals || []" :key="tag" class="basis-tag signal">{{ tag }}</span>
+                    <span v-for="tag in row.evaluation.basis?.trend || []" :key="tag" class="basis-tag trend">{{ tag }}</span>
                   </div>
                 </template>
               </el-table-column>
@@ -121,10 +121,10 @@
 
           <!-- Mobile Card View -->
           <div class="mobile-view" v-loading="loading">
-            <div v-for="item in filteredData" :key="item.code" class="asset-card">
+            <div v-for="item in tableData" :key="item.code" class="asset-card">
               <div class="card-header">
                 <div class="header-main">
-                  <span class="c-rank">#{{ item.evaluation.rank }}</span>
+                  <span class="c-rank">#{{ item.evaluation.display_rank }}</span>
                   <span class="c-name">{{ item.name }}</span>
                   <span class="c-code">{{ item.code }}</span>
                 </div>
@@ -154,7 +154,7 @@
         <el-tab-pane label="指数 (Indices)" name="index">
            <!-- Index Table (similar to stock but simplified) -->
            <div class="desktop-view" v-loading="loading">
-              <el-table :data="filteredData" class="linear-table" style="width: 100%">
+              <el-table :data="tableData" class="linear-table" style="width: 100%">
                  <el-table-column label="标的" min-width="180">
                    <template #default="{ row }">
                      <div class="asset-cell">
@@ -193,7 +193,7 @@
            </div>
            
            <div class="mobile-view" v-loading="loading">
-              <div v-for="item in filteredData" :key="item.code" class="asset-card">
+              <div v-for="item in tableData" :key="item.code" class="asset-card">
                  <div class="card-header">
                     <span class="c-name">{{ item.name }}</span>
                     <span class="c-change" :class="getPriceClass(item.ohlcv.change_rate)">{{ formatPercent(item.ohlcv.change_rate) }}</span>
@@ -202,12 +202,23 @@
            </div>
         </el-tab-pane>
       </el-tabs>
+      <div class="pagination-row">
+        <el-pagination
+          layout="prev, pager, next, sizes, total"
+          :total="total"
+          :current-page="page"
+          :page-size="pageSize"
+          :page-sizes="[50, 100, 200]"
+          @current-change="handlePageChange"
+          @size-change="handlePageSizeChange"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { marketApi, type MarketComprehensiveItem } from '@/api/market'
 import { Search, CircleCheck } from '@element-plus/icons-vue'
 
@@ -216,24 +227,23 @@ const activeTab = ref<'stock' | 'index'>('stock')
 const targetDate = ref('')
 const searchKeyword = ref('')
 const tableData = ref<MarketComprehensiveItem[]>([])
-
-const filteredData = computed(() => {
-  if (!searchKeyword.value) return tableData.value
-  const kw = searchKeyword.value.toLowerCase()
-  return tableData.value.filter(item => 
-    item.code.toLowerCase().includes(kw) || 
-    item.name.toLowerCase().includes(kw)
-  )
-})
+const page = ref(1)
+const pageSize = ref(50)
+const total = ref(0)
+let searchTimer: number | undefined
 
 async function fetchData() {
   loading.value = true
   try {
     const res = await marketApi.getComprehensiveData({
       type: activeTab.value,
-      date: targetDate.value || undefined
+      date: targetDate.value || undefined,
+      page: page.value,
+      per_page: pageSize.value,
+      q: searchKeyword.value.trim() || undefined
     })
     tableData.value = res.items
+    total.value = res.total
     if (!targetDate.value) {
       targetDate.value = res.date
     }
@@ -242,6 +252,21 @@ async function fetchData() {
   } finally {
     loading.value = false
   }
+}
+
+function resetAndFetch() {
+  page.value = 1
+  fetchData()
+}
+
+function handlePageChange(nextPage: number) {
+  page.value = nextPage
+  fetchData()
+}
+
+function handlePageSizeChange(nextSize: number) {
+  pageSize.value = nextSize
+  resetAndFetch()
 }
 
 function formatNumber(val: number | null) {
@@ -268,6 +293,11 @@ function getScoreClass(score: number | null) {
 
 onMounted(() => {
   fetchData()
+})
+
+watch(searchKeyword, () => {
+  window.clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(resetAndFetch, 300)
 })
 </script>
 
@@ -492,6 +522,12 @@ onMounted(() => {
     &:hover, &.is-focus { box-shadow: 0 0 0 1px var(--color-brand) inset; }
   }
   .el-input__inner { color: var(--color-text-primary); font-size: 13px; }
+}
+
+.pagination-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
 }
 
 @media (max-width: 1024px) {
