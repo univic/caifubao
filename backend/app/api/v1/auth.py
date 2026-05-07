@@ -6,6 +6,7 @@ from flask_jwt_extended import (
     create_access_token,
     create_refresh_token,
     jwt_required,
+    get_jwt,
     get_jwt_identity,
 )
 from flask_security import (
@@ -46,8 +47,14 @@ def validate_password_strength(password):
 
 
 @auth_bp.route("/register", methods=["POST"])
+@jwt_required()
 def register():
-    """User registration"""
+    """User registration (admin only)"""
+    # Check admin role
+    claims = get_jwt()
+    roles = claims.get("role", [])
+    if "ADM" not in roles:
+        return jsonify({"message": "Admin access required"}), 403
     data = request.get_json()
 
     username = data.get("username")
@@ -135,24 +142,26 @@ def login():
     elif "99" in user.user_status:
         return jsonify({"message": "Account is locked"}), 403
 
-    # Reset failed login count on successful login
+    # Update user state and save once before token creation
     user.failed_login_count = 0
     user.locked_until = None
-
-    # Create tokens
-    access_token = create_access_token(
-        identity=str(user.id),
-        additional_claims={"username": user.username, "role": user.user_role},
-    )
-    refresh_token = create_refresh_token(identity=str(user.id))
-
-    # Update login info
     user.last_login_at = user.current_login_at
     user.last_login_ip = user.current_login_ip
     user.current_login_at = datetime.datetime.now()
     user.current_login_ip = request.remote_addr
     user.login_count = (user.login_count or 0) + 1
     user.save()
+
+    # Create tokens
+    access_token = create_access_token(
+        identity=str(user.id),
+        additional_claims={"username": user.username, "role": user.user_role},
+        expires_delta=datetime.timedelta(minutes=30),
+    )
+    refresh_token = create_refresh_token(
+        identity=str(user.id),
+        expires_delta=datetime.timedelta(days=7),
+    )
 
     return jsonify(
         {
