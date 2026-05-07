@@ -26,6 +26,7 @@ SIGNAL_JOB_MINUTE = 30
 
 # The quote_daily job family is required to have a SUCCESS record before signal runs
 DEPENDENCY_JOB_FAMILY = "quote_daily"
+DEPENDENCY_JOB_NAME = "datahub_quote_stock_daily"
 DEPENDENCY_JOB_HOUR = 18
 DEPENDENCY_JOB_MINUTE = 0
 
@@ -266,9 +267,9 @@ def main(argv: list[str] | None = None) -> None:
     # Check upstream dependency
     if not _check_dependency():
         logger.warning(
-            "Dependency check failed: no SUCCESS record found for job_family=%s "
+            "Dependency check failed: no SUCCESS record found for %s (stock+factors) "
             "at scheduled_at=%s. Skipping signal run.",
-            DEPENDENCY_JOB_FAMILY,
+            DEPENDENCY_JOB_NAME,
             scheduled_at,
         )
         context = job_run_helper.JobRunContext(
@@ -284,6 +285,9 @@ def main(argv: list[str] | None = None) -> None:
             summary={
                 "reason": "dependency_failed",
                 "dependency_job_family": DEPENDENCY_JOB_FAMILY,
+                "dependency_job_name": DEPENDENCY_JOB_NAME,
+                "dependency_target": "stock",
+                "dependency_include_factors": True,
                 "signal": args.signal,
                 "mode": args.mode,
             },
@@ -292,7 +296,7 @@ def main(argv: list[str] | None = None) -> None:
             json.dumps(
                 {
                     "status": "SKIPPED",
-                    "reason": f"No successful {DEPENDENCY_JOB_FAMILY} job for today",
+                    "reason": f"No successful {DEPENDENCY_JOB_NAME} (stock+factors) job for today",
                 }
             )
         )

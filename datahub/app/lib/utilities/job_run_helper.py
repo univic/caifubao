@@ -133,8 +133,18 @@ def latest_job_run(
     job_family: str,
     scheduled_at: datetime.datetime | None = None,
     statuses: list[str] | None = None,
+    job_name: str | None = None,
+    target: str | None = None,
+    include_factors: bool | None = None,
 ) -> DatahubJobRun | None:
-    query = DatahubJobRun.objects(job_family=job_family)
+    filters: dict = {"job_family": job_family}
+    if job_name is not None:
+        filters["job_name"] = job_name
+    if target is not None:
+        filters["target"] = target
+    if include_factors is not None:
+        filters["include_factors"] = include_factors
+    query = DatahubJobRun.objects(**filters)
     if scheduled_at is not None:
         query = query.filter(scheduled_at=normalize_datetime(scheduled_at))
     if statuses:
