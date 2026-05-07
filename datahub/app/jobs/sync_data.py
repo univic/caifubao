@@ -329,9 +329,6 @@ def main(argv: Sequence[str] | None = None) -> None:
 
         date_fields = COLLECTION_DATE_FIELDS.get(collection_name, ["date"])
         date_field = _find_date_field(source_coll, date_fields)
-        date_filter = (
-            _build_date_filter(date_field, parsed_dates) if parsed_dates else {}
-        )
 
         if parsed_dates and not date_field:
             if args.allow_full_sync:
@@ -341,6 +338,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     collection_name,
                     date_fields,
                 )
+                date_filter = {}
             else:
                 logger.error(
                     "Collection '%s': cannot determine date field from fields %s. "
@@ -350,6 +348,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                     date_fields,
                 )
                 sys.exit(1)
+        elif parsed_dates and date_field:
+            date_filter = _build_date_filter(date_field, parsed_dates)
+        else:
+            date_filter = {}
 
         summary = sync_collection(
             source_db,
