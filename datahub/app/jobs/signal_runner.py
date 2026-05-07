@@ -26,6 +26,8 @@ SIGNAL_JOB_MINUTE = 30
 
 # The quote_daily job family is required to have a SUCCESS record before signal runs
 DEPENDENCY_JOB_FAMILY = "quote_daily"
+DEPENDENCY_JOB_HOUR = 18
+DEPENDENCY_JOB_MINUTE = 0
 
 
 @dataclass(frozen=True)
@@ -132,11 +134,15 @@ def run_signal(
 
 
 def _check_dependency(scheduled_at: datetime.datetime | None) -> bool:
-    """Check if the required upstream job family has a SUCCESS record for today."""
+    """Check if the required upstream job family has a SUCCESS record for today.
+
+    Uses the upstream job's schedule time (DEPENDENCY_JOB_HOUR/MINUTE),
+    not this job's own schedule, to match the upstream job's recorded
+    scheduled_at value.
+    """
     if scheduled_at is None:
-        # If no scheduled_at, derive one from the default schedule time
         scheduled_at = job_run_helper.compute_daily_schedule_at(
-            SIGNAL_JOB_HOUR, SIGNAL_JOB_MINUTE
+            DEPENDENCY_JOB_HOUR, DEPENDENCY_JOB_MINUTE
         )
 
     latest = job_run_helper.latest_job_run(
