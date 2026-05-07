@@ -331,8 +331,18 @@ spec:
             command: ["python", "-m", "app.jobs.scoring_runner"]
             args:
             - run
-            - --horizon
-            - "5"
+            - --job-name
+            - datahub_scoring_daily
+            - --job-family
+            - scoring_daily
+            - --trigger
+            - cron
+            - --source
+            - k8s-cronjob
+            - --scheduled-hour
+            - "18"
+            - --scheduled-minute
+            - "35"
             env:
             - name: MONGODB_HOST
               valueFrom:
