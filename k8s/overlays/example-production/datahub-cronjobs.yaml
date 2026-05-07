@@ -233,6 +233,18 @@ spec:
             - ma-cross
             - --mode
             - stale
+            - --job-name
+            - datahub_signal_daily
+            - --job-family
+            - signal_daily
+            - --trigger
+            - cron
+            - --source
+            - k8s-cronjob
+            - --scheduled-hour
+            - "18"
+            - --scheduled-minute
+            - "30"
             env:
             - name: MONGODB_HOST
               valueFrom:
