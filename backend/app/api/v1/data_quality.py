@@ -91,7 +91,9 @@ def _is_data_quality_supported_stock(stock):
 
 
 def _load_active_stocks(query_text=""):
-    query = IndividualStock.objects(active_status=0)
+    query = IndividualStock.objects(active_status=0).only(
+        "code", "name", "data_capabilities", "active_status"
+    )
     query_text = (query_text or "").strip()
     if query_text:
         normalized = query_text.lower()
@@ -111,11 +113,7 @@ def _load_active_stocks(query_text=""):
                 continue
             result.append(stock)
         return result
-    return [
-        stock
-        for stock in query.order_by("code")
-        if _is_data_quality_supported_stock(stock)
-    ]
+    return [stock for stock in query if _is_data_quality_supported_stock(stock)]
 
 
 def _build_stock_scope():
@@ -139,28 +137,30 @@ def _is_target_asset(row):
 
 
 def _load_asset_status_map(codes):
-    if not codes:
+    if codes is not None and not codes:
         return {}
-    status_rows = DataAssetStatus.objects(
-        code__in=codes,
-        asset_name__in=tuple(TARGET_META_TYPES.keys()),
-    ).only(
-        "code",
-        "object_type",
-        "asset_type",
-        "asset_name",
-        "latest_data_date",
-        "data_count",
-        "status",
-        "status_reason",
-        "last_calculated_at",
-    )
-
+    code_set = set(codes) if codes is not None else None
     status_map = {}
-    for row in status_rows:
-        if not _is_target_asset(row):
-            continue
-        status_map[(row.code, row.asset_name)] = row
+    for asset_name, asset_type in TARGET_META_TYPES.items():
+        query = DataAssetStatus.objects(
+            object_type="individual_stock",
+            asset_type=asset_type,
+            asset_name=asset_name,
+        )
+        if code_set is not None:
+            query = query.filter(code__in=list(code_set))
+        status_rows = query.only(
+            "code",
+            "asset_type",
+            "asset_name",
+            "latest_data_date",
+            "data_count",
+            "status",
+            "status_reason",
+            "last_calculated_at",
+        )
+        for row in status_rows:
+            status_map[(row.code, row.asset_name)] = row
     return status_map
 
 
@@ -393,7 +393,7 @@ def _build_items(query_text=""):
 
     stage_started_at = time.perf_counter()
     codes = [stock.code for stock in stocks]
-    asset_status_map = _load_asset_status_map(codes)
+    asset_status_map = _load_asset_status_map(codes if query_text else None)
     _log_elapsed(
         "load_asset_status_map",
         stage_started_at,

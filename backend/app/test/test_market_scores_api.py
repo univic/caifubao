@@ -8,8 +8,33 @@ class FakeQuery:
     def only(self, *_fields):
         return self
 
+    def no_dereference(self):
+        return self
+
     def order_by(self, *_fields):
         return self
+
+    def filter(self, **kwargs):
+        rows = self.rows
+        for key, value in kwargs.items():
+            if key.endswith("__in"):
+                field = key.removesuffix("__in")
+                rows = [row for row in rows if getattr(row, field) in value]
+            else:
+                rows = [row for row in rows if getattr(row, key) == value]
+        self.rows = rows
+        return self
+
+    def skip(self, count):
+        self.rows = self.rows[count:]
+        return self
+
+    def limit(self, count):
+        self.rows = self.rows[:count]
+        return self
+
+    def count(self):
+        return len(self.rows)
 
     def first(self):
         return self.rows[0] if self.rows else None

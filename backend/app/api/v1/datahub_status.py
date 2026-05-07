@@ -2,16 +2,21 @@
 # Datahub status API Blueprint - quick data asset / quote overview
 
 import datetime
+import threading
+import time
 from flask import Blueprint, jsonify
 
 from app.model.data_asset_status import DataAssetStatus
-from app.model.stock import FinanceMarket, IndividualStock, StockIndex, StockDailyQuote
+from app.model.stock import FinanceMarket, IndividualStock, StockIndex
 from app.utilities.trading_day_helper import (
     determine_most_recent_previous_complete_trading_day,
     determine_pervious_trading_day,
 )
 
 datahub_status_bp = Blueprint("datahub_status", __name__, url_prefix="/api/datahub")
+STATUS_CACHE_TTL_SECONDS = 60
+_status_cache_lock = threading.RLock()
+_status_cache = {"expires_at": 0, "payload": None}
 
 
 def _format_datetime(value):
@@ -74,27 +79,6 @@ def _classify_asset_status(
     return "expired"
 
 
-def _get_latest_quote_date(codes):
-    if not codes:
-        return None
-
-    result = StockDailyQuote.objects(code__in=codes).aggregate(
-        [
-            {
-                "$group": {
-                    "_id": None,
-                    "latest_quote_date": {"$max": "$date"},
-                    "quote_count": {"$sum": 1},
-                }
-            }
-        ]
-    )
-    row = next(iter(result), None)
-    if not row:
-        return None, 0
-    return row.get("latest_quote_date"), row.get("quote_count", 0)
-
-
 def _get_latest_asset_status(object_type):
     status_qs = DataAssetStatus.objects(
         object_type=object_type, asset_type="quote", asset_name="daily_quote"
@@ -104,12 +88,30 @@ def _get_latest_asset_status(object_type):
     return latest_date, status_qs.count()
 
 
+def _get_quote_status_data_count(object_type):
+    result = DataAssetStatus.objects(
+        object_type=object_type, asset_type="quote", asset_name="daily_quote"
+    ).aggregate(
+        [
+            {
+                "$group": {
+                    "_id": None,
+                    "quote_count": {"$sum": "$data_count"},
+                }
+            }
+        ]
+    )
+    row = next(iter(result), None)
+    return row.get("quote_count", 0) if row else 0
+
+
 def _build_category_status(stock_model, object_type, reference_dates):
     codes = _get_codes(stock_model)
-    latest_quote_date, latest_quote_count = _get_latest_quote_date(codes)
     latest_asset_status_date, asset_status_records_count = _get_latest_asset_status(
         object_type
     )
+    latest_quote_date = latest_asset_status_date
+    latest_quote_count = _get_quote_status_data_count(object_type)
     latest_complete_trading_day = reference_dates["latest_complete_trading_day"]
     previous_complete_trading_day = reference_dates["previous_complete_trading_day"]
 
@@ -175,4 +177,12 @@ def _build_status_payload():
 @datahub_status_bp.route("/status", methods=["GET"])
 def get_datahub_status():
     """Return a lightweight data asset / latest quote summary."""
-    return jsonify(_build_status_payload()), 200
+    now = time.monotonic()
+    with _status_cache_lock:
+        if _status_cache["payload"] and _status_cache["expires_at"] > now:
+            return jsonify(_status_cache["payload"]), 200
+
+        payload = _build_status_payload()
+        _status_cache["payload"] = payload
+        _status_cache["expires_at"] = time.monotonic() + STATUS_CACHE_TTL_SECONDS
+        return jsonify(payload), 200

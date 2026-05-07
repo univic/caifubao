@@ -3,11 +3,19 @@
 
 import datetime
 import logging
+import threading
+import time
 
 from flask import Blueprint, jsonify, request
+from mongoengine import Q
 
+from app.model.data_asset_status import DataAssetStatus
 from app.model.stock import IndividualStock, StockIndex, StockDailyQuote
-from app.model.scoring import StockScorePrediction
+
+try:
+    from app.model.scoring import StockScorePrediction
+except ImportError:  # pragma: no cover - compatibility with older dev images
+    from app.model.scoring import StockDailyScore as StockScorePrediction
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +27,16 @@ MAJOR_INDEXES = [
     ("sz399006", "创业板指"),
     ("sh000688", "科创50"),
 ]
+
+DAILY_QUOTE_STATUS_FILTER = {
+    "asset_type": "quote",
+    "asset_name": "daily_quote",
+}
+OVERVIEW_CACHE_TTL_SECONDS = 60
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 200
+_overview_cache_lock = threading.RLock()
+_overview_cache = {"expires_at": 0, "payload": None}
 
 
 def _format_datetime(value):
@@ -44,6 +62,45 @@ def _parse_horizon(value, default=5):
     return horizon if horizon in {5, 20, 60} else default
 
 
+def _parse_int(value, default, minimum=1, maximum=MAX_PAGE_SIZE):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(min(parsed, maximum), minimum)
+
+
+def _latest_quote_date_for_object_type(object_type):
+    latest = (
+        DataAssetStatus.objects(
+            object_type=object_type,
+            **DAILY_QUOTE_STATUS_FILTER,
+        )
+        .only("latest_data_date")
+        .order_by("-latest_data_date")
+        .first()
+    )
+    return latest.latest_data_date if latest else None
+
+
+def _latest_quote_date_for_code(code, object_type=None):
+    query = {
+        "code": code,
+        **DAILY_QUOTE_STATUS_FILTER,
+    }
+    if object_type:
+        query["object_type"] = object_type
+
+    status = DataAssetStatus.objects(**query).only("latest_data_date").first()
+    if status and status.latest_data_date:
+        return status.latest_data_date
+
+    latest_quote = (
+        StockDailyQuote.objects(code=code).only("date").order_by("-date").first()
+    )
+    return latest_quote.date if latest_quote else None
+
+
 def _serialize_score_summary(score_doc):
     if score_doc is None:
         return {
@@ -56,31 +113,62 @@ def _serialize_score_summary(score_doc):
             "model_version": None,
         }
     return {
-        "score": score_doc.score,
-        "rank": score_doc.rank,
-        "percentile": score_doc.percentile,
-        "recommendation": score_doc.recommendation,
-        "status": score_doc.status,
-        "verification": score_doc.verification or {},
-        "model_version": score_doc.model_version,
+        "score": getattr(score_doc, "score", 0.0),
+        "rank": getattr(score_doc, "rank", None),
+        "percentile": getattr(score_doc, "percentile", None),
+        "recommendation": getattr(score_doc, "recommendation", "NONE"),
+        "status": getattr(score_doc, "status", None),
+        "verification": getattr(score_doc, "verification", {}) or {},
+        "model_version": getattr(score_doc, "model_version", None),
     }
+
+
+def _asset_query(asset_type, query_text=""):
+    if asset_type == "stock":
+        query = IndividualStock.objects(active_status=0)
+    else:
+        query = StockIndex.objects()
+
+    query_text = (query_text or "").strip()
+    if query_text:
+        query = query.filter(
+            Q(code__icontains=query_text.lower()) | Q(name__icontains=query_text)
+        )
+    return query
 
 
 def _serialize_index(code, fallback_name):
     stock = StockIndex.objects(code=code).only("code", "name").first()
-    latest_quote = (
-        StockDailyQuote.objects(code=code)
-        .only(
-            "date",
-            "open",
-            "close",
-            "previous_close",
-            "high",
-            "low",
+    latest_date = _latest_quote_date_for_code(code, "stock_index")
+    latest_quote = None
+    if latest_date:
+        latest_quote = (
+            StockDailyQuote.objects(code=code, date=latest_date)
+            .only(
+                "date",
+                "open",
+                "close",
+                "previous_close",
+                "high",
+                "low",
+            )
+            .first()
         )
-        .order_by("-date")
-        .first()
-    )
+
+    if not latest_quote:
+        latest_quote = (
+            StockDailyQuote.objects(code=code)
+            .only(
+                "date",
+                "open",
+                "close",
+                "previous_close",
+                "high",
+                "low",
+            )
+            .order_by("-date")
+            .first()
+        )
 
     if not latest_quote:
         return {
@@ -144,31 +232,30 @@ def _build_market_breadth():
             "limitDown": 0,
         }
 
-    pipeline = [
-        {"$match": {"code": {"$in": stock_codes}}},
-        {"$sort": {"code": 1, "date": -1}},
-        {
-            "$group": {
-                "_id": "$code",
-                "close": {"$first": "$close"},
-                "previous_close": {"$first": "$previous_close"},
-                "change_rate": {"$first": "$change_rate"},
-                "trade_status": {"$first": "$trade_status"},
-            }
-        },
-    ]
+    latest_date = _latest_quote_date_for_object_type("individual_stock")
+    if not latest_date:
+        return {
+            "advances": 0,
+            "declines": 0,
+            "limitUp": 0,
+            "limitDown": 0,
+        }
+
+    quotes = (
+        StockDailyQuote.objects(code__in=stock_codes, date=latest_date)
+        .only("close", "previous_close", "change_rate", "trade_status")
+        .no_dereference()
+    )
 
     advances = declines = limit_up = limit_down = 0
-    for row in StockDailyQuote.objects.aggregate(pipeline):
-        if row.get("trade_status") == 0:
+    for quote in quotes:
+        if quote.trade_status == 0:
             continue
 
-        previous_close = row.get("previous_close") or row.get("close") or 0
-        change_rate = row.get("change_rate")
+        previous_close = quote.previous_close or quote.close or 0
+        change_rate = quote.change_rate
         if change_rate is None and previous_close:
-            change_rate = (
-                ((row.get("close") or 0) - previous_close) / previous_close * 100
-            )
+            change_rate = ((quote.close or 0) - previous_close) / previous_close * 100
 
         if change_rate is None:
             continue
@@ -197,29 +284,26 @@ def _build_top_movers(limit=5):
         for stock in IndividualStock.objects(active_status=0).only("code", "name")
     }
 
-    pipeline = [
-        {"$match": {"code": {"$in": list(stock_map.keys())}}},
-        {"$sort": {"code": 1, "date": -1}},
-        {
-            "$group": {
-                "_id": "$code",
-                "close": {"$first": "$close"},
-                "change_rate": {"$first": "$change_rate"},
-            }
-        },
-    ]
+    latest_date = _latest_quote_date_for_object_type("individual_stock")
+    if not latest_date:
+        return [], []
+
+    quotes = (
+        StockDailyQuote.objects(code__in=list(stock_map.keys()), date=latest_date)
+        .only("code", "close", "change_rate")
+        .no_dereference()
+    )
 
     movers = []
-    for row in StockDailyQuote.objects.aggregate(pipeline):
-        change_pct = row.get("change_rate")
+    for quote in quotes:
+        change_pct = quote.change_rate
         if change_pct is None:
             continue
-        code = row.get("_id")
         movers.append(
             {
-                "code": code,
-                "name": stock_map.get(code, code),
-                "price": _to_number(row.get("close")),
+                "code": quote.code,
+                "name": stock_map.get(quote.code, quote.code),
+                "price": _to_number(quote.close),
                 "changePct": _to_number(change_pct),
             }
         )
@@ -254,7 +338,62 @@ def _build_payload():
 @market_bp.route("/overview", methods=["GET"])
 def get_market_overview():
     """Return a lightweight market overview for the dashboard."""
-    return jsonify(_build_payload()), 200
+    now = time.monotonic()
+    with _overview_cache_lock:
+        if _overview_cache["payload"] and _overview_cache["expires_at"] > now:
+            return jsonify(_overview_cache["payload"]), 200
+
+        payload = _build_payload()
+        _overview_cache["payload"] = payload
+        _overview_cache["expires_at"] = time.monotonic() + OVERVIEW_CACHE_TTL_SECONDS
+        return jsonify(payload), 200
+
+
+def _resolve_market_target_date(asset_type, date_str):
+    if date_str:
+        return datetime.datetime.strptime(date_str, "%Y-%m-%d")
+
+    object_type = "individual_stock" if asset_type == "stock" else "stock_index"
+    latest_date = _latest_quote_date_for_object_type(object_type)
+    return latest_date or datetime.datetime.now()
+
+
+def _serialize_market_item(code, name, quote, score_map, primary_horizon, display_rank):
+    horizon_scores = {
+        str(horizon): _serialize_score_summary(score_map.get((code, horizon)))
+        for horizon in (5, 20, 60)
+    }
+    primary_score = horizon_scores[str(primary_horizon)]
+
+    verification = primary_score["verification"] or {}
+    return {
+        "code": code,
+        "name": name,
+        "ohlcv": {
+            "open": _to_number(quote.open) if quote else None,
+            "high": _to_number(quote.high) if quote else None,
+            "low": _to_number(quote.low) if quote else None,
+            "close": _to_number(quote.close) if quote else None,
+            "volume": _to_number(quote.volume) if quote else None,
+            "change_rate": _to_number(quote.change_rate) if quote else None,
+        },
+        "evaluation": {
+            "primary_horizon": primary_horizon,
+            "score": primary_score["score"],
+            "rank": primary_score["rank"] or display_rank,
+            "display_rank": display_rank,
+            "percentile": primary_score["percentile"],
+            "recommendation": primary_score["recommendation"],
+            "basis": {"signals": [], "trend": []},
+            "status": primary_score["status"],
+            "verification": verification,
+            "model_version": primary_score["model_version"],
+            "profit_percentage_t5": verification.get("profit_percentage_t5"),
+            "max_profit_percentage": verification.get("max_profit_percentage"),
+            "is_effective": verification.get("is_effective"),
+            "scores": horizon_scores,
+        },
+    }
 
 
 @market_bp.route("/comprehensive", methods=["GET"])
@@ -263,84 +402,86 @@ def get_comprehensive_data():
     asset_type = request.args.get("type", "stock")
     date_str = request.args.get("date")
     primary_horizon = _parse_horizon(request.args.get("horizon"), default=5)
+    page = _parse_int(request.args.get("page"), 1, minimum=1, maximum=100000)
+    per_page = _parse_int(
+        request.args.get("per_page"),
+        DEFAULT_PAGE_SIZE,
+        minimum=1,
+        maximum=MAX_PAGE_SIZE,
+    )
+    query_text = request.args.get("q", "")
 
-    if date_str:
-        try:
-            target_date = datetime.datetime.strptime(date_str, "%Y-%m-%d")
-        except ValueError:
-            return jsonify({"success": False, "message": "Invalid date format"}), 400
-    else:
-        # Auto-detect latest date from quotes
-        latest_quote = StockDailyQuote.objects.order_by("-date").first()
-        target_date = latest_quote.date if latest_quote else datetime.datetime.now()
+    try:
+        target_date = _resolve_market_target_date(asset_type, date_str)
+    except ValueError:
+        return jsonify({"success": False, "message": "Invalid date format"}), 400
 
     # Normalize to midnight for comparison
     target_date = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    offset = (page - 1) * per_page
 
-    # 1. Fetch Assets
-    if asset_type == "stock":
-        assets = IndividualStock.objects(active_status=0).only("code", "name")
+    assets_query = _asset_query(asset_type, query_text).only("code", "name")
+    total = assets_query.count()
+    all_matching_codes = None
+    score_query = StockScorePrediction.objects(
+        date=target_date, horizon=primary_horizon
+    )
+    if query_text:
+        all_matching_assets = list(assets_query)
+        all_matching_codes = [asset.code for asset in all_matching_assets]
+        asset_name_map = {asset.code: asset.name for asset in all_matching_assets}
+        score_query = score_query.filter(stock_code__in=all_matching_codes)
     else:
-        assets = StockIndex.objects().only("code", "name")
+        asset_name_map = {}
 
-    asset_map = {a.code: a.name for a in assets}
-    codes = list(asset_map.keys())
+    primary_scores = list(
+        score_query.order_by("-score", "stock_code").skip(offset).limit(per_page)
+    )
+    if primary_scores:
+        page_codes = [score.stock_code for score in primary_scores]
+        if not asset_name_map:
+            page_assets = list(
+                _asset_query(asset_type)
+                .filter(code__in=page_codes)
+                .only("code", "name")
+            )
+            asset_name_map = {asset.code: asset.name for asset in page_assets}
+    else:
+        page_assets = list(assets_query.order_by("code").skip(offset).limit(per_page))
+        page_codes = [asset.code for asset in page_assets]
+        asset_name_map.update({asset.code: asset.name for asset in page_assets})
 
-    # 2. Fetch Quotes for this date
-    quotes = StockDailyQuote.objects(code__in=codes, date=target_date)
+    quotes = (
+        StockDailyQuote.objects(code__in=page_codes, date=target_date)
+        .only("code", "open", "high", "low", "close", "volume", "change_rate")
+        .no_dereference()
+    )
     quote_map = {q.code: q for q in quotes}
 
-    # 3. Fetch multi-horizon scores for this date
-    scores = StockScorePrediction.objects(stock_code__in=codes, date=target_date)
-    score_map = {(s.stock_code, s.horizon): s for s in scores}
+    scores = StockScorePrediction.objects(stock_code__in=page_codes, date=target_date)
+    score_map = {(s.stock_code, getattr(s, "horizon", 5)): s for s in scores}
 
-    # 4. Merge and Calculate Ranks
     items = []
-    for code in codes:
-        q = quote_map.get(code)
-        horizon_scores = {
-            str(horizon): _serialize_score_summary(score_map.get((code, horizon)))
-            for horizon in (5, 20, 60)
-        }
-        primary_score = horizon_scores[str(primary_horizon)]
-
+    for index, code in enumerate(page_codes, start=offset + 1):
         items.append(
-            {
-                "code": code,
-                "name": asset_map.get(code),
-                "ohlcv": {
-                    "open": _to_number(q.open) if q else None,
-                    "high": _to_number(q.high) if q else None,
-                    "low": _to_number(q.low) if q else None,
-                    "close": _to_number(q.close) if q else None,
-                    "volume": _to_number(q.volume) if q else None,
-                    "change_rate": _to_number(q.change_rate) if q else None,
-                },
-                "evaluation": {
-                    "primary_horizon": primary_horizon,
-                    "score": primary_score["score"],
-                    "rank": primary_score["rank"],
-                    "percentile": primary_score["percentile"],
-                    "recommendation": primary_score["recommendation"],
-                    "status": primary_score["status"],
-                    "verification": primary_score["verification"],
-                    "model_version": primary_score["model_version"],
-                    "scores": horizon_scores,
-                },
-            }
+            _serialize_market_item(
+                code,
+                asset_name_map.get(code, code),
+                quote_map.get(code),
+                score_map,
+                primary_horizon,
+                index,
+            )
         )
-
-    # Sort by selected horizon score descending for the market table.
-    items.sort(key=lambda x: x["evaluation"]["score"], reverse=True)
-    for i, item in enumerate(items):
-        item["evaluation"]["display_rank"] = i + 1
 
     return (
         jsonify(
             {
                 "success": True,
                 "date": target_date.strftime("%Y-%m-%d"),
-                "total": len(items),
+                "total": total,
+                "page": page,
+                "per_page": per_page,
                 "items": items,
             }
         ),

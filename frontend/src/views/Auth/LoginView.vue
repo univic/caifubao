@@ -131,8 +131,11 @@ async function handleLogin() {
     try {
       await userStore.doLogin(form.username, form.password)
       ElMessage.success('登录成功')
-      const redirect = (route.query.redirect as string) || '/app'
-      router.push(redirect)
+      const redirect =
+        typeof route.query.redirect === 'string' && route.query.redirect !== '/login'
+          ? route.query.redirect
+          : '/'
+      router.replace(redirect)
     } catch (error: any) {
       let errorMessage = '登录失败'
       if (error.response) {

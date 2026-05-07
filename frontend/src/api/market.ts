@@ -14,8 +14,9 @@ export interface MarketComprehensiveItem {
   evaluation: {
     score: number | null
     rank: number
+    display_rank: number
     recommendation: string
-    basis: any
+    basis?: any
     status: string | null
     profit_percentage_t5: number | null
     max_profit_percentage: number | null
@@ -27,11 +28,19 @@ export interface MarketComprehensiveResponse {
   success: boolean
   date: string
   total: number
+  page: number
+  per_page: number
   items: MarketComprehensiveItem[]
 }
 
 export const marketApi = {
-  getComprehensiveData(params: { date?: string; type: 'stock' | 'index' }) {
+  getComprehensiveData(params: {
+    date?: string
+    type: 'stock' | 'index'
+    page?: number
+    per_page?: number
+    q?: string
+  }) {
     return api.get<any, MarketComprehensiveResponse>('/market/comprehensive', { params })
   },
   
