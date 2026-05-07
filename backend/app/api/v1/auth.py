@@ -6,7 +6,6 @@ from flask_jwt_extended import (
     create_access_token,
     create_refresh_token,
     jwt_required,
-    get_jwt,
     get_jwt_identity,
 )
 from flask_security import (
@@ -29,64 +28,6 @@ security = Security()
 
 def init_auth(app):
     security.init_app(app, user_datastore)
-
-
-def validate_password_strength(password):
-    """Validate password strength"""
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters long"
-    if not any(c.isupper() for c in password):
-        return False, "Password must contain at least one uppercase letter"
-    if not any(c.islower() for c in password):
-        return False, "Password must contain at least one lowercase letter"
-    if not any(c.isdigit() for c in password):
-        return False, "Password must contain at least one digit"
-    if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password):
-        return False, "Password must contain at least one special character"
-    return True, None
-
-
-@auth_bp.route("/register", methods=["POST"])
-@jwt_required()
-def register():
-    """User registration (admin only)"""
-    # Check admin role
-    claims = get_jwt()
-    roles = claims.get("role", [])
-    if "ADM" not in roles:
-        return jsonify({"message": "Admin access required"}), 403
-    data = request.get_json()
-
-    username = data.get("username")
-    email = data.get("email")
-    password = data.get("password")
-
-    if not all([username, email, password]):
-        return jsonify({"message": "Missing required fields"}), 400
-
-    # Validate password strength
-    is_valid, error_msg = validate_password_strength(password)
-    if not is_valid:
-        return jsonify({"message": error_msg}), 400
-
-    # Check if user exists
-    if User.objects(username=username).first():
-        return jsonify({"message": "Username already exists"}), 400
-
-    if User.objects(email=email).first():
-        return jsonify({"message": "Email already exists"}), 400
-
-    # Create user
-    user = User(
-        username=username,
-        email=email,
-        password_hash=hash_password(password),
-        user_status=["20"],  # Active
-        user_role=["USER"],
-    )
-    user.save()
-
-    return jsonify({"message": "Registration successful"}), 201
 
 
 MAX_FAILED_LOGIN_ATTEMPTS = 5
