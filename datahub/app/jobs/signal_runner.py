@@ -133,21 +133,20 @@ def run_signal(
     return result
 
 
-def _check_dependency(scheduled_at: datetime.datetime | None) -> bool:
+def _check_dependency() -> bool:
     """Check if the required upstream job family has a SUCCESS record for today.
 
-    Uses the upstream job's schedule time (DEPENDENCY_JOB_HOUR/MINUTE),
-    not this job's own schedule, to match the upstream job's recorded
-    scheduled_at value.
+    Always uses the upstream job's schedule time (DEPENDENCY_JOB_HOUR/MINUTE),
+    regardless of this job's own scheduled_at, to correctly match the upstream
+    job's recorded scheduled_at value.
     """
-    if scheduled_at is None:
-        scheduled_at = job_run_helper.compute_daily_schedule_at(
-            DEPENDENCY_JOB_HOUR, DEPENDENCY_JOB_MINUTE
-        )
+    upstream_scheduled_at = job_run_helper.compute_daily_schedule_at(
+        DEPENDENCY_JOB_HOUR, DEPENDENCY_JOB_MINUTE
+    )
 
     latest = job_run_helper.latest_job_run(
         job_family=DEPENDENCY_JOB_FAMILY,
-        scheduled_at=scheduled_at,
+        scheduled_at=upstream_scheduled_at,
         statuses=[job_run_helper.STATUS_SUCCESS],
     )
     return latest is not None
@@ -265,7 +264,7 @@ def main(argv: list[str] | None = None) -> None:
         scheduled_at = job_run_helper.utc_now_naive()
 
     # Check upstream dependency
-    if not _check_dependency(scheduled_at):
+    if not _check_dependency():
         logger.warning(
             "Dependency check failed: no SUCCESS record found for job_family=%s "
             "at scheduled_at=%s. Skipping signal run.",
