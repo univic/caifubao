@@ -86,11 +86,19 @@ def _build_date_filter(
     date_field: str | None,
     dates: list[datetime.datetime] | None,
 ) -> dict[str, Any]:
-    """Build a MongoDB query filter for the given dates."""
+    """Build a MongoDB query filter for the given dates.
+
+    Returns an empty dict if no dates are provided.
+    Raises ValueError if dates are given but date_field is None
+    (caller should guard against this before calling).
+    """
     if not dates:
         return {}
     if date_field is None:
-        return {}
+        raise ValueError(
+            "date_field is None but dates were provided. "
+            "This should not happen — caller must validate."
+        )
     if len(dates) == 1:
         d = dates[0]
         return {
@@ -274,6 +282,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Number of documents per batch (default: 500).",
     )
     parser.add_argument(
+        "--allow-full-sync",
+        action="store_true",
+        help="Allow full collection sync when --date is given but no date field is detected. "
+        "Without this flag, the sync will abort if --date is specified but the date field "
+        "cannot be determined for a collection.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -319,11 +334,22 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
 
         if parsed_dates and not date_field:
-            logger.warning(
-                "Collection '%s': could not determine date field, "
-                "syncing all documents (no date filter applied).",
-                collection_name,
-            )
+            if args.allow_full_sync:
+                logger.warning(
+                    "Collection '%s': could not determine date field from %s, "
+                    "syncing all documents (--allow-full-sync is set).",
+                    collection_name,
+                    date_fields,
+                )
+            else:
+                logger.error(
+                    "Collection '%s': cannot determine date field from fields %s. "
+                    "Aborting to prevent unintentional full sync. "
+                    "Use --allow-full-sync to override.",
+                    collection_name,
+                    date_fields,
+                )
+                sys.exit(1)
 
         summary = sync_collection(
             source_db,
