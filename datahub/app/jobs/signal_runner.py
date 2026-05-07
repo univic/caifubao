@@ -147,6 +147,9 @@ def _check_dependency() -> bool:
 
     latest = job_run_helper.latest_job_run(
         job_family=DEPENDENCY_JOB_FAMILY,
+        job_name=DEPENDENCY_JOB_NAME,
+        target="stock",
+        include_factors=True,
         scheduled_at=upstream_scheduled_at,
         statuses=[job_run_helper.STATUS_SUCCESS],
     )

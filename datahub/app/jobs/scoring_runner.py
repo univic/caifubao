@@ -18,6 +18,7 @@ SCORING_JOB_MINUTE = 35
 
 # The signal_daily job family is required to have a SUCCESS record before scoring runs
 DEPENDENCY_JOB_FAMILY = "signal_daily"
+DEPENDENCY_JOB_NAME = "datahub_signal_daily"
 DEPENDENCY_JOB_HOUR = 18
 DEPENDENCY_JOB_MINUTE = 30
 
@@ -155,8 +156,9 @@ def _check_dependency() -> bool:
 
     latest = job_run_helper.latest_job_run(
         job_family=DEPENDENCY_JOB_FAMILY,
+        job_name=DEPENDENCY_JOB_NAME,
         scheduled_at=upstream_scheduled_at,
-        statuses=["SUCCESS"],
+        statuses=[job_run_helper.STATUS_SUCCESS],
     )
     return latest is not None
 
