@@ -102,7 +102,7 @@ def mock_baostock_module():
 @pytest.fixture
 def mock_freshness_meta_helper():
     """Mock freshness_meta_helper for tests."""
-    with patch("app.utilities.freshness_meta_helper") as mock:
+    with patch("app.lib.utilities.freshness_meta_helper") as mock:
         mock.read_freshness_meta.return_value = None
         yield mock
 
@@ -110,7 +110,7 @@ def mock_freshness_meta_helper():
 @pytest.fixture
 def mock_stock_code_helper():
     """Mock stock_code_helper for tests."""
-    with patch("app.utilities.stock_code_helper") as mock:
+    with patch("app.lib.utilities.stock_code_helper") as mock:
         mock.add_market_prefix.side_effect = lambda x: (
             f"sh{x}" if x.startswith("6") else f"sz{x}"
         )

@@ -9,7 +9,7 @@ from multiprocessing import Pool, Manager
 from importlib import import_module
 from app.conf import app_config
 from app.model.task import Task
-from app.utilities import trading_day_helper
+from app.lib.utilities import trading_day_helper
 from app.lib.db_watcher.mongoengine_tool import mongo_watcher
 from app.lib.task_controller.common import (
     convert_kwarg_to_dict,

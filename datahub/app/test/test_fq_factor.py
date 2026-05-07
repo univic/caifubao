@@ -122,9 +122,9 @@ def test_update_code_skips_unsupported_fq_factor_stock():
 
 
 def test_run_stock_job_includes_fq_factor_phase():
-    source = Path(
-        "/Users/wenfengzhong/develop/caifubao/datahub/app/lib/datahub/processors/china_a_stock.py"
-    ).read_text()
+    from app.lib.datahub.processors import china_a_stock
+
+    source = Path(china_a_stock.__file__).read_text()
 
     assert '"check_prerequisite", self.check_prerequisite' in source
     assert '"check_stock_data_integrity", self.check_stock_data_integrity' in source

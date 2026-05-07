@@ -7,7 +7,7 @@ from app.lib.datahub.data_source import interface
 from app.lib.datahub.data_source.interface.baostock_interface import (
     BaostockInterfaceManager,
 )
-from app.utilities import trading_day_helper, performance_helper, stock_code_helper
+from app.lib.utilities import trading_day_helper, performance_helper, stock_code_helper
 
 
 logger = logging.getLogger(__name__)

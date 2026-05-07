@@ -1,8 +1,8 @@
 import re
 from app.lib.db_watcher.mongoengine_tool import mongo_watcher
-from app.utilities.progress_bar import progress_bar
+from app.lib.utilities.progress_bar import progress_bar
 from app.model.stock import StockIndex, IndividualStock, StockDailyQuote
-from app.utilities import trading_day_helper, freshness_meta_helper
+from app.lib.utilities import trading_day_helper, freshness_meta_helper
 
 
 class DataIntegrityWatcher(object):

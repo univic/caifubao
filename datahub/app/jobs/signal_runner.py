@@ -293,6 +293,10 @@ def main(argv: list[str] | None = None) -> None:
         )
         return
 
+    # Validate arguments before creating job run
+    if args.limit is not None and args.limit < 1:
+        raise ValueError("--limit must be greater than 0.")
+
     # Create job run tracking
     context = job_run_helper.JobRunContext(
         job_name=args.job_name,
@@ -305,9 +309,6 @@ def main(argv: list[str] | None = None) -> None:
     job_run = job_run_helper.create_job_run(context)
 
     try:
-        if args.limit is not None and args.limit < 1:
-            raise SystemExit("--limit must be greater than 0.")
-
         result = run_signal(
             args.signal,
             mode=args.mode,

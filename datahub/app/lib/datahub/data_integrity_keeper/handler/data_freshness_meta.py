@@ -1,8 +1,8 @@
 from app.lib.db_watcher.mongoengine_tool import mongo_watcher
 from app.lib.db_watcher import mongoengine_tool
-from app.utilities.progress_bar import progress_bar
+from app.lib.utilities.progress_bar import progress_bar
 from app.model.stock import StockIndex, IndividualStock, BasicStock, StockDailyQuote
-from app.utilities import freshness_meta_helper
+from app.lib.utilities import freshness_meta_helper
 
 
 def calibrate_daily_quote_meta():

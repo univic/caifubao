@@ -57,36 +57,38 @@ def run_scoring(args) -> dict:
         "horizons": horizons,
         "results": results,
         "pulled_total": sum(
-            r.get("total", 0) if isinstance(r, dict) else 0 for r in results.values()
+            r.get("scored_count", 0) if isinstance(r, dict) else 0
+            for r in results.values()
         ),
         "written_total": sum(
-            r.get("written", 0) if isinstance(r, dict) else 0 for r in results.values()
+            r.get("scored_count", 0) if isinstance(r, dict) else 0
+            for r in results.values()
         ),
     }
     return summary
 
 
-def run_verification(args) -> dict:
+def run_verification(
+    *,
+    horizon: int | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    model_version: str = "v1",
+) -> dict:
     from app.lib.scoring_engine.verification_service import ScoreVerificationService
 
-    service = ScoreVerificationService(model_version=args.model_version)
-    horizons = (
-        [args.horizon]
-        if hasattr(args, "horizon") and args.horizon
-        else DEFAULT_HORIZONS
-    )
+    service = ScoreVerificationService(model_version=model_version)
+    horizons = [horizon] if horizon else DEFAULT_HORIZONS
 
     results = {}
-    for horizon in horizons:
-        logger.info("Running verification for horizon=%d...", horizon)
+    for h in horizons:
+        logger.info("Running verification for horizon=%d...", h)
         result = service.verify_predictions(
-            start_date=parse_date(args.from_date)
-            if hasattr(args, "from_date")
-            else None,
-            end_date=parse_date(args.to_date) if hasattr(args, "to_date") else None,
-            horizon=horizon,
+            start_date=parse_date(from_date),
+            end_date=parse_date(to_date),
+            horizon=h,
         )
-        results[str(horizon)] = result
+        results[str(h)] = result
 
     return {"horizons": horizons, "results": results}
 
@@ -270,7 +272,12 @@ def main(argv: list[str] | None = None) -> None:
         run_backfill(args)
     elif args.command == "verify":
         _init_db_connection()
-        result = run_verification(args)
+        result = run_verification(
+            horizon=args.horizon,
+            from_date=args.from_date,
+            to_date=args.to_date,
+            model_version=args.model_version,
+        )
         print(f"Verification completed: {json.dumps(result, default=str)}")
     elif args.command == "report":
         _init_db_connection()
@@ -348,7 +355,12 @@ def _run_with_tracking(args) -> None:
 
         # Also run verification after scoring
         try:
-            verify_result = run_verification(args)
+            verify_result = run_verification(
+                horizon=args.horizon,
+                from_date=args.from_date if hasattr(args, "from_date") else None,
+                to_date=args.to_date if hasattr(args, "to_date") else None,
+                model_version=args.model_version,
+            )
             result["verify_results"] = verify_result
         except Exception as exc:
             logger.warning("Verification after scoring failed: %s", exc)

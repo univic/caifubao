@@ -1,6 +1,6 @@
 from mongoengine.errors import NotUniqueError
 from app.lib.db_watcher.mongoengine_tool import mongo_watcher
-from app.utilities.progress_bar import progress_bar
+from app.lib.utilities.progress_bar import progress_bar
 from app.model.stock import IndividualStock, StockDailyQuote
 
 
