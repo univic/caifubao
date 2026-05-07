@@ -65,13 +65,13 @@ def connect(uri: str) -> Database:
     db = client.get_database(db_name)
     # Verify connection
     db.command("ping")
-    logger.info("Connected to MongoDB: %s/%s", uri.split("@")[-1].split("/")[0], db_name)
+    logger.info(
+        "Connected to MongoDB: %s/%s", uri.split("@")[-1].split("/")[0], db_name
+    )
     return db
 
 
-def _find_date_field(
-    collection: Collection, date_fields: list[str]
-) -> str | None:
+def _find_date_field(collection: Collection, date_fields: list[str]) -> str | None:
     """Find which date field exists on a document in the collection."""
     doc = collection.find_one(projection={f: 1 for f in date_fields})
     if doc is None:
@@ -198,9 +198,7 @@ def sync_collection(
         except Exception:
             for d in batch:
                 try:
-                    target_coll.update_one(
-                        {"_id": d["_id"]}, {"$set": d}, upsert=True
-                    )
+                    target_coll.update_one({"_id": d["_id"]}, {"$set": d}, upsert=True)
                 except Exception as exc:
                     logger.warning(
                         "Failed to upsert doc %s in %s: %s",
@@ -222,9 +220,7 @@ def _ensure_indexes(source_coll: Collection, target_coll: Collection) -> None:
     """Copy indexes from source to target (skip _id_ which is automatic)."""
     try:
         source_indexes = list(source_coll.list_indexes())
-        existing_target = set(
-            idx["name"] for idx in target_coll.list_indexes()
-        )
+        existing_target = set(idx["name"] for idx in target_coll.list_indexes())
         for idx in source_indexes:
             if idx.get("name") == "_id_":
                 continue
@@ -232,9 +228,7 @@ def _ensure_indexes(source_coll: Collection, target_coll: Collection) -> None:
                 continue
             keys = list(idx["key"].items())
             kwargs = {
-                k: v
-                for k, v in idx.items()
-                if k not in ("key", "v", "ns", "name")
+                k: v for k, v in idx.items() if k not in ("key", "v", "ns", "name")
             }
             target_coll.create_index(keys, name=idx.get("name"), **kwargs)
     except Exception as exc:
@@ -317,11 +311,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     results: list[dict[str, Any]] = []
     for collection_name in collections:
         source_coll = source_db[collection_name]
-        target_coll = target_db[collection_name]
 
         date_fields = COLLECTION_DATE_FIELDS.get(collection_name, ["date"])
         date_field = _find_date_field(source_coll, date_fields)
-        date_filter = _build_date_filter(date_field, parsed_dates) if parsed_dates else {}
+        date_filter = (
+            _build_date_filter(date_field, parsed_dates) if parsed_dates else {}
+        )
 
         if parsed_dates and not date_field:
             logger.warning(
@@ -349,8 +344,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     total_matched = sum(r["matched"] for r in results)
     total_inserted = sum(r["inserted"] for r in results)
     total_bytes = sum(r["total_size_bytes"] for r in results)
-    print(f"Total: {total_matched} matched, {total_inserted} inserted"
-          f"{' (dry run)' if args.dry_run else ''}")
+    print(
+        f"Total: {total_matched} matched, {total_inserted} inserted"
+        f"{' (dry run)' if args.dry_run else ''}"
+    )
     if total_bytes:
         size_mb = total_bytes / (1024 * 1024)
         print(f"Total data: {size_mb:.2f} MB")

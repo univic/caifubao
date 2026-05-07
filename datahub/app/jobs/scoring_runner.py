@@ -57,12 +57,10 @@ def run_scoring(args) -> dict:
         "horizons": horizons,
         "results": results,
         "pulled_total": sum(
-            r.get("total", 0) if isinstance(r, dict) else 0
-            for r in results.values()
+            r.get("total", 0) if isinstance(r, dict) else 0 for r in results.values()
         ),
         "written_total": sum(
-            r.get("written", 0) if isinstance(r, dict) else 0
-            for r in results.values()
+            r.get("written", 0) if isinstance(r, dict) else 0 for r in results.values()
         ),
     }
     return summary
@@ -72,13 +70,19 @@ def run_verification(args) -> dict:
     from app.lib.scoring_engine.verification_service import ScoreVerificationService
 
     service = ScoreVerificationService(model_version=args.model_version)
-    horizons = [args.horizon] if hasattr(args, "horizon") and args.horizon else DEFAULT_HORIZONS
+    horizons = (
+        [args.horizon]
+        if hasattr(args, "horizon") and args.horizon
+        else DEFAULT_HORIZONS
+    )
 
     results = {}
     for horizon in horizons:
         logger.info("Running verification for horizon=%d...", horizon)
         result = service.verify_predictions(
-            start_date=parse_date(args.from_date) if hasattr(args, "from_date") else None,
+            start_date=parse_date(args.from_date)
+            if hasattr(args, "from_date")
+            else None,
             end_date=parse_date(args.to_date) if hasattr(args, "to_date") else None,
             horizon=horizon,
         )
