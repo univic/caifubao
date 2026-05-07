@@ -57,14 +57,14 @@ def _install_datahub_dependency_stubs():
     mongoengine_tool = types.ModuleType("app.lib.db_watcher.mongoengine_tool")
     mongoengine_tool.mongo_watcher = types.SimpleNamespace(get_db_connection=Mock())
 
-    trading_helper = types.ModuleType("app.utilities.trading_day_helper")
+    trading_helper = types.ModuleType("app.lib.utilities.trading_day_helper")
     trading_helper.is_trading_day = lambda *_args, **_kwargs: True
     trading_helper.get_a_stock_market_trade_calendar = lambda: []
 
     sys.modules.setdefault("app.lib.datahub.processors", processors)
     sys.modules.setdefault("app.lib.task_controller", task_controller_module)
     sys.modules.setdefault("app.lib.db_watcher.mongoengine_tool", mongoengine_tool)
-    sys.modules.setdefault("app.utilities.trading_day_helper", trading_helper)
+    sys.modules.setdefault("app.lib.utilities.trading_day_helper", trading_helper)
 
 
 _install_apscheduler_stubs()

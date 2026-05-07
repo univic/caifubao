@@ -13,11 +13,11 @@ class TestFreshnessMetaHelperFunctions(TestCase):
     def test_read_freshness_meta_returns_none_when_no_entry(self):
         """Test read_freshness_meta returns None when no entry exists."""
         with patch(
-            "app.utilities.freshness_meta_helper.read_meta_obj"
+            "app.lib.utilities.freshness_meta_helper.read_meta_obj"
         ) as mock_read_meta_obj:
             mock_read_meta_obj.return_value = None
 
-            from app.utilities.freshness_meta_helper import read_freshness_meta
+            from app.lib.utilities.freshness_meta_helper import read_freshness_meta
 
             result = read_freshness_meta(
                 code="sh600000",
@@ -33,11 +33,11 @@ class TestFreshnessMetaHelperFunctions(TestCase):
         mock_entry.freshness_datetime = datetime.datetime(2024, 1, 15)
 
         with patch(
-            "app.utilities.freshness_meta_helper.read_meta_obj"
+            "app.lib.utilities.freshness_meta_helper.read_meta_obj"
         ) as mock_read_meta_obj:
             mock_read_meta_obj.return_value = mock_entry
 
-            from app.utilities.freshness_meta_helper import read_freshness_meta
+            from app.lib.utilities.freshness_meta_helper import read_freshness_meta
 
             result = read_freshness_meta(
                 code="sh600000",
@@ -49,11 +49,13 @@ class TestFreshnessMetaHelperFunctions(TestCase):
 
     def test_upsert_freshness_meta_calls_upsert_one(self):
         """Test upsert_freshness_meta calls upsert_one correctly."""
-        with patch("app.utilities.freshness_meta_helper.DataFreshnessMeta") as mock_dfm:
+        with patch(
+            "app.lib.utilities.freshness_meta_helper.DataFreshnessMeta"
+        ) as mock_dfm:
             mock_query = MagicMock()
             mock_dfm.objects.return_value = mock_query
 
-            from app.utilities.freshness_meta_helper import upsert_freshness_meta
+            from app.lib.utilities.freshness_meta_helper import upsert_freshness_meta
 
             upsert_freshness_meta(
                 code="sh600000",
@@ -75,10 +77,12 @@ class TestFreshnessMetaHelperFunctions(TestCase):
             2024, 1, 15
         )
 
-        with patch("app.utilities.freshness_meta_helper.DataFreshnessMeta") as mock_dfm:
+        with patch(
+            "app.lib.utilities.freshness_meta_helper.DataFreshnessMeta"
+        ) as mock_dfm:
             mock_dfm.objects.return_value.first.return_value = None
 
-            from app.utilities.freshness_meta_helper import (
+            from app.lib.utilities.freshness_meta_helper import (
                 check_single_factor_freshness,
             )
 
@@ -98,10 +102,12 @@ class TestFreshnessMetaHelperFunctions(TestCase):
         mock_meta = MagicMock()
         mock_meta.freshness_datetime = datetime.datetime(2024, 1, 15)
 
-        with patch("app.utilities.freshness_meta_helper.DataFreshnessMeta") as mock_dfm:
+        with patch(
+            "app.lib.utilities.freshness_meta_helper.DataFreshnessMeta"
+        ) as mock_dfm:
             mock_dfm.objects.return_value.first.return_value = mock_meta
 
-            from app.utilities.freshness_meta_helper import (
+            from app.lib.utilities.freshness_meta_helper import (
                 check_single_factor_freshness,
             )
 
@@ -121,10 +127,12 @@ class TestFreshnessMetaHelperFunctions(TestCase):
         mock_meta = MagicMock()
         mock_meta.freshness_datetime = datetime.datetime(2024, 1, 10)  # older
 
-        with patch("app.utilities.freshness_meta_helper.DataFreshnessMeta") as mock_dfm:
+        with patch(
+            "app.lib.utilities.freshness_meta_helper.DataFreshnessMeta"
+        ) as mock_dfm:
             mock_dfm.objects.return_value.first.return_value = mock_meta
 
-            from app.utilities.freshness_meta_helper import (
+            from app.lib.utilities.freshness_meta_helper import (
                 check_single_factor_freshness,
             )
 
