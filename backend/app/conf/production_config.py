@@ -2,6 +2,7 @@
 # Author : univic
 
 import os
+import datetime
 from app.conf import BaseConfig
 
 
@@ -30,6 +31,8 @@ FORBIDDEN_PRODUCTION_SECRET_MARKERS = (
 class ProductionConfig(BaseConfig):
     # 生产环境下web端的url
     WEB_BASE_URL = ""
+    JWT_ACCESS_TOKEN_EXPIRES = datetime.timedelta(minutes=30)
+    JWT_REFRESH_TOKEN_EXPIRES = datetime.timedelta(days=7)
 
     def __init__(self):
         self.SECRET_KEY = os.getenv("SECRET_KEY", "")

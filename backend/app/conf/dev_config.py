@@ -7,7 +7,8 @@ from app.conf import BaseConfig
 
 
 class DevConfig(BaseConfig):
-    JWT_ACCESS_TOKEN_EXPIRES = datetime.timedelta(hours=8)
+    JWT_ACCESS_TOKEN_EXPIRES = datetime.timedelta(minutes=30)
+    JWT_REFRESH_TOKEN_EXPIRES = datetime.timedelta(days=7)
     FLASK_DEBUG = True
 
     # Flask-Security password configuration
