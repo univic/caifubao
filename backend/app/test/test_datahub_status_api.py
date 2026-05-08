@@ -48,7 +48,7 @@ def test_get_datahub_status_classifies_asset_status(client, monkeypatch):
     monkeypatch.setattr(
         datahub_status,
         "_get_latest_asset_status",
-        lambda object_type: (
+        lambda object_type, **kwargs: (
             datetime.datetime(2026, 4, 2, 0, 0, 0),
             3,
         ),
@@ -56,7 +56,7 @@ def test_get_datahub_status_classifies_asset_status(client, monkeypatch):
     monkeypatch.setattr(
         datahub_status,
         "_get_quote_status_data_count",
-        lambda object_type: (
+        lambda object_type, **kwargs: (
             len(index_codes) if object_type == "stock_index" else len(stock_codes)
         ),
     )
@@ -77,10 +77,12 @@ def test_get_datahub_status_classifies_asset_status(client, monkeypatch):
         "DataAssetStatus",
         SimpleNamespace(
             objects=lambda **kwargs: MagicMock(
-                only=lambda *args, **kw: (
-                    index_asset_statuses
-                    if kwargs["object_type"] == "stock_index"
-                    else stock_asset_statuses
+                only=lambda *args, **kw: MagicMock(
+                    filter=lambda **kw: (
+                        index_asset_statuses
+                        if kwargs["object_type"] == "stock_index"
+                        else stock_asset_statuses
+                    )
                 )
             )
         ),
