@@ -24,6 +24,7 @@ class DatahubJobRun(Document):
             ("job_name", "-started_at"),
             ("status", "-started_at"),
             ("job_family", "status"),
+            ("job_family", "status", "-started_at"),
         ],
     }
 
