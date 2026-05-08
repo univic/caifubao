@@ -92,6 +92,15 @@ def test_get_datahub_status_classifies_asset_status(client, monkeypatch):
     )
     monkeypatch.setattr(datahub_status.datetime, "datetime", fixed_datetime)
 
+    monkeypatch.setattr(
+        datahub_status,
+        "_check_pipeline_run_today",
+        lambda today_start: {
+            "signal_run_today": True,
+            "scoring_run_today": True,
+        },
+    )
+
     response = client.get("/api/datahub/status")
 
     assert response.status_code == 200
