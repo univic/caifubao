@@ -9,6 +9,7 @@ from mongoengine import get_db
 
 from app.model.data_asset_status import DataAssetStatus
 from app.model.stock import FinanceMarket, IndividualStock, StockIndex
+from app.utilities import data_capability_helper
 from app.utilities.trading_day_helper import (
     determine_most_recent_previous_complete_trading_day,
     determine_pervious_trading_day,
@@ -27,6 +28,14 @@ def _format_datetime(value):
 
 
 def _get_codes(stock_model):
+    if stock_model == IndividualStock:
+        # 只返回支持 daily_quote 的活跃股票（排除北交所等无行情能力的股票）
+        stocks = stock_model.objects(active_status=0).only("code", "data_capabilities")
+        return [
+            s.code
+            for s in stocks
+            if data_capability_helper.stock_supports(s, "daily_quote")
+        ]
     return list(stock_model.objects.scalar("code"))
 
 
@@ -157,20 +166,21 @@ def _build_category_status(stock_model, object_type, reference_dates):
 
 
 def _check_pipeline_run_today(trading_day_start: datetime.datetime) -> dict[str, bool]:
-    """Check if signal and scoring pipelines ran successfully since the given trading day start."""
+    """Check if signal and scoring pipelines ran successfully for the given trading day."""
+    trading_day_end = trading_day_start + datetime.timedelta(days=1)
     db = get_db()
     signal_count = db.datahub_job_runs.count_documents(
         {
             "job_family": "signal_daily",
             "status": "SUCCESS",
-            "started_at": {"$gte": trading_day_start},
+            "started_at": {"$gte": trading_day_start, "$lt": trading_day_end},
         }
     )
     scoring_count = db.datahub_job_runs.count_documents(
         {
             "job_family": "scoring_daily",
             "status": "SUCCESS",
-            "started_at": {"$gte": trading_day_start},
+            "started_at": {"$gte": trading_day_start, "$lt": trading_day_end},
         }
     )
     return {
