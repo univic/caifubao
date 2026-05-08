@@ -89,28 +89,31 @@ def _classify_asset_status(
     return "expired"
 
 
-def _get_latest_asset_status(object_type):
+def _get_latest_asset_status(object_type, codes=None):
     status_qs = DataAssetStatus.objects(
         object_type=object_type, asset_type="quote", asset_name="daily_quote"
     )
+    if codes is not None:
+        status_qs = status_qs.filter(code__in=codes)
     latest = status_qs.order_by("-latest_data_date").first()
     latest_date = latest.latest_data_date if latest else None
     return latest_date, status_qs.count()
 
 
-def _get_quote_status_data_count(object_type):
-    result = DataAssetStatus.objects(
-        object_type=object_type, asset_type="quote", asset_name="daily_quote"
-    ).aggregate(
-        [
-            {
-                "$group": {
-                    "_id": None,
-                    "quote_count": {"$sum": "$data_count"},
-                }
+def _get_quote_status_data_count(object_type, codes=None):
+    pipeline = [
+        {
+            "$match": {
+                "object_type": object_type,
+                "asset_type": "quote",
+                "asset_name": "daily_quote",
             }
-        ]
-    )
+        },
+    ]
+    if codes is not None:
+        pipeline[0]["$match"]["code"] = {"$in": codes}
+    pipeline.append({"$group": {"_id": None, "quote_count": {"$sum": "$data_count"}}})
+    result = DataAssetStatus.objects.aggregate(*pipeline)
     row = next(iter(result), None)
     return row.get("quote_count", 0) if row else 0
 
@@ -118,16 +121,18 @@ def _get_quote_status_data_count(object_type):
 def _build_category_status(stock_model, object_type, reference_dates):
     codes = _get_codes(stock_model)
     latest_asset_status_date, asset_status_records_count = _get_latest_asset_status(
-        object_type
+        object_type, codes=codes
     )
     latest_quote_date = latest_asset_status_date
-    latest_quote_count = _get_quote_status_data_count(object_type)
+    latest_quote_count = _get_quote_status_data_count(object_type, codes=codes)
     latest_complete_trading_day = reference_dates["latest_complete_trading_day"]
     previous_complete_trading_day = reference_dates["previous_complete_trading_day"]
 
     status_qs = DataAssetStatus.objects(
         object_type=object_type, asset_type="quote", asset_name="daily_quote"
     ).only("code", "latest_data_date")
+    if codes is not None:
+        status_qs = status_qs.filter(code__in=codes)
     status_map = {doc.code: doc for doc in status_qs}
 
     counts = {
