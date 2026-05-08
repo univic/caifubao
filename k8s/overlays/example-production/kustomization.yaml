@@ -156,3 +156,19 @@ patches:
       value:
         class: compute
         provider: tencent
+- target:
+    group: batch
+    version: v1
+    kind: CronJob
+    name: caifubao-datahub-freshness-check
+  patch: |-
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
+      value: prod-mongodb-pass-secret
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
+      value: PROD_MONGODB_PASS
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/imagePullSecrets
+      value:
+      - name: ccr-secret
