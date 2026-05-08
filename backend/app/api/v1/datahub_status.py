@@ -156,21 +156,21 @@ def _build_category_status(stock_model, object_type, reference_dates):
     }
 
 
-def _check_pipeline_run_today(today: datetime.datetime) -> dict[str, bool]:
-    """Check if signal and scoring pipelines ran successfully today."""
+def _check_pipeline_run_today(trading_day_start: datetime.datetime) -> dict[str, bool]:
+    """Check if signal and scoring pipelines ran successfully since the given trading day start."""
     db = get_db()
     signal_count = db.datahub_job_runs.count_documents(
         {
             "job_family": "signal_daily",
             "status": "SUCCESS",
-            "started_at": {"$gte": today},
+            "started_at": {"$gte": trading_day_start},
         }
     )
     scoring_count = db.datahub_job_runs.count_documents(
         {
             "job_family": "scoring_daily",
             "status": "SUCCESS",
-            "started_at": {"$gte": today},
+            "started_at": {"$gte": trading_day_start},
         }
     )
     return {
@@ -192,9 +192,16 @@ def _build_status_payload():
             today_start = datetime.datetime.combine(
                 latest_trading_day, datetime.time.min
             )
-    pipeline_status = _check_pipeline_run_today(today_start) if today_start else {}
+    pipeline_status = (
+        _check_pipeline_run_today(today_start)
+        if today_start
+        else {
+            "signal_run_today": False,
+            "scoring_run_today": False,
+        }
+    )
 
-    payload = {
+    return {
         "generated_at": datetime.datetime.now().isoformat(),
         "reference_dates": {
             "latest_complete_trading_day": _format_datetime(latest_trading_day),
@@ -206,10 +213,8 @@ def _build_status_payload():
         "stock": _build_category_status(
             IndividualStock, "individual_stock", reference_dates
         ),
+        **pipeline_status,
     }
-    if pipeline_status:
-        payload.update(pipeline_status)
-    return payload
 
 
 @datahub_status_bp.route("/status", methods=["GET"])
