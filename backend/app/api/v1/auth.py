@@ -30,58 +30,6 @@ def init_auth(app):
     security.init_app(app, user_datastore)
 
 
-def validate_password_strength(password):
-    """Validate password strength"""
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters long"
-    if not any(c.isupper() for c in password):
-        return False, "Password must contain at least one uppercase letter"
-    if not any(c.islower() for c in password):
-        return False, "Password must contain at least one lowercase letter"
-    if not any(c.isdigit() for c in password):
-        return False, "Password must contain at least one digit"
-    if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password):
-        return False, "Password must contain at least one special character"
-    return True, None
-
-
-@auth_bp.route("/register", methods=["POST"])
-def register():
-    """User registration"""
-    data = request.get_json()
-
-    username = data.get("username")
-    email = data.get("email")
-    password = data.get("password")
-
-    if not all([username, email, password]):
-        return jsonify({"message": "Missing required fields"}), 400
-
-    # Validate password strength
-    is_valid, error_msg = validate_password_strength(password)
-    if not is_valid:
-        return jsonify({"message": error_msg}), 400
-
-    # Check if user exists
-    if User.objects(username=username).first():
-        return jsonify({"message": "Username already exists"}), 400
-
-    if User.objects(email=email).first():
-        return jsonify({"message": "Email already exists"}), 400
-
-    # Create user
-    user = User(
-        username=username,
-        email=email,
-        password_hash=hash_password(password),
-        user_status=["20"],  # Active
-        user_role=["USER"],
-    )
-    user.save()
-
-    return jsonify({"message": "Registration successful"}), 201
-
-
 MAX_FAILED_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION_MINUTES = 30
 
@@ -135,24 +83,26 @@ def login():
     elif "99" in user.user_status:
         return jsonify({"message": "Account is locked"}), 403
 
-    # Reset failed login count on successful login
+    # Update user state and save once before token creation
     user.failed_login_count = 0
     user.locked_until = None
-
-    # Create tokens
-    access_token = create_access_token(
-        identity=str(user.id),
-        additional_claims={"username": user.username, "role": user.user_role},
-    )
-    refresh_token = create_refresh_token(identity=str(user.id))
-
-    # Update login info
     user.last_login_at = user.current_login_at
     user.last_login_ip = user.current_login_ip
     user.current_login_at = datetime.datetime.now()
     user.current_login_ip = request.remote_addr
     user.login_count = (user.login_count or 0) + 1
     user.save()
+
+    # Create tokens
+    access_token = create_access_token(
+        identity=str(user.id),
+        additional_claims={"username": user.username, "role": user.user_role},
+        expires_delta=datetime.timedelta(minutes=30),
+    )
+    refresh_token = create_refresh_token(
+        identity=str(user.id),
+        expires_delta=datetime.timedelta(days=7),
+    )
 
     return jsonify(
         {

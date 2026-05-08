@@ -4,8 +4,7 @@ title = "Caifubao gitleaks config"
 [allowlist]
 description = "Allowlisted files"
 paths = [
-    # Allow test files with test credentials
-    '''(.*?test.*\.py)''',
+    # Allow test directories
     '''(.*?/tests/.*)''',
 ]
 
