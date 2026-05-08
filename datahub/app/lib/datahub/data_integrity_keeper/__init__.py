@@ -24,7 +24,7 @@ class DataIntegrityKeeper(object):
         """
         logger.info(f"{self.module_name} - Running processor check_stock_quote_missing")
         from app.model.stock import FinanceMarket, StockDailyQuote, BasicStock
-        from app.utilities import freshness_meta_helper
+        from app.lib.utilities import freshness_meta_helper
 
         # 找到名为 ChinaAStock 的 FinanceMarket 对象
         market = FinanceMarket.objects(name="ChinaAStock").first()

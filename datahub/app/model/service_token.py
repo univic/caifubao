@@ -6,7 +6,7 @@ import datetime
 
 from mongoengine import DateTimeField, ListField, StringField
 
-import app.utilities.db_util as db_util
+import app.lib.utilities.db_util as db_util
 from app.lib.db_watcher.mongoengine_tool import db
 
 

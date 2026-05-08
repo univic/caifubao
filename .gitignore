@@ -36,3 +36,4 @@ backend/app/utilities/__pycache__/*
 **/__pycache__/
 *.py[cod]
 *$py.class
+migration/

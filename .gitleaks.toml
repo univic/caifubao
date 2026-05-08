@@ -1,0 +1,23 @@
+# Gitleaks config for Caifubao
+title = "Caifubao gitleaks config"
+
+[allowlist]
+description = "Allowlisted files"
+paths = [
+    # Allow test files with test credentials
+    '''(.*?test.*\.py)''',
+    '''(.*?/tests/.*)''',
+]
+
+# Extend default rules to catch MongoDB connection strings
+[[rules]]
+id = "caifubao-mongodb-password"
+description = "Hardcoded MongoDB password"
+regex = '''(?:MONGODB_PASSWORD|MONGO_ROOT_PASS|MONGO_INITDB_ROOT_PASSWORD)\s*[:=]\s*["']?[A-Za-z0-9!@#$%^&*()+_\-=]{8,}["']?'''
+tags = ["mongodb", "caifubao"]
+
+[[rules]]
+id = "caifubao-connection-string"
+description = "MongoDB connection string with password"
+regex = '''mongodb(?:\+srv)?://[^:]+:[^@]+@'''
+tags = ["mongodb", "connection-string"]

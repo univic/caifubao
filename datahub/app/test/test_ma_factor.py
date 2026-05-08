@@ -193,9 +193,9 @@ def test_update_code_skips_unsupported_ma_factor_stock():
 
 
 def test_run_stock_job_updates_ma_after_fq_factor_phase():
-    source = Path(
-        "/Users/wenfengzhong/develop/caifubao/datahub/app/lib/datahub/processors/china_a_stock.py"
-    ).read_text()
+    from app.lib.datahub.processors import china_a_stock
+
+    source = Path(china_a_stock.__file__).read_text()
 
     assert '"update_fq_factor", self.update_fq_factor' in source
     assert '"update_ma_factor", self.update_ma_factor' in source

@@ -21,7 +21,7 @@ from app.lib.datahub import processors
 # from app.lib.strategy import strategy_director
 from app.lib.task_controller import task_controller
 from app.lib.db_watcher.mongoengine_tool import mongo_watcher
-from app.utilities.trading_day_helper import (
+from app.lib.utilities.trading_day_helper import (
     is_trading_day,
     get_a_stock_market_trade_calendar,
 )

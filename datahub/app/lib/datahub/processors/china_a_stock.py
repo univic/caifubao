@@ -23,8 +23,8 @@ from app.lib.datahub.data_source.interface.baostock_interface import (
 from app.lib.factor_factory import FQFactorService, MovingAverageFactorService
 from app.lib.signal_factory import MovingAverageSignalService
 from app.lib.scoring_engine.scoring_service import StockScoringService
-from app.utilities.progress_bar import progress_bar
-from app.utilities import trading_day_helper
+from app.lib.utilities.progress_bar import progress_bar
+from app.lib.utilities import trading_day_helper
 from app.lib.utilities import data_asset_status_helper
 from app.lib.utilities import data_capability_helper
 
