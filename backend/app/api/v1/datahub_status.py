@@ -5,6 +5,7 @@ import datetime
 import threading
 import time
 from flask import Blueprint, jsonify
+from mongoengine import get_db
 
 from app.model.data_asset_status import DataAssetStatus
 from app.model.stock import FinanceMarket, IndividualStock, StockIndex
@@ -155,14 +156,48 @@ def _build_category_status(stock_model, object_type, reference_dates):
     }
 
 
+def _check_pipeline_run_today(today: datetime.datetime) -> dict[str, bool]:
+    """Check if signal and scoring pipelines ran successfully today."""
+    db = get_db()
+    signal_count = db.datahub_job_runs.count_documents(
+        {
+            "job_family": "signal_daily",
+            "status": "SUCCESS",
+            "started_at": {"$gte": today},
+        }
+    )
+    scoring_count = db.datahub_job_runs.count_documents(
+        {
+            "job_family": "scoring_daily",
+            "status": "SUCCESS",
+            "started_at": {"$gte": today},
+        }
+    )
+    return {
+        "signal_run_today": signal_count > 0,
+        "scoring_run_today": scoring_count > 0,
+    }
+
+
 def _build_status_payload():
     reference_dates = _resolve_reference_dates()
-    return {
+    latest_trading_day = reference_dates["latest_complete_trading_day"]
+    today_start = None
+    if latest_trading_day is not None:
+        if isinstance(latest_trading_day, datetime.datetime):
+            today_start = latest_trading_day.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+        else:
+            today_start = datetime.datetime.combine(
+                latest_trading_day, datetime.time.min
+            )
+    pipeline_status = _check_pipeline_run_today(today_start) if today_start else {}
+
+    payload = {
         "generated_at": datetime.datetime.now().isoformat(),
         "reference_dates": {
-            "latest_complete_trading_day": _format_datetime(
-                reference_dates["latest_complete_trading_day"]
-            ),
+            "latest_complete_trading_day": _format_datetime(latest_trading_day),
             "previous_complete_trading_day": _format_datetime(
                 reference_dates["previous_complete_trading_day"]
             ),
@@ -172,6 +207,9 @@ def _build_status_payload():
             IndividualStock, "individual_stock", reference_dates
         ),
     }
+    if pipeline_status:
+        payload.update(pipeline_status)
+    return payload
 
 
 @datahub_status_bp.route("/status", methods=["GET"])
