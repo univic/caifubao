@@ -76,11 +76,14 @@ def run_verification(
     horizon: int | None = None,
     from_date: str | None = None,
     to_date: str | None = None,
-    model_version: str = "v1",
+    model_version: str | None = None,
 ) -> dict:
+    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
     from app.lib.scoring_engine.verification_service import ScoreVerificationService
 
-    service = ScoreVerificationService(model_version=model_version)
+    service = ScoreVerificationService(
+        model_version=model_version or DEFAULT_MODEL_VERSION
+    )
     horizons = [horizon] if horizon else DEFAULT_HORIZONS
 
     results = {}
@@ -166,9 +169,11 @@ def _check_dependency() -> bool:
 def add_common_options(
     parser, include_date=False, include_range=False, include_horizon=True
 ):
+    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
+
     parser.add_argument(
         "--model-version",
-        default="v1",
+        default=DEFAULT_MODEL_VERSION,
         help="Scoring model version.",
     )
     if include_horizon:
@@ -198,7 +203,9 @@ def main(argv: list[str] | None = None) -> None:
     p_run.add_argument("--date", help="Evaluation date (YYYY-MM-DD)")
     p_run.add_argument("--dry-run", action="store_true")
     p_run.add_argument("--replace", action="store_true")
-    p_run.add_argument("--model-version", default="v1")
+    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
+
+    p_run.add_argument("--model-version", default=DEFAULT_MODEL_VERSION)
 
     # backfill command
     p_backfill = subparsers.add_parser("backfill", help="Backfill historical scores")
