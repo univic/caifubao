@@ -40,7 +40,7 @@
             <div class="login-card__kicker">
               <span>欢迎回来</span>
               <EnvBadge size="small" />
-          </div>
+            </div>
             <h2>登录你的量化工作台</h2>
             <p>输入账号后，继续查看行情、信号和回测结果。</p>
           </div>

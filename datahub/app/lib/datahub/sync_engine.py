@@ -53,20 +53,16 @@ def _build_src_client() -> MongoClient:
     return client
 
 
-def _get_src_db(client: MongoClient) -> MongoDatabase:
+def _get_src_db(client: MongoClient, cfg) -> MongoDatabase:
     """Return the source database handle."""
-    from app.conf import app_config as cfg
-
     return client[cfg.MONGODB_SRC_NAME]
 
 
-def _get_dst_db() -> MongoDatabase:
+def _get_dst_db(cfg) -> MongoDatabase:
     """Return the local (dev) database handle via mongoengine's connection."""
     from mongoengine import get_connection
 
     conn = get_connection()
-    from app.conf import app_config as cfg
-
     return conn[cfg.MONGODB_NAME]
 
 
@@ -182,8 +178,10 @@ def run_sync(
         close_client = True
 
     try:
-        src_db = _get_src_db(src_client)
-        dst_db = _get_dst_db()
+        from app.conf import app_config as cfg
+
+        src_db = _get_src_db(src_client, cfg)
+        dst_db = _get_dst_db(cfg)
 
         target_collections = collections or list(SYNCABLE_COLLECTIONS.keys())
         unknown = set(target_collections) - set(SYNCABLE_COLLECTIONS.keys())
