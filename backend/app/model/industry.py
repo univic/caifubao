@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Industry classification and daily aggregated metrics models."""
+"""Industry classification model for the backend API service.
 
-import datetime
+Mirrors datahub/app/model/industry.py. Only the model classes needed for
+querying (read-only) are included here — the sync pipeline lives in datahub.
+"""
 
 from mongoengine import (
     DateTimeField,
@@ -17,9 +19,7 @@ class StockIndustryClassification(Document):
     """
     Shenwan (申万) industry classification for each stock.
 
-    Updated monthly via the data pipeline. The industry_code_sw_l1/l2 fields
-    store the numeric codes assigned by the Shenwan industry system (e.g. 480000
-    for 银行). Change history is preserved in industry_change_log.
+    Updated monthly via the datahub sync pipeline.
     """
 
     stock_code = StringField(required=True, unique=True)
@@ -45,13 +45,8 @@ class StockIndustryClassification(Document):
             "industry_code_sw_l1",
             "industry_code_sw_l2",
             "industry_name_sw_l1",
-            ("industry_code_sw_l1", "-last_synced_at"),
         ],
     }
-
-    def save(self, *args, **kwargs):
-        self.last_synced_at = datetime.datetime.now(datetime.UTC)
-        return super(StockIndustryClassification, self).save(*args, **kwargs)
 
 
 class IndustryDailyMetrics(Document):
@@ -59,8 +54,7 @@ class IndustryDailyMetrics(Document):
     Daily aggregated scoring metrics per Shenwan industry per horizon.
 
     One document per (industry, date, horizon, model_version). Generated
-    after each scoring run so that the industry_momentum component can
-    reference the average score of stocks within the same industry.
+    during scoring runs and queried by the industry_momentum component.
     """
 
     industry_code = StringField(required=True)
@@ -92,11 +86,7 @@ class IndustryDailyMetrics(Document):
                 "fields": ["industry_code", "date", "horizon", "model_version"],
                 "unique": True,
             },
-            ("date", "industry_code", "horizon"),
+            ("date", "industry_code"),
             "-date",
         ],
     }
-
-    def save(self, *args, **kwargs):
-        self.generated_at = datetime.datetime.now(datetime.UTC)
-        return super(IndustryDailyMetrics, self).save(*args, **kwargs)

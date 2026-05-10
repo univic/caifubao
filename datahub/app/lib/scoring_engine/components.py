@@ -3,6 +3,7 @@
 import math
 from statistics import pstdev
 
+from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
 from app.model.industry import IndustryDailyMetrics, StockIndustryClassification
 
 
@@ -309,6 +310,7 @@ def industry_momentum_component(
         metrics = (
             IndustryDailyMetrics.objects(
                 industry_code=industry.industry_code_sw_l1,
+                horizon=horizon,
             )
             .order_by("-date")
             .first()
@@ -364,16 +366,24 @@ def industry_momentum_component(
 def aggregate_industry_metrics(
     date,
     predictions: list,
-    model_version: str,
+    model_version: str = DEFAULT_MODEL_VERSION,
 ) -> list[dict]:
     """Aggregate score predictions into IndustryDailyMetrics per L1 industry.
 
-    Called after scoring is complete for a given date. Persists the aggregated
-    metrics so industry_momentum_component can reference them on subsequent runs.
+    Called after scoring is complete for a given date and horizon. Persists
+    the aggregated metrics so industry_momentum_component can reference them
+    on subsequent runs.
     """
     from collections import defaultdict
 
-    # Map stock_code → industry_code
+    if not predictions:
+        return []
+
+    # Infer horizon from the first prediction (all predictions passed here
+    # should share the same horizon).
+    horizon = predictions[0].horizon
+
+    # Map stock_code → industry doc
     industries = {
         doc.stock_code: doc
         for doc in StockIndustryClassification.objects(
@@ -381,43 +391,56 @@ def aggregate_industry_metrics(
         )
     }
 
-    groups = defaultdict(list)
+    groups: dict[str, dict] = defaultdict(
+        lambda: {"scores": [], "recos": [], "name": ""}
+    )
     for pred in predictions:
         ind = industries.get(pred.stock_code)
         if not ind or not ind.industry_code_sw_l1:
             continue
-        groups[ind.industry_code_sw_l1].append(
-            {
-                "score": pred.score or 0,
-                "percentile": pred.percentile or 0,
-                "rank": pred.rank or 0,
-                "recommendation": pred.recommendation or "NONE",
-            }
-        )
+        key = ind.industry_code_sw_l1
+        groups[key]["scores"].append(pred.score or 0)
+        groups[key]["recos"].append(pred.recommendation or "NONE")
+        if not groups[key]["name"]:
+            groups[key]["name"] = ind.industry_name_sw_l1 or ""
 
     results = []
-    for code, preds in groups.items():
-        scores = [p["score"] for p in preds]
+    for code, group in groups.items():
+        scores = group["scores"]
         if not scores:
             continue
 
-        recos = [p["recommendation"] for p in preds]
+        recos = group["recos"]
+        percentiles = [
+            p.percentile or 0
+            for p in predictions
+            if industries.get(p.stock_code)
+            and industries[p.stock_code].industry_code_sw_l1 == code
+        ]
+        ranks = [
+            p.rank or 0
+            for p in predictions
+            if industries.get(p.stock_code)
+            and industries[p.stock_code].industry_code_sw_l1 == code
+        ]
 
         std_dev = round(pstdev(scores), 2) if len(scores) > 1 else 0.0
 
         doc = IndustryDailyMetrics(
             industry_code=code,
-            industry_name=industries[next(iter(preds))].industry_name_sw_l1
-            if preds
-            else "",
+            industry_name=group["name"],
             date=date,
+            horizon=horizon,
+            model_version=model_version,
             stock_count=len(scores),
             avg_score=round(sum(scores) / len(scores), 2),
             max_score=round(max(scores), 2),
             min_score=round(min(scores), 2),
             std_dev_score=std_dev,
-            avg_percentile=round(sum(p["percentile"] for p in preds) / len(preds), 4),
-            avg_rank=round(sum(p["rank"] for p in preds) / len(preds), 2),
+            avg_percentile=round(sum(percentiles) / len(percentiles), 4)
+            if percentiles
+            else 0.0,
+            avg_rank=round(sum(ranks) / len(ranks), 2) if ranks else 0.0,
             buy_count=sum(1 for r in recos if r == "BUY"),
             watch_count=sum(1 for r in recos if r == "WATCH"),
             avoid_count=sum(1 for r in recos if r == "AVOID"),

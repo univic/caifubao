@@ -114,26 +114,32 @@ class StockScoringService:
             if not dry_run:
                 self.assign_ranks(date, current_horizon)
 
-        if not dry_run:
-            predictions = list(
-                self.prediction_model.objects(
-                    date=date,
-                    model_version=self.model_version,
+                # Aggregate industry metrics per horizon
+                horizon_predictions = list(
+                    self.prediction_model.objects(
+                        date=date,
+                        horizon=current_horizon,
+                        model_version=self.model_version,
+                    )
                 )
-            )
-            try:
-                aggregate_industry_metrics(
-                    date=date,
-                    predictions=predictions,
-                    model_version=self.model_version,
-                )
-                logger.info(
-                    "Industry metrics aggregated for date=%s, predictions=%d",
-                    date,
-                    len(predictions),
-                )
-            except Exception as exc:
-                logger.warning("Failed to aggregate industry metrics: %s", exc)
+                try:
+                    aggregate_industry_metrics(
+                        date=date,
+                        predictions=horizon_predictions,
+                        model_version=self.model_version,
+                    )
+                    logger.info(
+                        "Industry metrics aggregated for date=%s horizon=%d predictions=%d",
+                        date,
+                        current_horizon,
+                        len(horizon_predictions),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to aggregate industry metrics for horizon=%d: %s",
+                        current_horizon,
+                        exc,
+                    )
 
         return {
             "date": date,
