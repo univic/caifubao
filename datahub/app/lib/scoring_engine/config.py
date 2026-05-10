@@ -3,7 +3,7 @@
 from copy import deepcopy
 
 SUPPORTED_HORIZONS = (5, 20, 60)
-DEFAULT_MODEL_VERSION = "score_v2_202604"
+DEFAULT_MODEL_VERSION = "score_v2_202605"
 
 SCORING_CONFIG = {
     5: {
@@ -16,10 +16,11 @@ SCORING_CONFIG = {
         "breakout_lookback": 20,
         "risk_lookback": 10,
         "weights": {
-            "signal_strength": 30.0,
+            "signal_strength": 25.0,
             "momentum": 25.0,
             "trend_alignment": 20.0,
-            "breakout_or_position": 15.0,
+            "breakout_or_position": 10.0,
+            "industry_momentum": 5.0,
             "relative_strength": 0.0,
             "risk_penalty": 10.0,
         },
@@ -37,7 +38,8 @@ SCORING_CONFIG = {
             "signal_strength": 15.0,
             "momentum": 15.0,
             "trend_alignment": 30.0,
-            "breakout_or_position": 10.0,
+            "breakout_or_position": 5.0,
+            "industry_momentum": 5.0,
             "relative_strength": 15.0,
             "risk_penalty": 15.0,
         },
@@ -55,7 +57,8 @@ SCORING_CONFIG = {
             "signal_strength": 5.0,
             "momentum": 10.0,
             "trend_alignment": 35.0,
-            "breakout_or_position": 10.0,
+            "breakout_or_position": 5.0,
+            "industry_momentum": 5.0,
             "relative_strength": 25.0,
             "risk_penalty": 15.0,
         },

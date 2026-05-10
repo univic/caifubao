@@ -4,7 +4,9 @@ import datetime
 import logging
 
 from app.lib.scoring_engine.components import (
+    aggregate_industry_metrics,
     breakout_or_position_component,
+    industry_momentum_component,
     momentum_component,
     quote_price,
     relative_strength_component,
@@ -112,6 +114,33 @@ class StockScoringService:
             if not dry_run:
                 self.assign_ranks(date, current_horizon)
 
+                # Aggregate industry metrics per horizon
+                horizon_predictions = list(
+                    self.prediction_model.objects(
+                        date=date,
+                        horizon=current_horizon,
+                        model_version=self.model_version,
+                    )
+                )
+                try:
+                    aggregate_industry_metrics(
+                        date=date,
+                        predictions=horizon_predictions,
+                        model_version=self.model_version,
+                    )
+                    logger.info(
+                        "Industry metrics aggregated for date=%s horizon=%d predictions=%d",
+                        date,
+                        current_horizon,
+                        len(horizon_predictions),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to aggregate industry metrics for horizon=%d: %s",
+                        current_horizon,
+                        exc,
+                    )
+
         return {
             "date": date,
             "horizons": horizons,
@@ -158,7 +187,7 @@ class StockScoringService:
             ),
         )
         components, penalties = self._build_components(
-            quote, factors, signals, history_quotes, horizon, config
+            quote, factors, signals, history_quotes, date, horizon, config, stock.code
         )
         score = self._calculate_score(components, penalties)
         recommendation = self._recommendation(score, config)
@@ -276,7 +305,7 @@ class StockScoringService:
         }
 
     def _build_components(
-        self, quote, factors, signals, history_quotes, horizon, config
+        self, quote, factors, signals, history_quotes, date, horizon, config, stock_code
     ):
         weights = config["weights"]
         momentum_quotes = history_quotes[: config["momentum_lookback"]]
@@ -300,6 +329,13 @@ class StockScoringService:
                 quote,
                 history_quotes[: config["momentum_lookback"]],
                 weights["relative_strength"],
+            ),
+            industry_momentum_component(
+                stock_code=stock_code,
+                date=date,
+                horizon=horizon,
+                weight=weights.get("industry_momentum", 0.0),
+                model_version=self.model_version,
             ),
         ]
         penalties = [risk_penalty(quote, risk_quotes, weights["risk_penalty"])]

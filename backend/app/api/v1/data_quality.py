@@ -16,6 +16,7 @@ from app.model.data_asset_status import (
     STATUS_STALE,
     DataAssetStatus,
 )
+from app.model.industry import StockIndustryClassification
 from app.model.stock import FinanceMarket, IndividualStock
 from app.utilities import data_capability_helper
 from app.utilities.trading_day_helper import (
@@ -446,6 +447,38 @@ def _clear_items_cache():
         _items_cache.clear()
 
 
+def _build_industry_coverage():
+    """Build industry coverage summary for the data quality page."""
+    try:
+        total_classified = StockIndustryClassification.objects.count()
+        pipeline = [
+            {"$group": {"_id": "$industry_name_sw_l1", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+        ]
+        by_l1 = list(StockIndustryClassification.objects.aggregate(pipeline))
+        industry_count = len(by_l1)
+
+        last_sync = None
+        newest = (
+            StockIndustryClassification.objects().order_by("-last_synced_at").first()
+        )
+        if newest and newest.last_synced_at:
+            last_sync = _format_datetime(newest.last_synced_at)
+
+        return {
+            "total_classified": total_classified,
+            "industry_count": industry_count,
+            "last_sync": last_sync,
+        }
+    except Exception as exc:
+        logger.warning("Failed to build industry coverage: %s", exc)
+        return {
+            "total_classified": 0,
+            "industry_count": 0,
+            "last_sync": None,
+        }
+
+
 def _build_summary():
     items = _get_cached_items()
     status_counts = _count_status(items)
@@ -481,6 +514,7 @@ def _build_summary():
             "quote": _build_quote_coverage(items),
             "fq_factor": _build_factor_coverage(items, "fq_factor_date"),
             "ma_factor": _build_factor_coverage(items, "ma_dates"),
+            "industry": _build_industry_coverage(),
         },
     }
 

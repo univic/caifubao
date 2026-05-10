@@ -47,18 +47,34 @@
           class="metric-card"
           shadow="hover"
         >
-          <div class="label">{{ card.title }}</div>
-          <div class="metric-value">{{ card.coverage.ok_rate.toFixed(2) }}%</div>
-          <el-progress
-            :percentage="card.coverage.ok_rate"
-            :status="progressStatus(card.coverage.ok_rate)"
-            :stroke-width="10"
-          />
-          <div class="metric-footer">
-            <span>OK {{ card.coverage.ok }}</span>
-            <span>异常 {{ abnormalCount(card.coverage) }}</span>
-            <span v-if="card.coverage.blocked">阻塞 {{ card.coverage.blocked }}</span>
-          </div>
+          <template v-if="card.coverage">
+            <div class="label">{{ card.title }}</div>
+            <div class="metric-value">{{ (card.coverage.ok_rate || 0).toFixed(2) }}%</div>
+            <el-progress
+              :percentage="card.coverage.ok_rate"
+              :status="progressStatus(card.coverage.ok_rate)"
+              :stroke-width="10"
+            />
+            <div class="metric-footer">
+              <span>OK {{ card.coverage.ok }}</span>
+              <span>异常 {{ abnormalCount(card.coverage) }}</span>
+              <span v-if="card.coverage.blocked">阻塞 {{ card.coverage.blocked }}</span>
+            </div>
+          </template>
+          <template v-if="card.industry">
+            <div class="label">{{ card.title }}</div>
+            <div class="metric-value">{{ card.industry.total_classified }}</div>
+            <el-progress
+              :percentage="(card.industry.total_classified / Math.max(summary?.scope.effective_total || 1, 1) * 100)"
+              :status="card.industry.total_classified > 0 ? 'success' : 'exception'"
+              :stroke-width="10"
+            />
+            <div class="metric-footer">
+              <span>{{ card.industry.industry_count }} 个申万行业</span>
+              <span v-if="card.industry.last_sync">最后更新 {{ formatDate(card.industry.last_sync) }}</span>
+              <span v-else class="text-dim">未同步</span>
+            </div>
+          </template>
         </el-card>
       </section>
 
@@ -196,7 +212,8 @@ const coverageCards = computed(() => {
     { key: 'overall', title: '整体覆盖率', coverage: summary.value.coverage.overall },
     { key: 'quote', title: '行情覆盖率', coverage: summary.value.coverage.quote },
     { key: 'fq', title: 'FQ 覆盖率', coverage: summary.value.coverage.fq_factor },
-    { key: 'ma', title: 'MA 覆盖率', coverage: summary.value.coverage.ma_factor }
+    { key: 'ma', title: 'MA 覆盖率', coverage: summary.value.coverage.ma_factor },
+    { key: 'industry', title: '行业覆盖', coverage: null, industry: summary.value.coverage.industry }
   ]
 })
 
