@@ -33,6 +33,11 @@ class ScoreVerificationService:
             "status__in": ["PENDING", "TRACKING"],
             "model_version": self.model_version,
         }
+        today = normalize_date(today or datetime.datetime.now(datetime.UTC))
+        # Only verify predictions whose target date has already passed
+        # (skips freshly-generated predictions that aren't due yet)
+        query["target_date__lte"] = today
+
         if start_date:
             query["date__gte"] = normalize_date(start_date)
         if end_date:

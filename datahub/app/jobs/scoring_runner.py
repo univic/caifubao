@@ -77,6 +77,7 @@ def run_verification(
     from_date: str | None = None,
     to_date: str | None = None,
     model_version: str | None = None,
+    today: datetime.datetime | None = None,
 ) -> dict:
     from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
     from app.lib.scoring_engine.verification_service import ScoreVerificationService
@@ -93,6 +94,7 @@ def run_verification(
             start_date=parse_date(from_date),
             end_date=parse_date(to_date),
             horizon=h,
+            today=today,
         )
         results[str(h)] = result
 
@@ -292,6 +294,7 @@ def main(argv: list[str] | None = None) -> None:
             from_date=args.from_date,
             to_date=args.to_date,
             model_version=args.model_version,
+            today=datetime.datetime.now(datetime.UTC),
         )
         print(f"Verification completed: {json.dumps(result, default=str)}")
     elif args.command == "report":
@@ -369,12 +372,15 @@ def _run_with_tracking(args) -> None:
         result = run_scoring(args)
 
         # Also run verification after scoring
+        # Only verifies predictions whose target_date has already passed
+        # (skips the scores just generated above)
         try:
             verify_result = run_verification(
                 horizon=args.horizon,
                 from_date=args.from_date if hasattr(args, "from_date") else None,
                 to_date=args.to_date if hasattr(args, "to_date") else None,
                 model_version=args.model_version,
+                today=datetime.datetime.now(datetime.UTC),
             )
             result["verify_results"] = verify_result
         except Exception as exc:
