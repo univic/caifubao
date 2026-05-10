@@ -61,6 +61,11 @@ const routes: RouteRecordRaw[] = [
         })
       },
       {
+        path: 'quote/:symbol',
+        name: 'QuoteDetail',
+        component: () => import('@/views/History/QuoteDetailView.vue')
+      },
+      {
         path: 'backtest',
         name: 'BacktestList',
         component: () => import('@/views/Backtest/BacktestListView.vue')

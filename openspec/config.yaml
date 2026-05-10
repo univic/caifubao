@@ -7,8 +7,9 @@ context: |
   Tech stack: Python Flask backend, datahub jobs, Vue 3/Vite/Pinia/Element Plus frontend, MongoDB, k8s, GitHub Actions
   项目: 财经数据量化分析平台 (财富宝 caifubao)
   模块边界: datahub 生产行情/因子/质量数据，backend 提供聚合 API，frontend 消费 API 并展示
-  当前 MVP: 登录、市场总览、历史行情、数据质量、简单信号、简单回测
-  下一阶段: 将评分机制重塑为 Score5/Score20/Score60 多周期预测、历史回放、校准报告与闭环追踪；评分回放先用 datahub 内部轻量实现，不引入完整交易回测框架；保障 OpenClaw 作为下游通过 backend 只读 API 调取行情、因子、信号、评分和质量数据进行投资分析
+  当前 MVP: 登录、市场总览、历史行情、数据质量、简单信号、简单回测、多周期评分（Score5/20/60）
+  已完成: 评分引擎（StockScorePrediction模型 + scoring_engine服务 + 验证/回放/校准 + 多周期评分API + 前端展示）
+  下一阶段: OpenClaw 集成（service token 鉴权、只读数据 API、请求审计）
   Historical reference: openspec/changes/frontend 保留为早期前端蓝图，不再作为当前执行清单
 
 # Per-artifact rules (optional)

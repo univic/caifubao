@@ -34,6 +34,28 @@
       </div>
     </header>
 
+    <!-- Horizon Selector -->
+    <div class="horizon-controls">
+      <el-radio-group
+        v-model="selectedHorizon"
+        class="horizon-radio-group"
+        @change="onHorizonChange"
+      >
+        <el-radio-button :value="5">
+          <span class="horizon-label">Score5</span>
+          <span class="horizon-desc">短期</span>
+        </el-radio-button>
+        <el-radio-button :value="20">
+          <span class="horizon-label">Score20</span>
+          <span class="horizon-desc">中期</span>
+        </el-radio-button>
+        <el-radio-button :value="60">
+          <span class="horizon-label">Score60</span>
+          <span class="horizon-desc">长期</span>
+        </el-radio-button>
+      </el-radio-group>
+    </div>
+
     <!-- Main Content -->
     <div class="content-container">
       <el-tabs v-model="activeTab" class="linear-tabs" @tab-change="resetAndFetch">
@@ -49,9 +71,9 @@
                 </template>
               </el-table-column>
 
-              <el-table-column label="标的" min-width="180">
+              <el-table-column label="标的" min-width="160">
                 <template #default="{ row }">
-                  <div class="asset-cell">
+                  <div class="asset-cell asset-clickable" @click="navigateToDetail(row.code)">
                     <span class="asset-name">{{ row.name || '--' }}</span>
                     <span class="asset-code">{{ row.code }}</span>
                   </div>
@@ -74,44 +96,61 @@
                 </template>
               </el-table-column>
 
-              <el-table-column label="评分" width="90" align="center">
+              <el-table-column label="多周期评分" min-width="210" align="center">
                 <template #default="{ row }">
-                  <div class="score-badge" :class="getScoreClass(row.evaluation.score)">
-                    {{ row.evaluation.score !== null ? row.evaluation.score : '--' }}
+                  <div class="multi-score-inline">
+                    <div 
+                      v-for="h in HORIZONS" 
+                      :key="h" 
+                      class="mini-score-chip"
+                      :class="getScoreClass(row.evaluation.scores?.[String(h)]?.score)"
+                    >
+                      <span class="chip-horizon">S{{ h }}</span>
+                      <span class="chip-score">
+                        {{ formatScore(row.evaluation.scores?.[String(h)]?.score) }}
+                      </span>
+                    </div>
                   </div>
                 </template>
               </el-table-column>
 
               <el-table-column label="建议" width="100">
                 <template #default="{ row }">
-                  <el-tag 
-                    v-if="row.evaluation.recommendation !== 'NONE'"
-                    :type="row.evaluation.recommendation === 'BUY' ? 'success' : 'warning'"
-                    effect="dark"
-                    size="small"
-                  >
-                    {{ row.evaluation.recommendation }}
-                  </el-tag>
-                  <span v-else class="text-dim">--</span>
+                  <div class="rec-with-pct">
+                    <el-tag 
+                      v-if="row.evaluation.recommendation !== 'NONE'"
+                      :type="getRecTagType(row.evaluation.recommendation)"
+                      effect="dark"
+                      size="small"
+                    >
+                      {{ row.evaluation.recommendation }}
+                    </el-tag>
+                    <span v-else class="text-dim">--</span>
+                    <span v-if="row.evaluation.percentile !== null" class="percentile-hint">
+                      P{{ (row.evaluation.percentile * 100).toFixed(0) }}
+                    </span>
+                  </div>
                 </template>
               </el-table-column>
 
-              <el-table-column label="评分依据" min-width="200">
+              <el-table-column label="排名" width="80" align="center">
                 <template #default="{ row }">
-                  <div class="basis-tags">
-                    <span v-for="tag in row.evaluation.basis?.signals || []" :key="tag" class="basis-tag signal">{{ tag }}</span>
-                    <span v-for="tag in row.evaluation.basis?.trend || []" :key="tag" class="basis-tag trend">{{ tag }}</span>
-                  </div>
+                  <span class="rank-text" :class="{ 'top-rank': row.evaluation.display_rank <= 3 }">
+                    #{{ row.evaluation.rank || row.evaluation.display_rank }}
+                  </span>
                 </template>
               </el-table-column>
 
               <el-table-column label="T+5 验证" min-width="150">
                 <template #default="{ row }">
                   <div v-if="row.evaluation.status === 'VERIFIED'" class="verify-cell">
-                    <span :class="getPriceClass(row.evaluation.max_profit_percentage * 100)">
-                      {{ formatPercent(row.evaluation.max_profit_percentage * 100) }}
+                    <span :class="getPriceClass(row.evaluation.max_profit_percentage)">
+                      {{ formatPercent(row.evaluation.max_profit_percentage) }}
                     </span>
                     <el-icon v-if="row.evaluation.is_effective" class="effect-icon"><CircleCheck /></el-icon>
+                  </div>
+                  <div v-else-if="row.evaluation.status" class="verify-cell">
+                    <span class="text-dim">{{ row.evaluation.status }}</span>
                   </div>
                   <span v-else class="text-dim">待验证</span>
                 </template>
@@ -129,7 +168,7 @@
                   <span class="c-code">{{ item.code }}</span>
                 </div>
                 <div class="header-score" :class="getScoreClass(item.evaluation.score)">
-                  {{ item.evaluation.score }}
+                  {{ formatScore(item.evaluation.score) }}
                 </div>
               </div>
               <div class="card-body">
@@ -142,9 +181,22 @@
                   </span>
                 </div>
                 <div class="recommendation-row" v-if="item.evaluation.recommendation !== 'NONE'">
-                   <el-tag :type="item.evaluation.recommendation === 'BUY' ? 'success' : 'warning'" effect="dark" size="small">
+                   <el-tag :type="getRecTagType(item.evaluation.recommendation)" effect="dark" size="small">
                      {{ item.evaluation.recommendation }}
                    </el-tag>
+                </div>
+              </div>
+              <div class="card-scores">
+                <div 
+                  v-for="h in HORIZONS" 
+                  :key="h" 
+                  class="mini-score-chip"
+                  :class="getScoreClass(item.evaluation.scores?.[String(h)]?.score)"
+                >
+                  <span class="chip-horizon">S{{ h }}</span>
+                  <span class="chip-score">
+                    {{ formatScore(item.evaluation.scores?.[String(h)]?.score) }}
+                  </span>
                 </div>
               </div>
             </div>
@@ -157,7 +209,7 @@
               <el-table :data="tableData" class="linear-table" style="width: 100%">
                  <el-table-column label="标的" min-width="180">
                    <template #default="{ row }">
-                     <div class="asset-cell">
+                     <div class="asset-cell asset-clickable" @click="navigateToDetail(row.code)">
                        <span class="asset-name">{{ row.name || '--' }}</span>
                        <span class="asset-code">{{ row.code }}</span>
                      </div>
@@ -173,10 +225,20 @@
                      <span :class="getPriceClass(row.ohlcv.change_rate)">{{ formatPercent(row.ohlcv.change_rate) }}</span>
                    </template>
                  </el-table-column>
-                 <el-table-column label="评分" width="100" align="center">
+                 <el-table-column label="多周期评分" min-width="210" align="center">
                     <template #default="{ row }">
-                      <div class="score-badge" :class="getScoreClass(row.evaluation.score)">
-                        {{ row.evaluation.score }}
+                      <div class="multi-score-inline">
+                        <div 
+                          v-for="h in HORIZONS" 
+                          :key="h" 
+                          class="mini-score-chip"
+                          :class="getScoreClass(row.evaluation.scores?.[String(h)]?.score)"
+                        >
+                          <span class="chip-horizon">S{{ h }}</span>
+                          <span class="chip-score">
+                            {{ formatScore(row.evaluation.scores?.[String(h)]?.score) }}
+                          </span>
+                        </div>
                       </div>
                     </template>
                  </el-table-column>
@@ -219,11 +281,17 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { marketApi, type MarketComprehensiveItem } from '@/api/market'
 import { Search, CircleCheck } from '@element-plus/icons-vue'
 
+const router = useRouter()
+
+const HORIZONS = [5, 20, 60] as const
+
 const loading = ref(false)
 const activeTab = ref<'stock' | 'index'>('stock')
+const selectedHorizon = ref<number>(5)
 const targetDate = ref('')
 const searchKeyword = ref('')
 const tableData = ref<MarketComprehensiveItem[]>([])
@@ -238,6 +306,7 @@ async function fetchData() {
     const res = await marketApi.getComprehensiveData({
       type: activeTab.value,
       date: targetDate.value || undefined,
+      horizon: selectedHorizon.value,
       page: page.value,
       per_page: pageSize.value,
       q: searchKeyword.value.trim() || undefined
@@ -257,6 +326,10 @@ async function fetchData() {
 function resetAndFetch() {
   page.value = 1
   fetchData()
+}
+
+function onHorizonChange() {
+  resetAndFetch()
 }
 
 function handlePageChange(nextPage: number) {
@@ -279,16 +352,32 @@ function formatPercent(val: number | null) {
   return (val > 0 ? '+' : '') + val.toFixed(2) + '%'
 }
 
+function formatScore(val: number | null | undefined) {
+  if (val === null || val === undefined) return '--'
+  return val.toFixed(1)
+}
+
 function getPriceClass(val: number | null) {
   if (val === null || val === 0) return ''
   return val > 0 ? 'text-up' : 'text-down'
 }
 
-function getScoreClass(score: number | null) {
-  if (score === null) return ''
+function getScoreClass(score: number | null | undefined) {
+  if (score === null || score === undefined) return ''
   if (score >= 80) return 'high'
   if (score >= 60) return 'medium'
   return 'low'
+}
+
+function getRecTagType(rec: string) {
+  if (rec === 'BUY') return 'success'
+  if (rec === 'WATCH') return 'warning'
+  if (rec === 'AVOID') return 'danger'
+  return 'info'
+}
+
+function navigateToDetail(code: string) {
+  router.push({ name: 'QuoteDetail', params: { symbol: code } })
 }
 
 onMounted(() => {
@@ -323,7 +412,7 @@ watch(searchKeyword, () => {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 48px;
+  margin-bottom: 24px;
   gap: 24px;
 }
 
@@ -374,11 +463,80 @@ watch(searchKeyword, () => {
 .search { width: 220px; }
 .date { width: 160px; }
 
+/* Horizon controls */
+.horizon-controls {
+  margin-bottom: 24px;
+  display: flex;
+  justify-content: center;
+}
+
+.horizon-radio-group {
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 4px;
+}
+
+.horizon-label {
+  font-size: 14px;
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.horizon-desc {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
 .content-container {
   background: var(--color-panel);
   border: 1px solid var(--color-border);
   border-radius: 12px;
   padding: 24px;
+}
+
+/* Multi-score chips */
+.multi-score-inline {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.mini-score-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  min-width: 52px;
+
+  &.high {
+    background: rgba(16, 185, 129, 0.08);
+    border-color: rgba(16, 185, 129, 0.25);
+    .chip-score { color: var(--color-up); }
+  }
+  &.medium {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.25);
+    .chip-score { color: #f59e0b; }
+  }
+  &.low {
+    .chip-score { color: var(--color-text-dim); }
+  }
+
+  .chip-horizon {
+    font-size: 9px;
+    color: var(--color-text-dim);
+    font-weight: 500;
+    text-transform: uppercase;
+  }
+  .chip-score {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--color-text-primary);
+  }
 }
 
 /* Table Text & Badges */
@@ -398,30 +556,31 @@ watch(searchKeyword, () => {
 .asset-name { font-weight: 510; color: var(--color-text-primary); }
 .asset-code { font-size: 12px; color: var(--color-text-dim); font-family: ui-monospace, SF Mono, monospace; }
 
+.asset-clickable {
+  cursor: pointer;
+  transition: opacity 0.15s;
+  &:hover {
+    opacity: 0.8;
+    .asset-name { color: var(--color-brand); }
+  }
+}
+
 .text-up { color: var(--color-up); }
 .text-down { color: var(--color-down); }
 .text-dim { color: var(--color-text-dim); }
 
-.score-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 13px;
-  font-weight: 600;
-  background: rgba(255, 255, 255, 0.05);
-  &.high { color: var(--color-up); background: rgba(16, 185, 129, 0.1); }
-  &.medium { color: #f59e0b; background: rgba(245, 158, 11, 0.1); }
-  &.low { color: var(--color-text-dim); }
+.rec-with-pct {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.basis-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.basis-tag {
+.percentile-hint {
   font-size: 10px;
-  padding: 1px 6px;
+  color: var(--color-text-dim);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 4px;
   border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  &.signal { color: #818cf8; background: rgba(129, 140, 248, 0.1); }
-  &.trend { color: #2dd4bf; background: rgba(45, 212, 191, 0.1); }
 }
 
 .verify-cell {
@@ -440,7 +599,8 @@ watch(searchKeyword, () => {
 @media (max-width: 768px) {
   .desktop-view { display: none; }
   .mobile-view { display: flex; flex-direction: column; gap: 12px; }
-  
+  .horizon-controls { justify-content: flex-start; }
+
   .asset-card {
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid var(--color-border);
@@ -482,6 +642,15 @@ watch(searchKeyword, () => {
         .c-change { font-size: 13px; }
       }
     }
+
+    .card-scores {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--color-border);
+      justify-content: center;
+    }
   }
 }
 
@@ -522,6 +691,24 @@ watch(searchKeyword, () => {
     &:hover, &.is-focus { box-shadow: 0 0 0 1px var(--color-brand) inset; }
   }
   .el-input__inner { color: var(--color-text-primary); font-size: 13px; }
+}
+
+:deep(.el-radio-button__inner) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-dim);
+  padding: 8px 20px;
+  border-radius: 8px;
+  &:hover {
+    color: var(--color-text-primary);
+  }
+}
+
+:deep(.el-radio-button.is-active .el-radio-button__inner) {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: #fff;
+  box-shadow: none;
 }
 
 .pagination-row {
