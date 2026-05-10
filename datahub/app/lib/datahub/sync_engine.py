@@ -24,8 +24,7 @@ logger = logging.getLogger(__name__)
 # Collections that are safe to sync (external data only, no computed results)
 SYNCABLE_COLLECTIONS = {
     "stock_daily_quote": {"date_field": "date"},
-    "stock_factor": {"date_field": "date"},
-    "stock_industry": {"date_field": "last_synced_at"},
+    "stock_factor_daily": {"date_field": "date"},
     "finance_market": {"date_field": None},  # small, always full sync
 }
 
@@ -43,11 +42,13 @@ def _build_src_client() -> MongoClient:
     pwd = cfg.MONGODB_SRC_PASSWORD
     # Build client from individual parameters (not a connection string)
     # to avoid triggering gitleaks pattern detection.
+    # Explicit authSource="admin" to match existing mongoengine config.
     client = MongoClient(
         host=host,
         port=port,
         username=user,
         password=pwd,
+        authSource="admin",
         serverSelectionTimeoutMS=10000,
     )
     return client

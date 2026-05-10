@@ -23,8 +23,20 @@ const props = withDefaults(
  * Default when unset is 'production' — the production dashboard
  * always shows the PROD badge so operators know which instance
  * they're interacting with.
+ *
+ * Accepted values:
+ *   production / prod  → gray PROD badge
+ *   development / dev  → amber DEV badge
+ *   anything else       → amber DEV badge (dev default)
  */
-const env = computed(() => import.meta.env.VITE_APP_ENV || 'production')
+const env = computed(() => {
+    const raw = import.meta.env.VITE_APP_ENV || 'production'
+    // Normalize: 'production', 'prod' both map to 'prod'
+    if (raw === 'production' || raw === 'prod') {
+        return 'prod'
+    }
+    return 'dev'
+})
 
 const sizeClass = computed(() => `env-badge--${props.size}`)
 </script>
