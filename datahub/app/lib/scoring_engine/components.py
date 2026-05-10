@@ -3,8 +3,7 @@
 import math
 from statistics import pstdev
 
-
-from app.model.industry import IndustryDailyMetrics
+from app.model.industry import IndustryDailyMetrics, StockIndustryClassification
 
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -295,8 +294,6 @@ def industry_momentum_component(
     neutral 0.5 when no industry data is available (no penalty, no boost).
     """
     try:
-        from app.model.industry import StockIndustryClassification
-
         industry = StockIndustryClassification.objects(stock_code=stock_code).first()
         if not industry or not industry.industry_code_sw_l1:
             return build_component(
@@ -352,7 +349,7 @@ def industry_momentum_component(
                 "watch_count": metrics.watch_count,
             },
         )
-    except Exception as exc:
+    except (AttributeError, TypeError, ValueError) as exc:
         return build_component(
             "industry_momentum",
             "industry",
@@ -375,7 +372,6 @@ def aggregate_industry_metrics(
     metrics so industry_momentum_component can reference them on subsequent runs.
     """
     from collections import defaultdict
-    from app.model.industry import StockIndustryClassification
 
     # Map stock_code → industry_code
     industries = {
@@ -392,10 +388,10 @@ def aggregate_industry_metrics(
             continue
         groups[ind.industry_code_sw_l1].append(
             {
-                "score": getattr(pred, "score", 0) or 0,
-                "percentile": getattr(pred, "percentile", 0) or 0,
-                "rank": getattr(pred, "rank", 0) or 0,
-                "recommendation": getattr(pred, "recommendation", "NONE"),
+                "score": pred.score or 0,
+                "percentile": pred.percentile or 0,
+                "rank": pred.rank or 0,
+                "recommendation": pred.recommendation or "NONE",
             }
         )
 
@@ -407,6 +403,8 @@ def aggregate_industry_metrics(
 
         recos = [p["recommendation"] for p in preds]
 
+        std_dev = round(pstdev(scores), 2) if len(scores) > 1 else 0.0
+
         doc = IndustryDailyMetrics(
             industry_code=code,
             industry_name=industries[next(iter(preds))].industry_name_sw_l1
@@ -417,6 +415,7 @@ def aggregate_industry_metrics(
             avg_score=round(sum(scores) / len(scores), 2),
             max_score=round(max(scores), 2),
             min_score=round(min(scores), 2),
+            std_dev_score=std_dev,
             avg_percentile=round(sum(p["percentile"] for p in preds) / len(preds), 4),
             avg_rank=round(sum(p["rank"] for p in preds) / len(preds), 2),
             buy_count=sum(1 for r in recos if r == "BUY"),

@@ -170,9 +170,11 @@ def _derive_industry_code(industry_name: str) -> str:
     if industry_name in _INDUSTRY_CODE_MAP:
         return _INDUSTRY_CODE_MAP[industry_name]
 
-    # Generate a stable numeric-ish code from the name
-    code_val = hash(industry_name) % 100000
-    code = f"SW{abs(code_val):05d}"
+    # CRC32 produces a deterministic 0-2^32 range value from the name bytes
+    import zlib
+
+    code_val = zlib.crc32(industry_name.encode("utf-8")) & 0xFFFFFFFF
+    code = f"SW{(code_val % 100000):05d}"
     return code
 
 

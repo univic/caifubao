@@ -49,7 +49,7 @@
         >
           <template v-if="card.coverage">
             <div class="label">{{ card.title }}</div>
-            <div class="metric-value">{{ card.coverage.ok_rate.toFixed(2) }}%</div>
+            <div class="metric-value">{{ (card.coverage.ok_rate || 0).toFixed(2) }}%</div>
             <el-progress
               :percentage="card.coverage.ok_rate"
               :status="progressStatus(card.coverage.ok_rate)"
