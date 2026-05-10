@@ -5,7 +5,6 @@ FROM node:20-alpine AS builder
 # develop 分支 → development → 显示 DEV 徽章
 # main 分支   → production  → 显示 PROD 徽章
 ARG VITE_APP_ENV=production
-ENV VITE_APP_ENV=${VITE_APP_ENV}
 
 # 设置工作目录
 WORKDIR /app
@@ -19,8 +18,8 @@ RUN npm ci
 # 复制源代码
 COPY . .
 
-# 构建生产版本
-RUN npm run build
+# 构建生产版本（显式传递 VITE_APP_ENV 避免 ENV 指令在某些 buildx 版本中失效）
+RUN VITE_APP_ENV=${VITE_APP_ENV} npm run build
 
 # 运行阶段 - 使用 nginx
 FROM nginx:alpine
