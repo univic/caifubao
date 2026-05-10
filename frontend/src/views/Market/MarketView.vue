@@ -127,7 +127,7 @@
                     </el-tag>
                     <span v-else class="text-dim">--</span>
                     <span v-if="row.evaluation.percentile !== null" class="percentile-hint">
-                      P{{ (row.evaluation.percentile).toFixed(0) }}
+                      P{{ (row.evaluation.percentile * 100).toFixed(0) }}
                     </span>
                   </div>
                 </template>

@@ -145,7 +145,7 @@
                     {{ latestScores[h]?.recommendation }}
                   </el-tag>
                   <span v-if="latestScores[h]?.percentile !== null" class="percentile">
-                    P{{ (latestScores[h]?.percentile || 0).toFixed(0) }}
+                    P{{ ((latestScores[h]?.percentile ?? 0) * 100).toFixed(0) }}
                   </span>
                 </div>
                 <div class="score-status">
@@ -361,9 +361,12 @@ watch(scoreHorizon, () => {
   fetchScoreHistory()
 })
 
-watch(detailTab, (tab) => {
-  if (tab === 'score' && !scoreHistory.value.length && detail.value) {
-    fetchLatestScores()
+watch(detailTab, async (tab) => {
+  if (tab === 'score' && detail.value) {
+    await Promise.all([
+      fetchLatestScores(),
+      fetchScoreHistory()
+    ])
   }
 })
 
