@@ -3,6 +3,9 @@
 import math
 from statistics import pstdev
 
+from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
+from app.model.industry import IndustryDailyMetrics, StockIndustryClassification
+
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
@@ -277,3 +280,203 @@ def risk_penalty(quote, history_quotes: list, weight: float) -> dict:
         weight,
         {"trade_status": trade_status, "is_st": is_st, "return_count": len(returns)},
     )
+
+
+def industry_momentum_component(
+    stock_code: str,
+    date,
+    horizon: int,
+    weight: float,
+    model_version: str = DEFAULT_MODEL_VERSION,
+) -> dict:
+    """Industry momentum component.
+
+    Looks up the IndustryDailyMetrics for the stock's Shenwan L1 industry
+    that was computed strictly before the given scoring date (date__lt),
+    filtering by horizon and model_version. This prevents:
+    - Look-ahead bias (no future metrics are accessible)
+    - Feedback loops (re-running the same day won't read its own output)
+    - Cross-version contamination
+    Returns neutral 0.5 when no matching data exists.
+    """
+    try:
+        industry = StockIndustryClassification.objects(stock_code=stock_code).first()
+        if not industry or not industry.industry_code_sw_l1:
+            return build_component(
+                "industry_momentum",
+                "industry",
+                "Industry average score momentum",
+                None,
+                0.5,
+                weight,
+                evidence={"note": "No industry classification available"},
+            )
+
+        metrics = (
+            IndustryDailyMetrics.objects(
+                industry_code=industry.industry_code_sw_l1,
+                date__lt=date,
+                horizon=horizon,
+                model_version=model_version,
+            )
+            .order_by("-date")
+            .first()
+        )
+
+        if not metrics or metrics.stock_count < 3:
+            return build_component(
+                "industry_momentum",
+                "industry",
+                "Industry average score momentum",
+                None,
+                0.5,
+                weight,
+                evidence={
+                    "industry": industry.industry_name_sw_l1,
+                    "note": "Insufficient industry data (need >=3 scored stocks)",
+                },
+            )
+
+        normalized = clamp(metrics.avg_score / 100.0)
+        return build_component(
+            "industry_momentum",
+            "industry",
+            "Industry average score momentum ({})".format(industry.industry_name_sw_l1),
+            {
+                "industry": industry.industry_name_sw_l1,
+                "avg_score": metrics.avg_score,
+                "stock_count": metrics.stock_count,
+            },
+            normalized,
+            weight,
+            evidence={
+                "industry_code": industry.industry_code_sw_l1,
+                "industry_name": industry.industry_name_sw_l1,
+                "avg_score": metrics.avg_score,
+                "stock_count": metrics.stock_count,
+                "buy_count": metrics.buy_count,
+                "watch_count": metrics.watch_count,
+            },
+        )
+    except (AttributeError, TypeError, ValueError) as exc:
+        return build_component(
+            "industry_momentum",
+            "industry",
+            "Industry momentum (error)",
+            str(exc),
+            0.5,
+            weight,
+            evidence={"error": str(exc)},
+        )
+
+
+def aggregate_industry_metrics(
+    date,
+    predictions: list,
+    model_version: str = DEFAULT_MODEL_VERSION,
+) -> list[dict]:
+    """Aggregate score predictions into IndustryDailyMetrics per L1 industry.
+
+    Called after scoring is complete for a given date and horizon. Persists
+    the aggregated metrics so industry_momentum_component can reference them
+    on subsequent runs.
+    """
+    from collections import defaultdict
+
+    if not predictions:
+        return []
+
+    # Infer horizon from the first prediction (all predictions passed here
+    # should share the same horizon).
+    horizon = predictions[0].horizon
+
+    # Map stock_code → industry doc
+    industries = {
+        doc.stock_code: doc
+        for doc in StockIndustryClassification.objects(
+            stock_code__in=[p.stock_code for p in predictions]
+        )
+    }
+
+    groups: dict[str, dict] = defaultdict(
+        lambda: {"scores": [], "recos": [], "name": ""}
+    )
+    for pred in predictions:
+        ind = industries.get(pred.stock_code)
+        if not ind or not ind.industry_code_sw_l1:
+            continue
+        key = ind.industry_code_sw_l1
+        groups[key]["scores"].append(pred.score or 0)
+        groups[key]["recos"].append(pred.recommendation or "NONE")
+        if not groups[key]["name"]:
+            groups[key]["name"] = ind.industry_name_sw_l1 or ""
+
+    results = []
+    for code, group in groups.items():
+        scores = group["scores"]
+        if not scores:
+            continue
+
+        recos = group["recos"]
+        percentiles = [
+            p.percentile or 0
+            for p in predictions
+            if industries.get(p.stock_code)
+            and industries[p.stock_code].industry_code_sw_l1 == code
+        ]
+        ranks = [
+            p.rank or 0
+            for p in predictions
+            if industries.get(p.stock_code)
+            and industries[p.stock_code].industry_code_sw_l1 == code
+        ]
+
+        std_dev = round(pstdev(scores), 2) if len(scores) > 1 else 0.0
+
+        existing = IndustryDailyMetrics.objects(
+            industry_code=code,
+            date=date,
+            horizon=horizon,
+            model_version=model_version,
+        ).first()
+
+        if existing:
+            existing.industry_name = group["name"]
+            existing.stock_count = len(scores)
+            existing.avg_score = round(sum(scores) / len(scores), 2)
+            existing.max_score = round(max(scores), 2)
+            existing.min_score = round(min(scores), 2)
+            existing.std_dev_score = std_dev
+            existing.avg_percentile = (
+                round(sum(percentiles) / len(percentiles), 4) if percentiles else 0.0
+            )
+            existing.avg_rank = round(sum(ranks) / len(ranks), 2) if ranks else 0.0
+            existing.buy_count = sum(1 for r in recos if r == "BUY")
+            existing.watch_count = sum(1 for r in recos if r == "WATCH")
+            existing.avoid_count = sum(1 for r in recos if r == "AVOID")
+            existing.save()
+            results.append(existing)
+        else:
+            doc = IndustryDailyMetrics(
+                industry_code=code,
+                industry_name=group["name"],
+                date=date,
+                horizon=horizon,
+                model_version=model_version,
+                stock_count=len(scores),
+                avg_score=round(sum(scores) / len(scores), 2),
+                max_score=round(max(scores), 2),
+                min_score=round(min(scores), 2),
+                std_dev_score=std_dev,
+                avg_percentile=round(sum(percentiles) / len(percentiles), 4)
+                if percentiles
+                else 0.0,
+                avg_rank=round(sum(ranks) / len(ranks), 2) if ranks else 0.0,
+                buy_count=sum(1 for r in recos if r == "BUY"),
+                watch_count=sum(1 for r in recos if r == "WATCH"),
+                avoid_count=sum(1 for r in recos if r == "AVOID"),
+            )
+            doc.save()
+            results.append(doc)
+
+    return results

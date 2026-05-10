@@ -1,6 +1,12 @@
 # 多阶段构建 - 构建阶段
 FROM node:20-alpine AS builder
 
+# 构建时传入 VITE_APP_ENV 以控制前端环境标识（DEV/PROD）
+# develop 分支 → development → 显示 DEV 徽章
+# main 分支   → production  → 显示 PROD 徽章
+ARG VITE_APP_ENV=production
+ENV VITE_APP_ENV=${VITE_APP_ENV}
+
 # 设置工作目录
 WORKDIR /app
 

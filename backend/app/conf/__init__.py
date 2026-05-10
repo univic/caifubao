@@ -71,6 +71,24 @@ class BaseConfig(object):
             raise ValueError("MONGODB_PASS environment variable is required")
         return value
 
+    @property
+    def MONGODB_CONNECT_TIMEOUT_MS(self):
+        value = os.getenv("MONGODB_CONNECT_TIMEOUT_MS", "5000")
+        try:
+            return int(value)
+        except ValueError:
+            raise ValueError("MONGODB_CONNECT_TIMEOUT_MS must be a valid integer")
+
+    @property
+    def MONGODB_SERVER_SELECTION_TIMEOUT_MS(self):
+        value = os.getenv("MONGODB_SERVER_SELECTION_TIMEOUT_MS", "5000")
+        try:
+            return int(value)
+        except ValueError:
+            raise ValueError(
+                "MONGODB_SERVER_SELECTION_TIMEOUT_MS must be a valid integer"
+            )
+
     USER_MIN_USERNAME_LENGTH = 3
     USER_MAX_USERNAME_LENGTH = 25
     USER_MIN_PWD_LENGTH = 8

@@ -62,6 +62,24 @@ jobs:
         run: |
           echo "immutable_tag=sha-${SOURCE_SHA::12}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve frontend app env
+        id: app-env
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          case "$SOURCE_BRANCH" in
+            main)
+              echo "value=production" >> "$GITHUB_OUTPUT"
+              ;;
+            develop)
+              echo "value=development" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported source branch: $SOURCE_BRANCH" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Extract Docker metadata
         id: meta
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.changed == 'true'
@@ -80,6 +98,8 @@ jobs:
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
+          build-args: |
+            VITE_APP_ENV=${{ steps.app-env.outputs.value }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

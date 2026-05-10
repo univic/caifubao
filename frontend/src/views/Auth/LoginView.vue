@@ -37,7 +37,10 @@
       <section class="login-panel">
         <div class="login-card">
           <div class="login-card__header">
-            <div class="login-card__kicker">欢迎回来</div>
+            <div class="login-card__kicker">
+              <span>欢迎回来</span>
+              <EnvBadge size="small" />
+            </div>
             <h2>登录你的量化工作台</h2>
             <p>输入账号后，继续查看行情、信号和回测结果。</p>
           </div>
@@ -102,6 +105,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
+import EnvBadge from '@/components/layout/EnvBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -160,6 +164,9 @@ async function handleLogin() {
             break
           case 500:
             errorMessage = '服务器内部错误，请稍后重试'
+            break
+          case 503:
+            errorMessage = message || '数据库暂时不可用，请稍后重试'
             break
           default:
             errorMessage = message || `登录失败 (${status})`
@@ -339,6 +346,8 @@ async function handleLogin() {
 
   .login-card__kicker {
     display: inline-flex;
+    align-items: center;
+    gap: 8px;
     padding: 7px 11px;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.04);
