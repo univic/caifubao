@@ -395,3 +395,99 @@ spec:
                 cpu: "1000m"
           imagePullSecrets:
           - name: registry-secret
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: caifubao-datahub-industry-sync
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: industry-sync
+spec:
+  schedule: "0 12 1 * *"
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 21600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 7200
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: caifubao-datahub
+            job.caifubao.io/type: industry-sync
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: industry-sync-runner
+            image: caifubao-datahub:latest
+            imagePullPolicy: Always
+            command: ["python", "-m", "app.jobs.industry_sync_runner"]
+            args:
+            - run
+            - --job-name
+            - datahub_industry_sync
+            - --job-family
+            - industry_sync
+            - --trigger
+            - cron
+            - --source
+            - k8s-cronjob
+            - --scheduled-hour
+            - "12"
+            - --scheduled-minute
+            - "0"
+            env:
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_HOST
+            - name: MONGODB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_PORT
+            - name: MONGODB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_NAME
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_USER
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: MONGODB_PASSWORD
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: ENVIRONMENT
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "200m"
+          imagePullSecrets:
+          - name: registry-secret

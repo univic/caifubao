@@ -450,20 +450,24 @@ def _clear_items_cache():
 def _build_industry_coverage():
     """Build industry coverage summary for the data quality page."""
     try:
-        from app.lib.datahub.data_integrity_keeper.handler.industry_classification import (
-            get_industry_coverage_stats,
-        )
+        total_classified = StockIndustryClassification.objects.count()
+        pipeline = [
+            {"$group": {"_id": "$industry_name_sw_l1", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+        ]
+        by_l1 = list(StockIndustryClassification.objects.aggregate(pipeline))
+        industry_count = len(by_l1)
 
-        stats = get_industry_coverage_stats()
         last_sync = None
         newest = (
             StockIndustryClassification.objects().order_by("-last_synced_at").first()
         )
-        if newest:
+        if newest and newest.last_synced_at:
             last_sync = _format_datetime(newest.last_synced_at)
+
         return {
-            "total_classified": stats["total_classified"],
-            "industry_count": stats["industry_count"],
+            "total_classified": total_classified,
+            "industry_count": industry_count,
             "last_sync": last_sync,
         }
     except Exception as exc:

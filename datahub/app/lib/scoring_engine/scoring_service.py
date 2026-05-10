@@ -335,6 +335,7 @@ class StockScoringService:
                 date=date,
                 horizon=horizon,
                 weight=weights.get("industry_momentum", 0.0),
+                model_version=self.model_version,
             ),
         ]
         penalties = [risk_penalty(quote, risk_quotes, weights["risk_penalty"])]

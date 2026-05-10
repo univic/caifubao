@@ -287,12 +287,14 @@ def industry_momentum_component(
     date,
     horizon: int,
     weight: float,
+    model_version: str = DEFAULT_MODEL_VERSION,
 ) -> dict:
     """Industry momentum component.
 
-    Looks up the latest IndustryDailyMetrics for the stock's Shenwan L1 industry
-    and normalizes the industry's average score into a 0-1 value. Returns a
-    neutral 0.5 when no industry data is available (no penalty, no boost).
+    Looks up the IndustryDailyMetrics for the stock's Shenwan L1 industry
+    that was computed before (or on) the given scoring date, filtering by
+    horizon and model_version. This prevents look-ahead bias and cross-
+    version contamination. Returns neutral 0.5 when no matching data exists.
     """
     try:
         industry = StockIndustryClassification.objects(stock_code=stock_code).first()
@@ -310,7 +312,9 @@ def industry_momentum_component(
         metrics = (
             IndustryDailyMetrics.objects(
                 industry_code=industry.industry_code_sw_l1,
+                date__lte=date,
                 horizon=horizon,
+                model_version=model_version,
             )
             .order_by("-date")
             .first()
@@ -426,26 +430,50 @@ def aggregate_industry_metrics(
 
         std_dev = round(pstdev(scores), 2) if len(scores) > 1 else 0.0
 
-        doc = IndustryDailyMetrics(
+        existing = IndustryDailyMetrics.objects(
             industry_code=code,
-            industry_name=group["name"],
             date=date,
             horizon=horizon,
             model_version=model_version,
-            stock_count=len(scores),
-            avg_score=round(sum(scores) / len(scores), 2),
-            max_score=round(max(scores), 2),
-            min_score=round(min(scores), 2),
-            std_dev_score=std_dev,
-            avg_percentile=round(sum(percentiles) / len(percentiles), 4)
-            if percentiles
-            else 0.0,
-            avg_rank=round(sum(ranks) / len(ranks), 2) if ranks else 0.0,
-            buy_count=sum(1 for r in recos if r == "BUY"),
-            watch_count=sum(1 for r in recos if r == "WATCH"),
-            avoid_count=sum(1 for r in recos if r == "AVOID"),
-        )
-        doc.save()
-        results.append(doc)
+        ).first()
+
+        if existing:
+            existing.industry_name = group["name"]
+            existing.stock_count = len(scores)
+            existing.avg_score = round(sum(scores) / len(scores), 2)
+            existing.max_score = round(max(scores), 2)
+            existing.min_score = round(min(scores), 2)
+            existing.std_dev_score = std_dev
+            existing.avg_percentile = (
+                round(sum(percentiles) / len(percentiles), 4) if percentiles else 0.0
+            )
+            existing.avg_rank = round(sum(ranks) / len(ranks), 2) if ranks else 0.0
+            existing.buy_count = sum(1 for r in recos if r == "BUY")
+            existing.watch_count = sum(1 for r in recos if r == "WATCH")
+            existing.avoid_count = sum(1 for r in recos if r == "AVOID")
+            existing.save()
+            results.append(existing)
+        else:
+            doc = IndustryDailyMetrics(
+                industry_code=code,
+                industry_name=group["name"],
+                date=date,
+                horizon=horizon,
+                model_version=model_version,
+                stock_count=len(scores),
+                avg_score=round(sum(scores) / len(scores), 2),
+                max_score=round(max(scores), 2),
+                min_score=round(min(scores), 2),
+                std_dev_score=std_dev,
+                avg_percentile=round(sum(percentiles) / len(percentiles), 4)
+                if percentiles
+                else 0.0,
+                avg_rank=round(sum(ranks) / len(ranks), 2) if ranks else 0.0,
+                buy_count=sum(1 for r in recos if r == "BUY"),
+                watch_count=sum(1 for r in recos if r == "WATCH"),
+                avoid_count=sum(1 for r in recos if r == "AVOID"),
+            )
+            doc.save()
+            results.append(doc)
 
     return results

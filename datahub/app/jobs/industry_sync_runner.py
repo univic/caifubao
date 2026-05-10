@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Industry classification sync runner — entry point for monthly K8s CronJob.
+"""Industry classification sync runner — entry point for scheduled sync.
 
 Usage:
     python -m app.jobs.industry_sync_runner run [--dry-run] [--force-update]
 
-Can be triggered from a K8s CronJob scheduled monthly (e.g. 1st of each month).
+Designed for deployment as a monthly K8s CronJob (see:
+k8s/overlays/example-production/datahub-cronjobs.yaml
+for the reference CronJob manifest). Runs monthly on the 1st at 12:00 CST.
 """
 
 import argparse
