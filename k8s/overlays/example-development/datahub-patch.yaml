@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caifubao-datahub
+spec:
+  template:
+    spec:
+      containers:
+      - name: datahub
+        env:
+        - name: MONGODB_SRC_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_SRC_HOST
+        - name: MONGODB_SRC_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_SRC_PORT
+        - name: MONGODB_SRC_USER
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_SRC_USER
+        - name: MONGODB_SRC_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_SRC_NAME
+        - name: MONGODB_SRC_PASS
+          valueFrom:
+            secretKeyRef:
+              name: datahub-secret
+              key: MONGODB_SRC_PASS

@@ -1,6 +1,9 @@
 # 多阶段构建 - 构建阶段
 FROM node:20-alpine AS builder
 
+ARG VITE_APP_ENV=production
+ENV VITE_APP_ENV=${VITE_APP_ENV}
+
 # 设置工作目录
 WORKDIR /app
 
