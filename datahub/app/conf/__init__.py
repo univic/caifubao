@@ -64,6 +64,13 @@ class BaseConfig(object):
             raise ValueError("MONGODB_PASS environment variable is required")
         return value
 
+    # Source MongoDB (used by data sync engine — dev pulls from prod)
+    MONGODB_SRC_HOST = os.getenv("MONGODB_SRC_HOST", "")
+    MONGODB_SRC_PORT = int(os.getenv("MONGODB_SRC_PORT", "27017"))
+    MONGODB_SRC_USERNAME = os.getenv("MONGODB_SRC_USER", "")
+    MONGODB_SRC_PASSWORD = os.getenv("MONGODB_SRC_PASS", "")
+    MONGODB_SRC_NAME = os.getenv("MONGODB_SRC_NAME", "")
+
     DATAHUB_TASK_SCAN_INTERVAL = 5
     TASK_CONTROLLER_DEFAULT_TASK_QUEUE_NUM = 3
     TASK_CONTROLLER_MAX_TASK_QUEUE_NUM = 5
