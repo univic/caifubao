@@ -14,12 +14,15 @@ from flask_security import (
     hash_password,
     verify_password,
 )
+from pymongo.errors import PyMongoError
 from app.lib.db_watcher.mongoengine_tool import db
 from app.model.user_model import User
 from app.model.user_role import UserRole
 import datetime
+import logging
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
+logger = logging.getLogger(__name__)
 
 # Initialize Flask-Security
 user_datastore = MongoEngineUserDatastore(db, User, UserRole)
@@ -45,53 +48,60 @@ def login():
     if not all([username, password]):
         return jsonify({"message": "Missing username or password"}), 400
 
-    # Find user
-    user = User.objects(username=username).first()
+    try:
+        # Find user
+        user = User.objects(username=username).first()
 
-    # Check if account is locked
-    if user and user.locked_until and datetime.datetime.now() < user.locked_until:
-        remaining_time = (user.locked_until - datetime.datetime.now()).seconds // 60
-        return jsonify(
-            {
-                "message": f"Account is locked. Please try again in {remaining_time} minutes"
-            }
-        ), 403
+        # Check if account is locked
+        if user and user.locked_until and datetime.datetime.now() < user.locked_until:
+            remaining_time = (user.locked_until - datetime.datetime.now()).seconds // 60
+            return jsonify(
+                {
+                    "message": (
+                        "Account is locked. Please try again in "
+                        f"{remaining_time} minutes"
+                    )
+                }
+            ), 403
 
-    if not user or not verify_password(password, user.password_hash):
-        # Increment failed login count
-        if user:
-            user.failed_login_count = (user.failed_login_count or 0) + 1
+        if not user or not verify_password(password, user.password_hash):
+            # Increment failed login count
+            if user:
+                user.failed_login_count = (user.failed_login_count or 0) + 1
 
-            # Lock account if max attempts reached
-            if user.failed_login_count >= MAX_FAILED_LOGIN_ATTEMPTS:
-                user.locked_until = datetime.datetime.now() + datetime.timedelta(
-                    minutes=LOCKOUT_DURATION_MINUTES
-                )
-                if "99" not in user.user_status:
-                    user.user_status.append("99")
+                # Lock account if max attempts reached
+                if user.failed_login_count >= MAX_FAILED_LOGIN_ATTEMPTS:
+                    user.locked_until = datetime.datetime.now() + datetime.timedelta(
+                        minutes=LOCKOUT_DURATION_MINUTES
+                    )
+                    if "99" not in user.user_status:
+                        user.user_status.append("99")
 
-            user.save()
+                user.save()
 
-        return jsonify({"message": "Invalid username or password"}), 401
+            return jsonify({"message": "Invalid username or password"}), 401
 
-    # Check user status
-    if "99" in user.user_status and (
-        not user.locked_until or datetime.datetime.now() >= user.locked_until
-    ):
-        # Remove lock if lockout period has expired
-        user.user_status.remove("99")
-    elif "99" in user.user_status:
-        return jsonify({"message": "Account is locked"}), 403
+        # Check user status
+        if "99" in user.user_status and (
+            not user.locked_until or datetime.datetime.now() >= user.locked_until
+        ):
+            # Remove lock if lockout period has expired
+            user.user_status.remove("99")
+        elif "99" in user.user_status:
+            return jsonify({"message": "Account is locked"}), 403
 
-    # Update user state and save once before token creation
-    user.failed_login_count = 0
-    user.locked_until = None
-    user.last_login_at = user.current_login_at
-    user.last_login_ip = user.current_login_ip
-    user.current_login_at = datetime.datetime.now()
-    user.current_login_ip = request.remote_addr
-    user.login_count = (user.login_count or 0) + 1
-    user.save()
+        # Update user state and save once before token creation
+        user.failed_login_count = 0
+        user.locked_until = None
+        user.last_login_at = user.current_login_at
+        user.last_login_ip = user.current_login_ip
+        user.current_login_at = datetime.datetime.now()
+        user.current_login_ip = request.remote_addr
+        user.login_count = (user.login_count or 0) + 1
+        user.save()
+    except PyMongoError:
+        logger.exception("Login failed because MongoDB is unavailable")
+        return jsonify({"message": "Database unavailable, please try again later"}), 503
 
     # Create tokens
     access_token = create_access_token(

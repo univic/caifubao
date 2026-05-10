@@ -165,6 +165,9 @@ async function handleLogin() {
           case 500:
             errorMessage = '服务器内部错误，请稍后重试'
             break
+          case 503:
+            errorMessage = message || '数据库暂时不可用，请稍后重试'
+            break
           default:
             errorMessage = message || `登录失败 (${status})`
         }
