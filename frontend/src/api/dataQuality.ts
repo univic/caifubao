@@ -26,6 +26,12 @@ export interface DataQualityScope {
   unsupported_markets: string[]
 }
 
+export interface IndustryCoverage {
+  total_classified: number
+  industry_count: number
+  last_sync: string | null
+}
+
 export interface DataQualitySummary {
   status: 'OK' | 'WARN' | 'ERROR'
   generated_at: string
@@ -36,6 +42,7 @@ export interface DataQualitySummary {
     quote: DataQualityCoverage
     fq_factor: DataQualityCoverage
     ma_factor: DataQualityCoverage
+    industry: IndustryCoverage
   }
 }
 
