@@ -292,9 +292,12 @@ def industry_momentum_component(
     """Industry momentum component.
 
     Looks up the IndustryDailyMetrics for the stock's Shenwan L1 industry
-    that was computed before (or on) the given scoring date, filtering by
-    horizon and model_version. This prevents look-ahead bias and cross-
-    version contamination. Returns neutral 0.5 when no matching data exists.
+    that was computed strictly before the given scoring date (date__lt),
+    filtering by horizon and model_version. This prevents:
+    - Look-ahead bias (no future metrics are accessible)
+    - Feedback loops (re-running the same day won't read its own output)
+    - Cross-version contamination
+    Returns neutral 0.5 when no matching data exists.
     """
     try:
         industry = StockIndustryClassification.objects(stock_code=stock_code).first()
@@ -312,7 +315,7 @@ def industry_momentum_component(
         metrics = (
             IndustryDailyMetrics.objects(
                 industry_code=industry.industry_code_sw_l1,
-                date__lte=date,
+                date__lt=date,
                 horizon=horizon,
                 model_version=model_version,
             )
