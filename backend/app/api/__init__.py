@@ -20,6 +20,7 @@ from app.api.v1.portfolios import portfolios_bp
 from app.api.v1.quotes import quotes_bp
 from app.api.v1.scores import scores_bp
 from app.api.v1.score_experiments import score_experiments_bp
+from app.api.v1.system import system_bp
 from app.api.v1.signals import signals_bp
 
 
@@ -38,4 +39,5 @@ def register_blueprint(app: Flask):
     app.register_blueprint(signals_bp)
     register_openclaw_routes()
     app.register_blueprint(openclaw_bp)
+    app.register_blueprint(system_bp)
     app.register_blueprint(health_bp)

@@ -63,10 +63,7 @@
       </nav>
 
       <div class="topbar__actions">
-        <div class="status-pill">
-          <span class="status-pill__dot" />
-          <span>在线</span>
-        </div>
+        <EnvBadge />
 
         <el-dropdown @command="handleCommand" trigger="click" popper-class="topbar-dropdown">
           <button class="user-pill" type="button">
@@ -156,6 +153,7 @@
 import { computed, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import EnvBadge from '@/components/layout/EnvBadge.vue'
 import {
   ArrowDown,
   Bell,
@@ -348,27 +346,7 @@ async function handleCommand(command: string) {
   gap: 12px;
 }
 
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(39, 166, 68, 0.12);
-  color: #b8f2c4;
-  font-size: 13px;
-  font-weight: 510;
-  white-space: nowrap;
-  border: 1px solid rgba(39, 166, 68, 0.2);
-}
 
-.status-pill__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #27a644;
-  box-shadow: 0 0 0 4px rgba(39, 166, 68, 0.16);
-}
 
 .user-pill {
   display: inline-flex;
@@ -468,7 +446,7 @@ async function handleCommand(command: string) {
     display: inline-flex;
   }
 
-  .status-pill {
+  .env-badge {
     display: none;
   }
 }
