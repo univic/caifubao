@@ -1,6 +1,7 @@
 # backend/app/test/test_auth_api.py
 import pytest
 from unittest.mock import patch, MagicMock
+from pymongo.errors import ServerSelectionTimeoutError
 
 
 class TestAuthRegister:
@@ -192,6 +193,25 @@ class TestForgotPassword:
         payload = response.get_json()
         assert payload == {"message": "If email exists, reset link will be sent"}
         assert "reset_token" not in payload
+
+
+class TestAuthLogin:
+    """Test user login behavior"""
+
+    @patch("app.api.v1.auth.User")
+    def test_login_returns_503_when_database_unavailable(self, mock_user_model, client):
+        mock_user_model.objects.side_effect = ServerSelectionTimeoutError(
+            "database unavailable"
+        )
+
+        response = client.post(
+            "/api/auth/login", json={"username": "user", "password": "Passw0rd!"}
+        )
+
+        assert response.status_code == 503
+        assert response.get_json() == {
+            "message": "Database unavailable, please try again later"
+        }
 
 
 class TestProductionConfig:

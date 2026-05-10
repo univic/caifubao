@@ -73,7 +73,7 @@ jobs:
           set_output docker '^(backend/Dockerfile|datahub/Dockerfile|frontend/Dockerfile|\.github/workflows/ci\.yml$)'
           set_output k8s '^(k8s/|\.github/workflows/ci\.yml$)'
           set_output openspec '^(openspec/|\.github/workflows/ci\.yml$)'
-          set_output ci '^\.github/workflows/ci\.yml$'
+          set_output ci '^\.github/workflows/.*\.yml$'
 
   backend-test:
     name: Backend Tests (Python 3.12)
@@ -263,6 +263,83 @@ jobs:
       - name: Render example production overlay
         run: kubectl kustomize k8s/overlays/example-production > /tmp/caifubao-example-prod.yaml
 
+  private-deploy-dry-run:
+    name: Private Deploy Dry Run
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      ${{
+        (
+          needs.changes.outputs.backend == 'true' ||
+          needs.changes.outputs.frontend == 'true' ||
+          needs.changes.outputs.datahub == 'true' ||
+          needs.changes.outputs.docker == 'true' ||
+          needs.changes.outputs.k8s == 'true' ||
+          needs.changes.outputs.ci == 'true'
+        ) &&
+        (
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        )
+      }}
+
+    steps:
+      - name: Trigger private deploy dry-run
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_DISPATCH_TOKEN }}
+          PRIVATE_REPOSITORY: univic/caifubao-private
+          PUBLIC_REPOSITORY: ${{ github.repository }}
+          PUBLIC_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          : "${GH_TOKEN:?Missing PRIVATE_REPO_DISPATCH_TOKEN secret}"
+
+          started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          curl --fail-with-body -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${PRIVATE_REPOSITORY}/dispatches" \
+            -d @- <<EOF
+          {
+            "event_type": "deploy_dry_run",
+            "client_payload": {
+              "public_repository": "${PUBLIC_REPOSITORY}",
+              "public_ref": "${PUBLIC_REF}"
+            }
+          }
+          EOF
+
+          echo "Waiting for private deploy dry-run created after ${started_at}"
+          sleep 10
+          run_id=""
+          for _ in {1..18}; do
+            run_list_output="$(gh run list \
+              --repo "${PRIVATE_REPOSITORY}" \
+              --workflow deploy-dry-run.yml \
+              --limit 20 \
+              --json databaseId,createdAt \
+              --jq ".[] | select(.createdAt >= \"${started_at}\") | .databaseId" \
+              2>/tmp/private-dry-run-list.err)" || {
+              cat /tmp/private-dry-run-list.err >&2
+              echo "::warning title=Private dry-run not watched::Dispatch succeeded, but PRIVATE_REPO_DISPATCH_TOKEN cannot read private Actions runs. Grant Actions read permission to make this check blocking."
+              exit 0
+            }
+            run_id="$(printf '%s\n' "$run_list_output" | head -n 1)"
+            if [ -n "$run_id" ]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [ -z "$run_id" ]; then
+            echo "Timed out waiting for private dry-run workflow to start."
+            exit 1
+          fi
+
+          gh run watch "${run_id}" --repo "${PRIVATE_REPOSITORY}" --exit-status
+
   openspec-check:
     name: OpenSpec Validate
     runs-on: ubuntu-latest
@@ -287,7 +364,7 @@ jobs:
   required-checks:
     name: Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, backend-test, backend-lint, frontend-check, datahub-lint, dockerfile-check, kustomize-check, openspec-check]
+    needs: [changes, backend-test, backend-lint, frontend-check, datahub-lint, dockerfile-check, kustomize-check, private-deploy-dry-run, openspec-check]
     if: always()
 
     steps:
@@ -310,6 +387,7 @@ jobs:
           check_result "Datahub lint" "${{ needs.datahub-lint.result }}"
           check_result "Dockerfile check" "${{ needs.dockerfile-check.result }}"
           check_result "Kustomize check" "${{ needs.kustomize-check.result }}"
+          check_result "Private deploy dry-run" "${{ needs.private-deploy-dry-run.result }}"
           check_result "OpenSpec check" "${{ needs.openspec-check.result }}"
 
           echo "All required checks passed or were skipped because their paths did not change."

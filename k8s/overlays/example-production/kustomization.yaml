@@ -55,6 +55,23 @@ patches:
     group: apps
     version: v1
     kind: Deployment
+    name: caifubao-frontend
+  patch: |-
+    - op: add
+      path: /spec/template/spec/affinity
+      value:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: provider
+                operator: In
+                values:
+                - tencent
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
     name: caifubao-datahub
   patch: |-
     - op: replace

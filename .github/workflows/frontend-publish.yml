@@ -62,6 +62,24 @@ jobs:
         run: |
           echo "immutable_tag=sha-${SOURCE_SHA::12}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve frontend app env
+        id: app-env
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          case "$SOURCE_BRANCH" in
+            main)
+              echo "value=production" >> "$GITHUB_OUTPUT"
+              ;;
+            develop)
+              echo "value=development" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported source branch: $SOURCE_BRANCH" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Extract Docker metadata
         id: meta
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.changed == 'true'
@@ -80,11 +98,8 @@ jobs:
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
-          # 根据分支确定 VITE_APP_ENV：main → production，其余（develop）→ development
-          # 控制前端构建时嵌入的环境标识（DEV/PROD 徽章）
-          # Grouped ternary: (A || B) ? 'production' : 'development'
           build-args: |
-            VITE_APP_ENV=${{ ((github.event_name == 'workflow_dispatch' && github.ref_name == 'main') || (github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main')) && 'production' || 'development' }}
+            VITE_APP_ENV=${{ steps.app-env.outputs.value }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
