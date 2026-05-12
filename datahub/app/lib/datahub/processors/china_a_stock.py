@@ -95,7 +95,6 @@ class ChinaAStock(object):
             ("update_ma_factor", self.update_ma_factor),
             ("update_signals", self.update_signals),
             ("update_scoring", self.update_scoring),
-            ("verify_scoring", self.verify_scoring),
         ]
         return self._run_job("stock_market_sync", phases)
 
@@ -877,14 +876,14 @@ class ChinaAStock(object):
             "written_count": result["scored_count"],
         }
 
-    def verify_scoring(self, allow_update=False):
-        logger.info("Datahub - ChinaAStock - Verifying past scores (Closed-loop)")
-        service = StockScoringService()
-        result = service.verify_pending_scores()
-        return {
-            "pulled_count": result["verified_count"],
-            "written_count": result["verified_count"],
-        }
+    # def verify_scoring(self, allow_update=False):
+    #     logger.info("Datahub - ChinaAStock - Verifying past scores (Closed-loop)")
+    #     service = StockScoringService()
+    #     result = service.verify_pending_scores()
+    #     return {
+    #         "pulled_count": result["verified_count"],
+    #         "written_count": result["verified_count"],
+    #     }
 
     # def check_scheduled_task(self):
     #     # check the existence of index task
