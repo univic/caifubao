@@ -194,8 +194,12 @@ def run_sync(
         dst_db = _get_dst_db(cfg)
 
         target_collections = collections or list(SYNCABLE_COLLECTIONS.keys())
-        # Resolve aliases before checking
-        resolved = [COLLECTION_ALIASES.get(c, c) for c in target_collections]
+        # Strip whitespace, resolve aliases, deduplicate
+        resolved = list(
+            dict.fromkeys(
+                COLLECTION_ALIASES.get(c.strip(), c.strip()) for c in target_collections
+            )
+        )
         unknown = set(resolved) - set(SYNCABLE_COLLECTIONS.keys())
         if unknown:
             logger.warning("Skipping unknown collections: %s", unknown)
