@@ -86,7 +86,7 @@ class IndustryDailyMetrics(Document):
                 "fields": ["industry_code", "date", "horizon", "model_version"],
                 "unique": True,
             },
-            ("date", "industry_code"),
+            ("date", "industry_code", "horizon"),
             "-date",
         ],
     }

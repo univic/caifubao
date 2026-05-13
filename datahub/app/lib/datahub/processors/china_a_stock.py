@@ -95,7 +95,6 @@ class ChinaAStock(object):
             ("update_ma_factor", self.update_ma_factor),
             ("update_signals", self.update_signals),
             ("update_scoring", self.update_scoring),
-            ("verify_scoring", self.verify_scoring),
         ]
         return self._run_job("stock_market_sync", phases)
 
@@ -876,70 +875,6 @@ class ChinaAStock(object):
             "pulled_count": result["scored_count"],
             "written_count": result["scored_count"],
         }
-
-    def verify_scoring(self, allow_update=False):
-        logger.info("Datahub - ChinaAStock - Verifying past scores (Closed-loop)")
-        service = StockScoringService()
-        result = service.verify_pending_scores()
-        return {
-            "pulled_count": result["verified_count"],
-            "written_count": result["verified_count"],
-        }
-
-    # def check_scheduled_task(self):
-    #     # check the existence of index task
-    #     index_task_ok_flag = False
-    #     stock_task_ok_flag = False
-    #     run_hour = 18
-    #     task_num = DatahubTaskDoc.objects(status="CRTD",
-    #                                       name__startswith="Check index data integrity").count()
-    #     data_retrieve_kwarg = {
-    #         'allow_update': 'True'
-    #     }
-    #     if task_num == 0:
-    #         logger.info(f'Stock Market {self.market.name} - Initializing scheduled index data integrity task')
-    #         if trading_day_helper.is_trading_day(self.trade_calendar):
-    #             next_run_time = datetime.datetime.now()
-    #         else:
-    #             next_run_time = trading_day_helper.next_trading_day(self.trade_calendar)
-    #         next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
-    #         scheduled_datahub_task.create_task(
-    #             name=trading_day_helper.update_title_date_str('Check index data integrity', next_run_time),
-    #             package='datahub',
-    #             module='markets',
-    #             obj='zh_a_stock_market',
-    #             interface='akshare',
-    #             handler='check_index_data_integrity',
-    #             repeat='T-DAY',
-    #             scheduled_time=next_run_time,
-    #             task_kwarg_dict=data_retrieve_kwarg)
-    #     else:
-    #         index_task_ok_flag = True
-    #     # check the existence of stock task
-    #     task_num = DatahubTaskDoc.objects(status="CRTD",
-    #                                       name__startswith="Check stock data integrity").count()
-    #     if task_num == 0:
-    #         logger.info(f'Stock Market {self.market.name} - Initializing scheduled stock data integrity task')
-    #         if trading_day_helper.is_trading_day(self.trade_calendar):
-    #             next_run_time = datetime.datetime.now()
-    #         else:
-    #             next_run_time = trading_day_helper.next_trading_day(self.trade_calendar)
-    #         next_run_time = next_run_time.replace(hour=run_hour, minute=0, second=0)
-    #
-    #         scheduled_datahub_task.create_task(
-    #             name=trading_day_helper.update_title_date_str('Check stock data integrity', next_run_time),
-    #             package='datahub',
-    #             module='markets',
-    #             obj='zh_a_stock_market',
-    #             interface='akshare',
-    #             handler='check_stock_data_integrity',
-    #             repeat='T-DAY',
-    #             scheduled_time=next_run_time,
-    #             task_kwarg_dict=data_retrieve_kwarg)
-    #     else:
-    #         stock_task_ok_flag = True
-    #     if stock_task_ok_flag and index_task_ok_flag:
-    #         logger.info(f'Stock Market {self.market.name} - Scheduled data update task check OK')
 
 
 if __name__ == "__main__":

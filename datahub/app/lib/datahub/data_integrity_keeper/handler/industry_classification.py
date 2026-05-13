@@ -94,7 +94,7 @@ def sync_industry_classification(
                 existing.industry_name_sw_l1 = l1_name
                 existing.industry_code_sw_l1 = l1_code
                 existing.industry_name_sw_l2 = l2_name
-                existing.industry_code_sw_l2 = l2_name
+                existing.industry_code_sw_l2 = _derive_industry_code(l2_name or "")
                 existing.last_synced_at = now
                 existing.save()
                 counts["updated"] += 1
@@ -108,7 +108,7 @@ def sync_industry_classification(
                     stock_name=name,
                     industry_code_sw_l1=l1_code,
                     industry_name_sw_l1=l1_name,
-                    industry_code_sw_l2=l2_name,
+                    industry_code_sw_l2=_derive_industry_code(l2_name or ""),
                     industry_name_sw_l2=l2_name,
                     assigned_at=now,
                 )
@@ -153,17 +153,17 @@ def _parse_shenwan_industry(raw: str) -> tuple[str | None, str | None]:
     return raw.strip(), None
 
 
-# A minimal mapping of common Shenwan L1 industry names to placeholder codes.
+# A minimal mapping of common Shenwan L1 industry names to official codes.
 # Full numeric codes would require referencing the official Shenwan industry
-# code table. The L1 name is the primary key for aggregation.
+# code table. Populate entries here as codes are verified from baostock docs.
 _INDUSTRY_CODE_MAP: dict[str, str] = {}
 
 
 def _derive_industry_code(industry_name: str) -> str:
-    """Return a code for the L1 industry name.
+    """Return a deterministic code for the given industry name.
 
-    Uses a simple hash-based code when no official mapping exists.
-    Codes are deterministic and stable for the same name.
+    Checks the _INDUSTRY_CODE_MAP for an official mapping first, otherwise
+    falls back to CRC32 hash. Codes are deterministic and stable.
     """
     if not industry_name:
         return "UNKNOWN"
