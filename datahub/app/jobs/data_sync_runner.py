@@ -6,6 +6,12 @@ Usage:
                                             [--from-date 2026-04-01]
                                             [--dry-run]
 
+Collection aliases (resolved against SYNCABLE_COLLECTIONS):
+    quote    -> stock_daily_quote
+    factor   -> stock_factor_daily
+    market   -> finance_market
+    industry -> stock_industry
+
 Designed for deployment as a K8s CronJob (optional). In dev environments,
 this can be triggered on-demand or scheduled (e.g. nightly) to keep
 external data up-to-date without re-pulling from baostock.
@@ -110,7 +116,7 @@ def _run_with_tracking(args) -> None:
 
     try:
         result = run_sync(args)
-        status = "SUCCESS" if result.get("status") == "GOOD" else "FAILED"
+        status = "SUCCESS" if result.get("status") in ("GOOD", "DRY_RUN") else "FAILED"
 
         summary = {
             "total_read": result.get("total_read", 0),

@@ -26,6 +26,15 @@ SYNCABLE_COLLECTIONS = {
     "stock_daily_quote": {"date_field": "date"},
     "stock_factor_daily": {"date_field": "date"},
     "finance_market": {"date_field": None},  # small, always full sync
+    "stock_industry": {"date_field": None},  # small snapshot, always full sync
+}
+
+# User-friendly aliases for --collections argument
+COLLECTION_ALIASES = {
+    "quote": "stock_daily_quote",
+    "factor": "stock_factor_daily",
+    "market": "finance_market",
+    "industry": "stock_industry",
 }
 
 # Number of documents per bulk-write batch
@@ -185,16 +194,16 @@ def run_sync(
         dst_db = _get_dst_db(cfg)
 
         target_collections = collections or list(SYNCABLE_COLLECTIONS.keys())
-        unknown = set(target_collections) - set(SYNCABLE_COLLECTIONS.keys())
+        # Resolve aliases before checking
+        resolved = [COLLECTION_ALIASES.get(c, c) for c in target_collections]
+        unknown = set(resolved) - set(SYNCABLE_COLLECTIONS.keys())
         if unknown:
             logger.warning("Skipping unknown collections: %s", unknown)
-            target_collections = [
-                c for c in target_collections if c in SYNCABLE_COLLECTIONS
-            ]
+            resolved = [c for c in resolved if c in SYNCABLE_COLLECTIONS]
 
         results = {}
         start_time = datetime.datetime.now(datetime.UTC)
-        for name in target_collections:
+        for name in resolved:
             config = SYNCABLE_COLLECTIONS[name]
             src_col = src_db[name]
             dst_col = dst_db[name]
@@ -217,7 +226,7 @@ def run_sync(
             "status": "GOOD" if not dry_run else "DRY_RUN",
             "dry_run": dry_run,
             "elapsed_seconds": round(elapsed, 2),
-            "collections_synced": len(target_collections),
+            "collections_synced": len(resolved),
             "collections": results,
             "total_read": total_read,
             "total_upserted": total_upserted,
