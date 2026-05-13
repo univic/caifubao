@@ -116,7 +116,7 @@ spec:
           timeoutSeconds: 5
           failureThreshold: 3
       imagePullSecrets:
-      - name: registry-secret
+      - name: ccr-secret
 ---
 apiVersion: v1
 kind: Service

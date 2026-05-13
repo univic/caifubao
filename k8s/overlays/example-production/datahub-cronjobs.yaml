@@ -95,7 +95,7 @@ spec:
                 memory: "1Gi"
                 cpu: "500m"
           imagePullSecrets:
-          - name: registry-secret
+          - name: ccr-secret
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -195,7 +195,7 @@ spec:
                 memory: "1Gi"
                 cpu: "500m"
           imagePullSecrets:
-          - name: registry-secret
+          - name: ccr-secret
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -296,7 +296,7 @@ spec:
                 memory: "1Gi"
                 cpu: "500m"
           imagePullSecrets:
-          - name: registry-secret
+          - name: ccr-secret
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -394,7 +394,7 @@ spec:
                 memory: "2Gi"
                 cpu: "1000m"
           imagePullSecrets:
-          - name: registry-secret
+          - name: ccr-secret
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -490,4 +490,4 @@ spec:
                 memory: "512Mi"
                 cpu: "200m"
           imagePullSecrets:
-          - name: registry-secret
+          - name: ccr-secret
