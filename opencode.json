@@ -1,0 +1,132 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "AGENTS.md",
+    "DESIGN.md",
+    "openspec/config.yaml",
+    "openspec/changes/mvp-quant-demo/design.md",
+    "openspec/changes/mvp-quant-demo/tasks.md",
+    ".opencode/openclaw-development-workflow.md",
+    "docs/integrations/openclaw.md"
+  ],
+  "permission": {
+    "edit": "ask",
+    "bash": "ask",
+    "websearch": "ask"
+  },
+  "agent": {
+    "caifubao-orchestrator": {
+      "description": "Primary caifubao development agent that enforces module boundaries, OpenSpec alignment, and validation workflow.",
+      "mode": "primary",
+      "model": "deepseek/deepseek-v4-pro",
+      "prompt": "{file:.opencode/agents/caifubao-orchestrator.md}",
+      "permission": {
+        "read": "allow",
+        "grep": "allow",
+        "glob": "allow",
+        "task": "allow",
+        "edit": "ask",
+        "bash": "ask",
+        "websearch": "ask"
+      }
+    },
+    "qa-reviewer": {
+      "description": "Read-only caifubao reviewer for boundary, security, API contract, scoring, frontend, and validation risks.",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-v4-pro",
+      "prompt": "{file:.opencode/agents/qa-reviewer.md}",
+      "permission": {
+        "read": "allow",
+        "grep": "allow",
+        "glob": "allow",
+        "edit": "deny",
+        "bash": "ask",
+        "websearch": "deny"
+      }
+    },
+    "spec-guardian": {
+      "description": "Read-only OpenSpec guardian that decides whether behavior, contract, auth, freshness, or module-boundary changes require spec updates.",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-v4-pro",
+      "prompt": "{file:.opencode/agents/spec-guardian.md}",
+      "permission": {
+        "read": "allow",
+        "grep": "allow",
+        "glob": "allow",
+        "edit": "deny",
+        "bash": "deny",
+        "websearch": "deny"
+      }
+    },
+    "contract-reviewer": {
+      "description": "Read-only reviewer for backend API contracts, freshness metadata, service-token auth, and OpenClaw downstream compatibility.",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-v4-pro",
+      "prompt": "{file:.opencode/agents/contract-reviewer.md}",
+      "permission": {
+        "read": "allow",
+        "grep": "allow",
+        "glob": "allow",
+        "edit": "deny",
+        "bash": "ask",
+        "websearch": "deny"
+      }
+    },
+    "backend-implementer": {
+      "description": "Bounded backend implementer for Flask APIs, auth, service-token checks, light aggregation, models, utilities, and focused backend tests.",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-v4-pro",
+      "prompt": "{file:.opencode/agents/backend-implementer.md}",
+      "permission": {
+        "read": "allow",
+        "grep": "allow",
+        "glob": "allow",
+        "edit": "ask",
+        "bash": "ask",
+        "websearch": "deny"
+      }
+    },
+    "datahub-implementer": {
+      "description": "Bounded datahub implementer for jobs, runners, data models, scoring, freshness, data quality, scripts, and focused datahub tests.",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-v4-pro",
+      "prompt": "{file:.opencode/agents/datahub-implementer.md}",
+      "permission": {
+        "read": "allow",
+        "grep": "allow",
+        "glob": "allow",
+        "edit": "ask",
+        "bash": "ask",
+        "websearch": "deny"
+      }
+    },
+    "frontend-implementer": {
+      "description": "Bounded frontend implementer for Vue views, components, API clients, Pinia stores, routing, styles, and focused frontend validation.",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-v4-pro",
+      "prompt": "{file:.opencode/agents/frontend-implementer.md}",
+      "permission": {
+        "read": "allow",
+        "grep": "allow",
+        "glob": "allow",
+        "edit": "ask",
+        "bash": "ask",
+        "websearch": "deny"
+      }
+    },
+    "k8s-implementer": {
+      "description": "Bounded example deployment implementer for public k8s manifests, workflow changes, and deployment validation.",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-v4-pro",
+      "prompt": "{file:.opencode/agents/k8s-implementer.md}",
+      "permission": {
+        "read": "allow",
+        "grep": "allow",
+        "glob": "allow",
+        "edit": "ask",
+        "bash": "ask",
+        "websearch": "deny"
+      }
+    }
+  }
+}
