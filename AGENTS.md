@@ -34,3 +34,25 @@ service.
 - Deployment example changes should render with `kubectl kustomize` or an
   equivalent local check.
 
+## Development Environment Rules
+
+- **Always use a virtual environment** for Python development. Never install
+  packages directly into the system Python (`pip install` without a venv, or
+  with `--break-system-packages`).
+- **Default venv**: The project virtual environment is **`.venv/` at the
+  repository root**. All Python commands (`python`, `pip`, `pytest`, `ruff`)
+  must use this venv.
+- The project targets **Python 3.12**. If `.venv/` does not exist, create it
+  before doing anything else:
+  ```bash
+  # First, ensure Python 3.12 is available (via pyenv or system)
+  pyenv install 3.12.12      # if not already installed
+  /path/to/python3.12 -m venv .venv
+  source .venv/bin/activate
+  pip install -r backend/requirements.txt
+  ```
+- If `pyenv` is not available, use any Python 3.12 interpreter (not 3.14 or
+  higher — some pinned dependencies do not support 3.14+).
+- If `.venv/` already exists, activate it with `source .venv/bin/activate`
+  before any Python work.
+

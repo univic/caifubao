@@ -35,6 +35,7 @@ def register_routes():
     """
     from . import (
         factors,
+        health,
         quality,
         quotes,
         recommendations,
@@ -45,6 +46,7 @@ def register_routes():
     # Access them to satisfy potential linting, though import triggers registration
     _ = (
         factors,
+        health,
         quality,
         quotes,
         recommendations,

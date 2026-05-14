@@ -63,11 +63,48 @@ export interface DataStatusCategory {
   is_up_to_date: boolean
 }
 
+export interface PipelineJobStatus {
+  label: string
+  status: string               // SUCCESS | FAILED | SKIPPED | RUNNING | NONE
+  started_at: string | null
+  completed_at: string | null
+  error_message: string | null
+  skipped_reason: string | null
+  dependency_job_family: string | null
+  pulled_total: number
+  written_total: number
+  failed_phase: string | null
+}
+
+export interface PipelineStatus {
+  jobs: Record<string, PipelineJobStatus>
+  overall_healthy: boolean
+  summary: string
+  signal_run_today: boolean
+  scoring_run_today: boolean
+}
+
+export interface FreshnessGrade {
+  grade: string                 // FRESH | STALE | EXPIRED | ERROR | NO_DATA
+  reason: string
+  details: {
+    trading_days_behind: number | null
+    quote_date: string | null
+    trading_day: string | null
+    up_to_date_ratio: number
+  }
+}
+
 export interface DataStatusResponse {
   generated_at: string
   reference_dates: DataStatusReferenceDates
   index: DataStatusCategory
   stock: DataStatusCategory
+  pipeline?: PipelineStatus
+  freshness?: FreshnessGrade
+  // Legacy fields (backward compatible)
+  signal_run_today?: boolean
+  scoring_run_today?: boolean
 }
 
 async function getMarketOverview() {

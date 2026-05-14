@@ -20,6 +20,23 @@ STATUS_CACHE_TTL_SECONDS = 60
 _status_cache_lock = threading.RLock()
 _status_cache = {"expires_at": 0, "payload": None}
 
+# ── pipeline job definitions for structured status reporting ──────────
+# Each entry: (job_family, job_name, label, is_critical)
+# is_critical=True means failure here blocks downstream and degrades freshness.
+_PIPELINE_JOBS = [
+    ("quote_daily", "datahub_quote_index_daily", "指数行情拉取", True),
+    ("quote_daily", "datahub_quote_stock_daily", "个股行情拉取", True),
+    ("signal_daily", "datahub_signal_daily", "信号生成", True),
+    ("scoring_daily", "datahub_scoring_daily", "评分计算", True),
+]
+
+# ── freshness grade constants ─────────────────────────────────────────
+GRADE_FRESH = "FRESH"
+GRADE_STALE = "STALE"
+GRADE_EXPIRED = "EXPIRED"
+GRADE_ERROR = "ERROR"
+GRADE_NO_DATA = "NO_DATA"
+
 
 def _format_datetime(value):
     if value is None:
@@ -170,27 +187,217 @@ def _build_category_status(stock_model, object_type, reference_dates):
     }
 
 
-def _check_pipeline_run_today(trading_day_start: datetime.datetime) -> dict[str, bool]:
-    """Check if signal and scoring pipelines ran successfully for the given trading day."""
+def _get_pipeline_status(
+    trading_day_start: datetime.datetime,
+) -> dict:
+    """Return structured pipeline status for all key job families.
+
+    For each job family, queries the latest job run within the trading day
+    window (any status), exposing FAILED / SKIPPED / RUNNING / NONE in
+    addition to the legacy SUCCESS boolean so downstream reports can
+    distinguish root causes from symptoms.
+    """
+    if trading_day_start is None:
+        return {
+            "jobs": {},
+            "overall_healthy": False,
+            "summary": "NO_TRADING_DAY",
+            "signal_run_today": False,
+            "scoring_run_today": False,
+        }
+
     trading_day_end = trading_day_start + datetime.timedelta(days=1)
     db = get_db()
-    signal_count = db.datahub_job_runs.count_documents(
-        {
-            "job_family": "signal_daily",
-            "status": "SUCCESS",
-            "started_at": {"$gte": trading_day_start, "$lt": trading_day_end},
-        }
-    )
-    scoring_count = db.datahub_job_runs.count_documents(
-        {
-            "job_family": "scoring_daily",
-            "status": "SUCCESS",
-            "started_at": {"$gte": trading_day_start, "$lt": trading_day_end},
-        }
-    )
+
+    jobs = {}
+    critical_failed = 0
+    critical_success = 0
+    critical_total = 0
+
+    for family, name, label, is_critical in _PIPELINE_JOBS:
+        runs = list(
+            db.datahub_job_runs.find(
+                {
+                    "job_family": family,
+                    "job_name": name,
+                    "started_at": {"$gte": trading_day_start, "$lt": trading_day_end},
+                }
+            )
+            .sort("started_at", -1)
+            .limit(1)
+        )
+
+        latest = runs[0] if runs else None
+        entry = {"label": label}
+
+        if latest is not None:
+            status = latest.get("status", "UNKNOWN")
+            entry["status"] = status
+            entry["started_at"] = _format_datetime(latest.get("started_at"))
+            entry["completed_at"] = _format_datetime(latest.get("completed_at"))
+            entry["error_message"] = latest.get("error_message")
+            summary = latest.get("summary") or {}
+            entry["skipped_reason"] = summary.get("reason")
+            entry["dependency_job_family"] = summary.get("dependency_job_family")
+            entry["pulled_total"] = latest.get("pulled_total", 0)
+            entry["written_total"] = latest.get("written_total", 0)
+            entry["failed_phase"] = latest.get("failed_phase")
+        else:
+            entry["status"] = "NONE"
+            entry["started_at"] = None
+            entry["completed_at"] = None
+            entry["error_message"] = None
+            entry["skipped_reason"] = None
+            entry["dependency_job_family"] = None
+            entry["pulled_total"] = 0
+            entry["written_total"] = 0
+            entry["failed_phase"] = None
+
+        jobs[family] = entry
+
+        if is_critical:
+            critical_total += 1
+            if latest is not None and latest.get("status") == "SUCCESS":
+                critical_success += 1
+            elif latest is not None and latest.get("status") == "FAILED":
+                critical_failed += 1
+
+    # Build summary string for quick consumption
+    if critical_total > 0:
+        if critical_success == critical_total:
+            summary = "ALL_JOBS_SUCCESS"
+            overall_healthy = True
+        elif critical_failed > 0:
+            summary = "CRITICAL_FAILURE"
+            overall_healthy = False
+        elif critical_success > 0:
+            summary = "PARTIAL_SUCCESS"
+            overall_healthy = False
+        else:
+            summary = "NO_JOBS_RUN"
+            overall_healthy = False
+    else:
+        summary = "NO_CRITICAL_JOBS"
+        overall_healthy = True
+
+    # Legacy boolean fields for backward compatibility
+    signal_run = jobs.get("signal_daily", {}).get("status") == "SUCCESS"
+    scoring_run = jobs.get("scoring_daily", {}).get("status") == "SUCCESS"
+
     return {
-        "signal_run_today": signal_count > 0,
-        "scoring_run_today": scoring_count > 0,
+        "jobs": jobs,
+        "overall_healthy": overall_healthy,
+        "summary": summary,
+        "signal_run_today": signal_run,
+        "scoring_run_today": scoring_run,
+    }
+
+
+def _compute_freshness_grade(
+    stock_category: dict,
+    pipeline_status: dict,
+    reference_dates: dict,
+) -> dict:
+    """Compute an overall freshness grade for the data pipeline.
+
+    Combines pipeline health with data coverage/staleness to produce a
+    single actionable grade: FRESH / STALE / EXPIRED / ERROR / NO_DATA.
+    """
+    latest_trading_day = reference_dates.get("latest_complete_trading_day")
+    if latest_trading_day is None:
+        return {"grade": GRADE_NO_DATA, "reason": "无法确定最新交易日"}
+
+    overall_healthy = pipeline_status.get("overall_healthy", False)
+    total = stock_category.get("total_count", 0)
+    up_to_date = stock_category.get("up_to_date_count", 0)
+    no_data = stock_category.get("no_data_count", 0)
+
+    # Determine staleness from the stock category's latest quote date
+    latest_quote_date_str = stock_category.get("latest_quote_date")
+    trading_days_behind = 0
+    if latest_quote_date_str is not None:
+        try:
+            quote_date = datetime.datetime.fromisoformat(latest_quote_date_str).date()
+        except (ValueError, TypeError):
+            quote_date = None
+    else:
+        quote_date = None
+
+    # Count trading days behind using reference dates
+    if quote_date is not None:
+        latest_date = _date_from_dt(latest_trading_day)
+        # Simple date difference as approximation (actual trading day diff
+        # requires calendar data — upstream consumers can compute that)
+        if latest_date is not None:
+            cal_days_behind = (latest_date - quote_date).days
+            trading_days_behind = max(cal_days_behind, 0)
+
+    # Grade rules (ordered by priority)
+    if total == 0 or no_data == total:
+        return {
+            "grade": GRADE_NO_DATA,
+            "reason": "无可用行情数据",
+            "details": {
+                "trading_days_behind": None,
+                "quote_date": latest_quote_date_str,
+                "trading_day": _format_datetime(latest_trading_day),
+                "up_to_date_ratio": 0,
+            },
+        }
+
+    # Pipeline completely failed with stale data
+    if not overall_healthy:
+        # Check if any jobs have error messages
+        failed_jobs = [
+            v["label"]
+            for v in pipeline_status.get("jobs", {}).values()
+            if v.get("status") == "FAILED"
+        ]
+        skipped_jobs = [
+            v["label"]
+            for v in pipeline_status.get("jobs", {}).values()
+            if v.get("status") in ("SKIPPED", "NONE")
+        ]
+
+        reasons = []
+        if failed_jobs:
+            reasons.append(f"流水线失败: {', '.join(failed_jobs)}")
+        if skipped_jobs:
+            reasons.append(f"未运行: {', '.join(skipped_jobs)}")
+
+        return {
+            "grade": GRADE_ERROR if failed_jobs else GRADE_STALE,
+            "reason": "; ".join(reasons) if reasons else "流水线状态异常",
+            "details": {
+                "trading_days_behind": trading_days_behind,
+                "quote_date": latest_quote_date_str,
+                "trading_day": _format_datetime(latest_trading_day),
+                "up_to_date_ratio": round(up_to_date / total, 4) if total > 0 else 0,
+            },
+        }
+
+    # Pipeline healthy — grade by data staleness
+    up_to_date_ratio = round(up_to_date / total, 4) if total > 0 else 0
+
+    if trading_days_behind == 0 and up_to_date_ratio >= 0.95:
+        grade = GRADE_FRESH
+        reason = "数据新鲜，流水线正常"
+    elif trading_days_behind <= 2:
+        grade = GRADE_STALE
+        reason = f"数据滞后约{trading_days_behind}个自然日"
+    else:
+        grade = GRADE_EXPIRED
+        reason = f"数据过期，滞后约{trading_days_behind}个自然日"
+
+    return {
+        "grade": grade,
+        "reason": reason,
+        "details": {
+            "trading_days_behind": trading_days_behind,
+            "quote_date": latest_quote_date_str,
+            "trading_day": _format_datetime(latest_trading_day),
+            "up_to_date_ratio": up_to_date_ratio,
+        },
     }
 
 
@@ -207,13 +414,14 @@ def _build_status_payload():
             today_start = datetime.datetime.combine(
                 latest_trading_day, datetime.time.min
             )
-    pipeline_status = (
-        _check_pipeline_run_today(today_start)
-        if today_start
-        else {
-            "signal_run_today": False,
-            "scoring_run_today": False,
-        }
+
+    pipeline_status = _get_pipeline_status(today_start)
+
+    stock_category = _build_category_status(
+        IndividualStock, "individual_stock", reference_dates
+    )
+    freshness = _compute_freshness_grade(
+        stock_category, pipeline_status, reference_dates
     )
 
     return {
@@ -225,10 +433,12 @@ def _build_status_payload():
             ),
         },
         "index": _build_category_status(StockIndex, "stock_index", reference_dates),
-        "stock": _build_category_status(
-            IndividualStock, "individual_stock", reference_dates
-        ),
-        **pipeline_status,
+        "stock": stock_category,
+        "pipeline": pipeline_status,
+        "freshness": freshness,
+        # Legacy top-level boolean fields (backward compatible)
+        "signal_run_today": pipeline_status["signal_run_today"],
+        "scoring_run_today": pipeline_status["scoring_run_today"],
     }
 
 
