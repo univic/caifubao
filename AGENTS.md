@@ -26,6 +26,16 @@ service.
 - Prefer small changes that improve the demo loop: data update, API response,
   frontend display, and local validation.
 
+## Branching Rules
+
+- **New branches must be based on `main` or `develop`**, never on feature
+  branches or other non-trunk branches.
+- Before creating a branch, ensure you are on an up-to-date trunk:
+  ```bash
+  git checkout develop && git pull origin develop
+  git checkout -b feature/your-branch-name
+  ```
+
 ## Validation Expectations
 
 - Python changes should run the relevant `ruff check`, `ruff format --check`,
