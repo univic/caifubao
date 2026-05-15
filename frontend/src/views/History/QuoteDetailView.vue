@@ -10,7 +10,13 @@
           <span v-if="detail?.freshness?.freshness_datetime">· 更新于 {{ formatDate(detail.freshness.freshness_datetime) }}</span>
         </p>
       </div>
-      <el-button plain @click="goBack">返回查询</el-button>
+      <div class="topbar-actions">
+        <WatchlistButton
+          :code="detail?.stock.code || symbol"
+          :name="detail?.stock.name || symbol"
+        />
+        <el-button plain @click="goBack">返回查询</el-button>
+      </div>
     </section>
 
     <el-card class="search-card" shadow="never">
@@ -299,6 +305,7 @@ import { ElMessage } from 'element-plus'
 import { CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import { quoteApi, type QuoteDailyItem, type QuoteDetailResponse } from '@/api/quotes'
 import { scoreApi, type ScorePrediction } from '@/api/scores'
+import WatchlistButton from '@/components/common/WatchlistButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -818,6 +825,13 @@ function goBack() {
     linear-gradient(135deg, #0f1011 0%, #191a1b 55%, #0f1011 100%);
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
 }
 
 .title-block {

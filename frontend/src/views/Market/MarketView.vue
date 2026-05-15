@@ -63,6 +63,16 @@
           <!-- Desktop Table View -->
           <div class="desktop-view" v-loading="loading">
             <el-table :data="tableData" class="linear-table" style="width: 100%">
+              <el-table-column width="50" align="center">
+                <template #default="{ row }">
+                  <WatchlistButton
+                    :code="row.code"
+                    :name="row.name || row.code"
+                    size="small"
+                  />
+                </template>
+              </el-table-column>
+
               <el-table-column label="排名" width="70" align="center">
                 <template #default="{ row }">
                   <span class="rank-text" :class="{ 'top-rank': row.evaluation.display_rank <= 3 }">
@@ -162,6 +172,11 @@
           <div class="mobile-view" v-loading="loading">
             <div v-for="item in tableData" :key="item.code" class="asset-card">
               <div class="card-header">
+                <WatchlistButton
+                  :code="item.code"
+                  :name="item.name"
+                  size="small"
+                />
                 <div class="header-main">
                   <span class="c-rank">#{{ item.evaluation.display_rank }}</span>
                   <span class="c-name">{{ item.name }}</span>
@@ -284,6 +299,7 @@ import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { marketApi, type MarketComprehensiveItem } from '@/api/market'
 import { Search, CircleCheck } from '@element-plus/icons-vue'
+import WatchlistButton from '@/components/common/WatchlistButton.vue'
 
 const router = useRouter()
 
@@ -612,11 +628,14 @@ watch(searchKeyword, () => {
       justify-content: space-between;
       align-items: center;
       margin-bottom: 12px;
+      gap: 8px;
       
       .header-main {
         display: flex;
         align-items: baseline;
         gap: 8px;
+        flex: 1;
+        min-width: 0;
         .c-rank { font-size: 12px; color: #f59e0b; font-weight: 700; }
         .c-name { font-weight: 600; font-size: 15px; }
         .c-code { font-size: 11px; color: var(--color-text-dim); }
