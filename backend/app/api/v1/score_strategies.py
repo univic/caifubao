@@ -143,9 +143,7 @@ def run_score_backtest():
             (p.verification or {}).get("max_return") for p in day_predictions
         ]
         day_max_returns = [r for r in day_max_returns if r is not None]
-        day_hits = [
-            (p.verification or {}).get("hit_target") for p in day_predictions
-        ]
+        day_hits = [(p.verification or {}).get("hit_target") for p in day_predictions]
         day_hits = [bool(h) for h in day_hits if h is not None]
         if not day_returns:
             continue
@@ -290,8 +288,7 @@ def get_calibration():
         items = [
             p
             for p in predictions
-            if low <= (p.score or 0) < high
-            or (high == 100 and (p.score or 0) == 100)
+            if low <= (p.score or 0) < high or (high == 100 and (p.score or 0) == 100)
         ]
         returns = [(p.verification or {}).get("return_at_target") for p in items]
         returns = [r for r in returns if r is not None]
