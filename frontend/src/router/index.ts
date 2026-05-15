@@ -76,6 +76,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Backtest/BacktestCreateView.vue')
       },
       {
+        path: 'backtest/result',
+        name: 'BacktestResultView',
+        component: () => import('@/views/Backtest/BacktestResultView.vue')
+      },
+      {
         path: 'backtest/:id',
         name: 'BacktestResult',
         component: () => import('@/views/Backtest/BacktestResultView.vue')
