@@ -10,7 +10,13 @@
           <span v-if="detail?.freshness?.freshness_datetime">· 更新于 {{ formatDate(detail.freshness.freshness_datetime) }}</span>
         </p>
       </div>
-      <el-button plain @click="goBack">返回查询</el-button>
+      <div class="topbar-actions">
+        <WatchlistButton
+          :code="detail?.stock.code || symbol"
+          :name="detail?.stock.name || symbol"
+        />
+        <el-button plain @click="goBack">返回查询</el-button>
+      </div>
     </section>
 
     <el-card class="search-card" shadow="never">
@@ -160,6 +166,42 @@
             </el-card>
           </div>
 
+          <el-card v-if="scoreConfidence?.confidence" class="confidence-card" shadow="hover">
+            <div class="section-header">
+              <h2>评分置信度</h2>
+              <el-tag size="small" :type="confidenceTagType(scoreConfidence.confidence)">
+                {{ confidenceLabel(scoreConfidence.confidence) }}
+              </el-tag>
+            </div>
+            <div class="confidence-grid">
+              <div class="confidence-metric">
+                <span class="c-label">分桶</span>
+                <span class="c-value">{{ scoreConfidence.score_bucket }}</span>
+              </div>
+              <div class="confidence-metric">
+                <span class="c-label">历史命中率</span>
+                <span class="c-value" :class="hitRateClass(scoreConfidence.bucket_hit_rate)">
+                  {{ formatPct(scoreConfidence.bucket_hit_rate) }}
+                </span>
+              </div>
+              <div class="confidence-metric">
+                <span class="c-label">样本量</span>
+                <span class="c-value">{{ scoreConfidence.bucket_sample_count }} 条</span>
+              </div>
+              <div class="confidence-metric" v-if="scoreConfidence.trade_suggestions?.stop_loss !== null">
+                <span class="c-label">建议止损</span>
+                <span class="c-value down">{{ formatPct(scoreConfidence.trade_suggestions?.stop_loss) }}</span>
+              </div>
+              <div class="confidence-metric" v-if="scoreConfidence.trade_suggestions?.take_profit !== null">
+                <span class="c-label">建议止盈</span>
+                <span class="c-value up">{{ formatPct(scoreConfidence.trade_suggestions?.take_profit) }}</span>
+              </div>
+            </div>
+            <div v-if="scoreConfidence.trade_suggestions?.basis" class="confidence-basis">
+              {{ scoreConfidence.trade_suggestions.basis }}
+            </div>
+          </el-card>
+
           <!-- Score Verification Metrics -->
           <el-card v-if="selectedScoreDetail" class="verification-card" shadow="hover">
             <div class="section-header">
@@ -299,6 +341,8 @@ import { ElMessage } from 'element-plus'
 import { CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import { quoteApi, type QuoteDailyItem, type QuoteDetailResponse } from '@/api/quotes'
 import { scoreApi, type ScorePrediction } from '@/api/scores'
+import { scoreStrategiesApi, type ConfidenceResponse } from '@/api/scoreStrategies'
+import WatchlistButton from '@/components/common/WatchlistButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -315,6 +359,7 @@ let chartInstance: echarts.ECharts | null = null
 const detailTab = ref('kline')
 const scoreHorizons = [5, 20, 60] as const
 const scoreHorizon = ref<number>(5)
+const scoreConfidence = ref<ConfidenceResponse | null>(null)
 const scoreLoading = ref(false)
 const latestScores = ref<Record<number, ScorePrediction | null>>({ 5: null, 20: null, 60: null })
 const scoreHistory = ref<ScorePrediction[]>([])
@@ -359,13 +404,15 @@ watch(scoreHistory, async () => {
 
 watch(scoreHorizon, () => {
   fetchScoreHistory()
+  fetchScoreConfidence()
 })
 
 watch(detailTab, async (tab) => {
   if (tab === 'score' && detail.value) {
     await Promise.all([
       fetchLatestScores(),
-      fetchScoreHistory()
+      fetchScoreHistory(),
+      fetchScoreConfidence()
     ])
   }
 })
@@ -448,6 +495,17 @@ async function fetchScoreHistory() {
   } finally {
     scoreLoading.value = false
   }
+}
+
+async function fetchScoreConfidence() {
+  const latest = latestScores.value[scoreHorizon.value]
+  const code = detail.value?.stock.code
+  if (!latest || !code) { scoreConfidence.value = null; return }
+  try {
+    scoreConfidence.value = await scoreStrategiesApi.getConfidence({
+      stock_code: code, date: latest.date, horizon: scoreHorizon.value
+    })
+  } catch { scoreConfidence.value = null }
 }
 
 async function handleSearch() {
@@ -797,6 +855,27 @@ function statusTagType(status: string | null | undefined) {
 function goBack() {
   router.push({ name: 'History' })
 }
+
+function formatPct(value: number | null | undefined): string {
+  if (value == null) return '--'
+  return (value * 100).toFixed(1) + '%'
+}
+function confidenceTagType(confidence: string) {
+  if (confidence === 'high') return 'success'
+  if (confidence === 'medium') return 'warning'
+  return 'danger'
+}
+function confidenceLabel(confidence: string) {
+  if (confidence === 'high') return '高置信'
+  if (confidence === 'medium') return '中置信'
+  return '低置信'
+}
+function hitRateClass(value: number | null | undefined) {
+  if (value == null) return ''
+  if (value >= 0.6) return 'up'
+  if (value >= 0.4) return ''
+  return 'down'
+}
 </script>
 
 <style scoped lang="scss">
@@ -818,6 +897,13 @@ function goBack() {
     linear-gradient(135deg, #0f1011 0%, #191a1b 55%, #0f1011 100%);
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
 }
 
 .title-block {
@@ -984,7 +1070,7 @@ function goBack() {
     color: var(--color-text-secondary);
     font-size: 15px;
     font-weight: 510;
-    &.is-active { color: #fff; }
+    &.is-active { color: #f7f8f8; }
   }
   .el-tabs__active-bar { background-color: #7170ff; }
 }
@@ -1023,8 +1109,8 @@ function goBack() {
 
     .horizon-badge {
       font-size: 14px;
-      font-weight: 700;
-      color: #fff;
+      font-weight: 590;
+      color: #f7f8f8;
     }
 
     .horizon-desc {
@@ -1128,8 +1214,56 @@ function goBack() {
 :deep(.el-card__body) {
   .verification-card &,
   .score-chart-card &,
-  .score-table-card & {
+  .score-table-card &,
+  .confidence-card & {
     padding: 20px;
   }
+}
+
+.confidence-card {
+  margin-bottom: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(113, 112, 255, 0.2);
+  background: rgba(113, 112, 255, 0.04);
+}
+
+.confidence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.confidence-metric {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  .c-label {
+    color: var(--color-text-secondary);
+    font-size: 13px;
+  }
+
+  .c-value {
+    font-weight: 600;
+    font-size: 14px;
+
+    &.up { color: #10b981; }
+    &.down { color: #ef4444; }
+  }
+}
+
+.confidence-basis {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: #8a8f98;
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>

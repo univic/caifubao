@@ -90,7 +90,7 @@ const activeMenu = computed(() => route.path)
 
 <style scoped lang="scss">
 .sidebar {
-  background-color: #304156;
+  background-color: #0f1011;
   height: 100vh;
   position: fixed;
   left: 0;
@@ -98,6 +98,8 @@ const activeMenu = computed(() => route.path)
   overflow-x: hidden;
   transition: width 0.3s;
   z-index: 100;
+  font-family: 'Inter Variable', 'SF Pro Display', -apple-system, system-ui, sans-serif;
+  font-feature-settings: "cv01", "ss03";
 }
 
 .logo {
@@ -105,7 +107,7 @@ const activeMenu = computed(() => route.path)
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #2b3a4a;
+  background: #191a1b;
   
   img {
     height: 36px;
@@ -113,15 +115,15 @@ const activeMenu = computed(() => route.path)
   }
   
   .logo-text {
-    color: #fff;
+    color: #f7f8f8;
     font-size: 18px;
-    font-weight: 600;
+    font-weight: 590;
   }
   
   .logo-icon {
-    color: #409eff;
+    color: #7170ff;
     font-size: 24px;
-    font-weight: 700;
+    font-weight: 590;
   }
 }
 
@@ -130,6 +132,30 @@ const activeMenu = computed(() => route.path)
   
   &:not(.el-menu--collapse) {
     width: 210px;
+  }
+
+  :deep(.el-menu-item),
+  :deep(.el-sub-menu__title) {
+    color: #d0d6e0;
+    background-color: #0f1011;
+    font-weight: 510;
+    font-size: 14px;
+
+    &:hover {
+      background-color: rgba(255, 255, 255, 0.04);
+      color: #f7f8f8;
+    }
+  }
+
+  :deep(.el-menu-item.is-active) {
+    color: #f7f8f8;
+    background-color: rgba(113, 112, 255, 0.12);
+  }
+
+  :deep(.el-sub-menu) {
+    .el-menu {
+      background-color: #0f1011;
+    }
   }
 }
 </style>

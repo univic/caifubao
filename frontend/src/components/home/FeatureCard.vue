@@ -22,91 +22,51 @@ defineProps<Props>()
 .feature-card {
   position: relative;
   padding: 32px 28px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.2s ease;
   overflow: hidden;
 }
 
-.feature-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 107, 53, 0.3), transparent);
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-
 .feature-card:hover {
-  transform: translateY(-8px);
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 107, 53, 0.2);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3),
-              0 0 60px rgba(255, 107, 53, 0.1);
-}
-
-.feature-card:hover::before {
-  opacity: 1;
+  transform: translateY(-4px);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(113, 112, 255, 0.2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
 }
 
 .feature-card__icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
   margin-bottom: 20px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, rgba(255, 107, 53, 0.15), rgba(247, 201, 72, 0.1));
-  font-size: 28px;
+  border-radius: 10px;
+  background: rgba(113, 112, 255, 0.12);
+  font-size: 24px;
 }
 
 .feature-card__icon :deep(svg) {
-  width: 28px;
-  height: 28px;
-  fill: #ff6b35;
+  width: 24px;
+  height: 24px;
+  stroke: #7170ff;
 }
 
 .feature-card__title {
-  margin: 0 0 12px;
-  font-size: 20px;
-  font-weight: 600;
-  color: #ffffff;
-  font-family: 'Orbitron', 'PingFang SC', sans-serif;
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 590;
+  letter-spacing: -0.24px;
+  color: #f7f8f8;
 }
 
 .feature-card__description {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.6;
-  color: #a0a0b0;
-}
-
-/* Mobile responsive */
-@media (max-width: 768px) {
-  .feature-card {
-    padding: 24px 20px;
-  }
-  
-  .feature-card__icon {
-    width: 48px;
-    height: 48px;
-    margin-bottom: 16px;
-    font-size: 24px;
-  }
-  
-  .feature-card__title {
-    font-size: 18px;
-  }
-  
-  .feature-card__description {
-    font-size: 13px;
-  }
+  color: #8a8f98;
+  letter-spacing: -0.165px;
 }
 </style>
