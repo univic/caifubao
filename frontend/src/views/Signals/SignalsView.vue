@@ -422,7 +422,7 @@ onMounted(fetchSignals)
 .btn-primary {
   background: var(--color-brand) !important;
   border: none !important;
-  color: #fff !important;
+  color: #f7f8f8 !important;
 
   &:hover {
     background: var(--color-brand-accent) !important;

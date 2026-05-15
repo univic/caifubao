@@ -23,20 +23,19 @@ const features = [
 
 <template>
   <div class="home-view">
-    <!-- Hero Section with Black Hole Background (65-70% of viewport) -->
+    <div class="home-view__glow home-view__glow--top" />
+    <div class="home-view__glow home-view__glow--bottom" />
+
     <section class="hero">
-      <img src="/blackhole_bg.jpg" alt="Gargantua Black Hole" class="hero__bg" />
-      
       <div class="hero__content">
+        <p class="hero__eyebrow">Caifubao Quant Workspace</p>
         <h1 class="hero__title">
-          <span class="hero__title-main">Caifubao</span>
-          <span class="hero__title-sub">大A量化分析系统</span>
+          <span class="hero__title-main">财富宝</span>
+          <span class="hero__title-sub">大 A 量化分析系统</span>
         </h1>
-        
         <p class="hero__description">
-          智能量化，洞悉市场
+          智能量化，洞悉市场 — 用更安静的界面看懂行情、信号和回测。
         </p>
-        
         <div class="hero__actions">
           <GlassButton type="primary" to="/login">
             登录
@@ -47,15 +46,13 @@ const features = [
         </div>
       </div>
     </section>
-    
-    <!-- Features Section (30-35% of viewport) -->
+
     <section class="features">
       <div class="features__container">
         <h2 class="features__title">核心功能</h2>
         <p class="features__subtitle">
           强大的量化分析工具，助您做出更明智的投资决策
         </p>
-        
         <div class="features__grid">
           <FeatureCard
             v-for="feature in features"
@@ -67,12 +64,11 @@ const features = [
         </div>
       </div>
     </section>
-    
-    <!-- Footer -->
+
     <footer class="footer">
       <div class="footer__container">
         <p class="footer__copyright">
-          © 2026 Caifubao. All rights reserved.
+          &copy; 2026 Caifubao. All rights reserved.
         </p>
       </div>
     </footer>
@@ -81,41 +77,68 @@ const features = [
 
 <style scoped>
 .home-view {
+  position: relative;
   min-height: 100vh;
-  background: #0a0a0f;
+  background: #08090a;
   overflow-x: hidden;
+  font-family: 'Inter Variable', 'SF Pro Display', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-feature-settings: "cv01", "ss03";
 }
 
-/* Hero Section - 65-70% of viewport */
+.home-view__glow {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(80px);
+  pointer-events: none;
+  opacity: 0.3;
+}
+
+.home-view__glow--top {
+  top: -10%;
+  left: 20%;
+  width: 600px;
+  height: 400px;
+  background: rgba(113, 112, 255, 0.14);
+}
+
+.home-view__glow--bottom {
+  right: -5%;
+  bottom: 10%;
+  width: 500px;
+  height: 500px;
+  background: rgba(94, 106, 210, 0.1);
+}
+
+/* Hero Section */
 .hero {
   position: relative;
-  height: 68vh;
-  min-height: 500px;
-  max-height: 800px;
+  z-index: 1;
+  min-height: 68vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 20px;
-}
-
-.hero__bg {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-  z-index: 0;
+  padding: 80px 24px 60px;
 }
 
 .hero__content {
-  position: relative;
-  z-index: 1;
   text-align: center;
   max-width: 800px;
-  animation: fadeInUp 1s ease-out;
+  animation: fadeInUp 0.8s ease-out;
+}
+
+.hero__eyebrow {
+  display: inline-block;
+  margin-bottom: 16px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(113, 112, 255, 0.2);
+  background: rgba(113, 112, 255, 0.08);
+  color: #828fff;
+  font-size: 12px;
+  font-weight: 590;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .hero__title {
@@ -126,50 +149,44 @@ const features = [
 }
 
 .hero__title-main {
-  font-family: 'Orbitron', 'PingFang SC', sans-serif;
   font-size: 72px;
-  font-weight: 700;
-  letter-spacing: 8px;
-  background: linear-gradient(135deg, #ffffff 0%, #f7c948 50%, #ff6b35 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  text-shadow: 0 0 60px rgba(255, 107, 53, 0.5);
+  font-weight: 510;
+  line-height: 1;
+  letter-spacing: -1.584px;
+  color: #f7f8f8;
 }
 
 .hero__title-sub {
-  font-family: 'Inter', 'PingFang SC', sans-serif;
   font-size: 20px;
   font-weight: 400;
-  color: #a0a0b0;
-  letter-spacing: 4px;
+  color: #8a8f98;
+  letter-spacing: -0.24px;
 }
 
 .hero__description {
-  font-size: 24px;
-  color: #a0a0b0;
+  font-size: 18px;
+  color: #8a8f98;
   margin: 0 0 48px;
-  letter-spacing: 2px;
+  line-height: 1.6;
+  letter-spacing: -0.165px;
+  max-width: 560px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .hero__actions {
   display: flex;
-  gap: 20px;
+  gap: 16px;
   justify-content: center;
   flex-wrap: wrap;
 }
 
-/* Features Section - 30-35% of viewport */
+/* Features Section */
 .features {
   position: relative;
-  height: 32vh;
-  min-height: 300px;
-  max-height: 500px;
-  padding: 60px 20px;
-  background: linear-gradient(180deg, #0a0a0f 0%, #12121a 100%);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  z-index: 1;
+  padding: 80px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .features__container {
@@ -179,19 +196,19 @@ const features = [
 }
 
 .features__title {
-  font-family: 'Orbitron', 'PingFang SC', sans-serif;
-  font-size: 36px;
-  font-weight: 600;
-  color: #ffffff;
+  font-size: 32px;
+  font-weight: 510;
+  color: #f7f8f8;
   text-align: center;
-  margin: 0 0 16px;
+  margin: 0 0 12px;
+  letter-spacing: -0.704px;
 }
 
 .features__subtitle {
   font-size: 16px;
-  color: #a0a0b0;
+  color: #8a8f98;
   text-align: center;
-  margin: 0 0 40px;
+  margin: 0 0 48px;
 }
 
 .features__grid {
@@ -202,9 +219,10 @@ const features = [
 
 /* Footer */
 .footer {
-  padding: 40px 20px;
-  background: #12121a;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+  z-index: 1;
+  padding: 32px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .footer__container {
@@ -215,15 +233,15 @@ const features = [
 
 .footer__copyright {
   margin: 0;
-  font-size: 14px;
-  color: #666680;
+  font-size: 13px;
+  color: #62666d;
 }
 
 /* Animations */
 @keyframes fadeInUp {
   from {
     opacity: 0;
-    transform: translateY(30px);
+    transform: translateY(24px);
   }
   to {
     opacity: 1;
@@ -231,76 +249,70 @@ const features = [
   }
 }
 
-/* Responsive Design */
+/* Responsive */
 @media (max-width: 1024px) {
   .features__grid {
     grid-template-columns: repeat(2, 1fr);
   }
-  
+
   .hero {
-    height: 65vh;
+    min-height: 60vh;
   }
-  
-  .features {
-    height: 35vh;
+
+  .hero__title-main {
+    font-size: 48px;
+    letter-spacing: -1.056px;
   }
 }
 
 @media (max-width: 768px) {
   .hero {
-    height: 70vh;
-    min-height: 450px;
-    padding: 30px 16px;
+    min-height: 65vh;
+    padding: 64px 16px 48px;
   }
-  
+
   .hero__title-main {
-    font-size: 42px;
-    letter-spacing: 4px;
+    font-size: 36px;
+    letter-spacing: -0.704px;
   }
-  
+
   .hero__title-sub {
-    font-size: 14px;
-    letter-spacing: 2px;
+    font-size: 16px;
   }
-  
+
   .hero__description {
-    font-size: 18px;
+    font-size: 16px;
     margin-bottom: 36px;
   }
-  
+
   .hero__actions {
     flex-direction: column;
     align-items: center;
   }
-  
+
   .features {
-    height: auto;
-    min-height: auto;
-    padding: 50px 16px;
+    padding: 48px 16px;
   }
-  
+
   .features__grid {
     grid-template-columns: 1fr;
     gap: 24px;
   }
-  
+
   .features__title {
-    font-size: 28px;
-  }
-  
-  .features__subtitle {
-    margin-bottom: 30px;
+    font-size: 24px;
+    letter-spacing: -0.288px;
   }
 }
 
 @media (max-width: 480px) {
   .hero__title-main {
-    font-size: 32px;
-    letter-spacing: 2px;
+    font-size: 28px;
+    letter-spacing: -0.24px;
   }
-  
+
   .hero__description {
-    font-size: 16px;
+    font-size: 15px;
   }
 }
 </style>

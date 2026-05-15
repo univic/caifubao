@@ -692,7 +692,7 @@ onUnmounted(() => {
 }
 
 .index-card {
-  border-radius: 16px;
+  border-radius: 12px;
   border: 1px solid var(--color-border);
   padding: 16px 18px;
   background: rgba(255, 255, 255, 0.03);
@@ -708,7 +708,7 @@ onUnmounted(() => {
   .card-left { flex: 1; min-width: 0; }
   .card-right { width: 90px; height: 45px; }
   .index-name { font-size: 12px; color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .index-price { font-size: 22px; font-weight: 600; color: var(--color-text-primary); }
+  .index-price { font-size: 22px; font-weight: 590; color: var(--color-text-primary); letter-spacing: -0.288px; }
   .index-change { font-size: 12px; &.up { color: var(--color-up); } &.down { color: var(--color-down); } }
 }
 
@@ -736,8 +736,8 @@ onUnmounted(() => {
 .card {
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--color-border);
-  border-radius: 16px;
-  padding: 22px 24px;
+  border-radius: 12px;
+  padding: 24px;
 }
 
 .card-header {
@@ -785,12 +785,12 @@ onUnmounted(() => {
 }
 
 .chart-container { height: 200px; width: 100%; }
-.breadth-summary { font-size: 14px; font-weight: 500; .up { color: var(--color-up); } .down { color: var(--color-down); } .divider { margin: 0 6px; color: var(--color-text-quaternary); } }
+.breadth-summary { font-size: 14px; font-weight: 510; .up { color: var(--color-up); } .down { color: var(--color-down); } .divider { margin: 0 6px; color: var(--color-text-quaternary); } }
 .breadth-stats { display: flex; justify-content: space-around; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--color-border-subtle); }
 .stat-item {
   display: flex; flex-direction: column; align-items: center; padding: 8px 20px; border-radius: 10px;
   .label { font-size: 11px; color: var(--color-text-quaternary); }
-  .value { font-size: 20px; font-weight: 600; margin-top: 2px; }
+  .value { font-size: 20px; font-weight: 590; margin-top: 2px; }
   &.up-bg-stat { background: rgba(239, 68, 68, 0.06); .value { color: var(--color-up); } }
   &.down-bg-stat { background: rgba(34, 197, 94, 0.06); .value { color: var(--color-down); } }
 }
@@ -853,7 +853,7 @@ onUnmounted(() => {
     border: none; border-radius: 6px;
     background: transparent; color: var(--color-text-quaternary);
     cursor: pointer; transition: all 0.15s;
-    &.active { background: var(--color-brand); color: #fff; }
+    &.active { background: var(--color-brand); color: #f7f8f8; }
     &:hover:not(.active) { color: var(--color-text-secondary); }
   }
 }
@@ -872,7 +872,7 @@ onUnmounted(() => {
 
   .opp-rank {
     font-size: 11px; color: var(--color-text-quaternary); font-weight: 510; min-width: 28px;
-    &.top-rank { color: var(--color-gold); font-weight: 700; }
+    &.top-rank { color: var(--color-gold); font-weight: 590; }
   }
   .opp-info {
     display: flex; flex-direction: column; flex: 1; min-width: 0;

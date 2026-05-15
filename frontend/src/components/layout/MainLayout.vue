@@ -48,9 +48,11 @@ onMounted(() => {
   --color-border-lighter: rgba(255, 255, 255, 0.05);
   --box-shadow-light: 0 1px 0 rgba(255, 255, 255, 0.03), 0 18px 40px rgba(0, 0, 0, 0.28);
   --box-shadow-elevated: 0 24px 60px rgba(0, 0, 0, 0.38);
+  font-family: 'Inter Variable', 'SF Pro Display', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-feature-settings: "cv01", "ss03";
   min-height: calc(100vh - var(--topbar-height, 72px));
   margin-top: var(--topbar-height, 72px);
-  padding: 28px 24px 44px;
+  padding: 32px 24px 48px;
   background: transparent;
   max-width: 1600px;
   margin-left: auto;
@@ -62,7 +64,7 @@ onMounted(() => {
 .main-content :deep(.el-card) {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 20px;
+  border-radius: 12px;
   box-shadow: var(--box-shadow-light);
   color: var(--color-text-primary);
 }
