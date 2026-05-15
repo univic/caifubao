@@ -218,6 +218,8 @@ async function handleCommand(command: string) {
   background: rgba(8, 9, 10, 0.82);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+  font-family: 'Inter Variable', 'SF Pro Display', -apple-system, system-ui, sans-serif;
+  font-feature-settings: "cv01", "ss03";
 }
 
 .topbar__inner {

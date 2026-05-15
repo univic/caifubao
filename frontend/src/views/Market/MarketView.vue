@@ -413,15 +413,16 @@ watch(searchKeyword, () => {
   --color-brand: #5e6ad2;
   --color-text-primary: #f7f8f8;
   --color-text-dim: #8a8f98;
-  --color-up: #10b981;
-  --color-down: #ef4444;
+  --color-up: #ef4444;
+  --color-down: #22c55e;
   --color-border: rgba(255, 255, 255, 0.08);
 
   min-height: 100vh;
-  padding: 40px 60px;
+  padding: 40px 64px;
   background-color: var(--color-bg);
   color: var(--color-text-primary);
-  font-family: 'Inter Variable', sans-serif;
+  font-family: 'Inter Variable', 'SF Pro Display', -apple-system, system-ui, sans-serif;
+  font-feature-settings: "cv01", "ss03";
 }
 
 .market-hero {
@@ -445,7 +446,8 @@ watch(searchKeyword, () => {
   font-size: 48px;
   font-weight: 510;
   margin: 0 0 16px 0;
-  letter-spacing: -0.02em;
+  letter-spacing: -1.056px;
+  line-height: 1;
 }
 
 .subtitle {
@@ -495,7 +497,7 @@ watch(searchKeyword, () => {
 
 .horizon-label {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 510;
   margin-right: 6px;
 }
 
@@ -531,7 +533,7 @@ watch(searchKeyword, () => {
   &.high {
     background: rgba(16, 185, 129, 0.08);
     border-color: rgba(16, 185, 129, 0.25);
-    .chip-score { color: var(--color-up); }
+    .chip-score { color: #10b981; }
   }
   &.medium {
     background: rgba(245, 158, 11, 0.08);
@@ -545,12 +547,12 @@ watch(searchKeyword, () => {
   .chip-horizon {
     font-size: 9px;
     color: var(--color-text-dim);
-    font-weight: 500;
+    font-weight: 510;
     text-transform: uppercase;
   }
   .chip-score {
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 590;
     color: var(--color-text-primary);
   }
 }
@@ -559,8 +561,8 @@ watch(searchKeyword, () => {
 .rank-text {
   font-size: 13px;
   color: var(--color-text-dim);
-  font-weight: 500;
-  &.top-rank { color: #f59e0b; font-weight: 700; }
+  font-weight: 510;
+  &.top-rank { color: #f59e0b; font-weight: 590; }
 }
 
 .asset-cell {
@@ -604,7 +606,7 @@ watch(searchKeyword, () => {
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  .effect-icon { font-size: 16px; color: var(--color-up); }
+  .effect-icon { font-size: 16px; color: #10b981; }
 }
 
 .ohlcv-mini { display: flex; gap: 12px; font-size: 11px; color: var(--color-text-dim); }
@@ -636,15 +638,15 @@ watch(searchKeyword, () => {
         gap: 8px;
         flex: 1;
         min-width: 0;
-        .c-rank { font-size: 12px; color: #f59e0b; font-weight: 700; }
-        .c-name { font-weight: 600; font-size: 15px; }
+        .c-rank { font-size: 12px; color: #f59e0b; font-weight: 590; }
+        .c-name { font-weight: 590; font-size: 15px; }
         .c-code { font-size: 11px; color: var(--color-text-dim); }
       }
       
       .header-score {
         font-size: 14px;
-        font-weight: 700;
-        &.high { color: var(--color-up); }
+        font-weight: 590;
+        &.high { color: #10b981; }
         &.medium { color: #f59e0b; }
       }
     }
@@ -657,7 +659,7 @@ watch(searchKeyword, () => {
       .price-row {
         display: flex;
         gap: 12px;
-        .c-price { font-weight: 600; }
+        .c-price { font-weight: 590; }
         .c-change { font-size: 13px; }
       }
     }
@@ -726,7 +728,7 @@ watch(searchKeyword, () => {
 :deep(.el-radio-button.is-active .el-radio-button__inner) {
   background: var(--color-brand);
   border-color: var(--color-brand);
-  color: #fff;
+  color: #f7f8f8;
   box-shadow: none;
 }
 
