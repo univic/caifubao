@@ -6,9 +6,6 @@ namespace: caifubao-example-dev
 resources:
 - ../../base
 
-patches:
-- path: datahub-patch.yaml
-
 configMapGenerator:
 - name: backend-config
   literals:
