@@ -21,6 +21,7 @@ from app.api.v1.quotes import quotes_bp
 from app.api.v1.scores import scores_bp
 from app.api.v1.score_experiments import score_experiments_bp
 from app.api.v1.system import system_bp
+from app.api.v1.backtest import backtest_bp
 from app.api.v1.signals import signals_bp
 
 
@@ -31,6 +32,7 @@ def register_blueprint(app: Flask):
     app.register_blueprint(indices_bp)
     app.register_blueprint(market_bp)
     app.register_blueprint(portfolios_bp)
+    app.register_blueprint(backtest_bp)
     app.register_blueprint(datahub_status_bp)
     app.register_blueprint(data_quality_bp)
     app.register_blueprint(quotes_bp)

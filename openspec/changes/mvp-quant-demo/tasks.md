@@ -26,11 +26,11 @@
 
 ## 5. Backtest MVP
 
-- [ ] 5.1 Document single-stock daily backtest flow
-- [ ] 5.2 Document supported strategy set
-- [ ] 5.3 Document result payload and UI flow
-- [ ] 5.4 Document that MVP trading backtest uses lightweight internal backend code, not an external backtest framework
-- [ ] 5.5 Document separation between scoring replay/calibration and user-facing trading backtest
+- [x] 5.1 Document single-stock daily backtest flow (implemented: `backend/app/services/backtest_service.py` + `backend/app/api/v1/backtest.py`)
+- [x] 5.2 Document supported strategy set (MA_CROSS golden/dead cross, BUY_HOLD baseline)
+- [x] 5.3 Document result payload and UI flow (API returns metrics, trades, daily equity; frontend has Create/List/Result views)
+- [x] 5.4 Document that MVP trading backtest uses lightweight internal backend code, not an external backtest framework
+- [x] 5.5 Document separation between scoring replay/calibration (datahub) and user-facing trading backtest (backend)
 
 ## 6. Review
 
@@ -92,11 +92,11 @@
 
 ## 10. OpenClaw Data Access
 
-- [ ] 10.1 Document OpenClaw as a downstream read-only consumer of caifubao data
-- [ ] 10.2 Define required API domains: stock master data, quotes, adjusted prices, factors, signals, scores, and data quality
+- [x] 10.1 Document OpenClaw as a downstream read-only consumer of caifubao data (docs/integrations/openclaw.md, AGENTS.md)
+- [x] 10.2 Define required API domains: stock master data, quotes, adjusted prices, factors, signals, scores, and data quality (5 domains + recommendations documented)
 - [ ] 10.3 Define freshness and blocked-by-quote semantics for downstream analysis gating
-- [ ] 10.4 Identify backend API gaps for OpenClaw consumption
-- [ ] 10.5 Keep OpenClaw analysis logic out of caifubao and avoid direct Mongo coupling
-- [ ] 10.6 Define OpenClaw service-token authentication with hashed token storage and read-only scopes
-- [ ] 10.7 Define request audit fields for OpenClaw access, including request id, token id, endpoint, status code, and data-as-of
-- [ ] 10.8 Document token expiry, revocation, and future rate-limit expectations
+- [ ] 10.4 Identify backend API gaps for OpenClaw consumption (no formal gap analysis yet)
+- [x] 10.5 Keep OpenClaw analysis logic out of caifubao and avoid direct Mongo coupling (read-only API only, no analysis logic in caifubao)
+- [x] 10.6 Define OpenClaw service-token authentication with hashed token storage and read-only scopes (backend/app/model/service_token.py, auth_decorators.py)
+- [x] 10.7 Define request audit fields for OpenClaw access, including request id, token id, endpoint, status code, and data-as-of (utils.py request_id, auth decorator tracks last_used_at/last_used_ip)
+- [ ] 10.8 Document token expiry, revocation, and future rate-limit expectations (rate-limit docs still needed)
