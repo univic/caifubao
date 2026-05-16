@@ -133,7 +133,9 @@ def run_backtest(
     # Persist
     if save_result:
         ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        name = f"{stock_code}-{strategy_norm}-{start_date.date()}-{end_date.date()}-{ts}"
+        name = (
+            f"{stock_code}-{strategy_norm}-{start_date.date()}-{end_date.date()}-{ts}"
+        )
         doc = BacktestResult(
             name=name,
             stock_code=stock_code,
@@ -256,7 +258,13 @@ def _simulate(
             curr_ma20 = factor.ma_20 if factor is not None else None
 
             signal: Optional[str] = None
-            if i > 0 and prev_ma10 is not None and prev_ma20 is not None and curr_ma10 is not None and curr_ma20 is not None:
+            if (
+                i > 0
+                and prev_ma10 is not None
+                and prev_ma20 is not None
+                and curr_ma10 is not None
+                and curr_ma20 is not None
+            ):
                 # Golden cross: MA10 crosses above MA20
                 if prev_ma10 <= prev_ma20 and curr_ma10 > curr_ma20:
                     signal = "BUY"
@@ -276,19 +284,15 @@ def _simulate(
                         "price": round(price, 4),
                         "quantity": shares,
                         "amount": round(cost, 4),
-                        "reason": f"Golden cross (MA10 {round(curr_ma10,4)} > MA20 {round(curr_ma20,4)})",
+                        "reason": f"Golden cross (MA10 {round(curr_ma10, 4)} > MA20 {round(curr_ma20, 4)})",
                     }
                 )
             elif signal == "SELL" and shares > 0:
                 proceeds = shares * price
                 cash += proceeds
                 # Calculate PnL for this sell
-                buy_amounts = sum(
-                    t["amount"] for t in trades if t["side"] == "BUY"
-                )
-                sell_amounts = sum(
-                    t["amount"] for t in trades if t["side"] == "SELL"
-                )
+                buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                sell_amounts = sum(t["amount"] for t in trades if t["side"] == "SELL")
                 pnl = proceeds - (buy_amounts - sell_amounts)
                 trades.append(
                     {
@@ -298,7 +302,7 @@ def _simulate(
                         "quantity": shares,
                         "amount": round(proceeds, 4),
                         "pnl": round(pnl, 4),
-                        "reason": f"Dead cross (MA10 {round(curr_ma10,4)} < MA20 {round(curr_ma20,4)})",
+                        "reason": f"Dead cross (MA10 {round(curr_ma10, 4)} < MA20 {round(curr_ma20, 4)})",
                     }
                 )
                 shares = 0.0
@@ -308,12 +312,8 @@ def _simulate(
             if i == num_days - 1 and shares > 0:
                 proceeds = shares * price
                 cash += proceeds
-                buy_amounts = sum(
-                    t["amount"] for t in trades if t["side"] == "BUY"
-                )
-                sell_amounts = sum(
-                    t["amount"] for t in trades if t["side"] == "SELL"
-                )
+                buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                sell_amounts = sum(t["amount"] for t in trades if t["side"] == "SELL")
                 pnl = proceeds - (buy_amounts - sell_amounts)
                 trades.append(
                     {
@@ -343,7 +343,9 @@ def _simulate(
             prev_ma20 = curr_ma20
 
     return {
-        "final_value": round(cash + shares * _closing_price(quote_map[trading_days[-1]]), 4),
+        "final_value": round(
+            cash + shares * _closing_price(quote_map[trading_days[-1]]), 4
+        ),
         "trades": trades,
         "daily_values": daily_values,
     }
@@ -392,7 +394,9 @@ def _compute_metrics(
         "total_return": total_return,
         "total_return_pct": total_return_pct,
         "annualized_return": round(cagr * 100, 4),  # as percentage
-        "max_drawdown": round(max_dd * 100, 4) if max_dd is not None else 0.0,  # as percentage
+        "max_drawdown": round(max_dd * 100, 4)
+        if max_dd is not None
+        else 0.0,  # as percentage
         "max_drawdown_duration": max_dd_dur,
         "sharpe_ratio": round(sharpe, 4),
         "win_rate": win_rate,
@@ -452,7 +456,9 @@ def _compute_sharpe(
     if len(daily_returns) < 2:
         return 0.0
 
-    variance = sum((r - mean_ret) ** 2 for r in daily_returns) / (len(daily_returns) - 1)
+    variance = sum((r - mean_ret) ** 2 for r in daily_returns) / (
+        len(daily_returns) - 1
+    )
     std_ret = math.sqrt(variance)
     if std_ret == 0:
         return 0.0

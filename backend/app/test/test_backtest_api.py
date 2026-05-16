@@ -31,9 +31,7 @@ class FakeQuery:
         for field in reversed(fields):
             reverse = field.startswith("-")
             name = field.removeprefix("-")
-            rows = sorted(
-                rows, key=lambda r: _getattr(r, name) or "", reverse=reverse
-            )
+            rows = sorted(rows, key=lambda r: _getattr(r, name) or "", reverse=reverse)
         return type(self)(rows)
 
     def skip(self, n):
@@ -110,8 +108,20 @@ def _make_row(idx: int) -> SimpleNamespace:
             },
         ],
         daily_values=[
-            {"date": "2024-01-15T00:00:00", "close": 1650.0, "cash": 1000.0, "shares": 60, "equity": 100000.0},
-            {"date": "2024-01-16T00:00:00", "close": 1660.0, "cash": 1000.0, "shares": 60, "equity": 100600.0},
+            {
+                "date": "2024-01-15T00:00:00",
+                "close": 1650.0,
+                "cash": 1000.0,
+                "shares": 60,
+                "equity": 100000.0,
+            },
+            {
+                "date": "2024-01-16T00:00:00",
+                "close": 1660.0,
+                "cash": 1000.0,
+                "shares": 60,
+                "equity": 100600.0,
+            },
         ],
         created_at=datetime.datetime(2024, 7, 1, 12, 0, 0),
         completed_at=datetime.datetime(2024, 7, 1, 12, 0, 1),
@@ -268,7 +278,9 @@ class TestBacktestDeleteAPI:
         # Patch row.delete() before creating the query so the patched attribute
         # is on the same object instance that first() will return.
         row.delete = lambda: deleted.update({"deleted": True})
-        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQueryWithDelete([row]))
+        monkeypatch.setattr(
+            bt_mod.BacktestResult, "objects", FakeQueryWithDelete([row])
+        )
 
         resp = client.delete("/api/backtest/bt_result_1")
         assert resp.status_code == 200
@@ -283,7 +295,11 @@ class TestBacktestRunAPI:
     def test_missing_stock_code(self, client):
         resp = client.post(
             "/api/backtest/run",
-            json={"strategy": "MA_CROSS", "start_date": "2024-01-01", "end_date": "2024-06-30"},
+            json={
+                "strategy": "MA_CROSS",
+                "start_date": "2024-01-01",
+                "end_date": "2024-06-30",
+            },
         )
         assert resp.status_code == 400
         body = resp.get_json()
@@ -293,7 +309,11 @@ class TestBacktestRunAPI:
     def test_missing_strategy(self, client):
         resp = client.post(
             "/api/backtest/run",
-            json={"stock_code": "sh600519", "start_date": "2024-01-01", "end_date": "2024-06-30"},
+            json={
+                "stock_code": "sh600519",
+                "start_date": "2024-01-01",
+                "end_date": "2024-06-30",
+            },
         )
         assert resp.status_code == 400
         body = resp.get_json()
@@ -370,14 +390,37 @@ class TestBacktestRunAPI:
             "best_trade": 4000.0,
             "worst_trade": -2000.0,
             "trades": [
-                {"date": "2024-01-15T00:00:00", "side": "BUY", "price": 1650.0, "quantity": 60, "amount": 99000.0, "reason": "Golden cross"},
-                {"date": "2024-02-20T00:00:00", "side": "SELL", "price": 1716.67, "quantity": 60, "amount": 103000.0, "pnl": 4000.0, "reason": "Dead cross"},
+                {
+                    "date": "2024-01-15T00:00:00",
+                    "side": "BUY",
+                    "price": 1650.0,
+                    "quantity": 60,
+                    "amount": 99000.0,
+                    "reason": "Golden cross",
+                },
+                {
+                    "date": "2024-02-20T00:00:00",
+                    "side": "SELL",
+                    "price": 1716.67,
+                    "quantity": 60,
+                    "amount": 103000.0,
+                    "pnl": 4000.0,
+                    "reason": "Dead cross",
+                },
             ],
             "daily_values": [
-                {"date": "2024-01-15T00:00:00", "close": 1650.0, "cash": 1000.0, "shares": 60, "equity": 100000.0},
+                {
+                    "date": "2024-01-15T00:00:00",
+                    "close": 1650.0,
+                    "cash": 1000.0,
+                    "shares": 60,
+                    "equity": 100000.0,
+                },
             ],
         }
-        monkeypatch.setattr("app.api.v1.backtest.run_backtest", lambda **kw: success_result)
+        monkeypatch.setattr(
+            "app.api.v1.backtest.run_backtest", lambda **kw: success_result
+        )
 
         resp = client.post(
             "/api/backtest/run",
@@ -476,7 +519,9 @@ class TestBacktestResponseEnvelope:
             "trades": [],
             "daily_values": [],
         }
-        monkeypatch.setattr("app.api.v1.backtest.run_backtest", lambda **kw: success_result)
+        monkeypatch.setattr(
+            "app.api.v1.backtest.run_backtest", lambda **kw: success_result
+        )
 
         resp = client.post(
             "/api/backtest/run",

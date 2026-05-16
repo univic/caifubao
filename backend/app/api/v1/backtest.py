@@ -102,7 +102,9 @@ def _format_dt(value: datetime | None) -> str | None:
     return str(value)
 
 
-def _serialize_result(row: BacktestResult, include_details: bool = False) -> Dict[str, Any]:
+def _serialize_result(
+    row: BacktestResult, include_details: bool = False
+) -> Dict[str, Any]:
     payload = {
         "id": str(row.id),
         "name": row.name,
@@ -151,7 +153,9 @@ def _serialize_result(row: BacktestResult, include_details: bool = False) -> Dic
                 "shares": dv.get("shares"),
                 "equity": dv.get("equity"),
                 "value": dv.get("equity"),  # alias for total assets
-                "positions_value": round((dv.get("shares", 0) or 0) * (dv.get("close", 0) or 0), 4),  # holdings market value
+                "positions_value": round(
+                    (dv.get("shares", 0) or 0) * (dv.get("close", 0) or 0), 4
+                ),  # holdings market value
             }
             for dv in (row.daily_values or [])
         ]
