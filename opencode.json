@@ -11,8 +11,17 @@
   ],
   "permission": {
     "edit": "allow",
-    "bash": "ask",
-    "websearch": "ask"
+    "bash": {
+      "*": "allow",
+      "rm -rf *": "deny",
+      "rm -r *": "deny",
+      "git push --force*": "deny",
+      "git push -f*": "deny",
+      "docker rm*": "deny",
+      "docker rmi*": "deny",
+      "kubectl delete*": "deny"
+    },
+    "websearch": "allow"
   },
   "agent": {
     "caifubao-orchestrator": {
@@ -26,8 +35,8 @@
         "glob": "allow",
         "task": "allow",
         "edit": "allow",
-        "bash": "ask",
-        "websearch": "ask"
+        "bash": "allow",
+        "websearch": "allow"
       }
     },
     "qa-reviewer": {
@@ -82,7 +91,7 @@
         "grep": "allow",
         "glob": "allow",
         "edit": "allow",
-        "bash": "ask",
+        "bash": "allow",
         "websearch": "deny"
       }
     },
@@ -96,7 +105,7 @@
         "grep": "allow",
         "glob": "allow",
         "edit": "allow",
-        "bash": "ask",
+        "bash": "allow",
         "websearch": "deny"
       }
     },
@@ -110,7 +119,7 @@
         "grep": "allow",
         "glob": "allow",
         "edit": "allow",
-        "bash": "ask",
+        "bash": "allow",
         "websearch": "deny"
       }
     },
@@ -124,7 +133,7 @@
         "grep": "allow",
         "glob": "allow",
         "edit": "ask",
-        "bash": "ask",
+        "bash": "allow",
         "websearch": "deny"
       }
     }
