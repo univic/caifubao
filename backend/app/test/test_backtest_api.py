@@ -265,9 +265,10 @@ class TestBacktestDeleteAPI:
             def first(self):
                 return self.rows[0] if self.rows else None
 
+        # Patch row.delete() before creating the query so the patched attribute
+        # is on the same object instance that first() will return.
+        row.delete = lambda: deleted.update({"deleted": True})
         monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQueryWithDelete([row]))
-        # Patch row.delete() to record the call
-        monkeypatch.setattr(row, "delete", lambda: deleted.update({"deleted": True}))
 
         resp = client.delete("/api/backtest/bt_result_1")
         assert resp.status_code == 200
@@ -330,12 +331,11 @@ class TestBacktestRunAPI:
 
     def test_unsupported_strategy(self, client, monkeypatch):
         """An unsupported strategy should be caught by the service layer."""
-        from app.services import backtest_service
 
         def _fake_bt(*args, **kwargs):
             return {"error": "Unsupported strategy", "detail": "strategy=UNKNOWN"}
 
-        monkeypatch.setattr(backtest_service, "run_backtest", _fake_bt)
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", _fake_bt)
 
         resp = client.post(
             "/api/backtest/run",
@@ -352,7 +352,6 @@ class TestBacktestRunAPI:
 
     def test_successful_backtest(self, client, monkeypatch):
         """End-to-end: the service returns a valid result dict."""
-        from app.services import backtest_service
 
         success_result = {
             "id": "bt_abc123",
@@ -378,7 +377,7 @@ class TestBacktestRunAPI:
                 {"date": "2024-01-15T00:00:00", "close": 1650.0, "cash": 1000.0, "shares": 60, "equity": 100000.0},
             ],
         }
-        monkeypatch.setattr(backtest_service, "run_backtest", lambda **kw: success_result)
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", lambda **kw: success_result)
 
         resp = client.post(
             "/api/backtest/run",
@@ -399,7 +398,6 @@ class TestBacktestRunAPI:
 
     def test_initial_cash_default(self, client, monkeypatch):
         """initial_cash should default to 100000 when not provided."""
-        from app.services import backtest_service
 
         captured_kwargs = {}
 
@@ -424,7 +422,7 @@ class TestBacktestRunAPI:
                 "daily_values": [],
             }
 
-        monkeypatch.setattr(backtest_service, "run_backtest", _fake_bt)
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", _fake_bt)
 
         client.post(
             "/api/backtest/run",
@@ -458,7 +456,6 @@ class TestBacktestResponseEnvelope:
     """Verify the response envelope shape on all endpoints."""
 
     def test_run_envelope(self, client, monkeypatch):
-        from app.services import backtest_service
 
         success_result = {
             "id": "bt_env",
@@ -479,7 +476,7 @@ class TestBacktestResponseEnvelope:
             "trades": [],
             "daily_values": [],
         }
-        monkeypatch.setattr(backtest_service, "run_backtest", lambda **kw: success_result)
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", lambda **kw: success_result)
 
         resp = client.post(
             "/api/backtest/run",
