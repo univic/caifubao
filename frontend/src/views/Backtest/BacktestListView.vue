@@ -166,7 +166,7 @@ function formatNumber(value: number | null | undefined) {
 
 function formatPercent(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return '--'
-  return `${(value * 100).toFixed(2)}%`
+  return `${value.toFixed(2)}%`
 }
 
 function pnlClass(value: number) {

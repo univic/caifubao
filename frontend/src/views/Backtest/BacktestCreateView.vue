@@ -65,7 +65,6 @@
             >
               <el-option label="均线交叉策略 (MA_CROSS)" value="MA_CROSS" />
               <el-option label="买入持有策略 (BUY_HOLD)" value="BUY_HOLD" />
-              <el-option label="金叉死叉策略" value="GOLDEN_DEATH_CROSS" />
             </el-select>
             <template #extra>
               <span class="form-hint">
@@ -228,7 +227,7 @@ function formatNumber(value: number | null | undefined) {
 
 function formatPercent(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return '--'
-  return `${(value * 100).toFixed(2)}%`
+  return `${value.toFixed(2)}%`
 }
 
 function pnlClass(value: number) {
@@ -240,8 +239,7 @@ function pnlClass(value: number) {
 function strategyDescription(value: string) {
   const map: Record<string, string> = {
     MA_CROSS: '基于 MA10 与 MA20 均线交叉生成买卖信号',
-    BUY_HOLD: '期初买入并持有至期末，衡量基准收益',
-    GOLDEN_DEATH_CROSS: '基于均线金叉买入、死叉卖出'
+    BUY_HOLD: '期初买入并持有至期末，衡量基准收益'
   }
   return map[value] || ''
 }

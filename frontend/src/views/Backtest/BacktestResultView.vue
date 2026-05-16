@@ -162,15 +162,6 @@
                 <span class="reason-text">{{ row.reason || '--' }}</span>
               </template>
             </el-table-column>
-
-            <el-table-column label="持仓/现金" width="140" align="right">
-              <template #default="{ row }">
-                <div class="position-info">
-                  <span class="mono-text small">持仓 {{ row.position_after }}</span>
-                  <span class="mono-text small">现金 {{ formatMoney(row.cash_after) }}</span>
-                </div>
-              </template>
-            </el-table-column>
           </el-table>
         </div>
       </div>
@@ -211,21 +202,6 @@
             <el-table-column label="持仓市值" width="140" align="right">
               <template #default="{ row }">
                 <span class="mono-text">{{ formatMoney(row.positions_value) }}</span>
-              </template>
-            </el-table-column>
-
-            <el-table-column label="日收益" width="120" align="right">
-              <template #default="{ row }">
-                <span class="mono-text" :class="pnlClass(row.return_pct)">{{ formatPercent(row.return_pct) }}</span>
-              </template>
-            </el-table-column>
-
-            <el-table-column label="回撤" width="120" align="right">
-              <template #default="{ row }">
-                <span class="mono-text danger" v-if="row.drawdown_pct != null">
-                  {{ (row.drawdown_pct * 100).toFixed(2) }}%
-                </span>
-                <span class="mono-text muted" v-else>--</span>
               </template>
             </el-table-column>
           </el-table>
@@ -284,7 +260,7 @@ function formatNumber(value: number | null | undefined) {
 
 function formatPercent(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return '--'
-  return `${(value * 100).toFixed(2)}%`
+  return `${value.toFixed(2)}%`
 }
 
 function formatMoney(value: number | null | undefined) {

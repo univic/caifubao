@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.model.backtest import BacktestResult
@@ -132,7 +132,7 @@ def run_backtest(
 
     # Persist
     if save_result:
-        ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         name = f"{stock_code}-{strategy_norm}-{start_date.date()}-{end_date.date()}-{ts}"
         doc = BacktestResult(
             name=name,
@@ -158,7 +158,7 @@ def run_backtest(
             status="COMPLETED",
             trades=result["trades"],
             daily_values=result["daily_values"],
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(timezone.utc),
         )
         doc.save()
         result["id"] = str(doc.id)

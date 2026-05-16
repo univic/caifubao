@@ -7,18 +7,17 @@ export interface BacktestTrade {
   quantity: number
   amount: number
   reason: string
-  cash_after: number
-  position_after: number
   pnl?: number
 }
 
 export interface DailyValue {
   date: string
-  value: number
+  close: number
   cash: number
+  shares: number
+  equity: number
+  value: number
   positions_value: number
-  return_pct?: number
-  drawdown_pct?: number
 }
 
 export interface BacktestResult {
@@ -59,15 +58,15 @@ export interface RunBacktestPayload {
 
 export const backtestApi = {
   list() {
-    return api.get<{ items: BacktestResult[] }>('/backtest') as unknown as Promise<{ items: BacktestResult[] }>
+    return api.get<any>('/backtest').then((res: any) => res.data) as Promise<{ total: number; limit: number; offset: number; items: BacktestResult[] }>
   },
   run(payload: RunBacktestPayload) {
-    return api.post<BacktestResult>('/backtest/run', payload) as unknown as Promise<BacktestResult>
+    return api.post<any>('/backtest/run', payload).then((res: any) => res.data) as Promise<BacktestResult>
   },
   get(id: string) {
-    return api.get<BacktestResult>(`/backtest/${id}`) as unknown as Promise<BacktestResult>
+    return api.get<any>(`/backtest/${id}`).then((res: any) => res.data) as Promise<BacktestResult>
   },
   delete(id: string) {
-    return api.delete<{ message: string }>(`/backtest/${id}`) as unknown as Promise<{ message: string }>
+    return api.delete<any>(`/backtest/${id}`).then((res: any) => res.data) as Promise<{ message: string }>
   }
 }
