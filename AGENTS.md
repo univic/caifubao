@@ -3,6 +3,9 @@
 This file is the canonical operating guide for AI-assisted Caifubao development.
 It is loaded by OpenClaw when the caifubao-dev agent works in this repository.
 
+For Git workflow rules (branching, draft PR, CI gating), see
+[`.project-rules.md`](./.project-rules.md).
+
 ## Project Scope
 
 Caifubao is an A-share quantitative investing MVP for research, learning, and
