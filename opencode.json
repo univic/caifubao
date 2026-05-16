@@ -10,7 +10,7 @@
     "docs/integrations/openclaw.md"
   ],
   "permission": {
-    "edit": "ask",
+    "edit": "allow",
     "bash": "ask",
     "websearch": "ask"
   },
@@ -25,7 +25,7 @@
         "grep": "allow",
         "glob": "allow",
         "task": "allow",
-        "edit": "ask",
+        "edit": "allow",
         "bash": "ask",
         "websearch": "ask"
       }
@@ -81,7 +81,7 @@
         "read": "allow",
         "grep": "allow",
         "glob": "allow",
-        "edit": "ask",
+        "edit": "allow",
         "bash": "ask",
         "websearch": "deny"
       }
@@ -95,7 +95,7 @@
         "read": "allow",
         "grep": "allow",
         "glob": "allow",
-        "edit": "ask",
+        "edit": "allow",
         "bash": "ask",
         "websearch": "deny"
       }
@@ -109,7 +109,7 @@
         "read": "allow",
         "grep": "allow",
         "glob": "allow",
-        "edit": "ask",
+        "edit": "allow",
         "bash": "ask",
         "websearch": "deny"
       }
