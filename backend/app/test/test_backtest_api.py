@@ -14,11 +14,17 @@ class FakeQuery:
     def __init__(self, rows):
         self.rows = list(rows)
 
+    def __call__(self, **kwargs):
+        """Support mongoengine-style MyDocument.objects(**filters) syntax."""
+        if not kwargs:
+            return type(self)(self.rows)
+        return self.filter(**kwargs)
+
     def filter(self, **kwargs):
         rows = self.rows
         for key, value in kwargs.items():
             rows = [r for r in rows if _getattr(r, key) == value]
-        return FakeQuery(rows)
+        return type(self)(rows)
 
     def order_by(self, *fields):
         rows = self.rows
@@ -28,13 +34,13 @@ class FakeQuery:
             rows = sorted(
                 rows, key=lambda r: _getattr(r, name) or "", reverse=reverse
             )
-        return FakeQuery(rows)
+        return type(self)(rows)
 
     def skip(self, n):
-        return FakeQuery(self.rows[n:])
+        return type(self)(self.rows[n:])
 
     def limit(self, n):
-        return FakeQuery(self.rows[:n])
+        return type(self)(self.rows[:n])
 
     def count(self):
         return len(self.rows)
