@@ -384,17 +384,146 @@ def _handle_factor_eval(task: Any) -> None:
 
 
 def _handle_rolling_validation(task: Any) -> None:
+    """Rolling cross-validation: train on year Y, test on year Y+1, slide forward.
+
+    Compares calibration metrics (hit rates) between training and test periods
+    to detect overfitting.  Each window replays scores, verifies outcomes, and
+    generates calibration reports for both periods.  Windows where the test
+    hit_rate drops >20% versus train are flagged as overfit.
+    """
     _mark_started(task)
     try:
+        from datahub.app.lib.scoring_engine.replay_service import ScoreReplayService
+        from datahub.app.lib.scoring_engine.verification_service import ScoreVerificationService
+        from datahub.app.lib.scoring_engine.calibration_report import ScoreCalibrationReport
+
         params = task.params or {}
-        _update_progress(task, 0.1, "Running rolling validation...")
+        model_version = params.get("model_version", "score_v2_202605")
+        start_year = int(params.get("start_year", 2020))
+        end_year = int(params.get("end_year", 2024))
+        horizons = params.get("horizons", [20])
+        step_years = int(params.get("step_years", 1))
 
-        result = {
-            "model_version": params.get("model_version"),
-            "windows": [],
-            "note": "Rolling validation skeleton — needs grid search sub-tasks",
-        }
+        # Optional single-stock filter – backfill_predictions only accepts
+        # one stock_code, so pass it when present.
+        stock_code = params.get("stock_code")
 
-        _mark_completed(task, result)
+        windows = []
+        overfit_flags = []
+
+        # Total slide steps for progress calculation
+        total_steps = max((end_year - start_year) // step_years, 1)
+
+        for step_idx, train_year in enumerate(range(start_year, end_year, step_years)):
+            test_year = train_year + 1
+            if test_year > end_year:
+                break
+
+            progress = (step_idx / total_steps) if total_steps else 0
+            _update_progress(
+                task, progress,
+                f"Validating: train={train_year}, test={test_year}",
+            )
+
+            train_start = datetime(train_year, 1, 1)
+            train_end = datetime(train_year, 12, 31)
+            test_start = datetime(test_year, 1, 1)
+            test_end = datetime(test_year, 12, 31)
+
+            # Store test predictions under a window-specific version so they
+            # don't pollute the canonical model_version in the database.
+            test_model_version = f"{model_version}_rolling_test_{test_year}"
+
+            window_result = {
+                "train_year": train_year,
+                "test_year": test_year,
+                "horizons": {},
+            }
+
+            for horizon in horizons:
+                # --- Train period ---
+                replay = ScoreReplayService(model_version=model_version)
+                replay.backfill_predictions(
+                    train_start, train_end,
+                    horizon=horizon,
+                    stock_code=stock_code,
+                    replace=True,
+                )
+
+                verifier = ScoreVerificationService(model_version=model_version)
+                verifier.verify_predictions(
+                    train_start, train_end,
+                    horizon=horizon,
+                )
+
+                report = ScoreCalibrationReport(model_version=model_version)
+                train_cal = report.generate(train_start, train_end, horizon)
+
+                # --- Test period ---
+                test_replay = ScoreReplayService(model_version=test_model_version)
+                test_replay.backfill_predictions(
+                    test_start, test_end,
+                    horizon=horizon,
+                    stock_code=stock_code,
+                    replace=True,
+                )
+
+                test_verifier = ScoreVerificationService(
+                    model_version=test_model_version,
+                )
+                test_verifier.verify_predictions(
+                    test_start, test_end,
+                    horizon=horizon,
+                )
+
+                test_report_gen = ScoreCalibrationReport(
+                    model_version=test_model_version,
+                )
+                test_cal = test_report_gen.generate(test_start, test_end, horizon)
+
+                # Hit rate from the highest score bucket (80-100)
+                train_buckets = train_cal.get("score_buckets", [])
+                test_buckets = test_cal.get("score_buckets", [])
+
+                train_hit = (
+                    (train_buckets[-1].get("hit_rate") or 0)
+                    if train_buckets else 0
+                )
+                test_hit = (
+                    (test_buckets[-1].get("hit_rate") or 0)
+                    if test_buckets else 0
+                )
+
+                decay = (
+                    (train_hit - test_hit) / max(train_hit, 0.001)
+                    if train_hit > 0 else 0
+                )
+                overfit = decay > 0.20
+                if overfit:
+                    overfit_flags.append(
+                        f"Horizon {horizon}: train {train_year} -> "
+                        f"test {test_year} hit_rate dropped "
+                        f"{decay * 100:.1f}%"
+                    )
+
+                window_result["horizons"][str(horizon)] = {
+                    "train_hit_rate": round(train_hit, 6),
+                    "test_hit_rate": round(test_hit, 6),
+                    "decay": round(decay, 4),
+                    "overfit": overfit,
+                    "test_model_version": test_model_version,
+                }
+
+            windows.append(window_result)
+
+        _mark_completed(task, {
+            "model_version": model_version,
+            "windows": windows,
+            "overfit_flags": overfit_flags,
+            "verdict": (
+                "Overfit detected" if overfit_flags
+                else "Stable across windows"
+            ),
+        })
     except Exception:
         _mark_failed(task, traceback.format_exc())

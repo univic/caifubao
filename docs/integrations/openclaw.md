@@ -77,6 +77,90 @@ Check the freshness and coverage of data assets.
 - `symbol`: Filter by a specific stock.
 - `asset_type`: e.g., `quote`.
 
+### 2.6 Score Predictions
+`GET /scores`
+
+Fetch multi-horizon score predictions (Score5, Score20, Score60) with per-component explanations, input-snapshot freshness, and verification metrics.
+
+Requires the `openclaw:score-read` scope (or the broader `openclaw:data-read` scope).
+
+**Parameters:**
+- `date`: `YYYY-MM-DD` — filter by evaluation date
+- `horizon`: `5`, `20`, or `60`
+- `stock_code`: filter by stock code (e.g., `sh600519`)
+- `model_version`: filter by model version (e.g., `score_v2_202604`)
+- `status`: filter by verification status (`PENDING`, `TRACKING`, `VERIFIED`, `INSUFFICIENT_DATA`, `BLOCKED`, `FAILED`)
+- `page` / `per_page`: Pagination parameters (default 100, max 500)
+
+**Response Fields (per item):**
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `stock_code` | string | Stock code (e.g., `sh600519`) |
+| `stock_name` | string | Stock name |
+| `date` | string | Evaluation date (ISO-8601) |
+| `horizon` | int | Prediction horizon (5, 20, 60 trading days) |
+| `score` | float | Score value (higher = stronger opportunity) |
+| `rank` | int | Rank within date/horizon cohort |
+| `percentile` | float | Percentile within cohort |
+| `recommendation` | string | `BUY`, `WATCH`, `AVOID`, or `NONE` |
+| `status` | string | Verification status |
+| `base_price` | float | Close price on evaluation date |
+| `target_date` | string | Target date for verification (ISO-8601) |
+| `model_version` | string | Scoring model version |
+| `explanation` | object | Per-component scores, penalties, thresholds, evidence |
+| `input_snapshot` | object | Input data freshness for quote, factor, signal inputs |
+| `verification` | object/null | Outcomes: `hit_target_close`, `hit_target_intra`, `return_at_target`, `max_return`, `min_return`, `max_drawdown`, `days_to_max_return`, `quote_count` |
+
+**Example Request:**
+```http
+GET /api/v1/integrations/openclaw/scores?horizon=20&date=2026-04-15&per_page=10
+Authorization: Bearer st_your_service_token_here
+```
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "request_id": "a1b2c3d4-...",
+  "generated_at": "2026-05-17T12:00:00",
+  "data": {
+    "items": [
+      {
+        "stock_code": "sh600519",
+        "stock_name": "贵州茅台",
+        "date": "2026-04-15",
+        "horizon": 20,
+        "score": 82.5,
+        "rank": 1,
+        "percentile": 0.99,
+        "recommendation": "BUY",
+        "status": "VERIFIED",
+        "base_price": 1650.0,
+        "target_date": "2026-05-13",
+        "model_version": "score_v2_202604",
+        "explanation": { ... },
+        "input_snapshot": { ... },
+        "verification": {
+          "hit_target_close": true,
+          "hit_target_intra": true,
+          "return_at_target": 0.034,
+          "max_return": 0.052,
+          "min_return": -0.012,
+          "max_drawdown": -0.018,
+          "days_to_max_return": 8,
+          "quote_count": 20
+        }
+      }
+    ],
+    "total": 1250,
+    "page": 1,
+    "per_page": 10
+  }
+}
+```
+
 ## 3. Response Format
 
 All responses follow this standard structure:

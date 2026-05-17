@@ -12,6 +12,7 @@ def service_token_required(scope=None):
     """
     Decorator to protect OpenClaw integration endpoints with service tokens.
     Usage: @service_token_required(scope="openclaw:data-read")
+           @service_token_required(scope=["openclaw:score-read", "openclaw:data-read"])
     """
 
     def decorator(f):
@@ -28,7 +29,7 @@ def service_token_required(scope=None):
                 ), 401
 
             token = auth_header.split(" ")[1]
-            token_doc, error = verify_service_token(token, required_scope=scope)
+            token_doc, error = verify_service_token(token, required_scopes=scope)
 
             if error:
                 status_code = 403 if "scope" in error.lower() else 401
