@@ -233,6 +233,23 @@ def get_score_explanation(stock_code, date):
 # ---------------------------------------------------------------------------
 # Score generation endpoint — one-click scoring from the frontend.
 # ---------------------------------------------------------------------------
+#
+# The datahub scoring engine is imported here using the same sys.path pattern
+# already established in score_experiments.py.  This is a user-triggered
+# on-demand action (not scheduled collection), so it does not violate the
+# boundary rule that "backend must not run scheduled data-collection jobs."
+# Both backend and datahub share the same MongoDB, and the scoring service
+# is intentionally designed to be callable from either context.
+
+import os  # noqa: E402
+import sys  # noqa: E402
+
+sys.path.insert(  # noqa: E402
+    0,
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "datahub", "app"),
+)
+
+from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION  # noqa: E402
 
 
 @scores_bp.route("/generate", methods=["POST"])
@@ -242,24 +259,7 @@ def generate_scores():
 
     Accepts optional filters: date, horizon, stock_code, model_version.
     Checks that quote data exists for the target date before scoring.
-
-    The datahub scoring engine is imported inside the function body using
-    the same sys.path pattern already established in score_experiments.py.
-    This guards against import-time failures in CI environments where only
-    the backend package is installed.
     """
-    import os  # noqa: E402
-    import sys  # noqa: E402
-
-    sys.path.insert(
-        0,
-        os.path.join(
-            os.path.dirname(__file__), "..", "..", "..", "..", "datahub", "app"
-        ),
-    )
-
-    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION  # noqa: E402
-
     body = request.get_json(silent=True) or {}
 
     requested_date = _parse_datetime(body.get("date"))
@@ -299,10 +299,8 @@ def generate_scores():
                     "missing": "quote",
                     "suggestion": (
                         "在 datahub 容器中执行: "
-                        "python -m app.jobs.quote_runner --target stock "
-                        "--include-factors "
-                        "--job-name datahub_quote_stock_daily "
-                        "--trigger manual --source api"
+                        "python -m app.jobs.quote_runner --target stock --include-factors "
+                        "--job-name datahub_quote_stock_daily --trigger manual --source api"
                     ),
                 }
             ),
@@ -322,8 +320,7 @@ def generate_scores():
                             "success": False,
                             "message": (
                                 f"No quote data for stock_code={stock_code}. "
-                                "Ensure the stock is active "
-                                "and quotes have been synced."
+                                "Ensure the stock is active and quotes have been synced."
                             ),
                             "date": eval_date.strftime("%Y-%m-%d"),
                             "missing": "stock",
@@ -337,15 +334,12 @@ def generate_scores():
                 pred = service.score_single_stock(
                     stock, eval_date, h, dry_run=False, replace=replace
                 )
-                sc = pred.stock_code if hasattr(pred, "stock_code") else stock_code
-                ps = pred.score if hasattr(pred, "score") else None
-                pr = pred.recommendation if hasattr(pred, "recommendation") else None
                 results.append(
                     {
-                        "stock_code": sc,
+                        "stock_code": pred.stock_code if hasattr(pred, "stock_code") else stock_code,
                         "horizon": h,
-                        "score": ps,
-                        "recommendation": pr,
+                        "score": pred.score if hasattr(pred, "score") else None,
+                        "recommendation": pred.recommendation if hasattr(pred, "recommendation") else None,
                     }
                 )
             scored_count = len(results)
@@ -356,7 +350,6 @@ def generate_scores():
             scored_count = result.get("scored_count", 0)
             results = []
 
-        results_payload = results if results else None
         return (
             jsonify(
                 {
@@ -366,7 +359,7 @@ def generate_scores():
                     "horizon": horizon or "5,20,60",
                     "scored_count": scored_count,
                     "model_version": model_version,
-                    "results": results_payload,
+                    "results": results if results else None,
                 }
             ),
             200,
