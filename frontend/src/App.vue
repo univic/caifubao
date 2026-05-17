@@ -18,7 +18,7 @@ onMounted(() => {
 
 <style>
 #app {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Inter', 'SF Pro Display', -apple-system, system-ui, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
 }
 .placeholder {
   display: flex;
@@ -26,7 +26,6 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   min-height: 400px;
-  color: #909399;
+  color: var(--color-text-secondary, #8a8f98);
 }
 </style>
-<!-- build trigger -->

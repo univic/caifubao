@@ -29,27 +29,9 @@ onMounted(() => {
 }
 
 .main-content {
-  --color-primary: #7170ff;
-  --color-primary-light: #828fff;
-  --color-primary-dark: #5e6ad2;
-  --color-success: #27a644;
-  --color-success-light: #4ade80;
-  --color-warning: #d97706;
-  --color-info: #8a8f98;
-  --color-bg-page: #08090a;
-  --color-bg-card: #191a1b;
+  /* Layout overrides — most values inherit from :root (variables.scss) */
   --color-bg-header: rgba(15, 16, 17, 0.82);
-  --color-text-primary: #f7f8f8;
-  --color-text-regular: #d0d6e0;
-  --color-text-secondary: #8a8f98;
-  --color-text-placeholder: #62666d;
-  --color-border: rgba(255, 255, 255, 0.08);
-  --color-border-light: rgba(255, 255, 255, 0.06);
-  --color-border-lighter: rgba(255, 255, 255, 0.05);
-  --box-shadow-light: 0 1px 0 rgba(255, 255, 255, 0.03), 0 18px 40px rgba(0, 0, 0, 0.28);
-  --box-shadow-elevated: 0 24px 60px rgba(0, 0, 0, 0.38);
-  font-family: 'Inter Variable', 'SF Pro Display', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
-  font-feature-settings: "cv01", "ss03";
+  --color-success-light: #4ade80;
   min-height: calc(100vh - var(--topbar-height, 72px));
   margin-top: var(--topbar-height, 72px);
   padding: 32px 24px 48px;

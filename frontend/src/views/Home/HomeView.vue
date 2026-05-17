@@ -81,8 +81,7 @@ const features = [
   min-height: 100vh;
   background: #08090a;
   overflow-x: hidden;
-  font-family: 'Inter Variable', 'SF Pro Display', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
-  font-feature-settings: "cv01", "ss03";
+  font-family: 'Inter', 'SF Pro Display', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
 }
 
 .home-view__glow {
