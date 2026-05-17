@@ -337,24 +337,15 @@ def generate_scores():
                 pred = service.score_single_stock(
                     stock, eval_date, h, dry_run=False, replace=replace
                 )
+                sc = pred.stock_code if hasattr(pred, "stock_code") else stock_code
+                ps = pred.score if hasattr(pred, "score") else None
+                pr = pred.recommendation if hasattr(pred, "recommendation") else None
                 results.append(
                     {
-                        "stock_code": (
-                            pred.stock_code
-                            if hasattr(pred, "stock_code")
-                            else stock_code
-                        ),
+                        "stock_code": sc,
                         "horizon": h,
-                        "score": (
-                            pred.score
-                            if hasattr(pred, "score")
-                            else None
-                        ),
-                        "recommendation": (
-                            pred.recommendation
-                            if hasattr(pred, "recommendation")
-                            else None
-                        ),
+                        "score": ps,
+                        "recommendation": pr,
                     }
                 )
             scored_count = len(results)
@@ -365,6 +356,7 @@ def generate_scores():
             scored_count = result.get("scored_count", 0)
             results = []
 
+        results_payload = results if results else None
         return (
             jsonify(
                 {
@@ -374,7 +366,7 @@ def generate_scores():
                     "horizon": horizon or "5,20,60",
                     "scored_count": scored_count,
                     "model_version": model_version,
-                    "results": results if results else None,
+                    "results": results_payload,
                 }
             ),
             200,
