@@ -54,13 +54,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/History/HistoryView.vue')
       },
       {
-        path: 'history/:symbol',
-        redirect: (to) => ({
-          path: '/history',
-          query: { symbol: Array.isArray(to.params.symbol) ? to.params.symbol[0] : String(to.params.symbol || '') }
-        })
-      },
-      {
         path: 'quote/:symbol',
         name: 'QuoteDetail',
         component: () => import('@/views/History/QuoteDetailView.vue')

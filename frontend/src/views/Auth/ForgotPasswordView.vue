@@ -104,31 +104,37 @@ async function handleSubmitEmail() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(113, 112, 255, 0.12), transparent 28%),
+    radial-gradient(circle at 82% 0%, rgba(94, 106, 210, 0.12), transparent 24%),
+    #08090a;
 }
 
 .forgot-card {
   width: 400px;
   padding: 40px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--box-shadow-light);
 }
 
 .forgot-header {
   text-align: center;
   margin-bottom: 32px;
-  
+
   h1 {
     font-size: 24px;
-    font-weight: 600;
-    color: var(--color-primary);
+    font-weight: 590;
+    letter-spacing: -0.288px;
+    color: var(--color-text-primary);
     margin-bottom: 8px;
   }
-  
+
   p {
-    font-size: 14px;
+    font-size: 15px;
     color: var(--color-text-secondary);
+    letter-spacing: -0.165px;
   }
 }
 
@@ -141,44 +147,45 @@ async function handleSubmitEmail() {
 .success-step {
   text-align: center;
   padding: 20px 0;
-  
+
   .success-icon {
-    color: #67c23a;
+    color: var(--color-success);
     margin-bottom: 16px;
   }
-  
+
   h2 {
     font-size: 20px;
-    color: #333;
+    font-weight: 590;
+    color: var(--color-text-primary);
     margin-bottom: 12px;
   }
-  
+
   p {
-    font-size: 14px;
-    color: #666;
+    font-size: 15px;
+    color: var(--color-text-secondary);
     margin-bottom: 8px;
-    
+
     strong {
       color: var(--color-primary);
     }
   }
-  
+
   .hint {
-    font-size: 12px;
-    color: #999;
+    font-size: 13px;
+    color: var(--color-text-placeholder);
     margin-bottom: 24px;
   }
-  
+
   .back-link {
     margin-top: 16px;
-    
+
     a {
       color: var(--color-primary);
       text-decoration: none;
       font-size: 14px;
-      
+
       &:hover {
-        text-decoration: underline;
+        color: var(--color-primary-hover);
       }
     }
   }
@@ -187,14 +194,14 @@ async function handleSubmitEmail() {
 .forgot-footer {
   text-align: center;
   margin-top: 16px;
-  
+
   a {
     color: var(--color-primary);
     text-decoration: none;
     font-size: 14px;
-    
+
     &:hover {
-      text-decoration: underline;
+      color: var(--color-primary-hover);
     }
   }
 }

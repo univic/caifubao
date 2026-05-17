@@ -241,7 +241,7 @@ onMounted(() => {
   justify-content: space-between;
   margin-bottom: 16px;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 590;
   color: var(--color-text-primary);
 
   .sort-controls {
@@ -297,7 +297,7 @@ onMounted(() => {
 
   .index-name {
     font-size: 16px;
-    font-weight: 600;
+    font-weight: 590;
     color: var(--color-text-primary);
   }
 
@@ -309,7 +309,7 @@ onMounted(() => {
 
   .index-price {
     font-size: 28px;
-    font-weight: 600;
+    font-weight: 590;
     color: var(--color-text-primary);
     margin-bottom: 4px;
   }

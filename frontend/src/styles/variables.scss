@@ -1,181 +1,173 @@
-/* Caifubao Frontend - Global Styles */
+/* ═════════════════════════════════════════════════════════════════════
+   Caifubao Design System — Linear Dark Theme
+   Single source of truth for CSS custom properties, typography, and
+   utility classes.  All values follow DESIGN.md.
+   ═════════════════════════════════════════════════════════════════════ */
 
-:root {
-  /* Primary Colors */
-  --color-primary: #7170ff;
-  --color-primary-light: #828fff;
-  --color-primary-dark: #5e6ad2;
-  
-  /* Success/Up */
-  --color-success: #67c23a;
-  --color-success-light: #85ce61;
-  --color-up: #f56c6c;  /* Red for price up */
-  
-  /* Danger/Down */
-  --color-danger: #f56c6c;
-  --color-danger-light: #f78989;
-  --color-down: #67c23a;  /* Green for price down */
-  
-  /* Warning */
-  --color-warning: #e6a23c;
-  
-  /* Info */
-  --color-info: #909399;
-  
-  /* Background */
-  --color-bg-page: #eef2f7;
-  --color-bg-card: #ffffff;
-  --color-bg-sidebar: #0f172a;
-  --color-bg-header: rgba(255, 255, 255, 0.82);
-  
-  /* Text */
-  --color-text-primary: #303133;
-  --color-text-regular: #606266;
-  --color-text-secondary: #909399;
-  --color-text-placeholder: #c0c4cc;
-  
-  /* Border */
-  --color-border: rgba(15, 23, 42, 0.12);
-  --color-border-light: rgba(15, 23, 42, 0.08);
-  --color-border-lighter: rgba(15, 23, 42, 0.05);
-
-  /* Shadows */
-  --box-shadow-light: 0 12px 30px rgba(15, 23, 42, 0.08);
-  --box-shadow-elevated: 0 24px 60px rgba(15, 23, 42, 0.12);
-  
-  /* Layout */
-  --topbar-height: 72px;
-  --header-height: 72px;
-  --sidebar-width: 210px;
-  --sidebar-collapsed-width: 64px;
-}
-
-* {
-  margin: 0;
-  padding: 0;
+/* ── Global Reset ──────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
+/* ── CSS Custom Properties (Light DOM :root) ───────────────────────── */
+:root {
+  /* Brand */
+  --color-primary:       #7170ff;
+  --color-primary-dark:  #5e6ad2;
+  --color-primary-hover: #828fff;
+
+  /* Background surfaces (luminance stacking) */
+  --color-bg-marketing: #08090a;
+  --color-bg-panel:    #0f1011;
+  --color-bg-card:     #191a1b;
+  --color-bg-hover:    rgba(255, 255, 255, 0.03);
+  --color-bg-active:   rgba(113, 112, 255, 0.14);
+
+  /* Text hierarchy */
+  --color-text-primary:    #f7f8f8;
+  --color-text-regular:    #d0d6e0;
+  --color-text-secondary:  #8a8f98;
+  --color-text-placeholder:#62666d;
+
+  /* Borders (always semi-transparent white, never solid) */
+  --color-border:          rgba(255, 255, 255, 0.08);
+  --color-border-light:    rgba(255, 255, 255, 0.06);
+  --color-border-lighter:  rgba(255, 255, 255, 0.05);
+
+  /* Status */
+  --color-success: #27a644;
+  --color-danger:  #f56c6c;
+  --color-warning: #d97706;
+  --color-info:    #8a8f98;
+
+  /* Chinese market convention (red = up, green = down) */
+  --color-up:   #ef4444;
+  --color-down: #22c55e;
+
+  /* Shadows (subtle on dark backgrounds) */
+  --box-shadow-light:    0 1px 0 rgba(255, 255, 255, 0.03),
+                         0 18px 40px rgba(0, 0, 0, 0.28);
+  --box-shadow-elevated: 0 24px 60px rgba(0, 0, 0, 0.38);
+
+  /* Layout */
+  --topbar-height: 72px;
+}
+
+/* ── Body Baseline ─────────────────────────────────────────────────── */
 body {
-  font-family: 'Inter Variable', 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  font-size: 14px;
+  margin: 0;
+  min-height: 100vh;
+  font-family:
+    'Inter',                                    /* BootCDN static Inter */
+    'SF Pro Display',
+    -apple-system,
+    system-ui,
+    'Segoe UI',
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    'Open Sans',
+    'Helvetica Neue',
+    sans-serif;
+  font-feature-settings: "cv01", "ss03";
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
   color: var(--color-text-primary);
+  background: var(--color-bg-marketing);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-#app {
-  min-height: 100vh;
+/* ── Anchor ────────────────────────────────────────────────────────── */
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--color-primary-hover);
+  }
 }
 
-/* Utility Classes */
-.text-up {
-  color: var(--color-up) !important;
+/* ── Scrollbar (dark, minimal) ─────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
 
-.text-down {
-  color: var(--color-down) !important;
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.text-primary {
-  color: var(--color-primary) !important;
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.14);
+  }
 }
 
-.text-success {
-  color: var(--color-success) !important;
-}
+/* ── Utility Classes ───────────────────────────────────────────────── */
+.text-up      { color: var(--color-up)      !important; }
+.text-down    { color: var(--color-down)    !important; }
+.text-primary { color: var(--color-primary) !important; }
+.text-success { color: var(--color-success) !important; }
+.text-danger  { color: var(--color-danger)  !important; }
+.text-warning { color: var(--color-warning) !important; }
+.text-muted   { color: var(--color-text-secondary) !important; }
 
-.text-danger {
-  color: var(--color-danger) !important;
-}
-
-.text-warning {
-  color: var(--color-warning) !important;
-}
-
-.text-muted {
-  color: var(--color-text-secondary) !important;
-}
-
-/* Card Component */
+/* ── Reusable Card ─────────────────────────────────────────────────── */
 .card {
-  background: var(--color-bg-card);
-  border-radius: 16px;
-  border: 1px solid var(--color-border-lighter);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
   box-shadow: var(--box-shadow-light);
-  padding: 20px;
+  padding: 24px;
 }
 
-/* Page Container */
+/* ── Page Shell ────────────────────────────────────────────────────── */
 .page-container {
   padding: 20px;
 }
 
-/* Page Header */
 .page-header {
-  margin-bottom: 20px;
+  margin-bottom: 24px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  
+  gap: 8px;
+
   .page-title {
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
+    font-size: 24px;
+    font-weight: 400;
+    letter-spacing: -0.288px;
     color: var(--color-text-primary);
+    line-height: 1.33;
   }
-  
+
   .page-desc {
-    font-size: 14px;
+    font-size: 15px;
     color: var(--color-text-secondary);
   }
 }
 
-/* Flex Utilities */
-.flex {
-  display: flex;
-}
+/* ── Flex Helpers ──────────────────────────────────────────────────── */
+.flex         { display: flex; }
+.flex-center  { display: flex; align-items: center; justify-content: center; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
+.flex-wrap    { flex-wrap: wrap; }
+.gap-10       { gap: 10px; }
+.gap-20       { gap: 20px; }
 
-.flex-center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.flex-between {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.flex-wrap {
-  flex-wrap: wrap;
-}
-
-.gap-10 {
-  gap: 10px;
-}
-
-.gap-20 {
-  gap: 20px;
-}
-
-/* Grid */
-.grid {
-  display: grid;
-}
-
-.grid-cols-2 {
-  grid-template-columns: repeat(2, 1fr);
-}
-
-.grid-cols-3 {
-  grid-template-columns: repeat(3, 1fr);
-}
-
-.grid-cols-4 {
-  grid-template-columns: repeat(4, 1fr);
-}
+/* ── Grid Helpers ──────────────────────────────────────────────────── */
+.grid         { display: grid; }
+.grid-cols-2  { grid-template-columns: repeat(2, 1fr); }
+.grid-cols-3  { grid-template-columns: repeat(3, 1fr); }
+.grid-cols-4  { grid-template-columns: repeat(4, 1fr); }
 
 @media (max-width: 768px) {
   .grid-cols-2,
@@ -185,37 +177,10 @@ body {
   }
 }
 
-/* Animations */
+/* ── Animations ────────────────────────────────────────────────────── */
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-.fade-in {
-  animation: fadeIn 0.3s ease-out;
-}
-
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--color-bg-page);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-secondary);
-}
+.fade-in { animation: fadeIn 0.3s ease-out; }

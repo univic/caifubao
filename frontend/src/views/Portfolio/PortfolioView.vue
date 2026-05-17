@@ -328,7 +328,7 @@ onMounted(reload)
   margin: 0 0 4px;
   color: #64748b;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 590;
   letter-spacing: 0;
   text-transform: uppercase;
 }

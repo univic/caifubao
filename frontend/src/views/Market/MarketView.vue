@@ -479,7 +479,7 @@ watch(searchKeyword, () => {
 
 .horizon-label {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 590;
   margin-right: 6px;
 }
 
@@ -529,12 +529,12 @@ watch(searchKeyword, () => {
   .chip-horizon {
     font-size: 9px;
     color: var(--color-text-dim);
-    font-weight: 500;
+    font-weight: 510;
     text-transform: uppercase;
   }
   .chip-score {
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 590;
     color: var(--color-text-primary);
   }
 }
@@ -543,8 +543,8 @@ watch(searchKeyword, () => {
 .rank-text {
   font-size: 13px;
   color: var(--color-text-dim);
-  font-weight: 500;
-  &.top-rank { color: #f59e0b; font-weight: 700; }
+  font-weight: 510;
+  &.top-rank { color: #f59e0b; font-weight: 590; }
 }
 
 .asset-cell {
@@ -617,14 +617,14 @@ watch(searchKeyword, () => {
         display: flex;
         align-items: baseline;
         gap: 8px;
-        .c-rank { font-size: 12px; color: #f59e0b; font-weight: 700; }
-        .c-name { font-weight: 600; font-size: 15px; }
+        .c-rank { font-size: 12px; color: #f59e0b; font-weight: 590; }
+        .c-name { font-weight: 590; font-size: 15px; }
         .c-code { font-size: 11px; color: var(--color-text-dim); }
       }
       
       .header-score {
         font-size: 14px;
-        font-weight: 700;
+        font-weight: 590;
         &.high { color: var(--color-up); }
         &.medium { color: #f59e0b; }
       }
@@ -638,7 +638,7 @@ watch(searchKeyword, () => {
       .price-row {
         display: flex;
         gap: 12px;
-        .c-price { font-weight: 600; }
+        .c-price { font-weight: 590; }
         .c-change { font-size: 13px; }
       }
     }
