@@ -30,6 +30,16 @@
               @change="resetAndFetch"
             />
           </div>
+          <div class="filter-item action">
+            <el-button
+              class="btn-generate"
+              :loading="generatingScores"
+              @click="triggerScoreGeneration"
+            >
+              <el-icon><Cpu /></el-icon>
+              {{ generatingScores ? '生成中...' : '生成评分' }}
+            </el-button>
+          </div>
         </div>
       </div>
     </header>
@@ -62,7 +72,7 @@
         <el-tab-pane label="股票 (Stocks)" name="stock">
           <!-- Desktop Table View -->
           <div class="desktop-view" v-loading="loading">
-            <el-table :data="tableData" class="linear-table" style="width: 100%">
+            <el-table v-if="tableData.length" :data="tableData" class="linear-table" style="width: 100%">
               <el-table-column label="排名" width="70" align="center">
                 <template #default="{ row }">
                   <span class="rank-text" :class="{ 'top-rank': row.evaluation.display_rank <= 3 }">
@@ -156,6 +166,32 @@
                 </template>
               </el-table-column>
             </el-table>
+
+            <!-- Empty state when no scores exist -->
+            <div v-if="!tableData.length && !loading" class="empty-scores">
+              <div class="empty-icon">
+                <el-icon :size="48"><TrendCharts /></el-icon>
+              </div>
+              <h3>暂无评分数据</h3>
+              <p>
+                当前日期
+                <strong>{{ targetDate || '最新交易日' }}</strong>
+                还没有评分预测。评分管线由 quote → factor → signal → score 四个环节组成。
+              </p>
+              <p class="empty-hint">点击下方按钮一键计算评分（约需 5-30 秒）：</p>
+              <el-button
+                class="btn-generate"
+                type="primary"
+                :loading="generatingScores"
+                @click="triggerScoreGeneration"
+              >
+                <el-icon><Cpu /></el-icon>
+                {{ generatingScores ? '正在生成评分...' : '生成评分' }}
+              </el-button>
+              <p v-if="scoreGenMessage" class="gen-msg" :class="scoreGenMessage.includes('失败') ? 'error' : 'success'">
+                {{ scoreGenMessage }}
+              </p>
+            </div>
           </div>
 
           <!-- Mobile Card View -->
@@ -283,7 +319,8 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { marketApi, type MarketComprehensiveItem } from '@/api/market'
-import { Search, CircleCheck } from '@element-plus/icons-vue'
+import { scoreApi } from '@/api/scores'
+import { Search, CircleCheck, Cpu, TrendCharts } from '@element-plus/icons-vue'
 
 const router = useRouter()
 
@@ -330,6 +367,30 @@ function resetAndFetch() {
 
 function onHorizonChange() {
   resetAndFetch()
+}
+
+// Score generation
+const generatingScores = ref(false)
+const scoreGenMessage = ref('')
+
+async function triggerScoreGeneration() {
+  generatingScores.value = true
+  scoreGenMessage.value = ''
+  try {
+    const res = await scoreApi.generateScores({})
+    if (res.success) {
+      scoreGenMessage.value = `${res.message}`
+      await fetchData()
+    } else {
+      scoreGenMessage.value = res.message || '生成失败'
+    }
+  } catch (err: any) {
+    const msg = err?.response?.data?.message || err?.message || '生成失败，请检查后台日志'
+    scoreGenMessage.value = msg
+    console.error('Score generation failed:', err)
+  } finally {
+    generatingScores.value = false
+  }
 }
 
 function handlePageChange(nextPage: number) {
@@ -715,6 +776,58 @@ watch(searchKeyword, () => {
   display: flex;
   justify-content: flex-end;
   margin-top: 18px;
+}
+
+/* Generate button */
+.btn-generate {
+  background: rgba(94, 106, 210, 0.12) !important;
+  border: 1px solid rgba(113, 112, 255, 0.3) !important;
+  color: #828fff !important;
+  font-weight: 510;
+  &:hover {
+    background: rgba(94, 106, 210, 0.2) !important;
+    border-color: rgba(113, 112, 255, 0.5) !important;
+  }
+}
+
+/* Empty state */
+.empty-scores {
+  text-align: center;
+  padding: 80px 20px;
+  .empty-icon {
+    color: var(--color-text-dim);
+    opacity: 0.3;
+    margin-bottom: 16px;
+  }
+  h3 {
+    font-size: 20px;
+    font-weight: 590;
+    color: var(--color-text-primary);
+    margin: 0 0 8px 0;
+  }
+  p {
+    font-size: 14px;
+    color: var(--color-text-dim);
+    max-width: 480px;
+    margin: 0 auto 12px auto;
+    line-height: 1.5;
+    strong { color: var(--color-text-secondary); }
+  }
+  .empty-hint {
+    font-size: 13px;
+    color: var(--color-text-quaternary);
+  }
+  .gen-msg {
+    margin-top: 12px;
+    font-size: 13px;
+    &.success { color: #4ade80; }
+    &.error { color: #fb7185; }
+  }
+}
+
+.filter-item.action {
+  display: flex;
+  align-items: flex-end;
 }
 
 @media (max-width: 1024px) {

@@ -68,6 +68,8 @@ export interface DataStatusResponse {
   reference_dates: DataStatusReferenceDates
   index: DataStatusCategory
   stock: DataStatusCategory
+  signal_run_today?: boolean
+  scoring_run_today?: boolean
 }
 
 async function getMarketOverview() {
