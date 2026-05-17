@@ -514,9 +514,8 @@ onMounted(fetchExperiments)
 <style scoped lang="scss">
 .experiments-page {
   min-height: 100vh;
-  padding: 28px;
-  background: #f6f8fb;
-  color: #172033;
+  padding: 0;
+  color: var(--color-text-primary);
 }
 
 .toolbar,
@@ -529,10 +528,10 @@ onMounted(fetchExperiments)
 
 .eyebrow {
   margin: 0 0 4px;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 590;
-  letter-spacing: 0;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 510;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
@@ -545,15 +544,19 @@ p {
 
 h1 {
   font-size: 28px;
+  color: var(--color-text-primary);
 }
 
 h2 {
   font-size: 18px;
+  font-weight: 590;
+  color: var(--color-text-primary);
 }
 
 h3 {
   margin-bottom: 14px;
   font-size: 15px;
+  color: var(--color-text-primary);
 }
 
 .workspace {
@@ -567,10 +570,10 @@ h3 {
 .experiment-list,
 .report-panel,
 .report-section {
-  border: 1px solid #dce3ee;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: var(--box-shadow-light);
 }
 
 .experiment-form,
@@ -589,7 +592,7 @@ h3 {
 }
 
 .config-editor {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: 'Berkeley Mono', ui-monospace, SF Mono, Menlo, monospace;
 }
 
 .experiments-table {
@@ -605,7 +608,7 @@ h3 {
 .name-cell span,
 .panel-header p,
 .version-meta {
-  color: #64748b;
+  color: var(--color-text-placeholder);
   font-size: 12px;
 }
 
@@ -630,15 +633,15 @@ h3 {
 .metric {
   min-height: 86px;
   padding: 14px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--color-border-light);
   border-radius: 8px;
-  background: #f8fafc;
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .metric span,
 .metric small {
   display: block;
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 12px;
 }
 
@@ -646,6 +649,8 @@ h3 {
   display: block;
   margin-top: 8px;
   font-size: 24px;
+  font-weight: 590;
+  color: var(--color-text-primary);
 }
 
 .metric small {
@@ -653,11 +658,11 @@ h3 {
 }
 
 .positive {
-  color: #059669 !important;
+  color: var(--color-success) !important;
 }
 
 .negative {
-  color: #dc2626 !important;
+  color: var(--color-danger) !important;
 }
 
 .report-grid {
