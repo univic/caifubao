@@ -26,8 +26,11 @@ logger = logging.getLogger(__name__)
 
 
 def _init_db() -> None:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "datahub", "app"))
+    sys.path.insert(
+        0, os.path.join(os.path.dirname(__file__), "..", "..", "datahub", "app")
+    )
     from mongoengine import connect
+
     uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/caifubao")
     connect(host=uri, db="caifubao")
 
@@ -39,6 +42,7 @@ def parse_date(value: str) -> datetime.datetime:
 def cmd_list(args) -> None:
     """List available technical factors."""
     from app.lib.scoring_engine.technical_factors import ALL_TECHNICAL_FACTORS
+
     print("Available technical factors:")
     for name in sorted(ALL_TECHNICAL_FACTORS):
         doc = (ALL_TECHNICAL_FACTORS[name].__doc__ or "").strip().split("\n")[0]
@@ -62,14 +66,30 @@ def cmd_compute(args) -> None:
         .order_by("date")
     )
     if not quotes:
-        print(json.dumps({"error": f"No quotes for {stock_code} in [{start.date()}, {end.date()}]"}))
+        print(
+            json.dumps(
+                {
+                    "error": f"No quotes for {stock_code} in [{start.date()}, {end.date()}]"
+                }
+            )
+        )
         return
 
-    factor_names = args.factors.split(",") if args.factors != "all" else list(ALL_TECHNICAL_FACTORS)
-    factor_names = [f.strip() for f in factor_names if f.strip() in ALL_TECHNICAL_FACTORS]
+    factor_names = (
+        args.factors.split(",")
+        if args.factors != "all"
+        else list(ALL_TECHNICAL_FACTORS)
+    )
+    factor_names = [
+        f.strip() for f in factor_names if f.strip() in ALL_TECHNICAL_FACTORS
+    ]
 
-    print(f"Computing {len(factor_names)} factors for {stock_code}: {', '.join(factor_names)}")
-    print(f"Quotes loaded: {len(quotes)}  ({quotes[0].date.date()} — {quotes[-1].date.date()})")
+    print(
+        f"Computing {len(factor_names)} factors for {stock_code}: {', '.join(factor_names)}"
+    )
+    print(
+        f"Quotes loaded: {len(quotes)}  ({quotes[0].date.date()} — {quotes[-1].date.date()})"
+    )
     print("-" * 60)
 
     results = {}
@@ -95,7 +115,9 @@ def cmd_evaluate(args) -> None:
 
     factor_name = args.factor_name
     if factor_name not in ALL_TECHNICAL_FACTORS:
-        print(f"Unknown factor: {factor_name}. Available: {', '.join(ALL_TECHNICAL_FACTORS)}")
+        print(
+            f"Unknown factor: {factor_name}. Available: {', '.join(ALL_TECHNICAL_FACTORS)}"
+        )
         return
 
     start = parse_date(args.start_date)
@@ -104,7 +126,9 @@ def cmd_evaluate(args) -> None:
 
     # Load quotes for all stocks, or a single stock
     if stock_code:
-        quote_qs = StockDailyQuote.objects(code=stock_code).filter(date__gte=start, date__lte=end)
+        quote_qs = StockDailyQuote.objects(code=stock_code).filter(
+            date__gte=start, date__lte=end
+        )
     else:
         quote_qs = StockDailyQuote.objects(date__gte=start, date__lte=end)
 
@@ -115,11 +139,14 @@ def cmd_evaluate(args) -> None:
 
     # Group quotes by stock_code, then compute factor values per stock
     from collections import defaultdict
+
     quotes_by_stock = defaultdict(list)
     for q in quotes:
         quotes_by_stock[q.code].append(q)
 
-    print(f"Evaluating {factor_name} on {len(quotes_by_stock)} stocks, {len(quotes)} quotes")
+    print(
+        f"Evaluating {factor_name} on {len(quotes_by_stock)} stocks, {len(quotes)} quotes"
+    )
     print(f"Date range: {start.date()} — {end.date()}")
     print("-" * 60)
 
@@ -148,6 +175,7 @@ def cmd_evaluate(args) -> None:
     # Save to DB if requested
     if args.save:
         from app.model.factor_eval import FactorEvalReport
+
         doc = FactorEvalReport(
             factor_name=factor_name,
             start_date=start,
@@ -164,14 +192,18 @@ def cmd_evaluate(args) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Technical factor computation and evaluation CLI")
+    parser = argparse.ArgumentParser(
+        description="Technical factor computation and evaluation CLI"
+    )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # --- list ---
     subparsers.add_parser("list", help="List available factors")
 
     # --- compute ---
-    p_compute = subparsers.add_parser("compute", help="Compute factor values for a stock")
+    p_compute = subparsers.add_parser(
+        "compute", help="Compute factor values for a stock"
+    )
     p_compute.add_argument("stock_code", help="e.g. sh600519")
     p_compute.add_argument("start_date", help="YYYY-MM-DD")
     p_compute.add_argument("end_date", help="YYYY-MM-DD")
