@@ -11,16 +11,7 @@
   ],
   "permission": {
     "edit": "allow",
-    "bash": {
-      "*": "allow",
-      "rm -rf *": "deny",
-      "rm -r *": "deny",
-      "git push --force*": "deny",
-      "git push -f*": "deny",
-      "docker rm*": "deny",
-      "docker rmi*": "deny",
-      "kubectl delete*": "deny"
-    },
+    "bash": "allow",
     "websearch": "allow"
   },
   "agent": {
