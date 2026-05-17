@@ -40,7 +40,7 @@
         "grep": "allow",
         "glob": "allow",
         "edit": "deny",
-        "bash": "ask",
+        "bash": "allow",
         "websearch": "deny"
       }
     },
@@ -54,7 +54,7 @@
         "grep": "allow",
         "glob": "allow",
         "edit": "deny",
-        "bash": "deny",
+        "bash": "allow",
         "websearch": "deny"
       }
     },
@@ -68,7 +68,7 @@
         "grep": "allow",
         "glob": "allow",
         "edit": "deny",
-        "bash": "ask",
+        "bash": "allow",
         "websearch": "deny"
       }
     },
