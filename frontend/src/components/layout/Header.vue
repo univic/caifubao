@@ -52,6 +52,16 @@
             <span>回测</span>
           </el-menu-item>
 
+          <el-menu-item index="/score-experiments">
+            <el-icon><DataLine /></el-icon>
+            <span>评分实验</span>
+          </el-menu-item>
+
+          <el-menu-item index="/decisions">
+            <el-icon><Monitor /></el-icon>
+            <span>决策面板</span>
+          </el-menu-item>
+
           <el-sub-menu v-if="userStore.isAdmin" index="/admin/users">
             <template #title>
               <el-icon><Setting /></el-icon>
@@ -137,6 +147,16 @@
           <span>回测</span>
         </el-menu-item>
 
+        <el-menu-item index="/score-experiments">
+          <el-icon><DataLine /></el-icon>
+          <span>评分实验</span>
+        </el-menu-item>
+
+        <el-menu-item index="/decisions">
+          <el-icon><Monitor /></el-icon>
+          <span>决策面板</span>
+        </el-menu-item>
+
         <el-sub-menu v-if="userStore.isAdmin" index="/admin/users">
           <template #title>
             <el-icon><Setting /></el-icon>
@@ -160,8 +180,10 @@ import {
   Cpu,
   DataAnalysis,
   DataBoard,
+  DataLine,
   Grid,
   Menu,
+  Monitor,
   PieChart,
   Setting,
   SwitchButton,
@@ -182,6 +204,8 @@ const activeMenu = computed(() => {
   if (route.path.startsWith('/data-quality')) return '/data-quality'
   if (route.path.startsWith('/indices')) return '/indices'
   if (route.path.startsWith('/signals')) return '/signals'
+  if (route.path.startsWith('/score-experiments')) return '/score-experiments'
+  if (route.path.startsWith('/decisions')) return '/decisions'
   if (route.path.startsWith('/backtest')) return '/backtest'
   if (route.path.startsWith('/admin')) return '/admin/users'
   if (route.path === '/profile') return 'profile'

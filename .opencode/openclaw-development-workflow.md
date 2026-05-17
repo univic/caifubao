@@ -83,16 +83,55 @@ datahub produces record -> backend exposes API -> frontend renders API response
 
 Avoid assigning multiple agents to the same files.
 
-## Review Gates
+## Review Gates (MANDATORY)
 
-Use `contract-reviewer` when touching API, OpenClaw, auth, freshness, scoring
-contract, or frontend API consumption.
+Reviewers are NOT optional. Every non-trivial change set MUST go through the
+appropriate reviewer(s) before being considered complete. The orchestrator
+MUST schedule reviewer invocation as part of the implementation plan from
+the start — not as an afterthought.
 
-Use `qa-reviewer` before finishing non-trivial changes or public repository
-changes.
+### contract-reviewer — AUTO-TRIGGER when ANY of:
+- A new API endpoint is added or an existing endpoint changes signature
+- Auth decorators, scopes, or token lifecycle are touched
+- Response fields, pagination, filtering, or error shapes change
+- Freshness metadata, `data_as_of`, `generated_at`, or status fields change
+- Scoring contract, explanation, input_snapshot, or verification shapes change
+- OpenClaw integration API or `docs/integrations/openclaw.md` is touched
+- A new blueprint is registered
 
-Reviewers should report findings. They should not take over the implementation
-plan unless the orchestrator asks for a revised plan.
+### qa-reviewer — AUTO-TRIGGER when ANY of:
+- Cross-module changes (backend + frontend, datahub + backend, etc.)
+- New mutation/write endpoints (POST, PUT, DELETE)
+- New authentication or authorization code
+- Changes to `sys.path`, import paths, or module dependencies
+- Any change that creates, modifies, or deletes MongoDB documents
+- Before creating a PR or merging to main
+
+### spec-guardian — AUTO-TRIGGER when ANY of:
+- A new API endpoint is added
+- Auth model, scopes, or token format changes
+- Scoring, factor, or signal semantics change
+- Data ownership boundaries shift between modules
+- `DESIGN.md` or `AGENTS.md` implications exist
+
+### Execution Rules
+1. The orchestrator MUST include reviewer invocation in the task plan
+   (todowrite) BEFORE starting implementation.
+2. Reviewers run AFTER implementation completes and validation passes, but
+   BEFORE marking the task as done.
+3. If a reviewer reports P1 issues, they MUST be resolved and the reviewer
+   re-run (or the fixes verified by the orchestrator with explicit sign-off).
+4. P2 warnings MUST be explicitly addressed or acknowledged in the commit
+   message or PR description.
+5. The orchestrator grows a final summary enumerating each reviewer that ran
+   and the outcome.
+
+### Gate Checklist (include in final summary)
+```text
+[ ] spec-guardian:  triggered / not triggered
+[ ] contract-reviewer: triggered / not triggered
+[ ] qa-reviewer: triggered / not triggered
+```
 
 ## Validation Defaults
 

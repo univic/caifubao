@@ -289,6 +289,41 @@
             </div>
           </div>
         </div>
+
+        <div class="status-panel">
+          <div class="status-panel-header">
+            <h4>评分管线</h4>
+            <span
+              class="status-badge"
+              :class="{ healthy: marketStore.dataStatus?.scoring_run_today }"
+            >
+              {{ marketStore.dataStatus?.scoring_run_today ? '已运行' : '未运行' }}
+            </span>
+          </div>
+          <div class="status-metrics">
+            <div class="metric-pill" :class="marketStore.dataStatus?.signal_run_today ? 'healthy' : 'danger'">
+              <span class="label">信号</span>
+              <span class="value">{{ marketStore.dataStatus?.signal_run_today ? 'SUCCESS' : '未执行' }}</span>
+            </div>
+            <div class="metric-pill" :class="marketStore.dataStatus?.scoring_run_today ? 'healthy' : 'danger'">
+              <span class="label">评分</span>
+              <span class="value">{{ marketStore.dataStatus?.scoring_run_today ? 'SUCCESS' : '未执行' }}</span>
+            </div>
+          </div>
+          <el-button
+            v-if="!marketStore.dataStatus?.scoring_run_today"
+            size="small"
+            class="btn-ghost-sm"
+            style="margin-top: 10px; width: 100%"
+            :loading="generatingScores"
+            @click="triggerScoreGeneration()"
+          >
+            {{ generatingScores ? '生成中...' : '生成评分' }}
+          </el-button>
+          <p v-if="scoreGenMessage" class="status-msg" :class="scoreGenMessage.includes('失败') ? 'error' : 'success'">
+            {{ scoreGenMessage }}
+          </p>
+        </div>
       </div>
     </div>
   </div>
@@ -301,6 +336,7 @@ import { useMarketStore } from '@/stores/market'
 import { useWatchlistStore } from '@/stores/watchlist'
 import { signalApi, type SignalItem } from '@/api/signals'
 import { marketApi, type MarketComprehensiveItem } from '@/api/market'
+import { scoreApi } from '@/api/scores'
 import { Refresh, StarFilled, Bell, TrendCharts } from '@element-plus/icons-vue'
 import WatchlistButton from '@/components/common/WatchlistButton.vue'
 import ScoreChip from '@/components/common/ScoreChip.vue'
@@ -556,6 +592,30 @@ async function fetchOpportunities() {
     console.error('Failed to fetch opportunities:', err)
   } finally {
     oppLoading.value = false
+  }
+}
+
+// Score generation
+const generatingScores = ref(false)
+const scoreGenMessage = ref('')
+
+async function triggerScoreGeneration() {
+  generatingScores.value = true
+  scoreGenMessage.value = ''
+  try {
+    const res = await scoreApi.generateScores({})
+    if (res.success) {
+      scoreGenMessage.value = `${res.message}`
+      await refreshAll()
+    } else {
+      scoreGenMessage.value = res.message || '生成失败'
+    }
+  } catch (err: any) {
+    const msg = err?.response?.data?.message || err?.message || '生成失败，请检查后台日志'
+    scoreGenMessage.value = msg
+    console.error('Score generation failed:', err)
+  } finally {
+    generatingScores.value = false
   }
 }
 
@@ -936,7 +996,7 @@ onUnmounted(() => {
     .section-desc { font-size: 13px; color: var(--color-text-tertiary); margin: 4px 0 0; }
     .section-meta { font-size: 12px; color: var(--color-text-quaternary); font-family: var(--font-mono); }
   }
-  .status-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; @media (max-width: 768px) { grid-template-columns: 1fr; } }
+  .status-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; @media (max-width: 768px) { grid-template-columns: 1fr; } }
   .status-panel {
     padding: 16px; border-radius: 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--color-border-subtle);
     .status-panel-header { display: flex; justify-content: space-between; margin-bottom: 10px; h4 { margin: 0; font-size: 14px; font-weight: 510; } }
@@ -952,6 +1012,12 @@ onUnmounted(() => {
     &.danger { background: rgba(239, 68, 68, 0.08); color: #fb7185; }
   }
   .status-loading { text-align: center; padding: 20px; color: var(--color-text-quaternary); }
+  .status-msg {
+    margin: 8px 0 0 0;
+    font-size: 12px;
+    &.success { color: #4ade80; }
+    &.error { color: #fb7185; }
+  }
 }
 
 /* Utility */
