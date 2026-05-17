@@ -233,23 +233,6 @@ def get_score_explanation(stock_code, date):
 # ---------------------------------------------------------------------------
 # Score generation endpoint — one-click scoring from the frontend.
 # ---------------------------------------------------------------------------
-#
-# The datahub scoring engine is imported here using the same sys.path pattern
-# already established in score_experiments.py.  This is a user-triggered
-# on-demand action (not scheduled collection), so it does not violate the
-# boundary rule that "backend must not run scheduled data-collection jobs."
-# Both backend and datahub share the same MongoDB, and the scoring service
-# is intentionally designed to be callable from either context.
-
-import os  # noqa: E402
-import sys  # noqa: E402
-
-sys.path.insert(  # noqa: E402
-    0,
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "datahub", "app"),
-)
-
-from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION  # noqa: E402
 
 
 @scores_bp.route("/generate", methods=["POST"])
@@ -259,7 +242,24 @@ def generate_scores():
 
     Accepts optional filters: date, horizon, stock_code, model_version.
     Checks that quote data exists for the target date before scoring.
+
+    The datahub scoring engine is imported inside the function body using
+    the same sys.path pattern already established in score_experiments.py.
+    This guards against import-time failures in CI environments where only
+    the backend package is installed.
     """
+    import os  # noqa: E402
+    import sys  # noqa: E402
+
+    sys.path.insert(
+        0,
+        os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "..", "datahub", "app"
+        ),
+    )
+
+    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION  # noqa: E402
+
     body = request.get_json(silent=True) or {}
 
     requested_date = _parse_datetime(body.get("date"))
