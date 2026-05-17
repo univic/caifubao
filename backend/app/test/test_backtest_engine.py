@@ -579,7 +579,9 @@ class TestInformationRatio:
         ]
         bench = [0.01, 0.0099]  # matching returns
         result = _compute_information_ratio(dv, bench, 100000.0)
-        assert result is not None  # IR can be high with perfect tracking, just verify it computes
+        assert (
+            result is not None
+        )  # IR can be high with perfect tracking, just verify it computes
 
 
 # ============================================================================
