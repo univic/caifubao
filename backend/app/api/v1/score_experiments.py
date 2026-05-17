@@ -229,6 +229,7 @@ def _metric_summary(predictions):
             "avg_min_return": None,
             "avg_max_drawdown": None,
             "hit_rate": None,
+            "hit_rate_intra": None,
             "stop_loss_hit_rate": None,
         }
 
@@ -239,7 +240,8 @@ def _metric_summary(predictions):
         "avg_max_return": _avg_metric(predictions, "max_return"),
         "avg_min_return": _avg_metric(predictions, "min_return"),
         "avg_max_drawdown": _avg_metric(predictions, "max_drawdown"),
-        "hit_rate": _rate(predictions, "hit_target"),
+        "hit_rate": _rate(predictions, "hit_target_close"),
+        "hit_rate_intra": _rate(predictions, "hit_target_intra"),
         "stop_loss_hit_rate": _rate(predictions, "hit_stop_loss"),
     }
 

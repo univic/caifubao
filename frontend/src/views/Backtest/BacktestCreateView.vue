@@ -65,6 +65,8 @@
             >
               <el-option label="均线交叉策略 (MA_CROSS)" value="MA_CROSS" />
               <el-option label="买入持有策略 (BUY_HOLD)" value="BUY_HOLD" />
+              <el-option label="评分阈值策略 (SCORE_THRESHOLD)" value="SCORE_THRESHOLD" />
+              <el-option label="评分动量策略 (SCORE_MOMENTUM)" value="SCORE_MOMENTUM" />
             </el-select>
             <template #extra>
               <span class="form-hint">
@@ -107,6 +109,77 @@
             />
             <template #extra>
               <span class="form-hint">默认 100,000 元</span>
+            </template>
+          </el-form-item>
+        </div>
+
+        <!-- Score-driven params (visible when strategy is SCORE_THRESHOLD or SCORE_MOMENTUM) -->
+        <div
+          v-if="['SCORE_THRESHOLD', 'SCORE_MOMENTUM'].includes(form.strategy)"
+          class="form-grid"
+          style="margin-top: 0; padding-top: 0; border-top: 1px solid var(--color-border-subtle);"
+        >
+          <el-form-item label="评分周期">
+            <el-select v-model="form.horizon" placeholder="选择周期" class="linear-select">
+              <el-option label="Score5 (短线 5天)" :value="5" />
+              <el-option label="Score20 (波段 20天)" :value="20" />
+              <el-option label="Score60 (中线 60天)" :value="60" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item v-if="form.strategy === 'SCORE_THRESHOLD'" label="买入阈值">
+            <el-input-number
+              v-model="form.entry_threshold"
+              :min="20"
+              :max="95"
+              :step="5"
+              controls-position="right"
+              class="linear-input-number"
+            />
+            <template #extra>
+              <span class="form-hint">评分 ≥ 此值时买入（默认70）</span>
+            </template>
+          </el-form-item>
+
+          <el-form-item v-if="form.strategy === 'SCORE_THRESHOLD'" label="退出阈值">
+            <el-input-number
+              v-model="form.exit_threshold"
+              :min="10"
+              :max="80"
+              :step="5"
+              controls-position="right"
+              class="linear-input-number"
+            />
+            <template #extra>
+              <span class="form-hint">评分 &lt; 此值时卖出（默认50）</span>
+            </template>
+          </el-form-item>
+
+          <el-form-item v-if="form.strategy === 'SCORE_MOMENTUM'" label="评分变动阈值">
+            <el-input-number
+              v-model="form.score_delta"
+              :min="1"
+              :max="50"
+              :step="1"
+              controls-position="right"
+              class="linear-input-number"
+            />
+            <template #extra>
+              <span class="form-hint">评分变动 ≥ 此值时触发交易（默认10）</span>
+            </template>
+          </el-form-item>
+
+          <el-form-item label="止损比例 (%)">
+            <el-input-number
+              v-model="form.stop_loss_pct"
+              :min="-30"
+              :max="0"
+              :step="1"
+              controls-position="right"
+              class="linear-input-number"
+            />
+            <template #extra>
+              <span class="form-hint">负值表示亏损比例（默认-5%）</span>
             </template>
           </el-form-item>
         </div>
@@ -177,6 +250,50 @@
             {{ result.total_trades }} 笔
           </span>
         </div>
+
+        <!-- Friction costs (show when available) -->
+        <template v-if="result.total_commission">
+          <div class="metric-item">
+            <span class="metric-label">总佣金</span>
+            <span class="metric-value mono">
+              ¥{{ formatNumber(result.total_commission) }}
+            </span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-label">总印花税</span>
+            <span class="metric-value mono">
+              ¥{{ formatNumber(result.total_stamp_duty) }}
+            </span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-label">总滑点成本</span>
+            <span class="metric-value mono">
+              ¥{{ formatNumber(result.total_slippage) }}
+            </span>
+          </div>
+        </template>
+
+        <!-- Benchmark comparison (show when available) -->
+        <template v-if="result.benchmark_return_pct !== undefined">
+          <div class="metric-item">
+            <span class="metric-label">基准收益 ({{ result.benchmark_code || '沪深300' }})</span>
+            <span class="metric-value mono" :class="pnlClass(result.benchmark_return_pct)">
+              {{ formatPercent(result.benchmark_return_pct) }}
+            </span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-label">超额收益 (Alpha)</span>
+            <span class="metric-value mono" :class="pnlClass(result.excess_return_pct)">
+              {{ formatPercent(result.excess_return_pct) }}
+            </span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-label">信息比率</span>
+            <span class="metric-value mono">
+              {{ formatNumber(result.information_ratio) }}
+            </span>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -201,7 +318,13 @@ const form = reactive({
   strategy: '',
   start_date: '',
   end_date: '',
-  initial_cash: 100000
+  initial_cash: 100000,
+  horizon: 20 as number | null,
+  entry_threshold: 70,
+  exit_threshold: 50,
+  score_delta: 10,
+  stop_loss_pct: -5,
+  model_version: ''
 })
 
 const formRules: FormRules = {
@@ -230,16 +353,20 @@ function formatPercent(value: number | null | undefined) {
   return `${value.toFixed(2)}%`
 }
 
-function pnlClass(value: number) {
-  if (value > 0) return 'positive'
-  if (value < 0) return 'negative'
+function pnlClass(value: number | null | undefined) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return ''
+  if (numeric > 0) return 'positive'
+  if (numeric < 0) return 'negative'
   return ''
 }
 
 function strategyDescription(value: string) {
   const map: Record<string, string> = {
     MA_CROSS: '基于 MA10 与 MA20 均线交叉生成买卖信号',
-    BUY_HOLD: '期初买入并持有至期末，衡量基准收益'
+    BUY_HOLD: '期初买入并持有至期末，衡量基准收益',
+    SCORE_THRESHOLD: '基于评分阈值生成买卖信号（Score≥阈值买入，Score<退出阈值卖出）',
+    SCORE_MOMENTUM: '基于评分动量变化生成买卖信号（评分上升买入，下降卖出）'
   }
   return map[value] || ''
 }
@@ -266,13 +393,29 @@ async function handleSubmit() {
   result.value = null
 
   try {
-    const backtestResult = await backtestApi.run({
+    const payload: any = {
       stock_code: form.stock_code.trim(),
       strategy: form.strategy,
       start_date: form.start_date,
       end_date: form.end_date,
       initial_cash: form.initial_cash
-    })
+    }
+
+    // Add score-driven params
+    if (['SCORE_THRESHOLD', 'SCORE_MOMENTUM'].includes(form.strategy)) {
+      payload.horizon = form.horizon
+      payload.stop_loss_pct = form.stop_loss_pct
+      if (form.model_version) payload.model_version = form.model_version
+    }
+    if (form.strategy === 'SCORE_THRESHOLD') {
+      payload.entry_threshold = form.entry_threshold
+      payload.exit_threshold = form.exit_threshold
+    }
+    if (form.strategy === 'SCORE_MOMENTUM') {
+      payload.score_delta = form.score_delta
+    }
+
+    const backtestResult = await backtestApi.run(payload)
     result.value = backtestResult
     successMessage.value = `回测完成！${backtestResult.name} 已生成。`
     ElMessage.success('回测运行成功')
