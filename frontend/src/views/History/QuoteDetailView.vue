@@ -901,7 +901,7 @@ function goBack() {
 
   .value {
     font-size: 22px;
-    font-weight: 700;
+    font-weight: 590;
   }
 
   .hint {
@@ -964,7 +964,7 @@ function goBack() {
   }
 
   .value {
-    font-weight: 600;
+    font-weight: 590;
   }
 }
 
@@ -1023,7 +1023,7 @@ function goBack() {
 
     .horizon-badge {
       font-size: 14px;
-      font-weight: 700;
+      font-weight: 590;
       color: #fff;
     }
 
@@ -1036,7 +1036,7 @@ function goBack() {
   .horizon-card-body {
     .big-score {
       font-size: 36px;
-      font-weight: 700;
+      font-weight: 590;
       margin-bottom: 8px;
 
       &.score-high { color: #10b981; }
@@ -1099,7 +1099,7 @@ function goBack() {
   }
 
   .v-value {
-    font-weight: 600;
+    font-weight: 590;
     font-size: 14px;
 
     &.down { color: #ef4444; }

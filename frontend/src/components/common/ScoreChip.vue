@@ -54,12 +54,12 @@ const scoreClass = computed(() => {
   .chip-horizon {
     font-size: 9px;
     color: #8a8f98;
-    font-weight: 500;
+    font-weight: 510;
     text-transform: uppercase;
   }
   .chip-score {
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 590;
     color: #d0d6e0;
   }
 }

@@ -40,7 +40,7 @@ function goHome() {
   
   h1 {
     font-size: 72px;
-    font-weight: 700;
+    font-weight: 590;
     color: var(--color-text-primary);
     margin: 0;
   }

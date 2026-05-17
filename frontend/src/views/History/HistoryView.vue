@@ -771,7 +771,7 @@ function rememberSearch(value: string) {
 .search-prefix {
   color: #828fff;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 590;
 }
 
 .search-actions {
@@ -862,7 +862,7 @@ function rememberSearch(value: string) {
 .stock-name {
   margin-top: 6px;
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 590;
 }
 
 .stock-meta {
@@ -917,7 +917,7 @@ function rememberSearch(value: string) {
 
   .value {
     font-size: 22px;
-    font-weight: 700;
+    font-weight: 590;
   }
 
   .hint {
@@ -961,7 +961,7 @@ function rememberSearch(value: string) {
   }
 
   .value {
-    font-weight: 600;
+    font-weight: 590;
     text-align: right;
   }
 }

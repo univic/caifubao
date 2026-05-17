@@ -233,99 +233,11 @@
     </div>
 
     <!-- Data Status Section -->
-    <div class="data-status card" v-if="marketStore.dataStatus">
-      <div class="section-header">
-        <div>
-          <h3>数据处理引擎状态</h3>
-          <p class="section-desc">
-            最新完整交易日:
-            {{ formatDate(marketStore.dataStatus.reference_dates.latest_complete_trading_day) || '未知' }}
-          </p>
-        </div>
-        <div class="section-meta">
-          统计于 {{ formatDateTime(marketStore.dataStatus.generated_at) }}
-        </div>
-      </div>
-
-      <div v-if="marketStore.statusLoading && !marketStore.dataStatus" class="status-loading">
-        加载中...
-      </div>
-
-      <div v-else class="status-grid">
-        <div class="status-panel">
-          <div class="status-panel-header">
-            <h4>指数数据</h4>
-            <span class="status-badge" :class="{ healthy: marketStore.dataStatus.index.is_up_to_date }">
-              {{ marketStore.dataStatus.index.is_up_to_date ? '已同步' : '落后' }}
-            </span>
-          </div>
-          <div class="status-metrics">
-            <div class="metric-pill healthy">
-              <span class="label">正常</span>
-              <span class="value">{{ marketStore.dataStatus.index.up_to_date_count }}</span>
-            </div>
-            <div class="metric-pill danger">
-              <span class="label">过期</span>
-              <span class="value">{{ marketStore.dataStatus.index.expired_count }}</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="status-panel">
-          <div class="status-panel-header">
-            <h4>个股行情</h4>
-            <span class="status-badge" :class="{ healthy: marketStore.dataStatus.stock.is_up_to_date }">
-              {{ marketStore.dataStatus.stock.is_up_to_date ? '已同步' : '落后' }}
-            </span>
-          </div>
-          <div class="status-metrics">
-            <div class="metric-pill healthy">
-              <span class="label">正常</span>
-              <span class="value">{{ marketStore.dataStatus.stock.up_to_date_count }}</span>
-            </div>
-            <div class="metric-pill danger">
-              <span class="label">过期</span>
-              <span class="value">{{ marketStore.dataStatus.stock.expired_count }}</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="status-panel">
-          <div class="status-panel-header">
-            <h4>评分管线</h4>
-            <span
-              class="status-badge"
-              :class="{ healthy: marketStore.dataStatus?.scoring_run_today }"
-            >
-              {{ marketStore.dataStatus?.scoring_run_today ? '已运行' : '未运行' }}
-            </span>
-          </div>
-          <div class="status-metrics">
-            <div class="metric-pill" :class="marketStore.dataStatus?.signal_run_today ? 'healthy' : 'danger'">
-              <span class="label">信号</span>
-              <span class="value">{{ marketStore.dataStatus?.signal_run_today ? 'SUCCESS' : '未执行' }}</span>
-            </div>
-            <div class="metric-pill" :class="marketStore.dataStatus?.scoring_run_today ? 'healthy' : 'danger'">
-              <span class="label">评分</span>
-              <span class="value">{{ marketStore.dataStatus?.scoring_run_today ? 'SUCCESS' : '未执行' }}</span>
-            </div>
-          </div>
-          <el-button
-            v-if="!marketStore.dataStatus?.scoring_run_today"
-            size="small"
-            class="btn-ghost-sm"
-            style="margin-top: 10px; width: 100%"
-            :loading="generatingScores"
-            @click="triggerScoreGeneration()"
-          >
-            {{ generatingScores ? '生成中...' : '生成评分' }}
-          </el-button>
-          <p v-if="scoreGenMessage" class="status-msg" :class="scoreGenMessage.includes('失败') ? 'error' : 'success'">
-            {{ scoreGenMessage }}
-          </p>
-        </div>
-      </div>
-    </div>
+    <DashboardDataStatus
+      :generating-scores="generatingScores"
+      :score-gen-message="scoreGenMessage"
+      @generate-scores="triggerScoreGeneration"
+    />
   </div>
 </template>
 
@@ -340,6 +252,7 @@ import { scoreApi } from '@/api/scores'
 import { Refresh, StarFilled, Bell, TrendCharts } from '@element-plus/icons-vue'
 import WatchlistButton from '@/components/common/WatchlistButton.vue'
 import ScoreChip from '@/components/common/ScoreChip.vue'
+import DashboardDataStatus from './DashboardDataStatus.vue'
 import * as echarts from 'echarts'
 
 const marketStore = useMarketStore()
@@ -461,16 +374,6 @@ function changeClass(val: number | null) {
 function formatChangePct(val: number | null) {
   if (val === null) return '--'
   return (val > 0 ? '+' : '') + val.toFixed(2) + '%'
-}
-
-function formatDate(value: string | null) {
-  if (!value) return ''
-  return value.slice(0, 10)
-}
-
-function formatDateTime(value: string | null) {
-  if (!value) return ''
-  return new Date(value).toLocaleString('zh-CN')
 }
 
 function signalLabel(value: string) {
@@ -988,37 +891,6 @@ onUnmounted(() => {
 .signal-scores { display: flex; gap: 4px; }
 
 .text-dim { color: var(--color-text-quaternary); font-size: 12px; }
-
-/* Data Status */
-.data-status {
-  .section-header {
-    display: flex; justify-content: space-between; margin-bottom: 16px;
-    .section-desc { font-size: 13px; color: var(--color-text-tertiary); margin: 4px 0 0; }
-    .section-meta { font-size: 12px; color: var(--color-text-quaternary); font-family: var(--font-mono); }
-  }
-  .status-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; @media (max-width: 768px) { grid-template-columns: 1fr; } }
-  .status-panel {
-    padding: 16px; border-radius: 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--color-border-subtle);
-    .status-panel-header { display: flex; justify-content: space-between; margin-bottom: 10px; h4 { margin: 0; font-size: 14px; font-weight: 510; } }
-    .status-badge {
-      font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(245, 158, 11, 0.1); color: #f59e0b;
-      &.healthy { background: rgba(34, 197, 94, 0.1); color: #4ade80; }
-    }
-  }
-  .status-metrics { display: flex; gap: 10px; }
-  .metric-pill {
-    flex: 1; display: flex; justify-content: space-between; padding: 8px 12px; border-radius: 8px; font-size: 12px;
-    &.healthy { background: rgba(34, 197, 94, 0.08); color: #4ade80; }
-    &.danger { background: rgba(239, 68, 68, 0.08); color: #fb7185; }
-  }
-  .status-loading { text-align: center; padding: 20px; color: var(--color-text-quaternary); }
-  .status-msg {
-    margin: 8px 0 0 0;
-    font-size: 12px;
-    &.success { color: #4ade80; }
-    &.error { color: #fb7185; }
-  }
-}
 
 /* Utility */
 .btn-ghost-sm {
