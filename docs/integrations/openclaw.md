@@ -16,7 +16,10 @@ Authorization: Bearer st_your_service_token_here
 ### Security Notes
 - Tokens should be treated as secrets.
 - If a token is compromised, contact the Caifubao administrator immediately to have it revoked.
-- Tokens are restricted to the `openclaw:data-read` scope, which only allows read-only access to specific endpoints.
+- Two scopes are available:
+  - `openclaw:data-read` — broad read-only access to quotes, factors, signals, quality, scores, and stocks.
+  - `openclaw:score-read` — narrow read-only access limited to score predictions only.
+- Tokens with `openclaw:data-read` can access all endpoints that accept `openclaw:score-read`.
 
 ## 2. API Reference
 

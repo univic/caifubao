@@ -61,6 +61,11 @@
         <template #title>组合管理</template>
       </el-menu-item>
       
+      <el-menu-item index="/decisions">
+        <el-icon><Monitor /></el-icon>
+        <template #title>决策面板</template>
+      </el-menu-item>
+
       <el-sub-menu v-if="userStore.isAdmin" index="/admin">
         <template #title>
           <el-icon><Setting /></el-icon>
