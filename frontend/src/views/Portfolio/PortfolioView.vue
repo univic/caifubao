@@ -310,9 +310,8 @@ onMounted(reload)
 <style scoped lang="scss">
 .portfolio-page {
   min-height: 100vh;
-  padding: 28px;
-  background: #f6f8fb;
-  color: #172033;
+  padding: 0;
+  color: var(--color-text-primary);
 }
 
 .toolbar,
@@ -326,16 +325,17 @@ onMounted(reload)
 
 .eyebrow {
   margin: 0 0 4px;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 590;
-  letter-spacing: 0;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 510;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 h1,
 h2 {
   margin: 0;
+  color: var(--color-text-primary);
 }
 
 h1 {
@@ -344,6 +344,7 @@ h1 {
 
 h2 {
   font-size: 18px;
+  font-weight: 590;
 }
 
 .toolbar-actions {
@@ -358,10 +359,10 @@ h2 {
 .create-bar,
 .panel,
 .metric {
-  border: 1px solid #dce3ee;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: var(--box-shadow-light);
 }
 
 .create-bar {
@@ -383,7 +384,7 @@ h2 {
 
 .metric span {
   display: block;
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 12px;
 }
 
@@ -391,6 +392,8 @@ h2 {
   display: block;
   margin-top: 8px;
   font-size: 24px;
+  font-weight: 590;
+  color: var(--color-text-primary);
 }
 
 .content-grid {
@@ -415,7 +418,7 @@ h2 {
 }
 
 .stock-cell span {
-  color: #64748b;
+  color: var(--color-text-placeholder);
   font-size: 12px;
 }
 
@@ -438,11 +441,11 @@ h2 {
 }
 
 .positive {
-  color: #059669;
+  color: var(--color-success);
 }
 
 .negative {
-  color: #dc2626;
+  color: var(--color-danger);
 }
 
 .empty-state {
