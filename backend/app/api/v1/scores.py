@@ -299,8 +299,10 @@ def generate_scores():
                     "missing": "quote",
                     "suggestion": (
                         "在 datahub 容器中执行: "
-                        "python -m app.jobs.quote_runner --target stock --include-factors "
-                        "--job-name datahub_quote_stock_daily --trigger manual --source api"
+                        "python -m app.jobs.quote_runner --target stock "
+                        "--include-factors "
+                        "--job-name datahub_quote_stock_daily "
+                        "--trigger manual --source api"
                     ),
                 }
             ),
@@ -320,7 +322,8 @@ def generate_scores():
                             "success": False,
                             "message": (
                                 f"No quote data for stock_code={stock_code}. "
-                                "Ensure the stock is active and quotes have been synced."
+                                "Ensure the stock is active "
+                                "and quotes have been synced."
                             ),
                             "date": eval_date.strftime("%Y-%m-%d"),
                             "missing": "stock",
@@ -336,10 +339,22 @@ def generate_scores():
                 )
                 results.append(
                     {
-                        "stock_code": pred.stock_code if hasattr(pred, "stock_code") else stock_code,
+                        "stock_code": (
+                            pred.stock_code
+                            if hasattr(pred, "stock_code")
+                            else stock_code
+                        ),
                         "horizon": h,
-                        "score": pred.score if hasattr(pred, "score") else None,
-                        "recommendation": pred.recommendation if hasattr(pred, "recommendation") else None,
+                        "score": (
+                            pred.score
+                            if hasattr(pred, "score")
+                            else None
+                        ),
+                        "recommendation": (
+                            pred.recommendation
+                            if hasattr(pred, "recommendation")
+                            else None
+                        ),
                     }
                 )
             scored_count = len(results)
