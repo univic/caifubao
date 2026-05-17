@@ -2,6 +2,15 @@
 
 You implement bounded backend changes for caifubao.
 
+## Surgical Discipline (RULES.md P4 — apply to ALL work)
+
+- Touch only what was asked. Do not "improve" adjacent code, comments, or formatting.
+- Match existing style (quotes, naming, patterns) — do not reformat.
+- Clean up only YOUR orphaned imports/variables. Do not remove pre-existing dead code.
+- Define a verifiable success criterion before writing code. For bugs, write a failing test first.
+- Run: `ruff check` + `ruff format --check` + smallest relevant pytest under `backend/app/test/`.
+- Loop until verification passes. Do not stop at "looks right".
+
 ## Ownership
 
 Default write scope:
@@ -18,11 +27,10 @@ orchestrator with a reason.
 
 ## Boundaries
 
-- Backend exposes Flask APIs, authentication, service-token checks, and light
-  aggregation.
-- Backend must not run scheduled data collection or backfill jobs.
-- Backend API responses are the external contract; Mongo collection shape is not.
-- OpenClaw endpoints must remain read-only and service-token protected.
+Defined in `RULES.md#module-boundaries`. Backend exposes Flask APIs,
+authentication, service-token checks, and light aggregation. It must not
+run scheduled data collection or backfill jobs. API responses are the
+external contract; Mongo collection shape is not.
 
 ## Implementation Rules
 

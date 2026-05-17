@@ -9,12 +9,15 @@ boundaries, OpenSpec documents, and public repository safety rules.
 
 Before planning or editing, load the relevant parts of:
 
-- `AGENTS.md`
-- `DESIGN.md`
+- `RULES.md` — single authority for safety, boundaries, spec gate, discipline, validation
+- `AGENTS.md` — orchestrator workflow steps and delegation rules
 - `openspec/config.yaml`
 - `openspec/changes/mvp-quant-demo/design.md`
 - `openspec/changes/mvp-quant-demo/tasks.md`
 - Any spec under `openspec/changes/mvp-quant-demo/specs/` that matches the task
+
+Load `DESIGN.md` only for frontend-related tasks. It is not needed for
+backend/datahub/k8s changes.
 
 For OpenClaw-related work, also load:
 
@@ -24,16 +27,13 @@ For OpenClaw-related work, also load:
 
 ## Module Boundaries
 
-- `datahub/` produces and stores market data, factors, signals, scoring outputs,
-  freshness, and data quality records.
-- `backend/` exposes Flask APIs, authentication, service-token checks, and light
-  aggregation. It must not run data collection jobs.
-- `frontend/` consumes backend APIs and renders the MVP user experience. It must
-  not depend on Mongo collection shapes.
-- `k8s/` contains example deployment assets only.
-- `OpenClaw` is a downstream read-only consumer through backend APIs. It must not
-  receive Mongo credentials, mutation endpoints, scheduler triggers, or admin
-  control.
+Defined in `RULES.md#module-boundaries`. All agent behavior SHALL respect
+these boundaries.
+
+## Rule Priority
+
+Defined in `RULES.md#rule-priority`. When rules conflict, follow the priority
+order: Safety > Module Boundaries > Spec Gate > Surgical Discipline > Validation > Existing Patterns.
 
 ## OpenClaw Development Command Workflow
 
@@ -69,6 +69,7 @@ For every non-trivial task, maintain these notes in your own working context:
 Outcome:
 Module Impact:
 Spec Gate: required / not required
+Assumptions:
 Write Scope:
 Validation Plan:
 Reviewer Requests:
@@ -90,21 +91,14 @@ process ceremony when the task is small.
 
 ## Validation Defaults
 
-- Python changes: run relevant `ruff check`, `ruff format --check`, and focused
-  tests.
-- Backend API changes: run the smallest relevant pytest file under `backend/`.
-- Datahub changes: run focused datahub tests or runner dry-runs where available.
-- Frontend changes: run `cd frontend && npm run lint && npm run build`.
-- Deployment example changes: run `kubectl kustomize` or an equivalent render
-  check.
+Defined in `RULES.md#validation`. Run the smallest check that covers the
+changed code.
 
 ## Safety Rules
 
-- Do not commit credentials, tokens, kubeconfigs, database dumps, or local env
-  files.
-- Use `.env.example` files for placeholders.
-- Keep private deployment overlays, registry settings, private domains, and
-  operator runbooks outside the public repository.
-- Prefer small changes that improve the demo loop: data update, API response,
-  frontend display, and local validation.
-- Do not invent new architecture when existing local patterns are sufficient.
+Defined in `RULES.md#safety`. Follow them strictly.
+
+## Review Gates
+
+Defined in `RULES.md#review-gates`. Schedule reviewers before implementation
+and run them before marking the task done.

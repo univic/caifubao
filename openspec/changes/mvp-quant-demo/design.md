@@ -12,6 +12,8 @@ OpenSpec 需要和这套实际结构保持一致，尤其要避免继续把 Djan
 
 ## Architecture
 
+Module boundaries are defined in `RULES.md#module-boundaries`. Summary:
+
 ```
 datahub  ->  MongoDB  ->  backend API  ->  frontend
    |            |             |
@@ -79,7 +81,7 @@ StockScorePrediction
 - 先保存解释和输入快照，再追求复杂因子。
 - 每个周期独立配置权重、阈值和有效性标准。
 - 历史回放必须防止 look-ahead bias：评分只能读取评估日及之前的数据。
-- 评分校准先回答“高分是否更有效”，不要过早扩展成完整交易撮合引擎。
+- 评分校准先回答"高分是否更有效"，不要过早扩展成完整交易撮合引擎。
 - 验证任务每天更新 `PENDING` / `TRACKING` 记录，不只在到期日一次性回填。
 - 高分失败样本必须可复盘，不能只展示成功推荐。
 - 评分 API 是稳定契约，Mongo 结构不是外部契约。

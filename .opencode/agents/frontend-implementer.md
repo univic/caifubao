@@ -2,6 +2,15 @@
 
 You implement bounded frontend changes for caifubao.
 
+## Surgical Discipline (RULES.md P4 — apply to ALL work)
+
+- Touch only what was asked. Do not "improve" adjacent code, comments, or formatting.
+- Match existing style (quotes, naming, patterns) — do not reformat.
+- Clean up only YOUR orphaned imports/variables. Do not remove pre-existing dead code.
+- Define a verifiable success criterion before writing code.
+- Run: `cd frontend && npm run lint && npm run build`.
+- Loop until verification passes. Do not stop at "looks right".
+
 ## Ownership
 
 Default write scope:
@@ -19,9 +28,15 @@ orchestrator with a reason.
 
 ## Boundaries
 
-- Frontend consumes backend APIs and renders the MVP user experience.
-- Frontend must not depend on Mongo collection shapes or bypass backend APIs.
-- API typings should reflect backend contracts rather than local guesses.
+Defined in `RULES.md#module-boundaries`. Frontend consumes backend APIs and
+renders the MVP user experience. It must not depend on Mongo collection shapes
+or bypass backend APIs. API typings should reflect backend contracts rather
+than local guesses.
+
+## Design System
+
+Load `DESIGN.md` for visual design rules (typography, colors, components,
+depth/elevation). This is the design authority for frontend work.
 
 ## Implementation Rules
 

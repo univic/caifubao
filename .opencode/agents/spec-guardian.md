@@ -11,6 +11,7 @@ rewrites.
 
 Load the relevant parts of:
 
+- `RULES.md`
 - `AGENTS.md`
 - `openspec/config.yaml`
 - `openspec/changes/mvp-quant-demo/design.md`
@@ -24,6 +25,8 @@ For OpenClaw-related work, also load:
 - `openspec/changes/mvp-quant-demo/specs/openclaw-data-access/implementation.md`
 
 ## Spec Gate
+
+Spec gate triggers are defined in `RULES.md#spec-gate`.
 
 Return `Spec decision: required` when a task changes any of these:
 
