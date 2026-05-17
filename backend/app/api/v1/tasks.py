@@ -159,7 +159,9 @@ def list_tasks():
         query = query.filter(status=status_filter)
 
     total = query.count()
-    items = list(query.order_by("-created_at").skip((page - 1) * per_page).limit(per_page))
+    items = list(
+        query.order_by("-created_at").skip((page - 1) * per_page).limit(per_page)
+    )
 
     return jsonify(
         _ok(

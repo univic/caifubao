@@ -46,6 +46,7 @@ For non-trivial work, keep these notes in working context:
 Outcome:
 Module Impact:
 Spec Gate: required / not required
+Assumptions:
 Write Scope:
 Validation Plan:
 Reviewer Requests:
@@ -54,12 +55,13 @@ Reviewer Requests:
 Default sequence:
 
 1. Understand the requested outcome and affected modules.
-2. Decide whether the Spec Gate is required before editing.
-3. Assign or perform only explicitly scoped implementation work.
-4. Keep write scopes disjoint when using subagents.
-5. Review contract and behavioral risk before finishing non-trivial changes.
-6. Run the smallest useful validation.
-7. Report changed files, checks run, and remaining risk.
+2. State assumptions explicitly. If something is ambiguous, ask before coding.
+3. Decide whether the Spec Gate is required before editing.
+4. Assign or perform only explicitly scoped implementation work.
+5. Keep write scopes disjoint when using subagents.
+6. Review contract and behavioral risk before finishing non-trivial changes.
+7. Run the smallest useful validation and loop until it passes.
+8. Report changed files, checks run, and remaining risk.
 
 Use subagents sparingly. Prefer these roles over the older generic
 Architect/Developer/QA/Scribe model:
@@ -77,6 +79,26 @@ Architect/Developer/QA/Scribe model:
 
 Do not activate every role by default. Use implementers only when their write
 scope is clear. Reviewers report findings; they do not own merge decisions.
+
+## Surgical Changes
+
+When editing existing code, follow these rules derived from Andrej Karpathy's
+observations on LLM coding pitfalls:
+
+- **Don't "improve" adjacent code, comments, or formatting.** If a file has
+  mixed styles and your task is to add a function, match the surrounding style.
+  Do not reformat the whole file.
+- **Don't refactor things that aren't broken.** Even if you'd write it
+  differently, leave working code alone.
+- **Match existing style.** The codebase uses single quotes? Use single quotes.
+- **Clean up only your own mess.** Remove imports, variables, or functions that
+  YOUR changes made unused. Do not delete pre-existing dead code unless asked.
+- **Every changed line must trace directly to the request.** If you cannot say
+  "this line is necessary because...", it does not belong in the diff.
+
+For full Karpathy discipline guidelines (Think Before Coding, Simplicity First,
+Surgical Changes, Goal-Driven Execution), see
+[`.opencode/skills/karpathy-discipline/SKILL.md`](.opencode/skills/karpathy-discipline/SKILL.md).
 
 ## Spec Gate
 
@@ -101,6 +123,37 @@ Relevant context usually starts with:
 - Matching specs under openspec/changes/mvp-quant-demo/specs/
 - docs/integrations/openclaw.md for OpenClaw-related work
 
+## Karpathy Code Discipline
+
+Four principles that apply to ALL agents (orchestrator, implementer, reviewer).
+These address common LLM coding pitfalls identified by Andrej Karpathy.
+Full details: [`.opencode/skills/karpathy-discipline/SKILL.md`](.opencode/skills/karpathy-discipline/SKILL.md).
+
+### Think Before Coding
+
+- State assumptions explicitly before writing code.
+- If the request is ambiguous, present multiple interpretations and ask.
+- If a simpler approach exists, say so. Push back when warranted.
+- If you don't understand something, stop and name what's unclear.
+
+### Simplicity First
+
+- No features beyond what was asked. No speculative code.
+- No abstractions for single-use code (no class hierarchy for one function).
+- No "flexibility" or "configurability" that wasn't requested.
+- If 200 lines could be 50, rewrite it.
+
+### Surgical Changes
+
+(Detailed in the section above.)
+
+### Goal-Driven Execution
+
+- Define a verifiable success criterion before writing code.
+- Transform "fix the bug" into "write a failing test, then make it pass."
+- For multi-step tasks, state a plan with verification checkpoints.
+- Loop until verification passes. Don't stop at "looks right."
+
 ## Validation Expectations
 
 - Python changes: run the relevant ruff check, ruff format --check, and the
@@ -109,9 +162,14 @@ Relevant context usually starts with:
 - Datahub changes: run focused datahub tests or runner dry-runs where available.
 - Frontend changes: run relevant lint/build checks.
 - Deployment example changes: render with kubectl kustomize or an equivalent
-  local check.
+  render check.
 
 If a check cannot be run, say exactly why.
+
+**Goal-driven loop:** Do not stop at "looks right." Run the verification. If it
+fails, fix the issue and run it again. Report the final passing state with the
+command output or summary. For bugs, write a test that reproduces the bug first,
+confirm it fails, then implement the fix and confirm the test passes.
 
 ## Public Repository Safety
 
