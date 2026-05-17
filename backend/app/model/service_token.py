@@ -21,7 +21,10 @@ class ServiceToken(db.Document):
 
     name = StringField(required=True, unique=True)
     token_hash = StringField(required=True)  # Hashed version of the token
-    scopes = ListField(StringField(), default=["openclaw:data-read"])
+    scopes = ListField(
+        StringField(choices=["openclaw:data-read", "openclaw:score-read"]),
+        default=["openclaw:data-read"],
+    )
     status = StringField(default="active", choices=["active", "revoked", "expired"])
 
     expires_at = DateTimeField()
@@ -44,14 +47,20 @@ class ServiceToken(db.Document):
         """Minimal info for logs"""
         return {"id": str(self.id), "name": self.name, "scopes": self.scopes}
 
-    def is_valid(self, required_scope=None):
+    def is_valid(self, required_scopes=None):
         if self.status != "active":
             return False, f"Token status is {self.status}"
 
         if self.expires_at and self.expires_at < datetime.datetime.now(datetime.UTC):
             return False, "Token has expired"
 
-        if required_scope and required_scope not in self.scopes:
-            return False, f"Token missing required scope: {required_scope}"
+        if required_scopes:
+            _scopes = (
+                [required_scopes]
+                if isinstance(required_scopes, str)
+                else list(required_scopes)
+            )
+            if not any(s in self.scopes for s in _scopes):
+                return False, f"Token missing required scope: {required_scopes}"
 
         return True, None
