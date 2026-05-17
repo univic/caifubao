@@ -97,6 +97,21 @@ def _round_to_lot(quantity: float) -> int:
     return int(quantity // LOT_SIZE) * LOT_SIZE
 
 
+def _max_buy_shares(price: float, available_cash: float) -> int:
+    """Maximum shares buyable at price after slippage + commission."""
+    if price <= 0 or available_cash <= MIN_COMMISSION:
+        return 0
+    exec_price = price * (1 + SLIPPAGE)
+    # Try rate-based commission first (applies for larger trades)
+    raw = int(available_cash / (exec_price * (1 + COMMISSION_RATE)))
+    if raw > 0 and raw * exec_price * COMMISSION_RATE < MIN_COMMISSION:
+        # Adjust for min-commission floor on small trades
+        if exec_price + MIN_COMMISSION > available_cash:
+            return 0
+        return int((available_cash - MIN_COMMISSION) / exec_price)
+    return max(raw, 0)
+
+
 def _allocate_positions(
     available_stocks: List[str],
     scores: Dict[str, float],
@@ -815,7 +830,7 @@ def _simulate(
             if i == 0:
                 # Initial buy (with friction and limit check)
                 if _can_trade(quote, "BUY"):
-                    shares = math.floor(cash / price) if price > 0 else 0
+                    shares = _max_buy_shares(price, cash)
                     if shares > 0:
                         exec_price, comm, duty, slip = _apply_friction(
                             price, shares, "BUY"
@@ -961,7 +976,7 @@ def _simulate(
             action_taken = False
             if pending_signal == "BUY" and shares == 0 and price > 0:
                 if _can_trade(quote, "BUY"):
-                    shares = math.floor(cash / price)
+                    shares = _max_buy_shares(price, cash)
                     if shares > 0:
                         exec_price, comm, duty, slip = _apply_friction(
                             price, shares, "BUY"
@@ -1205,7 +1220,7 @@ def _simulate(
             action_taken = False
             if pending_signal == "BUY" and shares == 0 and price > 0:
                 if _can_trade(quote, "BUY"):
-                    shares = math.floor(cash / price)
+                    shares = _max_buy_shares(price, cash)
                     if shares > 0:
                         exec_price, comm, duty, slip = _apply_friction(
                             price, shares, "BUY"
@@ -1446,7 +1461,7 @@ def _simulate(
             action_taken = False
             if pending_signal == "BUY" and shares == 0 and price > 0:
                 if _can_trade(quote, "BUY"):
-                    shares = math.floor(cash / price)
+                    shares = _max_buy_shares(price, cash)
                     if shares > 0:
                         exec_price, comm, duty, slip = _apply_friction(
                             price, shares, "BUY"

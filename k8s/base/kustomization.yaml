@@ -6,3 +6,4 @@ resources:
 - backend.yaml
 - frontend.yaml
 - datahub.yaml
+- compute-worker.yaml

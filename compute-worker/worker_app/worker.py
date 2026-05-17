@@ -11,8 +11,8 @@ import time
 import traceback
 from datetime import datetime, timezone
 
-from app.config import MONGO_URI, MONGO_DB, POLL_INTERVAL_SECONDS, MAX_CONCURRENT_TASKS
-from app.model import ComputeTask
+from worker_app.config import MONGO_URI, MONGO_DB, POLL_INTERVAL_SECONDS, MAX_CONCURRENT_TASKS
+from worker_app.model import ComputeTask
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def _fetch_next_task() -> ComputeTask | None:
 
 def _run_task(task: ComputeTask) -> None:
     """Execute a single task and handle status updates."""
-    from app.handlers import handle_task
+    from worker_app.handlers import handle_task
 
     try:
         handle_task(task)
