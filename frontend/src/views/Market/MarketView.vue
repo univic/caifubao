@@ -3,9 +3,9 @@
     <!-- Hero Section -->
     <header class="market-hero">
       <div class="hero-left">
-        <p class="eyebrow">Market Board</p>
-        <h1 class="page-title">标的看板</h1>
-        <p class="subtitle">全量标的行情与量化评分总览，支持多维筛选与预测闭环验证。</p>
+        <p class="eyebrow">Opportunity Board</p>
+        <h1 class="page-title">机会筛选</h1>
+        <p class="subtitle">从全量标的中优先筛出有评分、有验证依据的候选，减少来回跳转。</p>
       </div>
       
       <div class="hero-right">
@@ -30,6 +30,25 @@
               @change="resetAndFetch"
             />
           </div>
+          <div class="filter-item compact">
+            <el-select v-model="recommendationFilter" placeholder="建议" clearable class="linear-select">
+              <el-option label="买入观察" value="BUY" />
+              <el-option label="关注" value="WATCH" />
+              <el-option label="回避" value="AVOID" />
+            </el-select>
+          </div>
+          <div class="filter-item compact">
+            <el-select v-model="statusFilter" placeholder="验证状态" clearable class="linear-select">
+              <el-option label="已验证" value="VERIFIED" />
+              <el-option label="跟踪中" value="TRACKING" />
+              <el-option label="待验证" value="PENDING" />
+            </el-select>
+          </div>
+          <el-switch
+            v-model="watchlistOnly"
+            active-text="只看自选"
+            class="watch-switch"
+          />
           <div class="filter-item action">
             <el-button
               class="btn-generate"
@@ -72,7 +91,7 @@
         <el-tab-pane label="股票 (Stocks)" name="stock">
           <!-- Desktop Table View -->
           <div class="desktop-view" v-loading="loading">
-            <el-table v-if="tableData.length" :data="tableData" class="linear-table" style="width: 100%">
+            <el-table v-if="displayData.length" :data="displayData" class="linear-table" style="width: 100%">
               <el-table-column label="排名" width="70" align="center">
                 <template #default="{ row }">
                   <span class="rank-text" :class="{ 'top-rank': row.evaluation.display_rank <= 3 }">
@@ -143,14 +162,6 @@
                 </template>
               </el-table-column>
 
-              <el-table-column label="排名" width="80" align="center">
-                <template #default="{ row }">
-                  <span class="rank-text" :class="{ 'top-rank': row.evaluation.display_rank <= 3 }">
-                    #{{ row.evaluation.rank || row.evaluation.display_rank }}
-                  </span>
-                </template>
-              </el-table-column>
-
               <el-table-column label="T+5 验证" min-width="150">
                 <template #default="{ row }">
                   <div v-if="row.evaluation.status === 'VERIFIED'" class="verify-cell">
@@ -168,7 +179,7 @@
             </el-table>
 
             <!-- Empty state when no scores exist -->
-            <div v-if="!tableData.length && !loading" class="empty-scores">
+            <div v-if="!displayData.length && !loading" class="empty-scores">
               <div class="empty-icon">
                 <el-icon :size="48"><TrendCharts /></el-icon>
               </div>
@@ -196,7 +207,7 @@
 
           <!-- Mobile Card View -->
           <div class="mobile-view" v-loading="loading">
-            <div v-for="item in tableData" :key="item.code" class="asset-card">
+            <div v-for="item in displayData" :key="item.code" class="asset-card">
               <div class="card-header">
                 <div class="header-main">
                   <span class="c-rank">#{{ item.evaluation.display_rank }}</span>
@@ -242,7 +253,7 @@
         <el-tab-pane label="指数 (Indices)" name="index">
            <!-- Index Table (similar to stock but simplified) -->
            <div class="desktop-view" v-loading="loading">
-              <el-table :data="tableData" class="linear-table" style="width: 100%">
+              <el-table :data="displayData" class="linear-table" style="width: 100%">
                  <el-table-column label="标的" min-width="180">
                    <template #default="{ row }">
                      <div class="asset-cell asset-clickable" @click="navigateToDetail(row.code)">
@@ -291,7 +302,7 @@
            </div>
            
            <div class="mobile-view" v-loading="loading">
-              <div v-for="item in tableData" :key="item.code" class="asset-card">
+              <div v-for="item in displayData" :key="item.code" class="asset-card">
                  <div class="card-header">
                     <span class="c-name">{{ item.name }}</span>
                     <span class="c-change" :class="getPriceClass(item.ohlcv.change_rate)">{{ formatPercent(item.ohlcv.change_rate) }}</span>
@@ -303,7 +314,7 @@
       <div class="pagination-row">
         <el-pagination
           layout="prev, pager, next, sizes, total"
-          :total="total"
+          :total="displayTotal"
           :current-page="page"
           :page-size="pageSize"
           :page-sizes="[50, 100, 200]"
@@ -316,13 +327,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { marketApi, type MarketComprehensiveItem } from '@/api/market'
 import { scoreApi } from '@/api/scores'
 import { Search, CircleCheck, Cpu, TrendCharts } from '@element-plus/icons-vue'
+import { useWatchlistStore } from '@/stores/watchlist'
 
 const router = useRouter()
+const watchlistStore = useWatchlistStore()
 
 const HORIZONS = [5, 20, 60] as const
 
@@ -331,11 +344,28 @@ const activeTab = ref<'stock' | 'index'>('stock')
 const selectedHorizon = ref<number>(5)
 const targetDate = ref('')
 const searchKeyword = ref('')
+const recommendationFilter = ref('')
+const statusFilter = ref('')
+const watchlistOnly = ref(false)
 const tableData = ref<MarketComprehensiveItem[]>([])
 const page = ref(1)
 const pageSize = ref(50)
 const total = ref(0)
 let searchTimer: number | undefined
+
+const displayData = computed(() => {
+  return tableData.value.filter(item => {
+    if (recommendationFilter.value && item.evaluation.recommendation !== recommendationFilter.value) return false
+    if (statusFilter.value && item.evaluation.status !== statusFilter.value) return false
+    if (watchlistOnly.value && !watchlistStore.isWatched(item.code)) return false
+    return true
+  })
+})
+
+const displayTotal = computed(() => {
+  if (recommendationFilter.value || statusFilter.value || watchlistOnly.value) return displayData.value.length
+  return total.value
+})
 
 async function fetchData() {
   loading.value = true
@@ -503,6 +533,8 @@ watch(searchKeyword, () => {
 
 .filter-controls {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
   background: var(--color-panel);
   padding: 16px;
@@ -523,6 +555,11 @@ watch(searchKeyword, () => {
 
 .search { width: 220px; }
 .date { width: 160px; }
+.compact { width: 128px; }
+.watch-switch {
+  min-width: 92px;
+  --el-switch-on-color: var(--color-brand);
+}
 
 /* Horizon controls */
 .horizon-controls {

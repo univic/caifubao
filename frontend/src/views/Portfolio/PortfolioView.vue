@@ -60,6 +60,28 @@
             <el-table-column label="权重" align="right" width="90">
               <template #default="{ row }">{{ formatPercent(row.weight) }}</template>
             </el-table-column>
+            <el-table-column label="评分" min-width="190" align="center">
+              <template #default="{ row }">
+                <div v-if="positionEvaluations[row.stock_code]" class="position-scores">
+                  <ScoreChip :horizon="5" :score="positionEvaluations[row.stock_code]?.evaluation.scores?.['5']?.score" />
+                  <ScoreChip :horizon="20" :score="positionEvaluations[row.stock_code]?.evaluation.scores?.['20']?.score" />
+                  <ScoreChip :horizon="60" :score="positionEvaluations[row.stock_code]?.evaluation.scores?.['60']?.score" />
+                </div>
+                <span v-else class="muted">--</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="模型建议" width="110">
+              <template #default="{ row }">
+                <el-tag
+                  v-if="positionRec(row.stock_code) !== 'NONE'"
+                  :type="recTag(positionRec(row.stock_code))"
+                  effect="plain"
+                >
+                  {{ recLabel(positionRec(row.stock_code)) }}
+                </el-tag>
+                <span v-else class="muted">--</span>
+              </template>
+            </el-table-column>
           </el-table>
         </div>
 
@@ -131,6 +153,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { portfolioApi, type Portfolio, type PortfolioPosition, type PortfolioTransaction } from '@/api/portfolios'
+import { marketApi, type MarketComprehensiveItem } from '@/api/market'
+import ScoreChip from '@/components/common/ScoreChip.vue'
 
 const loading = ref(false)
 const creating = ref(false)
@@ -140,6 +164,7 @@ const portfolios = ref<Portfolio[]>([])
 const positions = ref<PortfolioPosition[]>([])
 const transactions = ref<PortfolioTransaction[]>([])
 const selectedPortfolioId = ref('')
+const positionEvaluations = ref<Record<string, MarketComprehensiveItem>>({})
 
 const newPortfolio = reactive({
   name: '',
@@ -211,6 +236,26 @@ async function loadPortfolioDetails(id: string) {
   if (index >= 0) portfolios.value[index] = portfolio
   positions.value = positionResponse.items
   transactions.value = transactionResponse.items
+  await loadPositionEvaluations(positionResponse.items)
+}
+
+async function loadPositionEvaluations(items: PortfolioPosition[]) {
+  const codes = items.map(item => item.stock_code).filter(Boolean)
+  if (!codes.length) {
+    positionEvaluations.value = {}
+    return
+  }
+  try {
+    const response = await marketApi.getComprehensiveData({
+      type: 'stock',
+      q: codes.join(','),
+      per_page: codes.length
+    })
+    positionEvaluations.value = Object.fromEntries(response.items.map(item => [item.code, item]))
+  } catch (error) {
+    console.error('Failed to load position evaluations:', error)
+    positionEvaluations.value = {}
+  }
 }
 
 async function createPortfolio() {
@@ -302,6 +347,24 @@ function sideTag(side: string) {
   if (side === 'BUY' || side === 'CASH_IN' || side === 'DIVIDEND') return 'success'
   if (side === 'SELL' || side === 'CASH_OUT') return 'warning'
   return 'info'
+}
+
+function recLabel(rec?: string) {
+  if (rec === 'BUY') return '买入'
+  if (rec === 'WATCH') return '关注'
+  if (rec === 'AVOID') return '回避'
+  return '--'
+}
+
+function recTag(rec?: string) {
+  if (rec === 'BUY') return 'success'
+  if (rec === 'WATCH') return 'warning'
+  if (rec === 'AVOID') return 'danger'
+  return 'info'
+}
+
+function positionRec(code: string) {
+  return positionEvaluations.value[code]?.evaluation.recommendation || 'NONE'
 }
 
 onMounted(reload)
@@ -411,6 +474,24 @@ h2 {
   margin-top: 14px;
 }
 
+.position-scores {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.muted {
+  color: var(--color-text-placeholder);
+  font-size: 12px;
+}
+
+:deep(.el-table) {
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: rgba(255, 255, 255, 0.03);
+  --el-table-border-color: rgba(255, 255, 255, 0.06);
+}
+
 .stock-cell {
   display: flex;
   flex-direction: column;
@@ -445,7 +526,7 @@ h2 {
 }
 
 .negative {
-  color: var(--color-danger);
+  color: #ef4444;
 }
 
 .empty-state {

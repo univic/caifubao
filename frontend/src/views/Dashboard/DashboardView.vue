@@ -4,8 +4,8 @@
     <div class="page-header">
       <div class="header-left">
         <p class="eyebrow">Workbench</p>
-        <h1 class="page-title">工作台</h1>
-        <p class="page-desc">A 股市场动态总览、自选标的追踪与量化决策入口</p>
+        <h1 class="page-title">今日决策台</h1>
+        <p class="page-desc">把市场温度、候选机会、自选变化和数据健康收拢到一个决策入口</p>
       </div>
       <div class="header-right" v-if="marketStore.lastUpdateTime">
         <span class="update-time">更新于 {{ marketStore.lastUpdateTime }}</span>
@@ -19,6 +19,46 @@
     <div v-if="marketStore.marketError" class="dashboard-banner warning">
       {{ marketStore.marketError }}
     </div>
+
+    <section class="decision-strip">
+      <div class="decision-card market-temperature">
+        <span class="decision-label">市场温度</span>
+        <strong>{{ marketMood.label }}</strong>
+        <p>{{ marketMood.detail }}</p>
+        <button type="button" @click="router.push('/signals')">查看今日信号</button>
+      </div>
+
+      <div class="decision-card primary-opportunity">
+        <span class="decision-label">首要机会</span>
+        <template v-if="topOpportunity">
+          <strong>{{ topOpportunity.name || topOpportunity.code }}</strong>
+          <p>
+            {{ topOpportunity.code }} · {{ recommendationLabel(topOpportunity.evaluation.recommendation) }}
+            · Score{{ oppHorizon }} {{ formatScore(topOpportunity.evaluation.scores?.[String(oppHorizon)]?.score) }}
+          </p>
+          <button type="button" @click="navigateToStock(topOpportunity.code)">进入详情</button>
+        </template>
+        <template v-else>
+          <strong>暂无候选</strong>
+          <p>当前筛选周期还没有可行动标的。</p>
+          <button type="button" @click="router.push('/market')">去机会筛选</button>
+        </template>
+      </div>
+
+      <div class="decision-card watchlist-action">
+        <span class="decision-label">我的待处理</span>
+        <strong>{{ watchActionCount }} 项</strong>
+        <p>{{ watchActionText }}</p>
+        <button type="button" @click="router.push('/portfolio')">查看自选与组合</button>
+      </div>
+
+      <div class="decision-card data-health">
+        <span class="decision-label">数据健康</span>
+        <strong>{{ dataHealth.label }}</strong>
+        <p>{{ dataHealth.detail }}</p>
+        <button type="button" @click="router.push('/data-quality')">检查数据</button>
+      </div>
+    </section>
 
     <!-- Index Cards -->
     <div class="index-cards">
@@ -242,7 +282,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMarketStore } from '@/stores/market'
 import { useWatchlistStore } from '@/stores/watchlist'
@@ -279,6 +319,29 @@ const enrichedWatchlist = ref<Array<{
 const oppHorizon = ref(5)
 const oppLoading = ref(false)
 const opportunities = ref<MarketComprehensiveItem[]>([])
+const topOpportunity = computed(() => opportunities.value[0] ?? null)
+const watchActionCount = computed(() => enrichedWatchlist.value.filter(item => item.scores || item.changePct !== null).length)
+const watchActionText = computed(() => {
+  if (!watchlistStore.count) return '先把关注标的加入自选，后续信号和评分变化会在这里出现。'
+  if (!watchActionCount.value) return '自选列表已建立，等待最新评分和行情同步。'
+  return '自选标的已有行情或评分变化，适合进入组合页逐项确认。'
+})
+const marketMood = computed(() => {
+  const { advances, declines, limitUp, limitDown } = marketStore.marketBreadth
+  const total = advances + declines
+  if (!total) return { label: '等待数据', detail: '市场宽度尚未同步，先检查数据健康。' }
+  const ratio = advances / total
+  if (ratio >= 0.58) return { label: '偏强', detail: `${advances} 涨 / ${declines} 跌，涨停 ${limitUp} 只，适合优先看多头候选。` }
+  if (ratio <= 0.42) return { label: '偏弱', detail: `${advances} 涨 / ${declines} 跌，跌停 ${limitDown} 只，候选需要更严格验证。` }
+  return { label: '震荡', detail: `${advances} 涨 / ${declines} 跌，市场分歧较高，适合等待评分确认。` }
+})
+const dataHealth = computed(() => {
+  const status = marketStore.dataStatus
+  if (!status) return { label: '未知', detail: '数据链路状态尚未返回。' }
+  const healthy = status.index.is_up_to_date && status.stock.is_up_to_date
+  if (healthy) return { label: '已同步', detail: `最新完整交易日 ${formatDate(status.reference_dates.latest_complete_trading_day) || '未知'}。` }
+  return { label: '需检查', detail: `指数过期 ${status.index.expired_count}，个股过期 ${status.stock.expired_count}。` }
+})
 
 // Breadth chart
 const breadthChartRef = ref<HTMLElement | null>(null)
@@ -374,6 +437,23 @@ function changeClass(val: number | null) {
 function formatChangePct(val: number | null) {
   if (val === null) return '--'
   return (val > 0 ? '+' : '') + val.toFixed(2) + '%'
+}
+
+function formatDate(value: string | null) {
+  if (!value) return ''
+  return value.slice(0, 10)
+}
+
+function formatScore(val: number | null | undefined) {
+  if (val === null || val === undefined) return '--'
+  return val.toFixed(1)
+}
+
+function recommendationLabel(value: string) {
+  if (value === 'BUY') return '买入观察'
+  if (value === 'WATCH') return '关注'
+  if (value === 'AVOID') return '回避'
+  return '无建议'
 }
 
 function signalLabel(value: string) {
@@ -633,6 +713,64 @@ onUnmounted(() => {
     color: #fde68a;
     border: 1px solid rgba(245, 158, 11, 0.2);
   }
+}
+
+.decision-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.decision-card {
+  min-height: 172px;
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02)),
+    #0f1011;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  strong {
+    color: var(--color-text-primary);
+    font-size: 24px;
+    font-weight: 590;
+    line-height: 1.1;
+  }
+
+  p {
+    min-height: 44px;
+    margin: 0;
+    color: var(--color-text-tertiary);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  button {
+    align-self: flex-start;
+    margin-top: auto;
+    border: 1px solid rgba(113, 112, 255, 0.28);
+    border-radius: 7px;
+    background: rgba(113, 112, 255, 0.12);
+    color: #f7f8f8;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 510;
+    padding: 7px 10px;
+  }
+
+  button:hover {
+    background: rgba(113, 112, 255, 0.18);
+  }
+}
+
+.decision-label {
+  color: var(--color-text-quaternary);
+  font-size: 12px;
+  font-weight: 590;
 }
 
 /* Index Cards */
@@ -902,10 +1040,15 @@ onUnmounted(() => {
 /* Responsive */
 @media (max-width: 1024px) {
   .page-title { font-size: 28px; }
+  .decision-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 768px) {
   .page-header { flex-direction: column; gap: 12px; }
   .right-col { gap: 14px; }
+}
+
+@media (max-width: 560px) {
+  .decision-strip { grid-template-columns: 1fr; }
 }
 </style>
