@@ -6,79 +6,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Caifubao - 大A量化分析系统，智能量化投资工具" />
     <title>Caifubao - 大A量化分析系统</title>
-    
-    <!-- 
-      字体方案说明：
-      由于 Google Fonts 在国内不可访问，采用以下方案：
-      1. BootCDN (bootcss.com) - 国内可访问的 CDN
-      2. 系统字体作为后备
-      
-      字体选择：
-      - Orbitron: 科技感标题字体
-      - Inter: 清晰的正文字体
-      - Noto Sans SC: 更好的中文支持
+
+    <!--
+      字体方案：
+      BootCDN 提供国内可访问的 fontsource-inter（静态 Inter）。
+      DESIGN.md 要求 Inter Variable with cv01/ss03；静态 Inter 部分
+      支持这些 OpenType features。后续可自托管 Inter Variable woff2
+      以获得完整的可变字体体验。
     -->
-    
-    <!-- 从 BootCDN 加载 Orbitron 和 Inter -->
-    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/fontsource-orbitron/4.5.9/index.min.css">
     <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/fontsource-inter/5.0.18/index.min.css">
-    
+
     <style>
-      /* CSS 变量定义字体族 */
-      :root {
-        --font-heading: 'Orbitron', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-        --font-body: 'Inter', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
-        
-        /* 颜色变量 */
-        --color-bg-primary: #0a0a0f;
-        --color-bg-secondary: #12121a;
-        --color-accent-primary: #ff6b35;
-        --color-accent-secondary: #f7c948;
-        --color-text-primary: #ffffff;
-        --color-text-secondary: #a0a0b0;
-        --color-text-muted: #666680;
-      }
-      
-      /* 全局字体设置 */
+      /* 最小内联样式：在 variables.scss 加载前提供暗色回退 */
       body {
-        font-family: var(--font-body);
+        background: #08090a;
+        color: #f7f8f8;
+        margin: 0;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
-        background-color: var(--color-bg-primary);
-        color: var(--color-text-primary);
-        margin: 0;
-        padding: 0;
-        overflow-x: hidden;
-      }
-      
-      /* 平滑滚动 */
-      html {
-        scroll-behavior: smooth;
-      }
-      
-      /* 选择颜色 */
-      ::selection {
-        background: rgba(255, 107, 53, 0.3);
-        color: #ffffff;
-      }
-      
-      /* 滚动条样式 */
-      ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-      }
-      
-      ::-webkit-scrollbar-track {
-        background: var(--color-bg-secondary);
-      }
-      
-      ::-webkit-scrollbar-thumb {
-        background: var(--color-text-muted);
-        border-radius: 4px;
-      }
-      
-      ::-webkit-scrollbar-thumb:hover {
-        background: var(--color-accent-primary);
       }
     </style>
   </head>
