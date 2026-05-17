@@ -56,7 +56,17 @@
       <div class="experiment-list">
         <div class="panel-header">
           <h2>实验记录</h2>
-          <span>{{ experiments.length }} 个</span>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <el-button
+              type="primary"
+              :disabled="selectedExperiments.length !== 2"
+              :loading="comparing"
+              @click="handleCompare"
+            >
+              对比选中实验 ({{ selectedExperiments.length }}/2)
+            </el-button>
+            <span>{{ experiments.length }} 个</span>
+          </div>
         </div>
         <el-table
           :data="experiments"
@@ -64,7 +74,9 @@
           highlight-current-row
           class="experiments-table"
           @row-click="selectExperiment"
+          @selection-change="handleSelectionChange"
         >
+          <el-table-column type="selection" width="44" />
           <el-table-column label="实验" min-width="220">
             <template #default="{ row }">
               <div class="name-cell">
@@ -182,6 +194,42 @@
         </el-tab-pane>
       </el-tabs>
     </section>
+
+    <el-dialog v-model="compareVisible" title="实验对比" width="80%" destroy-on-close>
+      <div v-if="compareResult" class="compare-report">
+        <el-alert
+          :title="compareResult.verdict"
+          :type="compareResult.verdict?.includes('wins') || compareResult.verdict?.includes('improvement') ? 'success' : 'warning'"
+          show-icon
+          :closable="false"
+          style="margin-bottom: 20px"
+        />
+
+        <h3>Overall Metrics</h3>
+        <el-table :data="compareTableData" stripe size="small" style="margin-bottom: 20px">
+          <el-table-column prop="metric" label="Metric" width="200" />
+          <el-table-column prop="candidate" label="Candidate" width="180" />
+          <el-table-column prop="baseline" label="Baseline" width="180" />
+          <el-table-column prop="delta" label="Delta">
+            <template #default="{ row }">
+              <span :class="deltaClass(row.delta)">{{ formatDelta(row.delta) }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <h3>Top-N Hit Rates</h3>
+        <el-table :data="topNCompareData" stripe size="small">
+          <el-table-column prop="group" label="Group" width="120" />
+          <el-table-column prop="candidate_hit" label="Candidate Hit Rate" width="180" />
+          <el-table-column prop="baseline_hit" label="Baseline Hit Rate" width="180" />
+          <el-table-column prop="delta" label="Delta">
+            <template #default="{ row }">
+              <span :class="deltaClass(row.delta)">{{ formatDelta(row.delta) }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -190,6 +238,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   scoreExperimentApi,
+  type CompareResult,
   type ScoreExperiment,
   type ScoreExperimentHorizonReport,
   type ScoreMetricSummary
@@ -204,9 +253,13 @@ const defaultConfig = {
 const loading = ref(false)
 const submitting = ref(false)
 const runningId = ref('')
+const comparing = ref(false)
 const experiments = ref<ScoreExperiment[]>([])
 const selectedExperiment = ref<ScoreExperiment | null>(null)
+const selectedExperiments = ref<ScoreExperiment[]>([])
 const activeHorizon = ref('5')
+const compareVisible = ref(false)
+const compareResult = ref<CompareResult | null>(null)
 const dateRange = ref<[string, string]>(['2025-01-01', '2025-12-31'])
 const configText = ref(JSON.stringify(defaultConfig, null, 2))
 const form = reactive({
@@ -286,6 +339,117 @@ async function runExperiment(row: ScoreExperiment) {
 
 function selectExperiment(row: ScoreExperiment) {
   selectedExperiment.value = row
+}
+
+function handleSelectionChange(selection: ScoreExperiment[]) {
+  selectedExperiments.value = selection
+}
+
+async function handleCompare() {
+  if (selectedExperiments.value.length !== 2) {
+    ElMessage.warning('请选择恰好 2 个实验进行对比')
+    return
+  }
+  const a = selectedExperiments.value[0]!
+  const b = selectedExperiments.value[1]!
+  const startDate = a.start_date?.slice(0, 10) || '2025-01-01'
+  const endDate = a.end_date?.slice(0, 10) || '2025-12-31'
+  comparing.value = true
+  try {
+    const response = await scoreExperimentApi.compare({
+      id_a: a.id || a.model_version,
+      id_b: b.id || b.model_version,
+      start_date: startDate,
+      end_date: endDate,
+      horizon: 20
+    }) as unknown as { success: boolean; data: CompareResult }
+    if (response.success && response.data) {
+      compareResult.value = response.data
+    } else {
+      compareResult.value = response.data
+    }
+    compareVisible.value = true
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : '对比失败'
+    ElMessage.error(message)
+  } finally {
+    comparing.value = false
+  }
+}
+
+const compareTableData = computed(() => {
+  if (!compareResult.value) return []
+  const c = compareResult.value.candidate?.overall
+  const b = compareResult.value.baseline?.overall
+  const d = compareResult.value.deltas || {} as Record<string, number | null>
+  return [
+    {
+      metric: 'Hit Rate',
+      candidate: formatPct(c?.hit_rate),
+      baseline: formatPct(b?.hit_rate),
+      delta: d.hit_rate as number | null | undefined
+    },
+    {
+      metric: 'Avg Return at Target',
+      candidate: formatPct(c?.avg_return_at_target),
+      baseline: formatPct(b?.avg_return_at_target),
+      delta: d.avg_return_at_target as number | null | undefined
+    },
+    {
+      metric: 'Avg Max Return',
+      candidate: formatPct(c?.avg_max_return),
+      baseline: formatPct(b?.avg_max_return),
+      delta: d.avg_max_return as number | null | undefined
+    },
+    {
+      metric: 'Avg Max Drawdown',
+      candidate: formatPct(c?.avg_max_drawdown),
+      baseline: formatPct(b?.avg_max_drawdown),
+      delta: d.avg_max_drawdown as number | null | undefined
+    },
+    {
+      metric: 'Stop-Loss Hit Rate',
+      candidate: formatPct(c?.stop_loss_hit_rate),
+      baseline: formatPct(b?.stop_loss_hit_rate),
+      delta: d.stop_loss_hit_rate as number | null | undefined
+    },
+    {
+      metric: 'Count',
+      candidate: c?.count != null ? String(c.count) : '--',
+      baseline: b?.count != null ? String(b.count) : '--',
+      delta: d.count as number | null | undefined
+    }
+  ]
+})
+
+const topNCompareData = computed(() => {
+  if (!compareResult.value) return []
+  const cTop = compareResult.value.candidate?.top_n || {}
+  const bTop = compareResult.value.baseline?.top_n || {}
+  const deltas = compareResult.value.deltas || {}
+  const topNDeltas = (deltas.top_n || {}) as Record<string, Record<string, number | null>>
+  return Object.keys(cTop).map(key => ({
+    group: key,
+    candidate_hit: formatPct((cTop[key] as ScoreMetricSummary)?.hit_rate),
+    baseline_hit: formatPct((bTop[key] as ScoreMetricSummary)?.hit_rate),
+    delta: topNDeltas[key]?.hit_rate_delta as number | null | undefined
+  }))
+})
+
+function formatPct(val: number | null | undefined): string {
+  if (val === null || val === undefined) return '--'
+  return (val * 100).toFixed(2) + '%'
+}
+
+function formatDelta(val: number | null | undefined): string {
+  if (val === null || val === undefined) return '--'
+  const sign = val >= 0 ? '+' : ''
+  return `${sign}${(val * 100).toFixed(2)}%`
+}
+
+function deltaClass(val: number | null | undefined): string {
+  if (val === null || val === undefined) return ''
+  return val > 0 ? 'positive' : 'negative'
 }
 
 function metricCards(summary: ScoreMetricSummary) {
@@ -519,5 +683,11 @@ h3 {
   .metric-grid {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
+}
+
+.compare-report h3 {
+  margin: 18px 0 10px;
+  font-size: 16px;
+  font-weight: 590;
 }
 </style>

@@ -159,6 +159,34 @@ function buildMockHorizonReport(horizon: number, avgReturn: number): ScoreExperi
   }
 }
 
+export interface CompareResult {
+  horizon: number
+  start_date: string
+  end_date: string
+  verdict: string
+  candidate: {
+    model_version: string
+    overall: ScoreMetricSummary
+    score_buckets: ScoreBucketSummary[]
+    top_n: Record<string, ScoreMetricSummary>
+  }
+  baseline: {
+    model_version: string
+    overall: ScoreMetricSummary
+    score_buckets: ScoreBucketSummary[]
+    top_n: Record<string, ScoreMetricSummary>
+  }
+  deltas: Record<string, number | null | Record<string, Record<string, number | null>>>
+}
+
+export interface CompareParams {
+  id_a: string
+  id_b: string
+  start_date: string
+  end_date: string
+  horizon: number
+}
+
 export const scoreExperimentApi = {
   listExperiments() {
     if (useMockApi) {
@@ -188,5 +216,8 @@ export const scoreExperimentApi = {
       return Promise.resolve({ ...mockExperiment, id })
     }
     return api.post<ScoreExperiment>(`/score-experiments/${id}/run`) as unknown as Promise<ScoreExperiment>
+  },
+  compare(params: CompareParams) {
+    return api.get<{ success: boolean; data: CompareResult }>('/score-experiments/compare', { params })
   }
 }
