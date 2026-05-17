@@ -18,8 +18,8 @@
       <nav class="topbar__nav" aria-label="主导航">
         <el-menu :default-active="activeMenu" mode="horizontal" class="topbar-menu" router>
           <el-menu-item index="/">
-            <el-icon><HomeFilled /></el-icon>
-            <span>工作台</span>
+            <el-icon><Grid /></el-icon>
+            <span>总览</span>
           </el-menu-item>
 
           <el-menu-item index="/market">
@@ -32,23 +32,24 @@
             <span>信号</span>
           </el-menu-item>
 
-          <el-sub-menu index="strategy-research">
-            <template #title>
-              <el-icon><Cpu /></el-icon>
-              <span>策略研究</span>
-            </template>
-            <el-menu-item index="/backtest">评分回测</el-menu-item>
-            <el-menu-item index="/score-experiments">评分实验</el-menu-item>
-          </el-sub-menu>
+          <el-menu-item index="/indices">
+            <el-icon><DataBoard /></el-icon>
+            <span>指数</span>
+          </el-menu-item>
 
-          <el-menu-item index="/portfolio">
-            <el-icon><Wallet /></el-icon>
-            <span>组合</span>
+          <el-menu-item index="/history">
+            <el-icon><TrendCharts /></el-icon>
+            <span>行情查询</span>
           </el-menu-item>
 
           <el-menu-item index="/data-quality">
             <el-icon><DataAnalysis /></el-icon>
             <span>数据质量</span>
+          </el-menu-item>
+
+          <el-menu-item index="/backtest">
+            <el-icon><Cpu /></el-icon>
+            <span>回测</span>
           </el-menu-item>
 
           <el-sub-menu v-if="userStore.isAdmin" index="/admin/users">
@@ -86,7 +87,6 @@
       </div>
     </div>
 
-    <!-- Mobile Drawer -->
     <el-drawer
       v-model="drawerVisible"
       title="菜单"
@@ -103,8 +103,8 @@
         @select="drawerVisible = false"
       >
         <el-menu-item index="/">
-          <el-icon><HomeFilled /></el-icon>
-          <span>工作台</span>
+          <el-icon><Grid /></el-icon>
+          <span>总览</span>
         </el-menu-item>
 
         <el-menu-item index="/market">
@@ -117,23 +117,24 @@
           <span>信号</span>
         </el-menu-item>
 
-        <el-sub-menu index="strategy-research">
-          <template #title>
-            <el-icon><Cpu /></el-icon>
-            <span>策略研究</span>
-          </template>
-          <el-menu-item index="/backtest">评分回测</el-menu-item>
-          <el-menu-item index="/score-experiments">评分实验</el-menu-item>
-        </el-sub-menu>
+        <el-menu-item index="/indices">
+          <el-icon><DataBoard /></el-icon>
+          <span>指数</span>
+        </el-menu-item>
 
-        <el-menu-item index="/portfolio">
-          <el-icon><Wallet /></el-icon>
-          <span>组合</span>
+        <el-menu-item index="/history">
+          <el-icon><TrendCharts /></el-icon>
+          <span>行情查询</span>
         </el-menu-item>
 
         <el-menu-item index="/data-quality">
           <el-icon><DataAnalysis /></el-icon>
           <span>数据质量</span>
+        </el-menu-item>
+
+        <el-menu-item index="/backtest">
+          <el-icon><Cpu /></el-icon>
+          <span>回测</span>
         </el-menu-item>
 
         <el-sub-menu v-if="userStore.isAdmin" index="/admin/users">
@@ -158,14 +159,15 @@ import {
   Bell,
   Cpu,
   DataAnalysis,
-  HomeFilled,
+  DataBoard,
+  Grid,
   Menu,
   PieChart,
   Setting,
   SwitchButton,
+  TrendCharts,
   User,
-  UserFilled,
-  Wallet
+  UserFilled
 } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 
@@ -177,13 +179,10 @@ const drawerVisible = ref(false)
 const activeMenu = computed(() => {
   if (route.path.startsWith('/market')) return '/market'
   if (route.path.startsWith('/history')) return '/history'
-  if (route.path.startsWith('/quote')) return '/market'
   if (route.path.startsWith('/data-quality')) return '/data-quality'
-  if (route.path.startsWith('/indices')) return '/market'
+  if (route.path.startsWith('/indices')) return '/indices'
   if (route.path.startsWith('/signals')) return '/signals'
   if (route.path.startsWith('/backtest')) return '/backtest'
-  if (route.path.startsWith('/score-experiments')) return '/score-experiments'
-  if (route.path.startsWith('/portfolio')) return '/portfolio'
   if (route.path.startsWith('/admin')) return '/admin/users'
   if (route.path === '/profile') return 'profile'
   return '/'
@@ -218,8 +217,6 @@ async function handleCommand(command: string) {
   background: rgba(8, 9, 10, 0.82);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
-  font-family: 'Inter Variable', 'SF Pro Display', -apple-system, system-ui, sans-serif;
-  font-feature-settings: "cv01", "ss03";
 }
 
 .topbar__inner {
@@ -324,7 +321,7 @@ async function handleCommand(command: string) {
     line-height: 48px;
     border-bottom: none !important;
     border-radius: 12px;
-    margin: 0 2px;
+    margin: 0 4px;
     color: #d0d6e0;
     background: transparent;
     font-size: 13px;
@@ -348,6 +345,8 @@ async function handleCommand(command: string) {
   align-items: center;
   gap: 12px;
 }
+
+
 
 .user-pill {
   display: inline-flex;
@@ -445,6 +444,10 @@ async function handleCommand(command: string) {
 
   .topbar__menu-button {
     display: inline-flex;
+  }
+
+  .env-badge {
+    display: none;
   }
 }
 

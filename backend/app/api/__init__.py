@@ -20,9 +20,10 @@ from app.api.v1.portfolios import portfolios_bp
 from app.api.v1.quotes import quotes_bp
 from app.api.v1.scores import scores_bp
 from app.api.v1.score_experiments import score_experiments_bp
-from app.api.v1.score_strategies import score_strategies_bp
 from app.api.v1.system import system_bp
+from app.api.v1.backtest import backtest_bp
 from app.api.v1.signals import signals_bp
+from app.api.v1.tasks import tasks_bp
 
 
 def register_blueprint(app: Flask):
@@ -32,13 +33,14 @@ def register_blueprint(app: Flask):
     app.register_blueprint(indices_bp)
     app.register_blueprint(market_bp)
     app.register_blueprint(portfolios_bp)
+    app.register_blueprint(backtest_bp)
     app.register_blueprint(datahub_status_bp)
     app.register_blueprint(data_quality_bp)
     app.register_blueprint(quotes_bp)
     app.register_blueprint(scores_bp)
     app.register_blueprint(score_experiments_bp)
-    app.register_blueprint(score_strategies_bp)
     app.register_blueprint(signals_bp)
+    app.register_blueprint(tasks_bp)
     register_openclaw_routes()
     app.register_blueprint(openclaw_bp)
     app.register_blueprint(system_bp)

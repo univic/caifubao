@@ -325,7 +325,8 @@ def test_verification_transitions_to_verified(scoring_service):
     assert prediction.status == "VERIFIED"
     assert prediction.verification["verified_quote_count"] == 5
     assert prediction.verification["max_return"] > 0
-    assert prediction.verification["hit_target"] is True
+    assert prediction.verification["hit_target_close"] is True
+    assert prediction.verification["hit_target_intra"] is True
 
 
 def test_replay_backfills_trading_dates(scoring_service):
@@ -362,7 +363,8 @@ def test_calibration_report_summarizes_verified_predictions():
                 "max_return": 0.08,
                 "min_return": -0.01,
                 "max_drawdown": -0.01,
-                "hit_target": True,
+                "hit_target_close": True,
+                "hit_target_intra": True,
                 "hit_stop_loss": False,
             },
             explanation={
@@ -385,7 +387,8 @@ def test_calibration_report_summarizes_verified_predictions():
                 "max_return": 0.09,
                 "min_return": -0.03,
                 "max_drawdown": -0.03,
-                "hit_target": True,
+                "hit_target_close": False,
+                "hit_target_intra": True,
                 "hit_stop_loss": False,
             },
             explanation={"components": []},

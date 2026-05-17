@@ -2,6 +2,8 @@
 # Score experiment APIs for research calibration and model-version comparison.
 
 import datetime
+import os
+import sys
 from collections import defaultdict
 from typing import Any
 
@@ -9,6 +11,12 @@ from flask import Blueprint, jsonify, request
 from mongoengine import ValidationError
 
 from app.model.scoring import ScoreExperiment, StockScorePrediction
+
+# Allow backend to import datahub scoring-engine utilities
+sys.path.insert(
+    0,
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "datahub", "app"),
+)
 
 score_experiments_bp = Blueprint(
     "score_experiments", __name__, url_prefix="/api/score-experiments"
@@ -229,6 +237,7 @@ def _metric_summary(predictions):
             "avg_min_return": None,
             "avg_max_drawdown": None,
             "hit_rate": None,
+            "hit_rate_intra": None,
             "stop_loss_hit_rate": None,
         }
 
@@ -239,7 +248,8 @@ def _metric_summary(predictions):
         "avg_max_return": _avg_metric(predictions, "max_return"),
         "avg_min_return": _avg_metric(predictions, "min_return"),
         "avg_max_drawdown": _avg_metric(predictions, "max_drawdown"),
-        "hit_rate": _rate(predictions, "hit_target"),
+        "hit_rate": _rate(predictions, "hit_target_close"),
+        "hit_rate_intra": _rate(predictions, "hit_target_intra"),
         "stop_loss_hit_rate": _rate(predictions, "hit_stop_loss"),
     }
 
@@ -363,6 +373,103 @@ def run_experiment(experiment_id):
 
     _run_experiment(experiment)
     return jsonify(_serialize_experiment(experiment)), 200
+
+
+@score_experiments_bp.route("/compare", methods=["GET"])
+def compare_experiments():
+    """Compare two experiments (or model versions) side-by-side.
+
+    Query params:
+        id_a : str (required) — experiment ID or model_version for candidate
+        id_b : str (required) — experiment ID or model_version for baseline
+        start_date : str (required) — YYYY-MM-DD
+        end_date   : str (required) — YYYY-MM-DD
+        horizon    : int (required) — 5, 20, or 60
+    """
+
+    id_a = (request.args.get("id_a") or "").strip()
+    id_b = (request.args.get("id_b") or "").strip()
+    start_date = _parse_datetime(request.args.get("start_date"))
+    end_date = _parse_datetime(request.args.get("end_date"))
+    horizon_raw = request.args.get("horizon")
+
+    if not id_a:
+        return jsonify({"success": False, "message": "id_a is required"}), 400
+    if not id_b:
+        return jsonify({"success": False, "message": "id_b is required"}), 400
+    if not start_date or not end_date or start_date > end_date:
+        return jsonify({"success": False, "message": "invalid date range"}), 400
+
+    try:
+        horizon = int(horizon_raw)
+    except (TypeError, ValueError):
+        return jsonify(
+            {"success": False, "message": "horizon is required and must be an integer"}
+        ), 400
+    if horizon not in SUPPORTED_HORIZONS:
+        return jsonify(
+            {
+                "success": False,
+                "message": f"horizon must be one of {sorted(SUPPORTED_HORIZONS)}",
+            }
+        ), 400
+
+    # Resolve id_a: try as experiment ID first, fall back to model_version
+    model_version_a = _resolve_to_model_version(id_a)
+    if model_version_a is None:
+        return jsonify(
+            {"success": False, "message": f"Cannot resolve id_a: {id_a}"}
+        ), 404
+
+    # Resolve id_b
+    model_version_b = _resolve_to_model_version(id_b)
+    if model_version_b is None:
+        return jsonify(
+            {"success": False, "message": f"Cannot resolve id_b: {id_b}"}
+        ), 404
+
+    try:
+        from app.lib.scoring_engine.comparison_report import ExperimentComparisonReport
+
+        report = ExperimentComparisonReport()
+        result = report.compare(
+            candidate_model_version=model_version_a,
+            baseline_model_version=model_version_b,
+            start_date=start_date,
+            end_date=end_date,
+            horizon=horizon,
+        )
+        return jsonify({"success": True, "data": result}), 200
+    except Exception as exc:
+        return jsonify({"success": False, "message": f"Comparison failed: {exc}"}), 500
+
+
+def _resolve_to_model_version(identifier: str) -> str | None:
+    """If *identifier* is a ScoreExperiment ID, return its model_version.
+    Otherwise return the identifier itself (assumed to be a model_version string).
+    Returns None if an experiment ID was given but not found.
+    """
+    try:
+        experiment = ScoreExperiment.objects(id=identifier).first()
+    except ValidationError:
+        experiment = None
+
+    if experiment is not None:
+        return experiment.model_version or identifier
+
+    # Not a valid experiment ObjectId — treat as a raw model_version string.
+    # But try once with the string path just in case it matches an experiment
+    # with a non-ObjectId `id` field.
+    try:
+        experiment = ScoreExperiment.objects(id=identifier).first()
+    except ValidationError:
+        experiment = None
+
+    if experiment is not None:
+        return experiment.model_version or identifier
+
+    # Fallback: treat the identifier as a model_version directly.
+    return identifier or None
 
 
 def _run_experiment(experiment):

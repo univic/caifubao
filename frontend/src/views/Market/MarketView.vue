@@ -63,16 +63,6 @@
           <!-- Desktop Table View -->
           <div class="desktop-view" v-loading="loading">
             <el-table :data="tableData" class="linear-table" style="width: 100%">
-              <el-table-column width="50" align="center">
-                <template #default="{ row }">
-                  <WatchlistButton
-                    :code="row.code"
-                    :name="row.name || row.code"
-                    size="small"
-                  />
-                </template>
-              </el-table-column>
-
               <el-table-column label="排名" width="70" align="center">
                 <template #default="{ row }">
                   <span class="rank-text" :class="{ 'top-rank': row.evaluation.display_rank <= 3 }">
@@ -172,11 +162,6 @@
           <div class="mobile-view" v-loading="loading">
             <div v-for="item in tableData" :key="item.code" class="asset-card">
               <div class="card-header">
-                <WatchlistButton
-                  :code="item.code"
-                  :name="item.name"
-                  size="small"
-                />
                 <div class="header-main">
                   <span class="c-rank">#{{ item.evaluation.display_rank }}</span>
                   <span class="c-name">{{ item.name }}</span>
@@ -299,7 +284,6 @@ import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { marketApi, type MarketComprehensiveItem } from '@/api/market'
 import { Search, CircleCheck } from '@element-plus/icons-vue'
-import WatchlistButton from '@/components/common/WatchlistButton.vue'
 
 const router = useRouter()
 
@@ -413,16 +397,15 @@ watch(searchKeyword, () => {
   --color-brand: #5e6ad2;
   --color-text-primary: #f7f8f8;
   --color-text-dim: #8a8f98;
-  --color-up: #ef4444;
-  --color-down: #22c55e;
+  --color-up: #10b981;
+  --color-down: #ef4444;
   --color-border: rgba(255, 255, 255, 0.08);
 
   min-height: 100vh;
-  padding: 40px 64px;
+  padding: 40px 60px;
   background-color: var(--color-bg);
   color: var(--color-text-primary);
-  font-family: 'Inter Variable', 'SF Pro Display', -apple-system, system-ui, sans-serif;
-  font-feature-settings: "cv01", "ss03";
+  font-family: 'Inter Variable', sans-serif;
 }
 
 .market-hero {
@@ -446,8 +429,7 @@ watch(searchKeyword, () => {
   font-size: 48px;
   font-weight: 510;
   margin: 0 0 16px 0;
-  letter-spacing: -1.056px;
-  line-height: 1;
+  letter-spacing: -0.02em;
 }
 
 .subtitle {
@@ -497,7 +479,7 @@ watch(searchKeyword, () => {
 
 .horizon-label {
   font-size: 14px;
-  font-weight: 510;
+  font-weight: 600;
   margin-right: 6px;
 }
 
@@ -533,7 +515,7 @@ watch(searchKeyword, () => {
   &.high {
     background: rgba(16, 185, 129, 0.08);
     border-color: rgba(16, 185, 129, 0.25);
-    .chip-score { color: #10b981; }
+    .chip-score { color: var(--color-up); }
   }
   &.medium {
     background: rgba(245, 158, 11, 0.08);
@@ -547,12 +529,12 @@ watch(searchKeyword, () => {
   .chip-horizon {
     font-size: 9px;
     color: var(--color-text-dim);
-    font-weight: 510;
+    font-weight: 500;
     text-transform: uppercase;
   }
   .chip-score {
     font-size: 13px;
-    font-weight: 590;
+    font-weight: 700;
     color: var(--color-text-primary);
   }
 }
@@ -561,8 +543,8 @@ watch(searchKeyword, () => {
 .rank-text {
   font-size: 13px;
   color: var(--color-text-dim);
-  font-weight: 510;
-  &.top-rank { color: #f59e0b; font-weight: 590; }
+  font-weight: 500;
+  &.top-rank { color: #f59e0b; font-weight: 700; }
 }
 
 .asset-cell {
@@ -606,7 +588,7 @@ watch(searchKeyword, () => {
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  .effect-icon { font-size: 16px; color: #10b981; }
+  .effect-icon { font-size: 16px; color: var(--color-up); }
 }
 
 .ohlcv-mini { display: flex; gap: 12px; font-size: 11px; color: var(--color-text-dim); }
@@ -630,23 +612,20 @@ watch(searchKeyword, () => {
       justify-content: space-between;
       align-items: center;
       margin-bottom: 12px;
-      gap: 8px;
       
       .header-main {
         display: flex;
         align-items: baseline;
         gap: 8px;
-        flex: 1;
-        min-width: 0;
-        .c-rank { font-size: 12px; color: #f59e0b; font-weight: 590; }
-        .c-name { font-weight: 590; font-size: 15px; }
+        .c-rank { font-size: 12px; color: #f59e0b; font-weight: 700; }
+        .c-name { font-weight: 600; font-size: 15px; }
         .c-code { font-size: 11px; color: var(--color-text-dim); }
       }
       
       .header-score {
         font-size: 14px;
-        font-weight: 590;
-        &.high { color: #10b981; }
+        font-weight: 700;
+        &.high { color: var(--color-up); }
         &.medium { color: #f59e0b; }
       }
     }
@@ -659,7 +638,7 @@ watch(searchKeyword, () => {
       .price-row {
         display: flex;
         gap: 12px;
-        .c-price { font-weight: 590; }
+        .c-price { font-weight: 600; }
         .c-change { font-size: 13px; }
       }
     }
@@ -728,7 +707,7 @@ watch(searchKeyword, () => {
 :deep(.el-radio-button.is-active .el-radio-button__inner) {
   background: var(--color-brand);
   border-color: var(--color-brand);
-  color: #f7f8f8;
+  color: #fff;
   box-shadow: none;
 }
 

@@ -102,7 +102,9 @@ def get_scoring_performance():
         return wrap_response(data={"message": "No verified data yet"})
 
     effective = sum(
-        1 for item in verified_scores if (item.verification or {}).get("hit_target")
+        1
+        for item in verified_scores
+        if (item.verification or {}).get("hit_target_close")
     )
 
     # Calculate average profit for top recommendations (score >= 60)

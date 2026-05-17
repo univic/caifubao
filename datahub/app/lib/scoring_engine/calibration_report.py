@@ -105,6 +105,9 @@ class ScoreCalibrationReport:
         return self._sample(items)
 
     def _false_negatives(self, predictions):
+        # Use max_return (aggressive/intra metric) intentionally:
+        # a false negative is a stock we scored low that had ANY opportunity
+        # (even if only intraday), so we use the aggressive threshold.
         items = [
             item
             for item in predictions
@@ -123,6 +126,7 @@ class ScoreCalibrationReport:
                 "avg_min_return": None,
                 "avg_max_drawdown": None,
                 "hit_rate": None,
+                "hit_rate_intra": None,
                 "stop_loss_hit_rate": None,
             }
 
@@ -133,7 +137,8 @@ class ScoreCalibrationReport:
             "avg_max_return": self._avg_metric(predictions, "max_return"),
             "avg_min_return": self._avg_metric(predictions, "min_return"),
             "avg_max_drawdown": self._avg_metric(predictions, "max_drawdown"),
-            "hit_rate": self._rate(predictions, "hit_target"),
+            "hit_rate": self._rate(predictions, "hit_target_close"),
+            "hit_rate_intra": self._rate(predictions, "hit_target_intra"),
             "stop_loss_hit_rate": self._rate(predictions, "hit_stop_loss"),
         }
 

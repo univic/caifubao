@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compute-worker
+  labels:
+    app: caifubao
+    component: compute-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: caifubao
+      component: compute-worker
+  template:
+    metadata:
+      labels:
+        app: caifubao
+        component: compute-worker
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-type
+                operator: In
+                values:
+                - compute
+      containers:
+      - name: compute-worker
+        image: registry.example.com/caifubao/compute-worker:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: caifubao-mongo
+              key: uri
+        - name: MONGO_DB
+          value: caifubao
+        - name: POLL_INTERVAL
+          value: "5"
+        - name: MAX_CONCURRENT_TASKS
+          value: "2"
+        - name: TASK_MAX_RETRIES
+          value: "3"
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "6"
+            memory: "28Gi"
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 30
+          periodSeconds: 60
+      restartPolicy: Always

@@ -34,6 +34,17 @@ from unittest.mock import patch
 # Set test environment
 os.environ["APP_ENV"] = "test"
 
+# Register a mock mongoengine connection before any Document class is imported.
+# Without this, importing mongoengine Document subclasses (e.g. BacktestResult)
+# raises ConnectionFailure("You have not defined a default connection").
+# connect() with only db + alias is lazy (does not actually open a socket).
+from mongoengine import connect as _mongo_connect  # noqa: E402
+
+_mongo_connect(db="testdb", alias="default")
+# Also register aliases used by datahub jobs
+for _alias in ("datahub_db", "data_sync_db"):
+    _mongo_connect(db="testdb", alias=_alias)
+
 
 @pytest.fixture
 def mock_mongodb():

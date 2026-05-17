@@ -1,303 +1,508 @@
 <template>
-  <div class="list-page">
+  <div class="backtest-list-page">
+    <!-- Hero Section -->
     <header class="page-hero">
-      <div class="hero-content">
-        <p class="eyebrow">Strategy Research</p>
-        <h1 class="page-title">策略研究</h1>
-        <p class="subtitle">基于评分引擎的选股策略验证。评分回测模拟 Top-N 组合收益，评分实验提供分桶校准与模型对比。</p>
+      <div class="hero-left">
+        <p class="eyebrow">Backtest</p>
+        <h1 class="page-title">策略回测</h1>
+        <p class="subtitle">对历史行情运行交易策略，查看收益率、最大回撤、夏普比率等核心指标。</p>
       </div>
-      <div class="hero-actions">
-        <el-button type="primary" @click="$router.push('/backtest/new')">新建回测</el-button>
+      <div class="hero-right">
+        <router-link to="/backtest/new">
+          <el-button class="btn-primary" :icon="Plus">新建回测</el-button>
+        </router-link>
       </div>
     </header>
 
-    <!-- Quick Access Cards -->
-    <div class="cards-grid">
-      <div class="strategy-card" @click="$router.push('/backtest/new')">
-        <div class="card-icon" style="background: rgba(94, 106, 210, 0.12);">
-          <el-icon :size="24" color="#7170ff"><TrendCharts /></el-icon>
+    <!-- Error Alert -->
+    <el-alert
+      v-if="errorMessage"
+      class="error-alert"
+      type="error"
+      :title="errorMessage"
+      show-icon
+      :closable="false"
+    />
+
+    <!-- Content Card -->
+    <div class="content-card">
+      <div class="card-header">
+        <div class="header-left">
+          <h3 class="card-title">回测记录</h3>
+          <p class="card-desc">共 {{ backtests.length }} 条记录</p>
         </div>
-        <div class="card-content">
-          <h3>评分回测</h3>
-          <p>基于已验证评分预测的 Top-N 选股组合模拟，验证评分引擎的实盘选股能力。</p>
-          <span class="card-action">创建回测 →</span>
-        </div>
+        <el-button class="btn-ghost" :icon="Refresh" :loading="loading" @click="fetchBacktests">刷新</el-button>
       </div>
 
-      <div class="strategy-card" @click="$router.push('/score-experiments')">
-        <div class="card-icon" style="background: rgba(16, 185, 129, 0.1);">
-          <el-icon :size="24" color="#10b981"><DataAnalysis /></el-icon>
-        </div>
-        <div class="card-content">
-          <h3>评分实验</h3>
-          <p>创建校准实验，分析分桶命中率、组件贡献度、模型版本对比，定位评分因子有效性。</p>
-          <span class="card-action">查看实验 →</span>
-        </div>
+      <div class="table-wrapper" v-loading="loading">
+        <el-table
+          :data="backtests"
+          class="linear-table"
+          empty-text="暂无回测记录，点击上方按钮新建"
+          @row-click="goToDetail"
+          highlight-current-row
+        >
+          <el-table-column label="名称" min-width="140">
+            <template #default="{ row }">
+              <div class="name-cell">
+                <span class="bt-name">{{ row.name }}</span>
+                <span class="bt-stock">{{ row.stock_name || row.stock_code }}</span>
+              </div>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="策略" min-width="140">
+            <template #default="{ row }">
+              <span class="strategy-label">{{ strategyLabel(row.strategy) }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="回测区间" min-width="200">
+            <template #default="{ row }">
+              <span class="mono-text">{{ formatDate(row.start_date) }} — {{ formatDate(row.end_date) }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="收益率" width="120" align="right">
+            <template #default="{ row }">
+              <span class="return-value" :class="pnlClass(row.total_return)">{{ formatPercent(row.total_return_pct) }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="最大回撤" width="120" align="right">
+            <template #default="{ row }">
+              <span class="mono-text danger-text">{{ formatPercent(row.max_drawdown) }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="夏普" width="90" align="right">
+            <template #default="{ row }">
+              <span class="mono-text">{{ formatNumber(row.sharpe_ratio) }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="胜率" width="90" align="right">
+            <template #default="{ row }">
+              <span class="mono-text">{{ formatPercent(row.win_rate) }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <span class="status-tag" :class="statusClass(row.status)">
+                {{ statusLabel(row.status) }}
+              </span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="创建时间" width="180">
+            <template #default="{ row }">
+              <span class="mono-text small">{{ formatDateTime(row.created_at) }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="操作" width="100" fixed="right">
+            <template #default="{ row }">
+              <el-popconfirm
+                title="确认删除该回测记录？"
+                confirm-button-text="删除"
+                cancel-button-text="取消"
+                @confirm.stop="handleDelete(row.id)"
+              >
+                <template #reference>
+                  <el-button
+                    class="btn-delete"
+                    :icon="Delete"
+                    size="small"
+                    text
+                    @click.stop
+                  >
+                    删除
+                  </el-button>
+                </template>
+              </el-popconfirm>
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
     </div>
 
-    <!-- How-to Guide -->
-    <div class="guide-card">
-      <div class="guide-content">
-        <h3>如何使用评分策略回测</h3>
-        <ol>
-          <li>
-            <strong>选择评分周期：</strong>Score5（短期5日）、Score20（波段20日）、Score60（中期60日）。不同周期适合不同的选股频率。
-          </li>
-          <li>
-            <strong>设置持仓数量：</strong>每日买入评分最高的前 N 只股票（1-50 只），均匀分配资金。
-          </li>
-          <li>
-            <strong>指定回测区间：</strong>区间内必须有已验证（VERIFIED）的评分预测数据。系统将使用已验证的实际收益进行组合模拟。
-          </li>
-          <li>
-            <strong>解读结果：</strong>查看累计收益率、年化收益、夏普比率、最大回撤和净值曲线，评估评分引擎的选股效果。
-          </li>
-        </ol>
-        <div class="guide-note">
-          <strong>注意：</strong>目前回测结果不会持久化存储，刷新页面后需要重新运行。后续版本将支持保存和回顾历史回测。
-        </div>
-      </div>
-    </div>
-
-    <div class="scoring-guide">
-      <h3>评分策略 vs 传统技术信号</h3>
-      <div class="comparison-grid">
-        <div class="comparison-item">
-          <div class="comp-title">评分策略回测</div>
-          <p>基于多因子评分（信号强度、趋势、动量、突破、相对强弱、估值），系统性评估每只股票的上涨潜力，按评分排序选股。</p>
-          <ul>
-            <li>已验证预测的真实收益作为回测数据源</li>
-            <li>每日 Top-N 等权组合</li>
-            <li>持有至目标日期（T+周期）后退出</li>
-          </ul>
-        </div>
-        <div class="comparison-item">
-          <div class="comp-title">评分实验校准</div>
-          <p>通过分桶分析、组件权重调整和模型版本对比，持续优化评分引擎的因子配置和预测准确率。</p>
-          <ul>
-            <li>按评分分桶统计命中率</li>
-            <li>多模型版本同期对比</li>
-            <li>因子贡献度归因分析</li>
-          </ul>
-        </div>
-      </div>
+    <!-- Empty State -->
+    <div v-if="!loading && backtests.length === 0" class="empty-state">
+      <el-empty description="暂无回测记录">
+        <router-link to="/backtest/new">
+          <el-button class="btn-primary" :icon="Plus">创建第一个回测</el-button>
+        </router-link>
+      </el-empty>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { TrendCharts, DataAnalysis } from '@element-plus/icons-vue'
-</script>
+import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { Refresh, Plus, Delete } from '@element-plus/icons-vue'
+import { backtestApi, type BacktestResult } from '@/api/backtest'
 
-<style scoped>
-.list-page {
-  max-width: 900px;
-  margin: 0 auto;
+const router = useRouter()
+const loading = ref(false)
+const errorMessage = ref('')
+const backtests = ref<BacktestResult[]>([])
+
+function formatDate(value: string | null) {
+  if (!value) return '--'
+  return value.slice(0, 10)
 }
 
+function formatDateTime(value: string | null) {
+  if (!value) return '--'
+  return value.replace('T', ' ').slice(0, 19)
+}
+
+function formatNumber(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '--'
+  return value.toFixed(2)
+}
+
+function formatPercent(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '--'
+  return `${value.toFixed(2)}%`
+}
+
+function pnlClass(value: number) {
+  if (value > 0) return 'positive'
+  if (value < 0) return 'negative'
+  return ''
+}
+
+function strategyLabel(value: string) {
+  const map: Record<string, string> = {
+    MA_CROSS: '均线交叉策略',
+    BUY_HOLD: '买入持有策略',
+    GOLDEN_DEATH_CROSS: '金叉死叉策略'
+  }
+  return map[value] || value
+}
+
+function statusLabel(value: string) {
+  const map: Record<string, string> = {
+    PENDING: '排队中',
+    RUNNING: '运行中',
+    COMPLETED: '已完成',
+    FAILED: '失败'
+  }
+  return map[value] || value
+}
+
+function statusClass(value: string) {
+  return {
+    PENDING: 'warning',
+    RUNNING: 'info',
+    COMPLETED: 'success',
+    FAILED: 'danger'
+  }[value] || 'info'
+}
+
+function goToDetail(row: BacktestResult) {
+  router.push(`/backtest/${row.id}`)
+}
+
+async function fetchBacktests() {
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    const response = await backtestApi.list()
+    backtests.value = response.items
+  } catch (error) {
+    console.error(error)
+    errorMessage.value = '回测记录加载失败，请稍后重试。'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handleDelete(id: string) {
+  try {
+    await backtestApi.delete(id)
+    backtests.value = backtests.value.filter(item => item.id !== id)
+  } catch (error) {
+    console.error(error)
+    errorMessage.value = '删除失败，请稍后重试。'
+  }
+}
+
+onMounted(fetchBacktests)
+</script>
+
+<style scoped lang="scss">
+.backtest-list-page {
+  --color-bg: #08090a;
+  --color-panel: #0f1011;
+  --color-surface: #191a1b;
+  --color-brand: #5e6ad2;
+  --color-brand-accent: #7170ff;
+  --color-text-primary: #f7f8f8;
+  --color-text-secondary: #d0d6e0;
+  --color-text-tertiary: #8a8f98;
+  --color-text-quaternary: #62666d;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-subtle: rgba(255, 255, 255, 0.05);
+  --font-inter: 'Inter Variable', Inter, sans-serif;
+  --font-mono: 'Berkeley Mono', ui-monospace, SF Mono, Menlo, monospace;
+
+  min-height: 100vh;
+  padding: 40px 60px;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-inter);
+  font-feature-settings: "cv01", "ss03";
+}
+
+/* Hero Section */
 .page-hero {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 32px;
-}
-
-.hero-actions {
-  padding-top: 8px;
+  align-items: flex-end;
+  margin-bottom: 48px;
 }
 
 .eyebrow {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 510;
-  color: #8a8f98;
+  color: var(--color-brand-accent);
+  margin-bottom: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin: 0 0 8px 0;
+  letter-spacing: 0.1em;
 }
 
 .page-title {
-  font-size: 32px;
-  font-weight: 590;
-  color: #f7f8f8;
-  margin: 0 0 8px 0;
-  letter-spacing: -0.02em;
+  font-size: 48px;
+  font-weight: 510;
+  line-height: 1;
+  letter-spacing: -1.056px;
+  margin: 0 0 16px 0;
+  color: var(--color-text-primary);
 }
 
 .subtitle {
-  font-size: 15px;
-  color: #8a8f98;
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+  max-width: 600px;
   margin: 0;
   line-height: 1.6;
-  max-width: 560px;
 }
 
-/* Quick Access Cards */
-.cards-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.strategy-card {
-  display: flex;
-  gap: 16px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  padding: 22px 24px;
-  cursor: pointer;
+/* Button overrides */
+:deep(.el-button) {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 6px;
+  font-weight: 510;
+  font-size: 14px;
   transition: all 0.2s;
 }
 
-.strategy-card:hover {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.12);
-  transform: translateY(-1px);
+.btn-primary {
+  background: var(--color-brand) !important;
+  border: none !important;
+  color: #fff !important;
+
+  &:hover {
+    background: var(--color-brand-accent) !important;
+  }
 }
 
-.card-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.02) !important;
+  border: 1px solid var(--color-border) !important;
+  color: var(--color-text-secondary) !important;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border-color: var(--color-text-tertiary) !important;
+  }
 }
 
-.card-content {
-  flex: 1;
-  min-width: 0;
+.btn-delete {
+  color: var(--color-text-quaternary) !important;
+
+  &:hover {
+    color: #ef4444 !important;
+  }
 }
 
-.card-content h3 {
-  font-size: 16px;
-  font-weight: 590;
-  color: #f7f8f8;
-  margin: 0 0 6px 0;
-}
-
-.card-content p {
-  font-size: 13px;
-  color: #8a8f98;
-  line-height: 1.5;
-  margin: 0 0 8px 0;
-}
-
-.card-action {
-  font-size: 13px;
-  font-weight: 510;
-  color: #7170ff;
-}
-
-/* Guide cards */
-.guide-card {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  padding: 28px;
+/* Error Alert */
+.error-alert {
   margin-bottom: 24px;
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #fb7185;
 }
 
-.guide-content h3 {
-  font-size: 18px;
-  font-weight: 590;
-  color: #f7f8f8;
-  margin: 0 0 16px 0;
-}
-
-.guide-content ol {
-  padding-left: 20px;
-  margin: 0 0 16px 0;
-}
-
-.guide-content li {
-  font-size: 14px;
-  color: #d0d6e0;
-  line-height: 1.8;
-  margin-bottom: 6px;
-}
-
-.guide-content li strong {
-  color: #f7f8f8;
-  font-weight: 510;
-}
-
-.guide-note {
-  background: rgba(94, 106, 210, 0.08);
-  border: 1px solid rgba(94, 106, 210, 0.15);
-  border-radius: 6px;
-  padding: 12px 16px;
-  font-size: 13px;
-  color: #a5b4fc;
-  line-height: 1.6;
-}
-
-.guide-note strong {
-  color: #c7d2fe;
-}
-
-.scoring-guide {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+/* Content Card */
+.content-card {
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
-  padding: 28px;
+  overflow: hidden;
 }
 
-.scoring-guide h3 {
-  font-size: 18px;
+.card-header {
+  padding: 24px 32px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-title {
+  font-size: 20px;
   font-weight: 590;
-  color: #f7f8f8;
-  margin: 0 0 16px 0;
+  letter-spacing: -0.24px;
+  margin: 0 0 4px 0;
 }
 
-.comparison-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 24px;
-}
-
-.comparison-item {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  padding: 20px;
-}
-
-.comp-title {
-  font-size: 15px;
-  font-weight: 590;
-  color: #f7f8f8;
-  margin-bottom: 8px;
-}
-
-.comparison-item p {
-  font-size: 13px;
-  color: #8a8f98;
-  line-height: 1.6;
-  margin: 0 0 12px 0;
-}
-
-.comparison-item ul {
-  padding-left: 18px;
+.card-desc {
+  font-size: 14px;
+  color: var(--color-text-tertiary);
   margin: 0;
 }
 
-.comparison-item li {
-  font-size: 13px;
-  color: #d0d6e0;
-  line-height: 1.7;
+/* Table Overrides */
+.table-wrapper {
+  padding: 0 12px 12px 12px;
 }
 
-@media (max-width: 768px) {
-  .cards-grid {
-    grid-template-columns: 1fr;
+:deep(.linear-table) {
+  background: transparent !important;
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: transparent;
+  --el-table-border-color: var(--color-border-subtle);
+  --el-table-text-color: var(--color-text-secondary);
+  --el-table-header-text-color: var(--color-text-tertiary);
+
+  &::before { display: none; }
+
+  th.el-table__cell {
+    font-size: 12px;
+    font-weight: 510;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 16px 8px;
   }
-  .comparison-grid {
-    grid-template-columns: 1fr;
+
+  td.el-table__cell {
+    padding: 12px 8px;
+    border-bottom: 1px solid var(--color-border-subtle);
+    cursor: pointer;
   }
-  .page-title { font-size: 24px; }
+
+  .el-table__row:hover > td {
+    background-color: rgba(255, 255, 255, 0.02) !important;
+  }
+}
+
+/* Cell Styles */
+.name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bt-name {
+  font-size: 14px;
+  font-weight: 510;
+  color: var(--color-text-primary);
+}
+
+.bt-stock {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--color-text-quaternary);
+}
+
+.strategy-label {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.mono-text {
+  font-family: var(--font-mono);
+  font-size: 13px;
+
+  &.small {
+    font-size: 12px;
+    color: var(--color-text-quaternary);
+  }
+}
+
+.return-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 590;
+
+  &.positive { color: #ef4444; }
+  &.negative { color: #22c55e; }
+}
+
+.danger-text {
+  color: #fb7185;
+}
+
+/* Status Tags */
+.status-tag {
+  font-size: 11px;
+  font-weight: 510;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+
+  &.success {
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.1);
+  }
+
+  &.info {
+    color: #60a5fa;
+    background: rgba(96, 165, 250, 0.1);
+  }
+
+  &.warning {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.1);
+  }
+
+  &.danger {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+  }
+}
+
+/* Empty State */
+.empty-state {
+  margin-top: 80px;
+}
+
+:deep(.el-empty__description) {
+  color: var(--color-text-tertiary);
+  margin-bottom: 16px;
+}
+
+@media (max-width: 1024px) {
+  .backtest-list-page {
+    padding: 24px;
+  }
+
+  .page-title {
+    font-size: 32px;
+  }
+
+  .page-hero {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 24px;
+  }
 }
 </style>

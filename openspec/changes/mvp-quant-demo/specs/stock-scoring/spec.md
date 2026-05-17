@@ -64,7 +64,15 @@ Score predictions SHALL be verified against future quote outcomes for their hori
 - **GIVEN** a prediction has enough future quote records for its horizon
 - **WHEN** verification runs
 - **THEN** the prediction SHALL become `VERIFIED`
-- **AND** verification SHALL include target return, max return, min return, drawdown, quote count, hit target, hit stop loss, and verification time.
+- **AND** verification SHALL include target return, max return, min return, drawdown, quote count, hit target (dual-metric), hit stop loss, and verification time.
+
+#### Scenario: Hit target is measured conservatively
+
+- **GIVEN** a verified prediction with future quote data
+- **WHEN** verification computes hit-target flags
+- **THEN** it SHALL report `hit_target_close` (whether `return_at_target >= effective_threshold`, the conservative metric for strategy development)
+- **AND** it SHALL report `hit_target_intra` (whether `max_return >= effective_threshold`, the aggressive metric for reference only)
+- **AND** calibration reports and score-quality monitoring SHALL use `hit_target_close` as the primary success criterion.
 
 #### Scenario: Horizon date passed with incomplete data
 
