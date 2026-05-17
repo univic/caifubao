@@ -22,6 +22,11 @@
             <span>总览</span>
           </el-menu-item>
 
+          <el-menu-item index="/history">
+            <el-icon><TrendCharts /></el-icon>
+            <span>行情</span>
+          </el-menu-item>
+
           <el-menu-item index="/market">
             <el-icon><PieChart /></el-icon>
             <span>标的看板</span>
@@ -37,9 +42,14 @@
             <span>指数</span>
           </el-menu-item>
 
-          <el-menu-item index="/history">
-            <el-icon><TrendCharts /></el-icon>
-            <span>行情查询</span>
+          <el-menu-item index="/backtest">
+            <el-icon><Cpu /></el-icon>
+            <span>回测</span>
+          </el-menu-item>
+
+          <el-menu-item index="/portfolio">
+            <el-icon><Wallet /></el-icon>
+            <span>组合</span>
           </el-menu-item>
 
           <el-menu-item index="/data-quality">
@@ -47,9 +57,9 @@
             <span>数据质量</span>
           </el-menu-item>
 
-          <el-menu-item index="/backtest">
-            <el-icon><Cpu /></el-icon>
-            <span>回测</span>
+          <el-menu-item index="/score-experiments">
+            <el-icon><DataLine /></el-icon>
+            <span>评分实验</span>
           </el-menu-item>
 
           <el-sub-menu v-if="userStore.isAdmin" index="/admin/users">
@@ -107,6 +117,11 @@
           <span>总览</span>
         </el-menu-item>
 
+        <el-menu-item index="/history">
+          <el-icon><TrendCharts /></el-icon>
+          <span>行情</span>
+        </el-menu-item>
+
         <el-menu-item index="/market">
           <el-icon><PieChart /></el-icon>
           <span>标的看板</span>
@@ -122,9 +137,14 @@
           <span>指数</span>
         </el-menu-item>
 
-        <el-menu-item index="/history">
-          <el-icon><TrendCharts /></el-icon>
-          <span>行情查询</span>
+        <el-menu-item index="/backtest">
+          <el-icon><Cpu /></el-icon>
+          <span>回测</span>
+        </el-menu-item>
+
+        <el-menu-item index="/portfolio">
+          <el-icon><Wallet /></el-icon>
+          <span>组合</span>
         </el-menu-item>
 
         <el-menu-item index="/data-quality">
@@ -132,9 +152,9 @@
           <span>数据质量</span>
         </el-menu-item>
 
-        <el-menu-item index="/backtest">
-          <el-icon><Cpu /></el-icon>
-          <span>回测</span>
+        <el-menu-item index="/score-experiments">
+          <el-icon><DataLine /></el-icon>
+          <span>评分实验</span>
         </el-menu-item>
 
         <el-sub-menu v-if="userStore.isAdmin" index="/admin/users">
@@ -160,6 +180,7 @@ import {
   Cpu,
   DataAnalysis,
   DataBoard,
+  DataLine,
   Grid,
   Menu,
   PieChart,
@@ -167,7 +188,8 @@ import {
   SwitchButton,
   TrendCharts,
   User,
-  UserFilled
+  UserFilled,
+  Wallet
 } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 
@@ -179,9 +201,13 @@ const drawerVisible = ref(false)
 const activeMenu = computed(() => {
   if (route.path.startsWith('/market')) return '/market'
   if (route.path.startsWith('/history')) return '/history'
+  if (route.path.startsWith('/quote')) return '/history'
   if (route.path.startsWith('/data-quality')) return '/data-quality'
   if (route.path.startsWith('/indices')) return '/indices'
   if (route.path.startsWith('/signals')) return '/signals'
+  if (route.path.startsWith('/score-experiments')) return '/score-experiments'
+  if (route.path.startsWith('/decisions')) return '/decisions'
+  if (route.path.startsWith('/portfolio')) return '/portfolio'
   if (route.path.startsWith('/backtest')) return '/backtest'
   if (route.path.startsWith('/admin')) return '/admin/users'
   if (route.path === '/profile') return 'profile'

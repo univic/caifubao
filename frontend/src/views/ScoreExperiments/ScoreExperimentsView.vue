@@ -351,8 +351,8 @@ onMounted(fetchExperiments)
 .experiments-page {
   min-height: 100vh;
   padding: 28px;
-  background: #f6f8fb;
-  color: #172033;
+  background: transparent;
+  color: var(--color-text-primary);
 }
 
 .toolbar,
@@ -365,7 +365,7 @@ onMounted(fetchExperiments)
 
 .eyebrow {
   margin: 0 0 4px;
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0;
@@ -403,9 +403,9 @@ h3 {
 .experiment-list,
 .report-panel,
 .report-section {
-  border: 1px solid #dce3ee;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.03);
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
 }
 
@@ -441,7 +441,7 @@ h3 {
 .name-cell span,
 .panel-header p,
 .version-meta {
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 12px;
 }
 
@@ -466,7 +466,7 @@ h3 {
 .metric {
   min-height: 86px;
   padding: 14px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--color-border-light);
   border-radius: 8px;
   background: #f8fafc;
 }
@@ -474,7 +474,7 @@ h3 {
 .metric span,
 .metric small {
   display: block;
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 12px;
 }
 

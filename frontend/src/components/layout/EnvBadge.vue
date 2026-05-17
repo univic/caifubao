@@ -49,7 +49,7 @@ const sizeClass = computed(() => `env-badge--${props.size}`)
   padding: 4px 10px;
   border-radius: 999px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 590;
   white-space: nowrap;
   letter-spacing: 0.03em;
   line-height: 1;
