@@ -24,6 +24,7 @@ from app.api.v1.system import system_bp
 from app.api.v1.backtest import backtest_bp
 from app.api.v1.signals import signals_bp
 from app.api.v1.tasks import tasks_bp
+from app.api.v1.decisions import decisions_bp
 
 
 def register_blueprint(app: Flask):
@@ -41,6 +42,7 @@ def register_blueprint(app: Flask):
     app.register_blueprint(score_experiments_bp)
     app.register_blueprint(signals_bp)
     app.register_blueprint(tasks_bp)
+    app.register_blueprint(decisions_bp)
     register_openclaw_routes()
     app.register_blueprint(openclaw_bp)
     app.register_blueprint(system_bp)
