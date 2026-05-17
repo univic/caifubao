@@ -243,7 +243,7 @@ async function handleLogin() {
 .login-story,
 .login-card {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 28px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.03);
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.12),
@@ -277,7 +277,7 @@ async function handleLogin() {
   margin: 20px 0 16px;
   font-size: clamp(42px, 7vw, 72px);
   line-height: 0.95;
-  letter-spacing: -0.05em;
+  letter-spacing: -1.584px;
   color: #f7f8f8;
   font-weight: 510;
 }
@@ -299,7 +299,7 @@ async function handleLogin() {
 
 .story-metric {
   padding: 18px;
-  border-radius: 20px;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(255, 255, 255, 0.02);
 
@@ -379,7 +379,7 @@ async function handleLogin() {
 
   :deep(.el-input__wrapper) {
     height: 50px;
-    border-radius: 16px;
+    border-radius: 6px;
     background: rgba(255, 255, 255, 0.03);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   }
@@ -401,9 +401,9 @@ async function handleLogin() {
   width: 100%;
   height: 52px;
   border: 1px solid rgba(113, 112, 255, 0.28);
-  border-radius: 16px;
+  border-radius: 6px;
   background: linear-gradient(135deg, #5e6ad2 0%, #7170ff 100%);
-  box-shadow: 0 18px 36px rgba(94, 106, 210, 0.28);
+  box-shadow: 0 4px 12px rgba(94, 106, 210, 0.2);
   font-weight: 590;
   letter-spacing: 0.01em;
 }

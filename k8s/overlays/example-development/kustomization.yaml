@@ -5,7 +5,9 @@ namespace: caifubao-example-dev
 
 resources:
 - ../../base
-- datahub-cronjobs.yaml
+
+patches:
+- path: datahub-patch.yaml
 
 configMapGenerator:
 - name: backend-config
@@ -33,7 +35,6 @@ secretGenerator:
 - name: datahub-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
-  - MONGODB_SRC_USER=readonly_user
   - MONGODB_SRC_PASS=change-me-example
 - name: mongodb-secret
   literals:

@@ -10,18 +10,9 @@
     "docs/integrations/openclaw.md"
   ],
   "permission": {
-    "edit": "allow",
-    "bash": {
-      "*": "allow",
-      "rm -rf *": "deny",
-      "rm -r *": "deny",
-      "git push --force*": "deny",
-      "git push -f*": "deny",
-      "docker rm*": "deny",
-      "docker rmi*": "deny",
-      "kubectl delete*": "deny"
-    },
-    "websearch": "allow"
+    "edit": "ask",
+    "bash": "ask",
+    "websearch": "ask"
   },
   "agent": {
     "caifubao-orchestrator": {
@@ -34,9 +25,9 @@
         "grep": "allow",
         "glob": "allow",
         "task": "allow",
-        "edit": "allow",
-        "bash": "allow",
-        "websearch": "allow"
+        "edit": "ask",
+        "bash": "ask",
+        "websearch": "ask"
       }
     },
     "qa-reviewer": {
@@ -90,8 +81,8 @@
         "read": "allow",
         "grep": "allow",
         "glob": "allow",
-        "edit": "allow",
-        "bash": "allow",
+        "edit": "ask",
+        "bash": "ask",
         "websearch": "deny"
       }
     },
@@ -104,8 +95,8 @@
         "read": "allow",
         "grep": "allow",
         "glob": "allow",
-        "edit": "allow",
-        "bash": "allow",
+        "edit": "ask",
+        "bash": "ask",
         "websearch": "deny"
       }
     },
@@ -118,8 +109,8 @@
         "read": "allow",
         "grep": "allow",
         "glob": "allow",
-        "edit": "allow",
-        "bash": "allow",
+        "edit": "ask",
+        "bash": "ask",
         "websearch": "deny"
       }
     },
@@ -133,7 +124,7 @@
         "grep": "allow",
         "glob": "allow",
         "edit": "ask",
-        "bash": "allow",
+        "bash": "ask",
         "websearch": "deny"
       }
     }
