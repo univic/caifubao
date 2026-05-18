@@ -100,43 +100,48 @@
 
 Based on live backtest findings (2026-05-18: sz000977 Score5 median=21, only 1% BUY).
 
-- [ ] 12d.1 Lower Score5 default thresholds 70/50 -> 60/40; bump model version to score_v2_202606
+- [ ] 12d.1 Generate full-market calibration report first; propose hybrid percentile+absolute thresholds based on distribution; bump model version only after full-market validation (NOT single-stock observation)
 - [ ] 12d.2 Signal persistence decay: exponential decay factor 0.7/day when signal disappears
 - [ ] 12d.3 Config entries: signal_decay_factor, signal_decay_max_days per horizon
-- [ ] 12d.4 Score distribution metrics in calibration report; flag BUY<5% or AVOID>40%
-- [ ] 12d.5 Backfill with new model version and re-run SCORE_THRESHOLD validation on sz000977
-- [ ] 12d.6 Update scoring tests for signal decay and new thresholds
+- [ ] 12d.4 Score distribution metrics in calibration report; flag BUY<3% or AVOID>50% as miscalibrated
+- [ ] 12d.5 Backfill with new model version across FULL MARKET; compare calibration reports between old and new model versions
+- [ ] 12d.6 Update scoring tests for signal decay and hybrid threshold logic
 
 ### 12e. Backtest Optimization Quick Wins (2 days)
 
-- [ ] 12e.1 POST /api/backtest/optimize: param sweep, best by Sharpe
+- [ ] 12e.1 POST /api/backtest/optimize: param sweep with train/val/test split (60/20/20); select best params on train+val; report final result on test period only; warn if <300 trading days total
 - [ ] 12e.2 MULTI_HORIZON_CONSENSUS: BUY when all horizons >= entry, SELL when any < exit
 - [ ] 12e.3 Consensus strategy in _simulate() with partial data handling
-- [ ] 12e.4 optimize subcommand in backtest_runner.py CLI
-- [ ] 12e.5 Validate on sz000977: consensus + optimize vs baselines
+- [ ] 12e.4 optimize subcommand in backtest_runner.py CLI with --split flag
+- [ ] 12e.5 Validate on sz000977: consensus + optimize vs baselines; check train/test Sharpe decay
 
 ## 13. Phase 1.5 — Strategy Discovery & Screening (3 days)
 
 Bridge from single backtests to systematic strategy discovery. Pure backend —
 wraps existing run_backtest() in screening, comparison, and validation loops.
+All scan/comparison results MUST include anti-overfitting flags and use composite
+ranking (not pure Sharpe).
 
-- [ ] 13.1 POST /api/backtest/compare: all eligible strategies on one stock; side-by-side comparison
-- [ ] 13.2 POST /api/backtest/scan: one strategy across all stocks; paginated, sorted by Sharpe
+- [ ] 13.1 POST /api/backtest/compare: all eligible strategies on one stock; side-by-side comparison ranked by composite score (excess return, max DD, info ratio, turnover penalty)
+- [ ] 13.2 POST /api/backtest/scan: one strategy across all stocks; paginated; include trade count, concentration flag, turnover rate, single-best-day contribution; rank by composite score
 - [ ] 13.3 Async market scan via ComputeTask when stock count > threshold
-- [ ] 13.4 POST /api/backtest/walk-forward: rolling-window with configurable window/step; stability score
+- [ ] 13.4 POST /api/backtest/walk-forward: rolling-window; include first-half vs second-half Sharpe comparison; flag performance_decay if second-half Sharpe is >20% lower
 - [ ] 13.5 GET /api/backtest/<id>/regime: bull/bear/sideways decomposition via CSI 300 trend
-- [ ] 13.6 compare and scan subcommands in backtest_runner.py CLI
-- [ ] 13.7 Validate: compare all strategies on sz000977; scan MA_CROSS on top-50; regime breakdown on best strategy
-- [ ] 13.8 Frontend: discovery workspace with screen -> compare -> walk-forward -> regime workflow
-- [ ] 13.9 CSV export for scan, comparison, walk-forward results
+- [ ] 13.6 Implement composite ranking function: excess return + max DD penalty + info ratio - turnover penalty - concentration penalty; exclude <5 trades from ranking
+- [ ] 13.7 Implement anti-overfitting guardrails: train/val/test split, multiple-comparison flagging (Bonferroni), minimum sample warnings, concentration detection (>40% from single episode = flag)
+- [ ] 13.8 Implement trading executability constraints: ST/suspension filter, liquidity floor (5M CNY avg turnover), dynamic slippage mode, position capacity check (1% of daily volume)
+- [ ] 13.9 compare, scan, walk-forward subcommands in backtest_runner.py CLI
+- [ ] 13.10 Validate: compare all strategies on sz000977; scan MA_CROSS on top-50 by market cap; check anti-overfitting flags
+- [ ] 13.11 Frontend: discovery workspace with anti-overfitting flags visible on every result card
+- [ ] 13.12 CSV export for scan, comparison, walk-forward results including all flags
 
 ## 14. Phase 2 — Scoring Scheme Combinatorial Optimization (4 days)
 
 - [ ] 14.1 GridSearchTask: weight-grid + threshold-grid auto-generate N experiments
-- [ ] 14.2 Run score-driven backtest per experiment; capture Sharpe, hit rate, max DD
+- [ ] 14.2 Run score-driven backtest per experiment; capture composite score, Sharpe, hit rate, max DD
 - [ ] 14.3 Enforce weight-sum constraint (sum to 100, vary enabled components only)
 - [ ] 14.4 ExperimentComparisonReport: metrics table with statistical significance
-- [ ] 14.5 Rank top-20 configs by Sharpe with weight heatmap visualization
+- [ ] 14.5 Rank top-20 configs by composite score (not pure Sharpe) with weight heatmap visualization
 - [ ] 14.6 Multi-horizon consensus/divergence detection
 - [ ] 14.7 GET /api/score-experiments/compare?id_a=X&id_b=Y
 - [ ] 14.8 Frontend: experiment comparison view, grid-search heatmap
@@ -188,14 +193,17 @@ Each factor: compute -> factor eval (Phase 3) -> integrate as scoring component
 ## 18. Phase 6 — Decision Dashboard + Alerts (3 days)
 
 - [ ] 18.1 Daily decision dashboard: top scores per horizon, score deltas, position match
-- [ ] 18.2 Score alert detection: score jump >= 15 points, threshold crossing, quality degradation
-- [ ] 18.3 Score quality monitoring: rolling 30-day hit rate, distribution shift detection
-- [ ] 18.4 Model drift detection: P50/P90 score shift > 10 points in 20 days
-- [ ] 18.5 Decision journal: log recommended vs executed with P&L tracking
-- [ ] 18.6 Position attribution: attribute trade P&L to scoring horizon and dominant components
-- [ ] 18.7 Rebalance preview: map today's scores to portfolio; recommend entries/exits/holds
-- [ ] 18.8 Configurable watchlists for focused monitoring
-- [ ] 18.9 Frontend: integrated decision workspace with dashboard, alerts, journal
+- [ ] 18.2 Actionable recommendations: each BUY/WATCH/AVOID includes confidence (historical hit rate + sample size + trend), invalidation conditions (exit threshold, stop-loss, expiry), position sizing (target weight, capacity check)
+- [ ] 18.3 Score alert detection: score jump >= 15 points, threshold crossing, quality degradation
+- [ ] 18.4 Score quality monitoring: rolling 30-day hit rate, distribution shift detection
+- [ ] 18.5 Model drift detection: P50/P90 score shift > 10 points in 20 days
+- [ ] 18.6 Decision journal: log recommended vs executed with P&L
+- [ ] 18.7 Journal tracks missed recommendations: system recommended BUY but user did not execute; compute opportunity P&L
+- [ ] 18.8 Journal tracks user deviations: user executed trade NOT recommended by system; separate P&L tracking
+- [ ] 18.9 Position attribution: attribute trade P&L to scoring horizon and dominant components
+- [ ] 18.10 Rebalance preview: map today's scores to portfolio; recommend entries/exits/holds with confidence + invalidation
+- [ ] 18.11 Configurable watchlists for focused monitoring
+- [ ] 18.12 Frontend: decision workspace with confidence metadata and invalidation conditions inline on every signal
 
 ## 19. Phase 7 — OpenClaw Score-Read + Completion (1 day)
 
@@ -204,3 +212,38 @@ Each factor: compute -> factor eval (Phase 3) -> integrate as scoring component
 - [ ] 19.3 Include explanation, input-snapshot freshness, verification in response
 - [ ] 19.4 Enforce 403 on compute endpoints for OpenClaw
 - [ ] 19.5 Document complete OpenClaw API surface
+
+## 20. Success Criteria
+
+Minimum acceptance thresholds that MUST be met before any phase is considered
+complete. These apply across all discovery, optimization, and decision-support
+workflows.
+
+- [ ] 20.1 SCORE-based strategies do not need to beat BUY_HOLD on absolute return, but MUST demonstrate a clear advantage in at least one of: net return, max drawdown, Sharpe ratio, or information ratio over a full-market sample (not single-stock cherry-picking)
+- [ ] 20.2 Single-stock validation is NOT sufficient for acceptance; any strategy or threshold change MUST be validated on at least the top-50 stocks by market cap or the full active market
+- [ ] 20.3 Parameter optimization results MUST pass walk-forward decay check: test-period Sharpe MUST NOT be more than 20% below train-period Sharpe; results that fail this check SHALL be flagged "overfit" and excluded from top-ranking positions
+- [ ] 20.4 Any strategy ranked in a top-N list SHALL have at minimum 5 trades, 120+ trading days of data, and a concentration ratio (single-best-day / total return) below 40%
+- [ ] 20.5 Scoring model version changes SHALL be accompanied by a calibration report comparing the new and old model versions across the full market
+- [ ] 20.6 Decision journal SHALL separately track "model quality" (how good were recommendations) and "execution discipline" (how well were they followed) as distinct metrics
+
+## 21. Recommended Execution Order
+
+1. **12d/12e first** — Scoring quick wins + backtest optimization with:
+   - Full-market calibration before any threshold change (12d.1)
+   - Train/val/test split in optimization (12e.1)
+   - Validate against sz000977 AND top-50 market scan
+
+2. **Then 13.x** — Strategy discovery with anti-overfitting built in:
+   - Composite ranking (13.6)
+   - Anti-overfitting guardrails (13.7)
+   - Trading executability constraints (13.8)
+
+3. **Then 15.x** — Factor evaluation pipeline:
+   - IC, quintile, correlation to decide which factors earn a place in the model
+
+4. **Then 14.x (Phase 2)** — Grid search optimization:
+   - Only after baseline anti-overfitting guards are proven effective
+
+5. **Finally 18.x** — Decision dashboard:
+   - Only after research pipeline quality is validated
+   - Dashboard should display signals from a proven pipeline, not pretty-print unstable signals
