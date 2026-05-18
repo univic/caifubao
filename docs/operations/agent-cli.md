@@ -90,6 +90,7 @@ Output example:
 
 #### `score score-one <STOCK> [--date DATE] [--horizon 5|20|60] [--replace]`
 Score a single stock for a specific date and horizon.
+`--replace` is always applied (idempotent — safe to re-run).
 
 ```
 make score-one STOCK=sz000977 DATE=2026-05-18 HORIZON=5
@@ -234,20 +235,43 @@ dev MongoDB. Syncable collections: `stock_daily_quote`, `stock_factor_daily`,
 | `basic_stock` | ~6.4K | prod sync |
 
 ### Secrets lifecycle
-- `MONGODB_SRC_PASSWORD` is in GitHub Secrets (`caifubao-private`)
-- Private deploy workflow injects it into K3s secret `datahub-secret`
-- Kustomize `secretGenerator` with `envs:` reads from generated `.env.datahub-secret`
-- If sync fails with auth error, the secret may need manual patching
+The `MONGODB_SRC_PASSWORD` follows this path from source to container:
 
-## Troubleshooting
+```
+GitHub Secret                     deploy workflow
+(MONGODB_SRC_PASSWORD) ───→ write-actions-env.sh ───→ env/root/.env
+                                                        │
+                                            prepare-worktree.sh
+                                                        │
+                                         生成 .env.datahub-secret
+                                           MONGODB_SRC_USER=xxx
+                                           MONGODB_SRC_PASS=<real>
+                                                        │
+                                            kustomize secretGenerator
+                                            envs: .env.datahub-secret
+                                                        │
+                                          datahub-secret-<hash>
+                                          含真实密码 → pod env
+```
 
-### Sync fails with authentication error
+The kustomize `secretGenerator` creates a **hashed** secret name (e.g.
+`datahub-secret-cf49cb4g2c`). The Deployment references this hashed name.
+A plain `datahub-secret` (created by the preflight step) also exists but
+may not be the one actually mounted by the pod.
+
+### Secrets lifecycle (manual fix)
+If sync fails with authentication error:
+
 ```bash
-# Check actual pod env
+# 1. Check what the pod actually sees
 ./scripts/caifubao system pod | xargs -I {} kubectl -n caifubao-dev exec {} -- env | grep MONGODB_SRC
 
-# Manual fix if password is wrong
-kubectl -n caifubao-dev patch secret datahub-secret \
+# 2. Find the hashed secret name the deployment references
+kubectl -n caifubao-dev get deploy caifubao-datahub -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MONGODB_SRC_PASS")].valueFrom.secretKeyRef.name}'
+
+# 3. Patch the hashed secret with correct credentials
+HASHED=$(kubectl -n caifubao-dev get deploy caifubao-datahub -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MONGODB_SRC_PASS")].valueFrom.secretKeyRef.name}')
+kubectl -n caifubao-dev patch secret "$HASHED" \
   --type=json -p='[{"op":"replace","path":"/data/MONGODB_SRC_PASS","value":"'$(echo -n "<correct_password>" | base64)'"}]'
 kubectl -n caifubao-dev rollout restart deploy caifubao-datahub
 ```
@@ -264,7 +288,3 @@ This means no upstream data exists for the requested date. Check:
 ./scripts/caifubao data status sh600519  # check a known stock
 ```
 If the latest dates are behind, run `data sync` first.
-
-### CronJob fails with "unrecognized arguments: --scheduled-hour"
-This is a known bug — the `data_sync_runner.py` does not accept scheduling
-metadata args. Use `caifubao data sync` instead of triggering the CronJob.

@@ -8,10 +8,10 @@
 CFB     := ./scripts/caifubao
 ENV_FILE ?= .env.local
 STOCK    ?= sz000977
-DATE     ?= $(shell date +%Y-%m-%d)
+DATE     ?= $(shell python3 -c 'import datetime;print(datetime.date.today().isoformat())')
 HORIZON  ?= 5
-FROM     ?= $(shell date -d '7 days ago' +%Y-%m-%d)
-TO       ?= $(shell date +%Y-%m-%d)
+FROM     ?= $(shell python3 -c 'import datetime;print((datetime.date.today()-datetime.timedelta(days=7)).isoformat())')
+TO       ?= $(shell python3 -c 'import datetime;print(datetime.date.today().isoformat())')
 
 help: ## Show this help
 	@echo "caifubao — Makefile targets"
@@ -53,11 +53,11 @@ score-one: ## Score a single stock (STOCK= DATE= HORIZON=)
 score-all: ## Score all stocks (DATE= HORIZON=)
 	$(CFB) score score-all $(DATE) $(HORIZON)
 
-score-verify: ## Verify pending predictions
-	$(CFB) score verify $(FROM) $(TO)
+score-verify: ## Verify pending predictions (FROM= TO= HORIZON=)
+	$(CFB) score verify $(FROM) $(TO) $(HORIZON)
 
-score-report: ## Generate calibration report (FROM= TO=)
-	$(CFB) score report $(FROM) $(TO)
+score-report: ## Generate calibration report (FROM= TO= HORIZON=)
+	$(CFB) score report $(FROM) $(TO) $(HORIZON)
 
 # ---- System ----
 system-health: ## Full environment health check

@@ -150,7 +150,7 @@ cmd_score_one() {
     esac
   done
   [[ -z "$stock" ]] && die "Usage: caifubao score score-one <STOCK> [--date YYYY-MM-DD] [--horizon 5] [--replace]"
-  date="${date:-$(date +%Y-%m-%d)}"
+  date="${date:-$(python3 -c 'import datetime;print(datetime.date.today().isoformat())')}"
   horizon="${horizon:-5}"
 
   info "Scoring $stock for $date (horizon=$horizon)..."
@@ -160,7 +160,7 @@ cmd_score_one() {
 }
 
 cmd_score_all() {
-  local date="${1:-$(date +%Y-%m-%d)}"
+  local date="${1:-$(python3 -c 'import datetime;print(datetime.date.today().isoformat())')}"
   local horizon="${2:-5}"
   info "Scoring ALL stocks for $date (horizon=$horizon)..."
   _pod_exec "$PYTHON_BIN" -m app.jobs.scoring_runner backfill \
@@ -168,21 +168,21 @@ cmd_score_all() {
 }
 
 cmd_score_verify() {
-  local from="${1:-}"; local to="${2:-}"
-  from="${from:-$(date -d '7 days ago' +%Y-%m-%d)}"
-  to="${to:-$(date +%Y-%m-%d)}"
-  info "Verifying predictions $from → $to..."
+  local from="${1:-}"; local to="${2:-}"; local horizon="${3:-5}"
+  from="${from:-$(python3 -c 'import datetime;print((datetime.date.today()-datetime.timedelta(days=7)).isoformat())')}"
+  to="${to:-$(python3 -c 'import datetime;print(datetime.date.today().isoformat())')}"
+  info "Verifying predictions $from → $to (horizon=$horizon)..."
   _pod_exec "$PYTHON_BIN" -m app.jobs.scoring_runner verify \
-    --from "$from" --to "$to"
+    --from "$from" --to "$to" --horizon "$horizon"
 }
 
 cmd_score_report() {
-  local from="${1:-}"; local to="${2:-}"
-  from="${from:-$(date -d '30 days ago' +%Y-%m-%d)}"
-  to="${to:-$(date +%Y-%m-%d)}"
-  info "Generating calibration report $from → $to..."
+  local from="${1:-}"; local to="${2:-}"; local horizon="${3:-5}"
+  from="${from:-$(python3 -c 'import datetime;print((datetime.date.today()-datetime.timedelta(days=30)).isoformat())')}"
+  to="${to:-$(python3 -c 'import datetime;print(datetime.date.today().isoformat())')}"
+  info "Generating calibration report $from → $to (horizon=$horizon)..."
   _pod_exec "$PYTHON_BIN" -m app.jobs.scoring_runner report \
-    --from "$from" --to "$to" --format json
+    --from "$from" --to "$to" --horizon "$horizon" --format json
 }
 
 # ---- System commands ----
@@ -330,9 +330,10 @@ Data:
 
 Score:
   score score-one <STOCK> [opts]      Score a single stock (--date --horizon --replace)
+                                      Note: --replace is always applied (idempotent)
   score score-all [DATE] [HORIZON]    Score all active stocks
-  score verify [FROM] [TO]            Verify pending predictions
-  score report [FROM] [TO]            Generate calibration report
+  score verify [FROM] [TO] [HORIZON]  Verify pending predictions
+  score report [FROM] [TO] [HORIZON]  Generate calibration report
 
 System:
   system health                       Full environment health check
