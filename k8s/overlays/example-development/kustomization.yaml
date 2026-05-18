@@ -32,10 +32,15 @@ secretGenerator:
 - name: backend-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
+# datahub-secret: MONGODB_SRC_PASS must be injected from GitHub Actions
+# secret (MONGODB_SRC_PASSWORD) during deploy. In caifubao-private, the
+# deploy workflow replaces the placeholder before kustomize build:
+#   sed -i "s/PLACEHOLDER_SRC_PASSWORD/${MONGODB_SRC_PASSWORD}/g" kustomization.yaml
 - name: datahub-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
-  - MONGODB_SRC_PASS=change-me-example
+  - MONGODB_SRC_USER=readonly_user
+  - MONGODB_SRC_PASS=PLACEHOLDER_SRC_PASSWORD
 - name: mongodb-secret
   literals:
   - MONGODB_ROOT_PASSWORD=change-me-example
