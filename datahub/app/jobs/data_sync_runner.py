@@ -9,6 +9,7 @@ Usage:
 Collection aliases (resolved against SYNCABLE_COLLECTIONS):
     quote    -> stock_daily_quote
     factor   -> stock_factor_daily
+    signal   -> stock_signal_daily
     market   -> finance_market
     industry -> stock_industry
 

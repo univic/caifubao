@@ -2,9 +2,14 @@
 """MongoDB-to-MongoDB data sync engine.
 
 Copies external/read-only data collections from a source (prod) MongoDB to
-the current (dev) MongoDB destination. Only syncs "source-of-truth" data:
-quotes, factors, industry classifications, and market info. Never syncs
-computed results (scoring predictions, signals, backtest results, etc.).
+the current (dev) MongoDB destination. Only syncs upstream data that the
+scoring pipeline depends on: quotes, factors, signals, industry
+classifications, and market info. Never syncs computed results that are
+environment-specific (scoring predictions, backtest results, etc.).
+
+In dev environments, syncing signal data avoids the chicken-and-egg problem
+where signal computation requires factors and scoring requires signals.
+In prod, signals are computed locally by the signal runner.
 
 Usage:
     python -m app.jobs.data_sync_runner run
@@ -21,10 +26,13 @@ from pymongo.database import Database as MongoDatabase
 
 logger = logging.getLogger(__name__)
 
-# Collections that are safe to sync (external data only, no computed results)
+# Collections that are safe to sync (upstream data for scoring pipeline).
+# signal data is included for dev environments to avoid re-running the full
+# quote→factor→signal pipeline locally; in prod, signals are computed locally.
 SYNCABLE_COLLECTIONS = {
     "stock_daily_quote": {"date_field": "date"},
     "stock_factor_daily": {"date_field": "date"},
+    "stock_signal_daily": {"date_field": "date"},
     "finance_market": {"date_field": None},  # small, always full sync
     "stock_industry": {"date_field": None},  # small snapshot, always full sync
 }
@@ -33,6 +41,7 @@ SYNCABLE_COLLECTIONS = {
 COLLECTION_ALIASES = {
     "quote": "stock_daily_quote",
     "factor": "stock_factor_daily",
+    "signal": "stock_signal_daily",
     "market": "finance_market",
     "industry": "stock_industry",
 }
@@ -73,7 +82,7 @@ def _get_dst_db(cfg) -> MongoDatabase:
     from mongoengine import get_connection
 
     conn = get_connection()
-    return conn[cfg.MONGODB_NAME]
+    return conn[cfg.MONGODB_DB]
 
 
 def _iter_docs(
