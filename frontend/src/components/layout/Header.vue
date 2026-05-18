@@ -29,12 +29,12 @@
 
           <el-menu-item index="/market">
             <el-icon><PieChart /></el-icon>
-            <span>标的看板</span>
+            <span>机会筛选</span>
           </el-menu-item>
 
           <el-menu-item index="/signals">
             <el-icon><Bell /></el-icon>
-            <span>信号</span>
+            <span>今日信号</span>
           </el-menu-item>
 
           <el-menu-item index="/indices">
@@ -49,13 +49,18 @@
 
           <el-menu-item index="/portfolio">
             <el-icon><Wallet /></el-icon>
-            <span>组合</span>
+            <span>自选与组合</span>
           </el-menu-item>
 
-          <el-menu-item index="/data-quality">
-            <el-icon><DataAnalysis /></el-icon>
-            <span>数据质量</span>
-          </el-menu-item>
+          <el-sub-menu index="market-data">
+            <template #title>
+              <el-icon><DataAnalysis /></el-icon>
+              <span>市场数据</span>
+            </template>
+            <el-menu-item index="/history">历史行情</el-menu-item>
+            <el-menu-item index="/indices">指数全览</el-menu-item>
+            <el-menu-item index="/data-quality">数据质量</el-menu-item>
+          </el-sub-menu>
 
           <el-menu-item index="/score-experiments">
             <el-icon><DataLine /></el-icon>
@@ -124,12 +129,12 @@
 
         <el-menu-item index="/market">
           <el-icon><PieChart /></el-icon>
-          <span>标的看板</span>
+          <span>机会筛选</span>
         </el-menu-item>
 
         <el-menu-item index="/signals">
           <el-icon><Bell /></el-icon>
-          <span>信号</span>
+          <span>今日信号</span>
         </el-menu-item>
 
         <el-menu-item index="/indices">
@@ -144,13 +149,18 @@
 
         <el-menu-item index="/portfolio">
           <el-icon><Wallet /></el-icon>
-          <span>组合</span>
+          <span>自选与组合</span>
         </el-menu-item>
 
-        <el-menu-item index="/data-quality">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>数据质量</span>
-        </el-menu-item>
+        <el-sub-menu index="market-data">
+          <template #title>
+            <el-icon><DataAnalysis /></el-icon>
+            <span>市场数据</span>
+          </template>
+          <el-menu-item index="/history">历史行情</el-menu-item>
+          <el-menu-item index="/indices">指数全览</el-menu-item>
+          <el-menu-item index="/data-quality">数据质量</el-menu-item>
+        </el-sub-menu>
 
         <el-menu-item index="/score-experiments">
           <el-icon><DataLine /></el-icon>
