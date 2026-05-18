@@ -32,10 +32,14 @@ secretGenerator:
 - name: backend-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
+# datahub-secret: private deployment overlays should inject MONGODB_SRC_PASS
+# from GitHub secret MONGODB_SRC_PASSWORD before kustomize build. The
+# caifubao-private deploy workflow generates a local .env.datahub-secret file.
 - name: datahub-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
-  - MONGODB_SRC_PASS=change-me-example
+  - MONGODB_SRC_USER=readonly_user
+  - MONGODB_SRC_PASS=PLACEHOLDER_SRC_PASSWORD
 - name: mongodb-secret
   literals:
   - MONGODB_ROOT_PASSWORD=change-me-example
