@@ -1,3 +1,8 @@
+> **⚠️ ARCHIVED — HISTORICAL REFERENCE ONLY**
+> This file describes an abandoned architecture (Django, Celery, AkQuant).
+> The current system uses Flask + datahub + Vue 3. Do NOT use as a current spec.
+> See  for the active specification.
+
 ## Context
 
 财富宝(caifubao)是一个基于 Django + MongoDB 的财经数据量化分析平台，后端提供股票数据、回测引擎、信号生成等服务，但缺少用户界面。

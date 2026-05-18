@@ -1,3 +1,8 @@
+> **⚠️ ARCHIVED — HISTORICAL REFERENCE ONLY**
+> This file describes an abandoned architecture (Django, Celery, AkQuant).
+> The current system uses Flask + datahub + Vue 3. Do NOT use as a current spec.
+> See  for the active specification.
+
 ## Why
 
 财富宝(caifubao)目前以后端服务为主，缺乏用户界面。投资者需要一个直观的工作台来总览市场行情、查询历史数据、运行回测策略、发现交易机会。建设前端是产品化的关键一步，让系统从"技术可行"走向"用户可用"。

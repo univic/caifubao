@@ -1,4 +1,4 @@
-# Caifubao Backend
+# Caifubao — 大A量化分析平台
 
 大A量化分析系统后端服务
 
@@ -190,7 +190,7 @@ make test-frontend
 
 ```bash
 cd backend
-/Users/wenfengzhong/.pyenv/versions/3.12.12/bin/python -m venv venv312
+python3 -m venv venv312
 ```
 
 #### 2. 安装依赖
@@ -513,7 +513,7 @@ git commit -m "feat: 添加新功能"
    ```
    解决：创建虚拟环境
    ```bash
-   /Users/wenfengzhong/.pyenv/versions/3.12.12/bin/python -m venv /path/to/venv312
+   python3 -m venv /path/to/venv312
    ```
 
 2. **MongoDB 连接失败**

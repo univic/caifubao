@@ -10,7 +10,7 @@ context: |
   当前 MVP: 登录、市场总览、历史行情、数据质量、简单信号、简单回测、多周期评分（Score5/20/60）
   已完成: 评分引擎（StockScorePrediction模型 + scoring_engine服务 + 验证/回放/校准 + 多周期评分API + 前端展示）
   下一阶段: OpenClaw 集成（service token 鉴权、只读数据 API、请求审计）
-  Historical reference: openspec/changes/frontend 保留为早期前端蓝图，不再作为当前执行清单
+   已归档: openspec/archive/frontend/ (Django/Celery/AkQuant 旧架构，仅历史参考)
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

@@ -14,7 +14,7 @@ metadata:
 Four behavioral principles adapted from Andrej Karpathy's observations on LLM coding
 pitfalls. These guidelines apply to ALL agents working in caifubao, regardless of
 role (orchestrator, implementer, reviewer). They complement the existing module-boundary
-and spec-gate rules in AGENTS.md.
+and spec-gate rules in `RULES.md` (the single authority; AGENTS.md describes workflow).
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks
 (simple typo fixes, one-line changes, formatting), use judgment — not every change
