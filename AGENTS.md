@@ -32,10 +32,20 @@ boundaries exactly.
 
 ## OpenClaw Development Workflow
 
-Use caifubao-dev as the primary OpenClaw development agent for this repo. It
-should act as a lightweight technical lead, not as a waterfall team.
+The orchestrator is the single final owner. Other agents may implement bounded
+slices or review, but they do not own merge decisions.
 
-For non-trivial work, keep these notes in working context:
+For non-trivial work, follow this sequence:
+
+1. Understand the requested outcome and affected modules.
+2. State assumptions explicitly. If something is ambiguous, ask before coding.
+3. Decide whether the Spec Gate is required before editing.
+4. Assign exactly scoped implementation work — keep write scopes disjoint.
+5. Review contracts and behavioral risk before finishing non-trivial changes.
+6. Run the smallest useful validation and loop until it passes.
+7. Report changed files, checks run, and remaining risk.
+
+Keep these notes in working context:
 
 ```text
 Outcome:
@@ -47,39 +57,34 @@ Validation Plan:
 Reviewer Requests:
 ```
 
-Default sequence:
+### Agent Roles
 
-1. Understand the requested outcome and affected modules.
-2. State assumptions explicitly. If something is ambiguous, ask before coding.
-3. Decide whether the Spec Gate is required before editing.
-4. Assign or perform only explicitly scoped implementation work.
-5. Keep write scopes disjoint when using subagents.
-6. Review contract and behavioral risk before finishing non-trivial changes.
-7. Run the smallest useful validation and loop until it passes.
-8. Report changed files, checks run, and remaining risk.
+Use these roles over the older generic Architect/Developer/QA/Scribe model:
 
-Use subagents sparingly. Prefer these roles over the older generic
-Architect/Developer/QA/Scribe model:
-
-- spec-guardian: read-only decision on whether OpenSpec must change.
-- backend-implementer: bounded backend/API/auth/model/test changes.
-- datahub-implementer: bounded data production, scoring, freshness, runner,
-  model, and test changes.
-- frontend-implementer: bounded Vue/API client/store/view/component changes.
-- k8s-implementer: bounded public deployment example and workflow changes.
-- contract-reviewer: read-only API, freshness, auth, OpenClaw compatibility,
-  and module-boundary review.
-- qa-reviewer: read-only safety, regression, test, and repository hygiene
-  review.
+| Role | Type | Scope |
+|:---|:---|:---|
+| `spec-guardian` | read-only | OpenSpec gate decision |
+| `backend-implementer` | write | Flask API, auth, models, utilities, tests |
+| `datahub-implementer` | write | data production, scoring, freshness, runners, tests |
+| `frontend-implementer` | write | Vue views, components, API client, Pinia stores |
+| `k8s-implementer` | write | public deployment examples, workflow changes |
+| `contract-reviewer` | read-only | API contracts, freshness, auth, OpenClaw compatibility |
+| `qa-reviewer` | read-only | safety, regression, test, repository hygiene |
 
 Do not activate every role by default. Use implementers only when their write
 scope is clear. Reviewers report findings; they do not own merge decisions.
 
-## Surgical Changes
+### Review Gates (Mandatory)
 
-Surgical change rules are defined in `RULES.md#surgical-discipline`. In
-summary: do not "improve" adjacent code, do not refactor unbroken things,
-match existing style, and clean up only your own orphans.
+Every non-trivial change must go through the appropriate reviewer(s) before
+being considered complete. Reviewers run AFTER implementation and validation
+pass. If a reviewer reports P1 issues, they must be resolved and re-reviewed.
+
+```text
+[ ] spec-guardian:   triggered / not triggered
+[ ] contract-reviewer: triggered / not triggered
+[ ] qa-reviewer:      triggered / not triggered
+```
 
 ## Spec Gate
 
@@ -89,49 +94,41 @@ data ownership, or public docs.
 
 ## Karpathy Code Discipline
 
-Four principles that apply to ALL agents (orchestrator, implementer, reviewer).
-These address common LLM coding pitfalls identified by Andrej Karpathy.
-Full details: [`.opencode/skills/karpathy-discipline/SKILL.md`](.opencode/skills/karpathy-discipline/SKILL.md).
+Four principles that apply to ALL agents. These address common LLM coding
+pitfalls identified by Andrej Karpathy. Rules are defined in
+`RULES.md#surgical-discipline` with full details in
+[`.opencode/skills/karpathy-discipline/SKILL.md`](.opencode/skills/karpathy-discipline/SKILL.md).
 
-Rules are summarized in `RULES.md#surgical-discipline`.
+In summary:
 
-### Think Before Coding
-
-- State assumptions explicitly before writing code.
-- If the request is ambiguous, present multiple interpretations and ask.
-- If a simpler approach exists, say so. Push back when warranted.
-- If you don't understand something, stop and name what's unclear.
-
-### Simplicity First
-
-- No features beyond what was asked. No speculative code.
-- No abstractions for single-use code (no class hierarchy for one function).
-- No "flexibility" or "configurability" that wasn't requested.
-- If 200 lines could be 50, rewrite it.
-
-### Surgical Changes
-
-(Detailed in the section above.)
-
-### Goal-Driven Execution
-
-- Define a verifiable success criterion before writing code.
-- Transform "fix the bug" into "write a failing test, then make it pass."
-- For multi-step tasks, state a plan with verification checkpoints.
-- Loop until verification passes. Don't stop at "looks right."
+- **Think Before Coding**: State assumptions. If something is ambiguous, ask.
+  If a simpler approach exists, say so.
+- **Simplicity First**: No features beyond what was asked. No abstractions for
+  single-use code. If 200 lines could be 50, rewrite it.
+- **Surgical Changes**: Do not "improve" adjacent code, do not refactor
+  unbroken things, match existing style, clean up only your own orphans.
+- **Goal-Driven Execution**: Define a verifiable success criterion. Transform
+  "fix the bug" into "write a failing test, then make it pass." Loop until
+  verification passes.
 
 ## Validation Expectations
 
 Defined in `RULES.md#validation`.
 
 **Goal-driven loop:** Do not stop at "looks right." Run the verification. If it
-fails, fix the issue and run it again. Report the final passing state with the
-command output or summary. For bugs, write a test that reproduces the bug first,
-confirm it fails, then implement the fix and confirm the test passes.
+fails, fix the issue and run it again. For bugs, write a test that reproduces
+the bug first, confirm it fails, then implement the fix and confirm the test
+passes.
 
 ## Public Repository Safety
 
-Defined in `RULES.md#safety`. Follow them strictly. Prefer small changes that
-improve the demo loop: data update, API response, frontend display, and local
-validation. Do not invent new architecture when existing local patterns are
-sufficient.
+Defined in `RULES.md#safety`. Follow them strictly. Do not commit credentials,
+tokens, kubeconfigs, database dumps, or local env files. Prefer small changes
+that improve the demo loop. Do not invent new architecture when existing local
+patterns are sufficient.
+
+## Operations
+
+For dev environment operations (data sync, scoring, health checks), use the
+unified CLI: `./scripts/caifubao`. See `docs/operations/agent-cli.md` for
+the full command reference.

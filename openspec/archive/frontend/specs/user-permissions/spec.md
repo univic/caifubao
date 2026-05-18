@@ -1,3 +1,8 @@
+> **⚠️ ARCHIVED — HISTORICAL REFERENCE ONLY**
+> This file describes an abandoned architecture (Django, Celery, AkQuant).
+> The current system uses Flask + datahub + Vue 3. Do NOT use as a current spec.
+> See `openspec/changes/mvp-quant-demo/` for the active specification.
+
 # User Permissions Specification
 
 ## ADDED Requirements

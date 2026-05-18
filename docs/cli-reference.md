@@ -5,6 +5,9 @@ environment variable (default: `mongodb://localhost:27017/caifubao`).
 
 Run from the repository root with the datahub virtual environment activated.
 
+> **For K3s dev cluster operations:** See [agent-cli.md](operations/agent-cli.md) for
+> the `./scripts/caifubao` wrapper that runs these commands inside the datahub pod.
+
 ## Backtest Runner
 
 `python -m app.jobs.backtest_runner <command> [options]`
