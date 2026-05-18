@@ -175,9 +175,26 @@ strategy thresholds without manual trial-and-error.
   threshold grid (e.g., entry=[50,60,70,80], exit=[30,40,50])
 - **THEN** the engine SHALL run backtests for each parameter combination
   on the specified date range
-- **AND** return results sorted by Sharpe ratio (primary) and excess
-  return (secondary)
-- **AND** include the full metrics for the best configuration.
+- **AND** return results sorted by a composite score incorporating excess
+  return, max drawdown, information ratio, trade count, and turnover penalty
+  (see Composite Strategy Ranking requirement in strategy-discovery spec)
+- **AND** include the full metrics for the best configuration
+- **AND** flag configurations with fewer than 5 trades or concentration
+  above 40% as potentially overfit.
+
+#### Scenario: Optimization respects train / validation / test split
+
+- **GIVEN** a parameter optimization request for date range [D1, D2]
+- **WHEN** the optimization is configured
+- **THEN** the date range SHALL be splittable into train (earliest 60%),
+  validation (next 20%), and test (latest 20%) periods
+- **AND** parameter selection SHALL use only train + validation data
+- **AND** the final reported performance SHALL be computed exclusively
+  from test-period data, not from the full range
+- **AND** the split dates SHALL be included in the output for auditability
+- **AND** if the date range is too short for a meaningful split (fewer
+  than 300 trading days), the system SHALL warn that the optimization
+  result is not out-of-sample validated.
 
 #### Scenario: Optimization respects look-ahead bias
 

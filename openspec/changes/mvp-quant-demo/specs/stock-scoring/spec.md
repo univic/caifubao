@@ -167,26 +167,47 @@ The market comprehensive API SHALL include multi-horizon score summaries.
 
 The scoring system SHALL support distribution calibration to prevent
 overly conservative or aggressive score ranges that produce too few
-actionable signals.
+actionable signals. Calibration SHALL use full-market statistics, not
+single-stock observations.
 
-#### Scenario: Raw scores are too tightly clustered
+#### Scenario: Full-market distribution is used for calibration
 
-- **GIVEN** raw scores for a horizon have median <= 25 and >40% AVOID recommendations
-  after backfill
-- **WHEN** the distribution is evaluated against backtest results
-- **THEN** the scoring config SHALL support adjusting component weights
-  and recommendation thresholds without code changes
-- **AND** a new model version SHALL be used when weights change so that
-  backtest comparisons remain reproducible.
+- **GIVEN** score predictions exist for all active A-share stocks over
+  a date range for a given horizon and model version
+- **WHEN** a calibration analysis is requested
+- **THEN** the system SHALL compute the full-market score distribution
+  (min, P5, P25, median, P75, P95, max) and recommendation distribution
+  (BUY/WATCH/NONE/AVOID counts) per evaluation date
+- **AND** generate a recommendation: if BUY rate is consistently < 3%
+  across the market, suggest lowering the buy threshold; if AVOID rate
+  is consistently > 50%, suggest adjusting component weights
+- **AND** calibration recommendations SHALL reference the full-market
+  data, not a single stock's outcome.
 
-#### Scenario: Recommendation thresholds are configurable per horizon
+#### Scenario: Thresholds support hybrid percentile + absolute scoring
 
-- **GIVEN** Score5 for a volatile stock rarely exceeds 50
-- **WHEN** the scoring config is loaded for horizon=5
-- **THEN** `buy_threshold` and `watch_threshold` SHALL be horizon-specific
-  and overridable via `ScoreExperiment` config
-- **AND** the default thresholds SHALL be documented in the scoring config
-  module.
+- **GIVEN** calibration analysis indicates the raw score distribution
+  is skewed
+- **WHEN** recommendation thresholds are configured
+- **THEN** the system SHALL support a hybrid mode where a stock is
+  recommended BUY only when both conditions are met: (a) raw score >=
+  a configurable absolute threshold, AND (b) the stock's percentile
+  rank within its date/horizon cohort >= a configurable percentile
+  threshold (e.g., >= 85th percentile)
+- **AND** the hybrid thresholds SHALL be configurable per horizon and
+  per model version.
+
+#### Scenario: Threshold change requires new model version and full-market replay
+
+- **GIVEN** a proposed change to buy_threshold or watch_threshold
+- **WHEN** the change is implemented
+- **THEN** the DEFAULT_MODEL_VERSION SHALL be incremented
+- **AND** the new model SHALL be validated by backfilling scores for
+  the full market (not a single stock) over a representative date range
+- **AND** the calibration report for the new model version SHALL be
+  compared against the previous model version's calibration report
+- **AND** the threshold change SHALL NOT be accepted solely on the basis
+  of single-stock backtest results.
 
 #### Scenario: Score distribution metrics are reported
 
@@ -194,8 +215,10 @@ actionable signals.
 - **WHEN** the report is assembled
 - **THEN** it SHALL include score distribution statistics (min, P25, median,
   P75, max, recommendation counts) per horizon
-- **AND** flag when BUY rate < 5% or AVOID rate > 40% as potentially
-  miscalibrated.
+- **AND** flag when BUY rate < 3% or AVOID rate > 50% as potentially
+  miscalibrated
+- **AND** report the suggested hybrid threshold values based on the
+  observed distribution.
 
 ### Requirement: Signal Persistence Decay
 

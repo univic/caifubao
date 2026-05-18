@@ -10,9 +10,11 @@ to identify which stocks a given strategy is most effective on.
 - **GIVEN** quote and factor data exists for all active A-share stocks
 - **WHEN** a user submits a market scan for `MA_CROSS` over a date range
 - **THEN** the engine SHALL run the strategy on each stock independently
-- **AND** return results sorted by Sharpe ratio or excess return vs benchmark
+- **AND** return results sorted by a composite score (see Composite Strategy
+  Ranking requirement), NOT by Sharpe alone
 - **AND** include for each stock: return, Sharpe, max drawdown, win rate,
-  trade count, and benchmark excess
+  trade count, benchmark excess, turnover rate, and the single-best-day
+  contribution to total return
 - **AND** support optional filtering by minimum trade count, minimum
   Sharpe, sector/industry, and market cap.
 
@@ -32,6 +34,130 @@ to identify which stocks a given strategy is most effective on.
   as an asynchronous `ComputeTask`
 - **AND** the user SHALL receive a task ID for polling the result.
 
+### Requirement: Composite Strategy Ranking
+
+Strategy results from screening, comparison, and optimization SHALL be ranked
+by a composite score that penalizes overfitting-prone configurations, not by
+Sharpe ratio alone.
+
+#### Scenario: Composite score is computed
+
+- **GIVEN** a backtest result with full metrics
+- **WHEN** the composite score is computed
+- **THEN** the score SHALL incorporate at minimum: net excess return (strategy
+  minus benchmark), maximum drawdown magnitude, information ratio, and a
+  penalty proportional to turnover rate
+- **AND** configurations with fewer than 5 trades SHALL receive a severe
+  penalty or be excluded from ranking
+- **AND** the component weights and formula SHALL be documented and
+  configurable.
+
+#### Scenario: Composite score penalizes concentration
+
+- **GIVEN** a strategy result where a single trade or a single 5-day window
+  accounts for more than 40% of total P&L
+- **WHEN** the composite score is computed
+- **THEN** the score SHALL receive a concentration penalty
+- **AND** the result SHALL be flagged with "concentrated_returns" in the
+  output.
+
+#### Scenario: Composite score penalizes extreme drawdowns
+
+- **GIVEN** a strategy with max drawdown exceeding 30%
+- **WHEN** the composite score is computed
+- **THEN** the drawdown penalty SHALL increase non-linearly above 20%
+- **AND** the result SHALL be flagged "high_drawdown" above 30%.
+
+### Requirement: Anti-overfitting Guardrails
+
+The system SHALL embed minimum anti-overfitting protections into all
+screening, comparison, and optimization workflows so that discovered
+strategies are not artifacts of data snooping.
+
+#### Scenario: Train / validation / test split is enforced for optimization
+
+- **GIVEN** a parameter optimization or market scan that will report
+  performance results
+- **WHEN** the optimization is configured
+- **THEN** the date range SHALL be splittable into train (earliest 60%),
+  validation (next 20%), and test (latest 20%) periods
+- **AND** parameter selection SHALL use only train + validation data
+- **AND** the final reported result SHALL use only test-period data
+- **AND** the split dates SHALL be included in the output for auditability.
+
+#### Scenario: Multiple-comparison risk is flagged
+
+- **GIVEN** a market scan evaluated 2000 stocks with one strategy
+- **WHEN** the top-20 results are displayed
+- **THEN** the output SHALL include the total number of candidates evaluated
+- **AND** compute and display the expected number of false positives under
+  a null hypothesis (Bonferroni-corrected or Benjamini-Hochberg estimate)
+- **AND** label results that do not survive the multiple-comparison
+  correction as "not_significant_after_multi_testing".
+
+#### Scenario: Walk-forward decay is detected
+
+- **GIVEN** a walk-forward validation result
+- **WHEN** the stability analysis runs
+- **THEN** the system SHALL compare the average Sharpe of the first half
+  of windows to the average Sharpe of the second half
+- **AND** flag the result as "performance_decay" if the second-half Sharpe
+  is more than 20% lower than the first-half Sharpe
+- **AND** require the decay flag to be visible in any exported or displayed
+  result.
+
+#### Scenario: Minimum sample requirements
+
+- **GIVEN** a backtest result
+- **WHEN** it is displayed in a comparison, scan, or optimization ranking
+- **THEN** results with fewer than 5 trades SHALL be marked "low_sample"
+  and excluded from top-ranking positions
+- **AND** results covering fewer than 120 trading days SHALL be marked
+  "insufficient_period".
+
+### Requirement: Trading Executability Constraints
+
+Market scans and strategy evaluations SHALL incorporate real-world trading
+constraints beyond the existing friction model to ensure discovered strategies
+are executable at scale.
+
+#### Scenario: Un-tradable stocks are filtered
+
+- **GIVEN** a market scan is executed
+- **WHEN** stocks are evaluated for inclusion
+- **THEN** the system SHALL by default exclude stocks with trade_status
+  indicating suspension, ST designation, or listing within the last 60
+  trading days
+- **AND** these filters SHALL be configurable (on/off) with clear labels
+  in the output.
+
+#### Scenario: Liquidity floor is enforced
+
+- **GIVEN** a strategy that would trade a stock
+- **WHEN** the stock's average daily turnover over the last 20 days is
+  below a configurable threshold (default 5M CNY)
+- **THEN** the stock SHALL be flagged "low_liquidity" in scan results
+- **AND** the user SHALL have the option to exclude low-liquidity stocks
+  from ranking.
+
+#### Scenario: Dynamic slippage model is available
+
+- **GIVEN** a stock with high volatility or low liquidity
+- **WHEN** slippage is computed for a trade
+- **THEN** the system SHALL support a dynamic slippage mode that scales
+  with volatility (e.g., 0.1% base + 0.5 * daily_volatility) in addition
+  to the fixed 0.1% default
+- **AND** the slippage mode SHALL be selectable per backtest or scan.
+
+#### Scenario: Position capacity is estimated
+
+- **GIVEN** a strategy would allocate X CNY to a stock
+- **WHEN** the capacity check runs
+- **THEN** the system SHALL estimate whether X exceeds 1% of the stock's
+  average daily turnover over 20 days
+- **AND** flag the stock as "capacity_limited" if the position would
+  consume more than 1% of daily volume.
+
 ### Requirement: Strategy Comparison on a Single Stock
 
 The system SHALL compare all eligible strategies on one stock simultaneously
@@ -45,8 +171,10 @@ so users can identify the best strategy for a given instrument.
   SCORE_THRESHOLD, SCORE_MOMENTUM, and MULTI_HORIZON_CONSENSUS when score
   data exists)
 - **AND** return a side-by-side comparison with return, Sharpe, max drawdown,
-  win rate, trade count, benchmark excess, and information ratio
-- **AND** highlight the best strategy by Sharpe ratio.
+  win rate, trade count, benchmark excess, information ratio, and composite
+  score
+- **AND** rank strategies by composite score, not by Sharpe alone
+- **AND** include concentration and decay flags per strategy.
 
 #### Scenario: Score-driven strategies are excluded when score data is absent
 
@@ -81,6 +209,15 @@ or driven by a single favorable episode.
   than 2 standard deviations from the mean
 - **AND** label the worst-performing windows with their date range for
   further investigation.
+
+#### Scenario: Walk-forward triggers performance decay alert
+
+- **GIVEN** a walk-forward result with at least 6 windows
+- **WHEN** the stability analysis runs
+- **THEN** the system SHALL compare average Sharpe of the first half of
+  windows to the second half
+- **AND** flag "performance_decay" if second-half Sharpe is >20% lower
+- **AND** the flag SHALL be prominent in the output and persisted.
 
 #### Scenario: Window size is validated
 
@@ -153,18 +290,22 @@ discovery.
 ### Requirement: Discovery Workflow Integration
 
 The discovery capabilities SHALL be accessible through both the API and
-the frontend research workspace.
+the frontend research workspace, with anti-overfitting checks visible at
+every step.
 
-#### Scenario: Researcher follows a discovery workflow
+#### Scenario: Researcher follows a discovery workflow with guardrails
 
 - **GIVEN** the researcher wants to find effective strategies
 - **WHEN** they follow the workflow: scan strategies on a stock -> identify
-  best strategy -> walk-forward validate -> examine regime breakdown -> drill
-  into component contribution
+  best strategy -> check anti-overfitting flags -> walk-forward validate ->
+  examine regime breakdown -> drill into component contribution
 - **THEN** each step SHALL produce results that can be bookmarked or saved
   as a named analysis
 - **AND** the frontend SHALL provide navigation between discovery steps
-  with the stock and strategy context preserved.
+  with the stock and strategy context preserved
+- **AND** anti-overfitting flags (concentration, decay, low sample,
+  multiple-comparison) SHALL be visible on every result card without
+  requiring a drill-down.
 
 #### Scenario: Discovery results are exportable
 
@@ -172,4 +313,5 @@ the frontend research workspace.
 - **WHEN** the user exports the result
 - **THEN** the system SHALL support CSV export
 - **AND** include all metrics columns plus metadata (date range, strategy,
-  model version, generated timestamp).
+  model version, generated timestamp)
+- **AND** include all anti-overfitting flags in exported data.
