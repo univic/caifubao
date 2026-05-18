@@ -83,7 +83,7 @@ not misleadingly optimistic.
 - **GIVEN** a trade signal is generated
 - **WHEN** the engine determines the execution price
 - **THEN** it SHALL apply a configurable slippage factor (default 0.1%) against the signal direction
-- **AND** buy orders SHALL execute at close × (1 + slippage), sell orders at close × (1 − slippage).
+- **AND** buy orders SHALL execute at close x (1 + slippage), sell orders at close x (1 - slippage).
 
 #### Scenario: Friction is reported transparently
 
@@ -107,7 +107,7 @@ The backtest engine SHALL respect A-share price-limit rules using the existing
 #### Scenario: Sell order fails on limit-down day
 
 - **GIVEN** a sell signal is generated for a stock
-- **WHEN** the stock's `trade_status` indicates a limit-down condition (price movement = −10%)
+- **WHEN** the stock's `trade_status` indicates a limit-down condition (price movement = -10%)
 - **THEN** the engine SHALL NOT execute the sell order
 - **AND** SHALL record a skipped-trade entry with reason "limit_down_blocked".
 
@@ -127,14 +127,14 @@ benchmark to distinguish skill (Alpha) from market exposure (Beta).
 - **GIVEN** a backtest runs over a date range
 - **WHEN** the result is computed
 - **THEN** the engine SHALL simulate a buy-and-hold strategy on the specified benchmark index over the same date range
-- **AND** the default benchmark SHALL be CSI 300 (沪深 300, code `sh000300`) unless overridden.
+- **AND** the default benchmark SHALL be CSI 300 (sh000300) unless overridden.
 
 #### Scenario: Alpha and Beta are reported
 
 - **GIVEN** a completed backtest with benchmark data
 - **WHEN** metrics are computed
 - **THEN** the result SHALL include benchmark total return and annualized return
-- **AND** strategy excess return (strategy return − benchmark return)
+- **AND** strategy excess return (strategy return - benchmark return)
 - **AND** information ratio (excess return / tracking error) when sufficient daily data exists.
 
 ### Requirement: Multi-stock Backtest
@@ -154,7 +154,7 @@ The backtest engine SHALL support simultaneous simulation across multiple stocks
 - **GIVEN** a multi-stock backtest with N stocks and initial capital C
 - **WHEN** the allocation rule is "equal_weight"
 - **THEN** each active position SHALL receive approximately C / N in capital
-- **AND** the engine SHALL round down to 100-share lots (整手).
+- **AND** the engine SHALL round down to 100-share lots.
 
 #### Scenario: Per-stock contribution is tracked
 
@@ -162,3 +162,136 @@ The backtest engine SHALL support simultaneous simulation across multiple stocks
 - **WHEN** the result is returned
 - **THEN** it SHALL include per-stock contribution metrics (realized PnL, max drawdown, win rate)
 - **AND** portfolio-level aggregate metrics.
+
+### Requirement: Backtest Parameter Optimization
+
+The backtest system SHALL support automated parameter sweep to find optimal
+strategy thresholds without manual trial-and-error.
+
+#### Scenario: User optimizes SCORE_THRESHOLD parameters
+
+- **GIVEN** score predictions and quote data exist for a stock
+- **WHEN** a user submits a `POST /api/backtest/optimize` request with a
+  threshold grid (e.g., entry=[50,60,70,80], exit=[30,40,50])
+- **THEN** the engine SHALL run backtests for each parameter combination
+  on the specified date range
+- **AND** return results sorted by Sharpe ratio (primary) and excess
+  return (secondary)
+- **AND** include the full metrics for the best configuration.
+
+#### Scenario: Optimization respects look-ahead bias
+
+- **GIVEN** a parameter optimization request for date range [D1, D2]
+- **WHEN** each backtest is executed
+- **THEN** the engine SHALL use the same look-ahead guard for score
+  consumption as single backtests
+- **AND** SHALL NOT optimize parameters on data outside the requested range.
+
+#### Scenario: Optimization supports strategy-appropriate grids
+
+- **GIVEN** an optimization request for `SCORE_THRESHOLD`
+- **WHEN** the parameter grid is validated
+- **THEN** valid parameters SHALL include entry_threshold, exit_threshold,
+  stop_loss_pct, and horizon
+- **AND** invalid or irrelevant parameters for the strategy SHALL be
+  rejected with a clear error.
+
+### Requirement: Multi-horizon Consensus Strategy
+
+The backtest engine SHALL support a strategy that requires consensus
+across multiple score horizons to reduce false signals from short-term
+noise.
+
+#### Scenario: User backtests multi-horizon consensus
+
+- **GIVEN** Score5, Score20, and Score60 predictions exist
+- **WHEN** a user submits a backtest for `MULTI_HORIZON_CONSENSUS` with
+  per-horizon thresholds
+- **THEN** the engine SHALL generate a BUY signal only when all configured
+  horizons meet or exceed their respective entry thresholds
+- **AND** generate a SELL signal when ANY horizon drops below its exit
+  threshold or stop-loss is hit.
+
+#### Scenario: Consensus strategy handles partial horizon data
+
+- **GIVEN** Score5 data exists but Score60 is missing for a trading day
+- **WHEN** the consensus strategy evaluates a signal
+- **THEN** it SHALL require only the configured horizons that have data
+  for that day
+- **AND** SHALL skip the day if fewer than 2 horizons have data
+- **AND** SHALL record skipped days in the backtest result.
+
+### Requirement: Strategy Comparison Endpoint
+
+The backtest system SHALL support comparing all eligible strategies on a
+single stock simultaneously.
+
+#### Scenario: User compares all strategies on one stock
+
+- **GIVEN** quote, factor, and score data exists for a stock
+- **WHEN** a `POST /api/backtest/compare` request is submitted
+- **THEN** the engine SHALL run all eligible strategies for that stock
+  over the date range
+- **AND** return a side-by-side comparison table with total return, Sharpe,
+  max drawdown, win rate, trade count, benchmark excess, and information
+  ratio for each strategy
+- **AND** highlight the best strategy by Sharpe ratio.
+
+#### Scenario: Score-driven strategies excluded when no score data
+
+- **GIVEN** no `StockScorePrediction` data exists for the stock
+- **WHEN** comparison is requested
+- **THEN** score-driven strategy rows SHALL show "unavailable" with
+  reason "no_score_data"
+- **AND** BUY_HOLD and MA_CROSS SHALL still be evaluated.
+
+### Requirement: Market-wide Strategy Scan
+
+The backtest system SHALL support scanning one strategy across the entire
+stock universe.
+
+#### Scenario: User scans MA_CROSS across the market
+
+- **GIVEN** quote and factor data exists for all active stocks
+- **WHEN** a `POST /api/backtest/scan` request is submitted with a
+  strategy and date range
+- **THEN** the engine SHALL run the strategy on each stock independently
+- **AND** return results sorted by Sharpe ratio, paginated (default 100 per page)
+- **AND** for each stock include return, Sharpe, max drawdown, win rate,
+  trade count, and benchmark excess.
+
+#### Scenario: Offload heavy scans to compute-worker
+
+- **GIVEN** a market scan would run for 3000+ stocks
+- **WHEN** the scan is submitted
+- **THEN** the system SHALL support async execution via `ComputeTask`
+  with task type `MARKET_SCAN`
+- **AND** the response SHALL include a task ID for polling.
+
+### Requirement: Walk-forward Validation Endpoint
+
+The backtest system SHALL support rolling-window validation to detect
+regime-dependent performance.
+
+#### Scenario: User runs walk-forward on a strategy
+
+- **GIVEN** sufficient historical data exists
+- **WHEN** a `POST /api/backtest/walk-forward` request is submitted
+  with window size W and step S
+- **THEN** the engine SHALL run the strategy on each rolling window
+  and return per-window metrics (return, Sharpe, max DD, win rate)
+- **AND** compute a stability score (standard deviation of window Sharpe ratios)
+- **AND** flag windows where Sharpe deviates >2 sigma from the mean.
+
+### Requirement: Market Regime Breakdown
+
+The backtest system SHALL decompose performance by market regime.
+
+#### Scenario: Backtest result is decomposed by regime
+
+- **GIVEN** a completed backtest with daily equity and CSI 300 data
+- **WHEN** regime breakdown is requested via `GET /api/backtest/<id>/regime`
+- **THEN** the system SHALL classify periods into bull, bear, and sideways
+  using index trend thresholds
+- **AND** return separate metrics (return, Sharpe, win rate) per regime
+- **AND** report the percentage of time spent in each regime.

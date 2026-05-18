@@ -162,3 +162,111 @@ The market comprehensive API SHALL include multi-horizon score summaries.
 - **WHEN** `/api/market/comprehensive` is requested with a selected horizon
 - **THEN** the response SHALL use the selected horizon for display ranking
 - **AND** include score summaries for all three horizons when available.
+
+### Requirement: Score Distribution Calibration
+
+The scoring system SHALL support distribution calibration to prevent
+overly conservative or aggressive score ranges that produce too few
+actionable signals.
+
+#### Scenario: Raw scores are too tightly clustered
+
+- **GIVEN** raw scores for a horizon have median <= 25 and >40% AVOID recommendations
+  after backfill
+- **WHEN** the distribution is evaluated against backtest results
+- **THEN** the scoring config SHALL support adjusting component weights
+  and recommendation thresholds without code changes
+- **AND** a new model version SHALL be used when weights change so that
+  backtest comparisons remain reproducible.
+
+#### Scenario: Recommendation thresholds are configurable per horizon
+
+- **GIVEN** Score5 for a volatile stock rarely exceeds 50
+- **WHEN** the scoring config is loaded for horizon=5
+- **THEN** `buy_threshold` and `watch_threshold` SHALL be horizon-specific
+  and overridable via `ScoreExperiment` config
+- **AND** the default thresholds SHALL be documented in the scoring config
+  module.
+
+#### Scenario: Score distribution metrics are reported
+
+- **GIVEN** a calibration report is generated for a date range
+- **WHEN** the report is assembled
+- **THEN** it SHALL include score distribution statistics (min, P25, median,
+  P75, max, recommendation counts) per horizon
+- **AND** flag when BUY rate < 5% or AVOID rate > 40% as potentially
+  miscalibrated.
+
+### Requirement: Signal Persistence Decay
+
+The scoring system SHALL prevent abrupt score drops when a bullish
+signal temporarily disappears by applying a persistence decay model.
+
+#### Scenario: Bullish signal disappears for one day
+
+- **GIVEN** a stock had `MA20_ABOVE_MA60` signal yesterday but not today
+- **WHEN** the signal_strength component is calculated
+- **THEN** the contribution SHALL decay gradually (e.g., exponential decay
+  factor 0.7 per day since last signal) instead of instantly dropping to 0
+- **AND** decay SHALL be bounded by a configurable `signal_decay_max_days`
+  (default 5) beyond which the contribution reaches zero
+- **AND** the decay behavior SHALL be configurable per horizon.
+
+#### Scenario: Signal reappears before decay completes
+
+- **GIVEN** signal persistence is active and a signal reappears within
+  the decay window
+- **WHEN** the signal_strength component is recalculated
+- **THEN** the contribution SHALL reset to the full weighted value based
+  on the current signal
+- **AND** SHALL NOT double-count decay and live signal contributions.
+
+### Requirement: Component Contribution and Factor Effectiveness
+
+The scoring system SHALL support attribution of trading outcomes to specific
+score components so that researchers can identify which factors drive
+profitability and which are noise.
+
+#### Scenario: Component contribution is computed for a backtest trade
+
+- **GIVEN** a backtest trade was entered on a score-driven signal
+- **WHEN** component contribution analysis is requested
+- **THEN** the system SHALL retrieve the explanation at entry and exit
+- **AND** compute the score contribution delta for each component between
+  entry and exit
+- **AND** rank components by absolute contribution change to identify
+  which factor drove the exit signal.
+
+#### Scenario: Component win rate is aggregated across trades
+
+- **GIVEN** a set of trades all entered when a specific component
+  (e.g., momentum) had the highest contribution among all components
+- **WHEN** win rate by component is computed
+- **THEN** the system SHALL compute separate win rate, average P&L, and
+  average hold duration for trades dominated by each component
+- **AND** flag components with win rate significantly below the average
+  across all components as candidates for weight reduction or removal.
+
+#### Scenario: Factor predictive power is quantified
+
+- **GIVEN** a scoring component or external factor has been computed
+  historically for all stocks
+- **WHEN** factor evaluation is requested
+- **THEN** the system SHALL compute the rank IC between factor values
+  and forward horizon returns on each evaluation date
+- **AND** return mean IC, ICIR, and the percentage of dates with positive IC
+- **AND** SHALL NOT use future data when computing forward returns
+  (look-ahead bias prevention).
+
+#### Scenario: New factor can be evaluated before integration
+
+- **GIVEN** a candidate factor (e.g., volume_ratio, RSI) has been
+  computed and stored
+- **WHEN** a researcher requests a factor evaluation before adding it
+  to the scoring model
+- **THEN** the system SHALL compute the factor's standalone IC, ICIR,
+  and correlation with existing scoring components
+- **AND** flag if the new factor is highly correlated (>0.7) with an
+  existing component
+- **AND** support a side-by-side comparison of the scoring model with
+  and without the candidate factor.
