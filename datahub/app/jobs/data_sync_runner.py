@@ -87,6 +87,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     p_run.add_argument("--trigger", default=SYNC_JOB_TRIGGER)
     p_run.add_argument("--source", default=SYNC_JOB_SOURCE)
+    p_run.add_argument("--scheduled-hour", default=None, help="Scheduled hour (CronJob metadata, ignored)")
+    p_run.add_argument("--scheduled-minute", default=None, help="Scheduled minute (CronJob metadata, ignored)")
 
     args = parser.parse_args(argv)
 
