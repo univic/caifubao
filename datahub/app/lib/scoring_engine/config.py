@@ -15,6 +15,8 @@ SCORING_CONFIG = {
         "momentum_lookback": 3,
         "breakout_lookback": 20,
         "risk_lookback": 10,
+        "signal_decay_factor": 0.7,
+        "signal_decay_max_days": 5,
         "weights": {
             "signal_strength": 25.0,
             "momentum": 25.0,
@@ -34,6 +36,8 @@ SCORING_CONFIG = {
         "momentum_lookback": 10,
         "breakout_lookback": 60,
         "risk_lookback": 20,
+        "signal_decay_factor": 0.7,
+        "signal_decay_max_days": 10,
         "weights": {
             "signal_strength": 15.0,
             "momentum": 15.0,
@@ -53,6 +57,8 @@ SCORING_CONFIG = {
         "momentum_lookback": 20,
         "breakout_lookback": 120,
         "risk_lookback": 60,
+        "signal_decay_factor": 0.5,
+        "signal_decay_max_days": 20,
         "weights": {
             "signal_strength": 5.0,
             "momentum": 10.0,
