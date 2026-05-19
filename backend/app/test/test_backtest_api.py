@@ -2,6 +2,7 @@
 """Tests for the MVP backtest API endpoints."""
 
 import datetime
+import sys
 from types import SimpleNamespace
 
 
@@ -804,3 +805,185 @@ class TestConsensusThresholdValidation:
         # Keys should be normalized to int
         assert captured.get("consensus_entry_thresholds") == {5: 45.0}
         assert captured.get("consensus_exit_thresholds") == {5: 20.0}
+
+
+# ============================================================================
+# Component contribution tests
+# ============================================================================
+class TestComponentContributionAPI:
+    """GET /api/backtest/<id>/component-contribution"""
+
+    def test_component_contribution_for_score_strategy(self, client, monkeypatch):
+        """Returns component breakdown for score-driven backtest."""
+        from app.model import backtest as bt_mod
+
+        row = SimpleNamespace(
+            id="bt_comp_1",
+            stock_code="sz000977",
+            strategy="SCORE_THRESHOLD",
+            horizon=5,
+            trades=[
+                {
+                    "date": "2025-06-15T00:00:00",
+                    "side": "BUY",
+                    "pnl": None,
+                },
+                {
+                    "date": "2025-07-10T00:00:00",
+                    "side": "SELL",
+                    "pnl": 5000.0,
+                },
+            ],
+        )
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([row]))
+
+        # Mock StockScorePrediction with component explanation
+        import datetime
+        from app.model import scoring as sc_mod
+
+        fake_pred = SimpleNamespace(
+            stock_code="sz000977",
+            date=datetime.datetime(2025, 6, 15),
+            horizon=5,
+            explanation={
+                "components": [
+                    {
+                        "id": "momentum",
+                        "label": "Momentum",
+                        "contribution": 20.0,
+                        "normalized_value": 0.8,
+                    },
+                    {
+                        "id": "trend_alignment",
+                        "label": "Trend",
+                        "contribution": 15.0,
+                        "normalized_value": 0.75,
+                    },
+                ]
+            },
+        )
+
+        def _mock_query(**kw):
+            return FakeQuery([fake_pred]).filter(**kw)
+
+        monkeypatch.setattr(
+            sc_mod.StockScorePrediction,
+            "objects",
+            SimpleNamespace(__call__=lambda **kw: FakeQuery([fake_pred])),
+        )
+
+        resp = client.get("/api/backtest/bt_comp_1/component-contribution")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+        data = body["data"]
+        assert data["total_trades"] >= 1
+        assert len(data["component_summary"]) >= 1
+        assert len(data["trades"]) >= 1
+
+    def test_component_contribution_rejects_non_score_strategy(
+        self, client, monkeypatch
+    ):
+        """Returns 400 for non-score-driven strategies."""
+        from app.model import backtest as bt_mod
+
+        row = SimpleNamespace(
+            id="bt_comp_2",
+            stock_code="sz000977",
+            strategy="MA_CROSS",
+            horizon=None,
+            trades=[{"date": "2025-06-15T00:00:00", "side": "BUY", "pnl": None}],
+        )
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([row]))
+        resp = client.get("/api/backtest/bt_comp_2/component-contribution")
+        assert resp.status_code == 400, resp.get_json()
+
+    def test_component_contribution_not_found(self, client, monkeypatch):
+        """Returns 404 for missing backtest."""
+        from app.model import backtest as bt_mod
+
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([]))
+        resp = client.get("/api/backtest/nonexistent/component-contribution")
+        assert resp.status_code == 404
+
+
+# ============================================================================
+# Factor evaluation tests
+# ============================================================================
+class TestFactorEvaluateAPI:
+    """POST /api/backtest/evaluate-factor"""
+
+    def test_evaluate_factor_requires_component_id(self, client):
+        """Rejects request without component_id."""
+        resp = client.post(
+            "/api/backtest/evaluate-factor",
+            json={
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+            },
+        )
+        assert resp.status_code != 200
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_evaluate_factor_accepted_with_valid_input(self, client, monkeypatch):
+        """Accepts valid request with component_id."""
+        from app.model import scoring as sc_mod
+
+        fake_pred = SimpleNamespace(
+            stock_code="sz000977",
+            date=type("dt", (), {"isoformat": lambda: "2025-06-15"})(),
+            explanation={
+                "components": [
+                    {
+                        "id": "momentum",
+                        "normalized_value": 0.8,
+                    }
+                ]
+            },
+        )
+
+        monkeypatch.setattr(
+            sc_mod.StockScorePrediction,
+            "objects",
+            SimpleNamespace(__call__=lambda **kw: FakeQuery([fake_pred])),
+        )
+
+        # Mock FactorEvaluationService to avoid sys.path/datahub import
+        import types
+
+        fake_eval_result = {
+            "observation_count": 1,
+            "ic": {},
+            "icir": {},
+            "quintiles": {},
+            "decay": {},
+            "correlation": {},
+        }
+
+        def _mock_evaluate(**kw):
+            return fake_eval_result
+
+        fake_module = types.ModuleType("factor_eval")
+        fake_module.FactorEvaluationService = lambda: SimpleNamespace(
+            evaluate=_mock_evaluate
+        )
+
+        monkeypatch.setitem(
+            sys.modules,
+            "app.lib.scoring_engine.factor_eval",
+            fake_module,
+        )
+
+        resp = client.post(
+            "/api/backtest/evaluate-factor",
+            json={
+                "component_id": "momentum",
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+            },
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        assert body["success"] is True
+        assert body["data"]["component_id"] == "momentum"

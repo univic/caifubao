@@ -721,15 +721,14 @@ def component_contribution(result_id: str):
         except (ValueError, TypeError):
             continue
 
-        # Find the score prediction for this trade date
-        pred = (
-            StockScorePrediction.objects(
-                stock_code=row.stock_code,
-                date=trade_date,
-            )
-            .order_by("-date")
-            .first()
+        # Find the score prediction for this trade date, filtered by horizon
+        pred_query = StockScorePrediction.objects(
+            stock_code=row.stock_code,
+            date=trade_date,
         )
+        if getattr(row, "horizon", None):
+            pred_query = pred_query.filter(horizon=row.horizon)
+        pred = pred_query.order_by("-date").first()
 
         if not pred or not pred.explanation:
             continue
@@ -858,6 +857,16 @@ def evaluate_factor():
 
     if not factor_values:
         return _fail(f"Component '{component_id}' not found in any predictions")
+
+    import os
+    import sys
+
+    _datahub_app = os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "..", "datahub", "app"
+    )
+    _datahub_app = os.path.abspath(_datahub_app)
+    if _datahub_app not in sys.path:
+        sys.path.insert(0, _datahub_app)
 
     from app.lib.scoring_engine.factor_eval import FactorEvaluationService
 
