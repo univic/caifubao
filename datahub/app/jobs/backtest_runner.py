@@ -194,6 +194,55 @@ def run_compare(args) -> dict:
     return results
 
 
+def run_optimize(args) -> dict:
+    """Run parameter optimization sweep."""
+    _init_db()
+    # Build a mock Flask request context for the optimize endpoint
+    from flask import Flask
+
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+
+    param_grid = {}
+    if args.entry_range:
+        entry_vals = [float(v) for v in args.entry_range.split(",")]
+        param_grid["entry_threshold"] = entry_vals
+    if args.exit_range:
+        exit_vals = [float(v) for v in args.exit_range.split(",")]
+        param_grid["exit_threshold"] = exit_vals
+    if args.stop_loss_range:
+        sl_vals = [float(v) for v in args.stop_loss_range.split(",")]
+        param_grid["stop_loss_pct"] = sl_vals
+
+    if not param_grid:
+        print("Error: no parameter ranges specified")
+        return {"error": "no parameter ranges"}
+
+    from backend.app.api.v1.backtest import optimize as opt_handler
+
+    with app.test_request_context(
+        method="POST",
+        json={
+            "stock_code": args.stock_code,
+            "strategy": args.strategy,
+            "start_date": args.start_date,
+            "end_date": args.end_date,
+            "horizon": int(args.horizon),
+            "param_grid": param_grid,
+            "initial_cash": float(args.initial_cash),
+            "use_split": not args.no_split,
+        },
+    ):
+        response = opt_handler()
+        data = (
+            response[0].get_json()
+            if isinstance(response, tuple)
+            else response.get_json()
+        )
+        print(json.dumps(data, default=str, ensure_ascii=False, indent=2))
+        return data or {}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Standalone backtest CLI runner")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -251,6 +300,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_compare.add_argument("--exit", type=float)
     p_compare.add_argument("--stop-loss", type=float)
 
+    # --- optimize ---
+    p_optimize = subparsers.add_parser("optimize", help="Parameter sweep optimization")
+    p_optimize.add_argument("stock_code", help="e.g. sz000977")
+    p_optimize.add_argument("strategy", choices=["SCORE_THRESHOLD", "SCORE_MOMENTUM"])
+    p_optimize.add_argument("start_date", help="YYYY-MM-DD")
+    p_optimize.add_argument("end_date", help="YYYY-MM-DD")
+    p_optimize.add_argument("--horizon", type=int, required=True)
+    p_optimize.add_argument("--entry-range", help="Comma-separated: 50,60,70")
+    p_optimize.add_argument("--exit-range", help="Comma-separated: 30,40,50")
+    p_optimize.add_argument("--stop-loss-range", help="Comma-separated: -3,-5,-8")
+    p_optimize.add_argument("--initial-cash", default=100000)
+    p_optimize.add_argument(
+        "--no-split", action="store_true", help="Don't use train/val/test split"
+    )
+
     return parser
 
 
@@ -264,6 +328,8 @@ def main():
         run_multi(args)
     elif args.command == "compare":
         run_compare(args)
+    elif args.command == "optimize":
+        run_optimize(args)
     else:
         parser.print_help()
 

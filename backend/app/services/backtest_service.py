@@ -31,6 +31,7 @@ VALID_STRATEGIES = (
     "SCORE_THRESHOLD",
     "SCORE_MOMENTUM",
     "TOP_N_ROTATION",
+    "MULTI_HORIZON_CONSENSUS",
 )
 
 # Friction model
@@ -229,6 +230,8 @@ def run_backtest(
     stop_loss_pct: float = -5.0,
     score_delta: float = 10.0,
     model_version: str | None = None,
+    consensus_entry_thresholds: Dict[int, float] | None = None,
+    consensus_exit_thresholds: Dict[int, float] | None = None,
 ) -> Dict[str, Any]:
     """Run a single-stock daily backtest and return the result dict.
 
@@ -237,8 +240,9 @@ def run_backtest(
     stock_code : str
         The stock symbol (e.g. ``"sh600519"``).
     strategy : str
-        ``"MA_CROSS"``, ``"BUY_HOLD"``, ``"SCORE_THRESHOLD"``, or
-        ``"SCORE_MOMENTUM"`` (case-insensitive).
+        ``"MA_CROSS"``, ``"BUY_HOLD"``, ``"SCORE_THRESHOLD"``,
+        ``"SCORE_MOMENTUM"``, or ``"MULTI_HORIZON_CONSENSUS"``
+        (case-insensitive).
     start_date : datetime
         Start of the backtest window (inclusive).  Must be a date (time part
         is ignored).
@@ -263,6 +267,12 @@ def run_backtest(
         Score change required to trigger a trade (SCORE_MOMENTUM only, default 10).
     model_version : str | None
         Scoring model version filter. When None, all versions are used.
+    consensus_entry_thresholds : dict | None
+        Per-horizon entry thresholds for MULTI_HORIZON_CONSENSUS.
+        Default: {5: 60, 20: 55, 60: 50}.
+    consensus_exit_thresholds : dict | None
+        Per-horizon exit thresholds for MULTI_HORIZON_CONSENSUS.
+        Default: {5: 30, 20: 35, 60: 40}.
 
     Returns
     -------
@@ -323,6 +333,7 @@ def run_backtest(
 
     # Load score predictions for score-driven strategies
     score_map: Dict[datetime, Any] = {}
+    score_maps: Dict[int, Dict[datetime, Any]] = {}  # for consensus: horizon->map
     if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
         if not horizon:
             return _error("horizon is required for score-driven strategies")
@@ -343,6 +354,28 @@ def run_backtest(
                 "No score data",
                 f"No StockScorePrediction for {stock_code} horizon={horizon} in range",
             )
+    elif strategy_norm == "MULTI_HORIZON_CONSENSUS":
+        for h in (5, 20, 60):
+            score_q = StockScorePrediction.objects(
+                stock_code=stock_code,
+                horizon=h,
+                date__gte=start_date,
+                date__lte=end_date,
+            )
+            if model_version:
+                score_q = score_q.filter(model_version=model_version)
+            h_map: Dict[datetime, Any] = {}
+            for s in score_q.order_by("date"):
+                d = s.date.replace(hour=0, minute=0, second=0, microsecond=0)
+                h_map[d] = s
+            if h_map:
+                score_maps[h] = h_map
+
+    # Set default consensus thresholds
+    if consensus_entry_thresholds is None:
+        consensus_entry_thresholds = {5: 60.0, 20: 55.0, 60: 50.0}
+    if consensus_exit_thresholds is None:
+        consensus_exit_thresholds = {5: 30.0, 20: 35.0, 60: 40.0}
 
     # Run the strategy simulation
     sim_result = _simulate(
@@ -352,11 +385,14 @@ def run_backtest(
         factor_map=factor_map,
         initial_cash=initial_cash,
         score_map=score_map,
+        score_maps=score_maps,
         horizon=horizon,
         entry_threshold=entry_threshold,
         exit_threshold=exit_threshold,
         stop_loss_pct=stop_loss_pct,
         score_delta=score_delta,
+        consensus_entry_thresholds=consensus_entry_thresholds,
+        consensus_exit_thresholds=consensus_exit_thresholds,
     )
 
     # Compute final metrics (with friction totals)
@@ -795,11 +831,14 @@ def _simulate(
     factor_map: Dict[datetime, StockFactorDaily],
     initial_cash: float,
     score_map: Dict[datetime, Any] | None = None,
+    score_maps: Dict[int, Dict[datetime, Any]] | None = None,
     horizon: int | None = None,
     entry_threshold: float = 70.0,
     exit_threshold: float = 50.0,
     stop_loss_pct: float = -5.0,
     score_delta: float = 10.0,
+    consensus_entry_thresholds: Dict[int, float] | None = None,
+    consensus_exit_thresholds: Dict[int, float] | None = None,
 ) -> Dict[str, Any]:
     """Walk through trading days and apply the selected strategy.
 
@@ -808,6 +847,7 @@ def _simulate(
     - Limit-up / limit-down constraints with retry on consecutive limit days
     - Skipped-trade tracking
     - Score-driven strategies (SCORE_THRESHOLD, SCORE_MOMENTUM)
+    - Multi-horizon consensus (MULTI_HORIZON_CONSENSUS)
     """
     cash = initial_cash
     shares = 0.0
@@ -1634,6 +1674,231 @@ def _simulate(
             )
 
             prev_score = curr_score
+
+    elif strategy == "MULTI_HORIZON_CONSENSUS":
+        sc_maps = score_maps or {}
+        stop_loss_price: Optional[float] = None
+        pending_signal: Optional[str] = None
+        skipped_consensus: List[Dict[str, Any]] = []
+
+        for i, day in enumerate(trading_days):
+            quote = quote_map[day]
+            price = _closing_price(quote)
+
+            # Gather scores across available horizons
+            horizon_scores: Dict[int, Optional[float]] = {}
+            for h in (5, 20, 60):
+                h_map = sc_maps.get(h, {})
+                sd = h_map.get(day)
+                horizon_scores[h] = sd.score if sd else None
+
+            available_horizons = [h for h, s in horizon_scores.items() if s is not None]
+
+            # Must have at least 2 horizons with data
+            if len(available_horizons) >= 2:
+                # Check if all available horizons meet entry thresholds
+                entry_ok = all(
+                    (horizon_scores[h] or 0)
+                    >= (consensus_entry_thresholds or {}).get(h, 60)
+                    for h in available_horizons
+                )
+                # Check if ANY horizon drops below exit threshold
+                exit_triggered = any(
+                    (horizon_scores[h] or 0)
+                    < (consensus_exit_thresholds or {}).get(h, 30)
+                    for h in available_horizons
+                )
+
+                # Check stop-loss for existing position
+                if (
+                    shares > 0
+                    and stop_loss_price is not None
+                    and price <= stop_loss_price
+                ):
+                    pending_signal = "SELL"
+
+                if shares == 0 and entry_ok:
+                    pending_signal = "BUY"
+                elif shares > 0 and exit_triggered:
+                    pending_signal = "SELL"
+            else:
+                # Fewer than 2 horizons — skip
+                skipped_consensus.append(
+                    {
+                        "date": day.isoformat(),
+                        "reason": f"insufficient horizons ({len(available_horizons)})",
+                        "available_horizons": available_horizons,
+                    }
+                )
+
+            # Execute pending signal (reuse pattern from SCORE_THRESHOLD)
+            action_taken = False
+            if pending_signal == "BUY" and shares == 0 and price > 0:
+                if _can_trade(quote, "BUY"):
+                    shares = _max_buy_shares(price, cash)
+                    if shares > 0:
+                        exec_price, comm, duty, slip = _apply_friction(
+                            price, shares, "BUY"
+                        )
+                        cost = shares * exec_price
+                        cash -= cost + comm
+                        total_commission += comm
+                        total_stamp_duty += duty
+                        total_slippage += slip
+                    else:
+                        exec_price = price
+                        cost = 0.0
+                        comm = 0.0
+                        slip = 0.0
+                    # Set stop-loss
+                    stop_loss_price = price * (1 + stop_loss_pct / 100)
+                    score_strs = ", ".join(
+                        f"Score{h}={horizon_scores.get(h, '?')}"
+                        for h in available_horizons
+                    )
+                    reason = f"CONSENSUS entry: {score_strs}"
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "BUY",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(cost, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": 0.0,
+                            "slippage": round(slip, 4),
+                            "reason": reason,
+                        }
+                    )
+                    pending_signal = None
+                    action_taken = True
+                else:
+                    reason = _blocked_reason(quote, "BUY")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_BUY",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+                    action_taken = True
+
+            if not action_taken and pending_signal == "SELL" and shares > 0:
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = exec_price * shares - comm - duty
+                    cash += proceeds
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    score_strs = ", ".join(
+                        f"Score{h}={horizon_scores.get(h, '?')}"
+                        for h in available_horizons
+                    )
+                    reason = (
+                        f"CONSENSUS exit: {score_strs}"
+                        if price > (stop_loss_price or price * 2)
+                        else f"Stop loss triggered at {round(price, 4)}"
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": reason,
+                        }
+                    )
+                    shares = 0.0
+                    stop_loss_price = None
+                    pending_signal = None
+                else:
+                    reason = _blocked_reason(quote, "SELL")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_SELL",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+
+            # Liquidation at end if still holding
+            if i == num_days - 1 and shares > 0:
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = shares * exec_price
+                    cash += proceeds - comm - duty
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": "Liquidation at end of backtest",
+                        }
+                    )
+                    shares = 0.0
+
+            equity = cash + shares * price
+            daily_values.append(
+                {
+                    "date": day.isoformat(),
+                    "close": round(price, 4),
+                    "cash": round(cash, 4),
+                    "shares": shares,
+                    "equity": round(equity, 4),
+                }
+            )
 
     return {
         "final_value": round(

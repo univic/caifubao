@@ -257,6 +257,12 @@ def run():
             return _fail(
                 "horizon (5, 20, or 60) is required for score-driven strategies"
             )
+    elif strategy_norm == "MULTI_HORIZON_CONSENSUS":
+        pass  # no single horizon required — uses all three
+
+    # Parse consensus thresholds if present
+    consensus_entry = payload.get("consensus_entry_thresholds")
+    consensus_exit = payload.get("consensus_exit_thresholds")
 
     start_date = _parse_date(start_date_raw)
     if start_date is None:
@@ -293,6 +299,12 @@ def run():
         stop_loss_pct=stop_loss_pct,
         score_delta=score_delta,
         model_version=model_version,
+        consensus_entry_thresholds=consensus_entry
+        if isinstance(consensus_entry, dict)
+        else None,
+        consensus_exit_thresholds=consensus_exit
+        if isinstance(consensus_exit, dict)
+        else None,
     )
 
     if "error" in result:
@@ -402,6 +414,181 @@ def run_multi():
         return _fail(f"{result['error']}: {result.get('detail', '')}")
 
     return jsonify(_ok(data=result)), 200
+
+
+@backtest_bp.route("/optimize", methods=["POST"])
+def optimize():
+    """Run parameter sweep and return the best configuration.
+
+    Request body (JSON):
+        stock_code    : str (required)   e.g. "sz000977"
+        strategy      : str (required)   "SCORE_THRESHOLD", "SCORE_MOMENTUM"
+        start_date    : str (required)   YYYY-MM-DD
+        end_date      : str (required)   YYYY-MM-DD
+        param_grid    : dict (required)  e.g. {"entry_threshold":[50,60,70]}
+        initial_cash  : float (optional) default 100000
+        horizon       : int (required)   5, 20, or 60
+        use_split     : bool (optional)  default True — use train/val/test split
+    """
+    payload = request.get_json(silent=True) or {}
+
+    stock_code = (payload.get("stock_code") or "").strip()
+    strategy = (payload.get("strategy") or "").strip()
+    start_date = _parse_date(payload.get("start_date"))
+    end_date = _parse_date(payload.get("end_date"))
+    horizon = _parse_int(payload.get("horizon"), None)
+    initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+    param_grid = payload.get("param_grid") or {}
+    use_split = payload.get("use_split", True)
+
+    if not stock_code or not strategy:
+        return _fail("stock_code and strategy are required")
+    if not start_date or not end_date:
+        return _fail("start_date and end_date are required")
+    if not isinstance(param_grid, dict) or not param_grid:
+        return _fail("param_grid must be a non-empty dict")
+    if horizon is None or horizon not in (5, 20, 60):
+        return _fail("horizon (5, 20, or 60) is required for optimization")
+
+    strategy_norm = strategy.strip().upper()
+    if strategy_norm not in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
+        return _fail("optimize supports SCORE_THRESHOLD and SCORE_MOMENTUM only")
+
+    # --- Train/val/test split ---
+    if use_split:
+        total_days = (end_date - start_date).days
+        if total_days < 300:
+            logger.warning(
+                "Date range has only ~%s calendar days — "
+                "train/val/test split may be unreliable",
+                total_days,
+            )
+        train_end_ratio = 0.6
+        val_end_ratio = 0.8
+        train_end = start_date + (end_date - start_date) * train_end_ratio
+        val_end = start_date + (end_date - start_date) * val_end_ratio
+    else:
+        train_end = end_date
+        val_end = end_date
+
+    # --- Generate parameter combinations ---
+    grid_keys = list(param_grid.keys())
+
+    def _combos(keys, base=None):
+        if base is None:
+            base = {}
+        if not keys:
+            return [base]
+        results = []
+        key = keys[0]
+        for val in param_grid[key]:
+            nb = {**base, key: val}
+            results.extend(_combos(keys[1:], nb))
+        return results
+
+    combos = _combos(grid_keys)
+    logger.info(
+        "Optimizing %s on %s with %d combinations",
+        strategy,
+        stock_code,
+        len(combos),
+    )
+
+    # --- Run backtests (train+val for selection, test for final) ---
+    results = []
+    best_result = None
+    best_sharpe = float("-inf")
+
+    for combo in combos:
+        entry = combo.get("entry_threshold", 70.0)
+        exit_t = combo.get("exit_threshold", 50.0)
+        stop = combo.get("stop_loss_pct", -5.0)
+        delta = combo.get("score_delta", 10.0)
+        combo_mv = combo.get("model_version") or None
+
+        # Train+validation run (for parameter selection)
+        r = run_backtest(
+            stock_code=stock_code,
+            strategy=strategy,
+            start_date=start_date,
+            end_date=train_end if use_split else val_end,
+            initial_cash=initial_cash,
+            save_result=False,
+            horizon=horizon,
+            entry_threshold=entry,
+            exit_threshold=exit_t,
+            stop_loss_pct=stop,
+            score_delta=delta,
+            model_version=combo_mv,
+        )
+        if "error" in r:
+            results.append({"params": combo, "error": r["error"]})
+            continue
+
+        result_entry = {
+            "params": combo,
+            "sharpe_ratio": r.get("sharpe_ratio", 0),
+            "total_return_pct": r.get("total_return_pct", 0),
+            "max_drawdown": r.get("max_drawdown", 0),
+            "total_trades": r.get("total_trades", 0),
+            "excess_return_pct": r.get("excess_return_pct", 0),
+        }
+
+        # Run on test period if using split
+        if use_split:
+            test_r = run_backtest(
+                stock_code=stock_code,
+                strategy=strategy,
+                start_date=val_end,
+                end_date=end_date,
+                initial_cash=initial_cash,
+                save_result=False,
+                horizon=horizon,
+                entry_threshold=entry,
+                exit_threshold=exit_t,
+                stop_loss_pct=stop,
+                score_delta=delta,
+                model_version=combo_mv,
+            )
+            if "error" not in test_r:
+                result_entry["test_sharpe_ratio"] = test_r.get("sharpe_ratio", 0)
+                result_entry["test_return_pct"] = test_r.get("total_return_pct", 0)
+
+        results.append(result_entry)
+
+        # Track best by train+val Sharpe
+        train_sharpe = result_entry.get("sharpe_ratio", 0) or 0
+        if train_sharpe > best_sharpe:
+            best_sharpe = train_sharpe
+            best_result = result_entry
+
+    # Sort results by Sharpe
+    results.sort(
+        key=lambda x: x.get("sharpe_ratio", 0) or 0,
+        reverse=True,
+    )
+
+    return jsonify(
+        _ok(
+            data={
+                "stock_code": stock_code,
+                "strategy": strategy,
+                "horizon": horizon,
+                "date_range": {
+                    "train_end": train_end.isoformat(),
+                    "val_end": val_end.isoformat(),
+                    "test_end": end_date.isoformat(),
+                }
+                if use_split
+                else {"full_range_end": end_date.isoformat()},
+                "split_used": use_split,
+                "total_combinations": len(combos),
+                "completed": len([r for r in results if "error" not in r]),
+                "best": best_result,
+                "results": results,
+            }
+        )
+    ), 200
 
 
 @backtest_bp.route("", methods=["GET"])
