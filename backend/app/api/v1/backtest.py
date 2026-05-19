@@ -447,6 +447,10 @@ def optimize():
         return _fail("start_date and end_date are required")
     if not isinstance(param_grid, dict) or not param_grid:
         return _fail("param_grid must be a non-empty dict")
+    # Validate each value is a non-empty iterable
+    for key, vals in param_grid.items():
+        if not isinstance(vals, (list, tuple)) or len(vals) == 0:
+            return _fail(f"param_grid['{key}'] must be a non-empty list")
     if horizon is None or horizon not in (5, 20, 60):
         return _fail("horizon (5, 20, or 60) is required for optimization")
 

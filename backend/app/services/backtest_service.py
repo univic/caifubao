@@ -853,6 +853,7 @@ def _simulate(
     shares = 0.0
     trades: List[Dict[str, Any]] = []
     skipped_trades: List[Dict[str, Any]] = []
+    skipped_consensus: List[Dict[str, Any]] = []
     daily_values: List[Dict[str, Any]] = []
 
     total_commission = 0.0
@@ -1679,7 +1680,6 @@ def _simulate(
         sc_maps = score_maps or {}
         stop_loss_price: Optional[float] = None
         pending_signal: Optional[str] = None
-        skipped_consensus: List[Dict[str, Any]] = []
 
         for i, day in enumerate(trading_days):
             quote = quote_map[day]
@@ -1709,20 +1709,12 @@ def _simulate(
                     for h in available_horizons
                 )
 
-                # Check stop-loss for existing position
-                if (
-                    shares > 0
-                    and stop_loss_price is not None
-                    and price <= stop_loss_price
-                ):
-                    pending_signal = "SELL"
-
                 if shares == 0 and entry_ok:
                     pending_signal = "BUY"
                 elif shares > 0 and exit_triggered:
                     pending_signal = "SELL"
             else:
-                # Fewer than 2 horizons — skip
+                # Fewer than 2 horizons — record but still check stop-loss
                 skipped_consensus.append(
                     {
                         "date": day.isoformat(),
@@ -1730,6 +1722,10 @@ def _simulate(
                         "available_horizons": available_horizons,
                     }
                 )
+
+            # Check stop-loss unconditionally (regardless of score availability)
+            if shares > 0 and stop_loss_price is not None and price <= stop_loss_price:
+                pending_signal = "SELL"
 
             # Execute pending signal (reuse pattern from SCORE_THRESHOLD)
             action_taken = False
@@ -1888,6 +1884,16 @@ def _simulate(
                         }
                     )
                     shares = 0.0
+                else:
+                    reason = _blocked_reason(quote, "SELL")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_SELL",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
 
             equity = cash + shares * price
             daily_values.append(
@@ -1910,6 +1916,7 @@ def _simulate(
         "total_stamp_duty": round(total_stamp_duty, 4),
         "total_slippage": round(total_slippage, 4),
         "skipped_trades": skipped_trades,
+        "skipped_consensus": skipped_consensus,  # MULTI_HORIZON_CONSENSUS only
     }
 
 
