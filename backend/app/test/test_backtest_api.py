@@ -863,6 +863,12 @@ class TestComponentContributionAPI:
             },
         )
 
+        monkeypatch.setattr(
+            sc_mod.StockScorePrediction,
+            "objects",
+            FakeQuery([fake_pred]),
+        )
+
         def _mock_query(**kw):
             return FakeQuery([fake_pred]).filter(**kw)
 
@@ -932,21 +938,14 @@ class TestFactorEvaluateAPI:
 
         fake_pred = SimpleNamespace(
             stock_code="sz000977",
-            date=type("dt", (), {"isoformat": lambda: "2025-06-15"})(),
-            explanation={
-                "components": [
-                    {
-                        "id": "momentum",
-                        "normalized_value": 0.8,
-                    }
-                ]
-            },
+            date=datetime.datetime(2025, 6, 15),
+            explanation={"components": [{"id": "momentum", "normalized_value": 0.8}]},
         )
 
         monkeypatch.setattr(
             sc_mod.StockScorePrediction,
             "objects",
-            SimpleNamespace(__call__=lambda **kw: FakeQuery([fake_pred])),
+            FakeQuery([fake_pred]),
         )
 
         # Mock FactorEvaluationService to avoid sys.path/datahub import
