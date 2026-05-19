@@ -4,6 +4,8 @@
 These tests use synthetic data / SimpleNamespace objects — no MongoDB required.
 """
 
+from datetime import datetime
+
 from types import SimpleNamespace
 
 
@@ -596,3 +598,231 @@ class TestErrorHelper:
         result = _error("Test error", "some detail")
         assert result["error"] == "Test error"
         assert result["detail"] == "some detail"
+
+
+# ============================================================================
+# MULTI_HORIZON_CONSENSUS strategy simulation tests
+# ============================================================================
+class TestMultiHorizonConsensus:
+    """_simulate with MULTI_HORIZON_CONSENSUS strategy."""
+
+    @staticmethod
+    def _make_quote(price: float, trade_status: int = 1) -> SimpleNamespace:
+        return SimpleNamespace(
+            trade_status=trade_status,
+            change_rate=1.0,
+            close=price,
+            close_hfq=price,
+        )
+
+    @staticmethod
+    def _make_day(date_str: str) -> datetime:
+        return datetime.strptime(date_str, "%Y-%m-%d")
+
+    def test_buy_when_all_horizons_meet_entry(self):
+        """BUY when Score5>=60, Score20>=55, Score60>=50."""
+        from app.services.backtest_service import _simulate
+
+        days = [self._make_day(d) for d in ("2025-01-02", "2025-01-03")]
+        quote_map = {d: self._make_quote(100.0) for d in days}
+        factor_map = {}
+
+        score_maps = {
+            5: {
+                days[0]: SimpleNamespace(score=65.0),
+                days[1]: SimpleNamespace(score=65.0),
+            },
+            20: {
+                days[0]: SimpleNamespace(score=60.0),
+                days[1]: SimpleNamespace(score=60.0),
+            },
+            60: {
+                days[0]: SimpleNamespace(score=55.0),
+                days[1]: SimpleNamespace(score=55.0),
+            },
+        }
+
+        result = _simulate(
+            strategy="MULTI_HORIZON_CONSENSUS",
+            trading_days=days,
+            quote_map=quote_map,
+            factor_map=factor_map,
+            initial_cash=100000.0,
+            score_maps=score_maps,
+        )
+
+        # Should have a BUY trade on day 0
+        trades = result["trades"]
+        assert len(trades) >= 1
+        assert trades[0]["side"] == "BUY"
+        assert trades[0]["shares"] > 0
+
+    def test_sell_when_one_horizon_below_exit(self):
+        """SELL when ANY horizon drops below its exit threshold."""
+        from app.services.backtest_service import _simulate
+
+        days = [self._make_day(d) for d in ("2025-01-02", "2025-01-03")]
+        quote_map = {d: self._make_quote(100.0) for d in days}
+        factor_map = {}
+
+        # Day 0: all above entry → BUY
+        # Day 1: Score5 drops to 25 (below exit=30) → SELL
+        score_maps = {
+            5: {
+                days[0]: SimpleNamespace(score=70.0),
+                days[1]: SimpleNamespace(score=25.0),
+            },
+            20: {
+                days[0]: SimpleNamespace(score=60.0),
+                days[1]: SimpleNamespace(score=60.0),
+            },
+            60: {
+                days[0]: SimpleNamespace(score=55.0),
+                days[1]: SimpleNamespace(score=55.0),
+            },
+        }
+
+        result = _simulate(
+            strategy="MULTI_HORIZON_CONSENSUS",
+            trading_days=days,
+            quote_map=quote_map,
+            factor_map=factor_map,
+            initial_cash=100000.0,
+            score_maps=score_maps,
+            consensus_entry_thresholds={5: 60, 20: 55, 60: 50},
+            consensus_exit_thresholds={5: 30, 20: 35, 60: 40},
+        )
+
+        trades = result["trades"]
+        assert len(trades) >= 2
+        assert trades[0]["side"] == "BUY"
+        assert trades[-1]["side"] == "SELL"
+
+    def test_stop_loss_fires_when_score_data_missing(self):
+        """Stop-loss fires even when fewer than 2 horizons have data."""
+        from app.services.backtest_service import _simulate
+
+        days = [self._make_day(d) for d in ("2025-01-02", "2025-01-03", "2025-01-06")]
+        quote_map = {
+            days[0]: self._make_quote(100.0),
+            days[1]: self._make_quote(100.0),
+            days[2]: self._make_quote(94.0),  # below stop-loss
+        }
+        factor_map = {}
+
+        # Day 0: all above → BUY at 100
+        # Day 1: only Score5 has data (<2 horizons → skip consensus, but stop-loss checks)
+        # Day 2: price=94, stop_loss=95 → SELL
+        score_maps = {
+            5: {
+                days[0]: SimpleNamespace(score=70.0),
+                days[1]: SimpleNamespace(score=70.0),
+                days[2]: SimpleNamespace(score=70.0),
+            },
+        }
+
+        result = _simulate(
+            strategy="MULTI_HORIZON_CONSENSUS",
+            trading_days=days,
+            quote_map=quote_map,
+            factor_map=factor_map,
+            initial_cash=100000.0,
+            score_maps=score_maps,
+            stop_loss_pct=-5.0,
+        )
+
+        trades = result["trades"]
+        assert any(t["side"] == "BUY" for t in trades)
+        assert any(t["side"] == "SELL" for t in trades), (
+            f"Stop-loss should have fired when price dropped to 94, "
+            f"got trades: {trades}"
+        )
+
+    def test_skipped_consensus_tracked(self):
+        """When <2 horizons have data, skipped_consensus is populated."""
+        from app.services.backtest_service import _simulate
+
+        days = [self._make_day(d) for d in ("2025-01-02", "2025-01-03")]
+        quote_map = {d: self._make_quote(100.0) for d in days}
+        factor_map = {}
+
+        # Only 1 horizon with data → should track skipped_consensus
+        score_maps = {
+            5: {
+                days[0]: SimpleNamespace(score=70.0),
+                days[1]: SimpleNamespace(score=70.0),
+            },
+        }
+
+        result = _simulate(
+            strategy="MULTI_HORIZON_CONSENSUS",
+            trading_days=days,
+            quote_map=quote_map,
+            factor_map=factor_map,
+            initial_cash=100000.0,
+            score_maps=score_maps,
+        )
+
+        skipped = result.get("skipped_consensus", [])
+        assert len(skipped) >= 1
+        assert "insufficient horizons" in skipped[0]["reason"]
+
+    def test_no_buy_when_one_horizon_below_entry(self):
+        """No BUY when Score60 is below entry even if Score5/20 are above."""
+        from app.services.backtest_service import _simulate
+
+        days = [self._make_day(d) for d in ("2025-01-02", "2025-01-03")]
+        quote_map = {d: self._make_quote(100.0) for d in days}
+        factor_map = {}
+
+        # Score60=40 is below entry=50 → no buy
+        score_maps = {
+            5: {days[0]: SimpleNamespace(score=70.0)},
+            20: {days[0]: SimpleNamespace(score=60.0)},
+            60: {days[0]: SimpleNamespace(score=40.0)},
+        }
+
+        result = _simulate(
+            strategy="MULTI_HORIZON_CONSENSUS",
+            trading_days=days,
+            quote_map=quote_map,
+            factor_map=factor_map,
+            initial_cash=100000.0,
+            score_maps=score_maps,
+        )
+
+        trades = result["trades"]
+        assert len(trades) == 0, (
+            f"No trades expected when Score60=40 < entry=50, got: {trades}"
+        )
+
+    def test_custom_thresholds_via_dict(self):
+        """Custom entry thresholds via consensus_entry_thresholds dict."""
+        from app.services.backtest_service import _simulate
+
+        days = [self._make_day(d) for d in ("2025-01-02", "2025-01-03")]
+        quote_map = {d: self._make_quote(100.0) for d in days}
+        factor_map = {}
+
+        # All scores=45 — under default thresholds, but above custom
+        score45 = SimpleNamespace(score=45.0)
+        score_maps = {
+            5: {days[0]: score45},
+            20: {days[0]: score45},
+            60: {days[0]: score45},
+        }
+
+        # Custom thresholds: entry at 40 → all scores meet it
+        result = _simulate(
+            strategy="MULTI_HORIZON_CONSENSUS",
+            trading_days=days,
+            quote_map=quote_map,
+            factor_map=factor_map,
+            initial_cash=100000.0,
+            score_maps=score_maps,
+            consensus_entry_thresholds={5: 40, 20: 40, 60: 40},
+        )
+
+        trades = result["trades"]
+        assert len(trades) >= 1
+        assert trades[0]["side"] == "BUY"
