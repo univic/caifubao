@@ -65,38 +65,88 @@ def build_penalty(
     }
 
 
-def signal_strength_component(signals: list, weight: float) -> dict:
+def signal_strength_component(
+    signals: list,
+    weight: float,
+    days_since_signal: int | None = None,
+    last_signal_strengths: list | None = None,
+    last_signal_names: list | None = None,
+    decay_factor: float = 0.7,
+) -> dict:
+    """Compute bullish signal strength with persistence decay.
+
+    When today has bullish signals, contribution is computed from live
+    signals.  When today has NO bullish signals but a recent signal
+    exists within the decay window, the contribution decays exponentially:
+    contribution = full_value * decay_factor ^ days_since_signal.
+    """
     bullish_signals = [
         signal
         for signal in signals
         if getattr(signal, "direction", None) == "BULLISH"
         and getattr(signal, "signal_name", None)
     ]
-    if not bullish_signals:
-        normalized = 0.0
-    else:
+
+    if bullish_signals:
+        # Live signals — normal computation
         strengths = [
             float(getattr(signal, "strength", 1.0) or 1.0) for signal in bullish_signals
         ]
         normalized = clamp(sum(strengths) / max(len(strengths), 1))
+        evidence = {
+            "signals": [
+                {
+                    "name": getattr(s, "signal_name", None),
+                    "strength": getattr(s, "strength", None),
+                    "reason": getattr(s, "reason", None),
+                }
+                for s in bullish_signals
+            ]
+        }
+        return build_component(
+            "signal_strength",
+            "signal",
+            "Bullish signal strength",
+            [getattr(s, "signal_name", None) for s in bullish_signals],
+            normalized,
+            weight,
+            evidence,
+        )
 
+    # No live signals — apply persistence decay if recent signal exists
+    if days_since_signal is not None and last_signal_strengths:
+        strengths = last_signal_strengths
+        full_normalized = clamp(sum(strengths) / max(len(strengths), 1))
+        decay = decay_factor**days_since_signal
+        normalized = round(full_normalized * decay, 4)
+        evidence = {
+            "signals": [
+                {"name": name, "strength": strength}
+                for name, strength in zip(
+                    last_signal_names or [], last_signal_strengths
+                )
+            ],
+            "decay": f"decayed_{days_since_signal}d_factor_{decay}",
+        }
+        return build_component(
+            "signal_strength",
+            "signal",
+            "Bullish signal strength (decayed)",
+            last_signal_names or [],
+            normalized,
+            weight,
+            evidence,
+        )
+
+    # No signals at all
     return build_component(
         "signal_strength",
         "signal",
         "Bullish signal strength",
-        [getattr(signal, "signal_name", None) for signal in bullish_signals],
-        normalized,
+        [],
+        0.0,
         weight,
-        {
-            "signals": [
-                {
-                    "name": getattr(signal, "signal_name", None),
-                    "strength": getattr(signal, "strength", None),
-                    "reason": getattr(signal, "reason", None),
-                }
-                for signal in bullish_signals
-            ]
-        },
+        {"signals": []},
     )
 
 

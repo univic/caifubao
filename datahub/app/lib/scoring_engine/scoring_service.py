@@ -307,12 +307,70 @@ class StockScoringService:
     def _build_components(
         self, quote, factors, signals, history_quotes, date, horizon, config, stock_code
     ):
+        import datetime as dt
+
         weights = config["weights"]
         momentum_quotes = history_quotes[: config["momentum_lookback"]]
         breakout_quotes = history_quotes[: config["breakout_lookback"]]
         risk_quotes = history_quotes[: config["risk_lookback"]]
+
+        # Signal persistence decay: when today has no bullish signal, look back
+        decay_max_days = config.get("signal_decay_max_days", 5)
+        decay_factor = config.get("signal_decay_factor", 0.7)
+        days_since_signal: int | None = None
+        last_signal_strengths: list[float] | None = None
+        last_signal_names: list[str] | None = None
+
+        has_bullish_today = any(
+            getattr(s, "direction", None) == "BULLISH"
+            and getattr(s, "signal_name", None)
+            for s in signals
+        )
+
+        if not has_bullish_today and decay_max_days > 0:
+            lookback_start = date - dt.timedelta(days=decay_max_days + 1)
+            recent = list(
+                self.signal_model.objects(
+                    stock_code=stock_code,
+                    date__gte=normalize_date(lookback_start),
+                    date__lt=normalize_date(date),
+                ).order_by("-date")
+            )
+            # Group by date, find most recent date with bullish signals
+            by_date: dict = {}
+            for sig in recent:
+                if getattr(sig, "direction", None) == "BULLISH" and getattr(
+                    sig, "signal_name", None
+                ):
+                    d = getattr(sig, "date", None)
+                    if d:
+                        d_norm = d.replace(hour=0, minute=0, second=0, microsecond=0)
+                        by_date.setdefault(d_norm, []).append(sig)
+
+            if by_date:
+                most_recent_date = max(by_date.keys())
+                days_since_signal = (normalize_date(date) - most_recent_date).days
+                if days_since_signal <= decay_max_days:
+                    last_signal_strengths = [
+                        float(getattr(s, "strength", 1.0) or 1.0)
+                        for s in by_date[most_recent_date]
+                    ]
+                    last_signal_names = [
+                        getattr(s, "signal_name", None)
+                        for s in by_date[most_recent_date]
+                    ]
+                else:
+                    days_since_signal = None
+
         components = [
-            signal_strength_component(signals, weights["signal_strength"]),
+            signal_strength_component(
+                signals,
+                weights["signal_strength"],
+                days_since_signal=days_since_signal,
+                last_signal_strengths=last_signal_strengths,
+                last_signal_names=last_signal_names,
+                decay_factor=decay_factor,
+            ),
             trend_alignment_component(
                 quote, factors, horizon, weights["trend_alignment"]
             ),
