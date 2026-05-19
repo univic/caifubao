@@ -492,6 +492,13 @@ def run_backtest(
                 "model_version": model_version,
             }
             if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM")
+            else {
+                "strategy": strategy_norm,
+                "consensus_entry_thresholds": consensus_entry_thresholds,
+                "consensus_exit_thresholds": consensus_exit_thresholds,
+                "stop_loss_pct": stop_loss_pct,
+            }
+            if strategy_norm == "MULTI_HORIZON_CONSENSUS"
             else None,
             horizon=horizon
             if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM")

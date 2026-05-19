@@ -260,9 +260,35 @@ def run():
     elif strategy_norm == "MULTI_HORIZON_CONSENSUS":
         pass  # no single horizon required — uses all three
 
-    # Parse consensus thresholds if present
-    consensus_entry = payload.get("consensus_entry_thresholds")
-    consensus_exit = payload.get("consensus_exit_thresholds")
+    # Normalize and validate consensus threshold dict keys (JSON keys are strings)
+    def _normalize_threshold_dict(raw: dict | None, label: str) -> dict | None:
+        if not isinstance(raw, dict):
+            return None
+        out = {}
+        for k, v in raw.items():
+            try:
+                key = int(k)
+            except (ValueError, TypeError):
+                return None  # caller handles error
+            if key not in {5, 20, 60}:
+                return None
+            out[key] = float(v)
+        return out
+
+    consensus_entry = _normalize_threshold_dict(
+        payload.get("consensus_entry_thresholds"), "consensus_entry_thresholds"
+    )
+    consensus_exit = _normalize_threshold_dict(
+        payload.get("consensus_exit_thresholds"), "consensus_exit_thresholds"
+    )
+    if consensus_entry is None and isinstance(
+        payload.get("consensus_entry_thresholds"), dict
+    ):
+        return _fail("consensus_entry_thresholds keys must be 5, 20, or 60")
+    if consensus_exit is None and isinstance(
+        payload.get("consensus_exit_thresholds"), dict
+    ):
+        return _fail("consensus_exit_thresholds keys must be 5, 20, or 60")
 
     start_date = _parse_date(start_date_raw)
     if start_date is None:
@@ -299,12 +325,8 @@ def run():
         stop_loss_pct=stop_loss_pct,
         score_delta=score_delta,
         model_version=model_version,
-        consensus_entry_thresholds=consensus_entry
-        if isinstance(consensus_entry, dict)
-        else None,
-        consensus_exit_thresholds=consensus_exit
-        if isinstance(consensus_exit, dict)
-        else None,
+        consensus_entry_thresholds=consensus_entry,
+        consensus_exit_thresholds=consensus_exit,
     )
 
     if "error" in result:
@@ -467,13 +489,23 @@ def optimize():
                 "train/val/test split may be unreliable",
                 total_days,
             )
-        train_end_ratio = 0.6
         val_end_ratio = 0.8
-        train_end = start_date + (end_date - start_date) * train_end_ratio
         val_end = start_date + (end_date - start_date) * val_end_ratio
     else:
-        train_end = end_date
         val_end = end_date
+
+    # --- Strategy-specific param_grid validation ---
+    VALID_PARAM_KEYS = {
+        "SCORE_THRESHOLD": {"entry_threshold", "exit_threshold", "stop_loss_pct"},
+        "SCORE_MOMENTUM": {"score_delta", "stop_loss_pct"},
+    }
+    allowed = VALID_PARAM_KEYS.get(strategy_norm, set())
+    for key in param_grid:
+        if key not in allowed:
+            return _fail(
+                f"Unknown param '{key}' for strategy '{strategy_norm}'."
+                f" Allowed: {sorted(allowed)}"
+            )
 
     # --- Generate parameter combinations ---
     grid_keys = list(param_grid.keys())
@@ -501,21 +533,21 @@ def optimize():
     # --- Run backtests (train+val for selection, test for final) ---
     results = []
     best_result = None
-    best_sharpe = float("-inf")
+    best_val_sharpe = float("-inf")
 
     for combo in combos:
         entry = combo.get("entry_threshold", 70.0)
         exit_t = combo.get("exit_threshold", 50.0)
         stop = combo.get("stop_loss_pct", -5.0)
         delta = combo.get("score_delta", 10.0)
-        combo_mv = combo.get("model_version") or None
 
-        # Train+validation run (for parameter selection)
+        # Train+validation run (60%+20% for parameter selection)
+        selection_end = val_end if use_split else end_date
         r = run_backtest(
             stock_code=stock_code,
             strategy=strategy,
             start_date=start_date,
-            end_date=train_end if use_split else val_end,
+            end_date=selection_end,
             initial_cash=initial_cash,
             save_result=False,
             horizon=horizon,
@@ -523,7 +555,6 @@ def optimize():
             exit_threshold=exit_t,
             stop_loss_pct=stop,
             score_delta=delta,
-            model_version=combo_mv,
         )
         if "error" in r:
             results.append({"params": combo, "error": r["error"]})
@@ -531,11 +562,11 @@ def optimize():
 
         result_entry = {
             "params": combo,
-            "sharpe_ratio": r.get("sharpe_ratio", 0),
-            "total_return_pct": r.get("total_return_pct", 0),
-            "max_drawdown": r.get("max_drawdown", 0),
-            "total_trades": r.get("total_trades", 0),
-            "excess_return_pct": r.get("excess_return_pct", 0),
+            "val_sharpe_ratio": r.get("sharpe_ratio", 0),
+            "val_return_pct": r.get("total_return_pct", 0),
+            "val_max_drawdown": r.get("max_drawdown", 0),
+            "val_trades": r.get("total_trades", 0),
+            "val_excess_return_pct": r.get("excess_return_pct", 0),
         }
 
         # Run on test period if using split
@@ -552,7 +583,6 @@ def optimize():
                 exit_threshold=exit_t,
                 stop_loss_pct=stop,
                 score_delta=delta,
-                model_version=combo_mv,
             )
             if "error" not in test_r:
                 result_entry["test_sharpe_ratio"] = test_r.get("sharpe_ratio", 0)
@@ -560,15 +590,15 @@ def optimize():
 
         results.append(result_entry)
 
-        # Track best by train+val Sharpe
-        train_sharpe = result_entry.get("sharpe_ratio", 0) or 0
-        if train_sharpe > best_sharpe:
-            best_sharpe = train_sharpe
+        # Select best by train+val Sharpe
+        val_sharpe = result_entry.get("val_sharpe_ratio", 0) or 0
+        if val_sharpe > best_val_sharpe:
+            best_val_sharpe = val_sharpe
             best_result = result_entry
 
-    # Sort results by Sharpe
+    # Sort results by val Sharpe
     results.sort(
-        key=lambda x: x.get("sharpe_ratio", 0) or 0,
+        key=lambda x: x.get("val_sharpe_ratio", 0) or 0,
         reverse=True,
     )
 
@@ -579,8 +609,8 @@ def optimize():
                 "strategy": strategy,
                 "horizon": horizon,
                 "date_range": {
-                    "train_end": train_end.isoformat(),
-                    "val_end": val_end.isoformat(),
+                    "selection_end": val_end.isoformat(),
+                    "test_start": val_end.isoformat(),
                     "test_end": end_date.isoformat(),
                 }
                 if use_split
