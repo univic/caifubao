@@ -89,13 +89,25 @@ def main(argv: list[str] | None = None) -> None:
     p_run.add_argument("--source", default=SYNC_JOB_SOURCE)
     p_run.add_argument(
         "--scheduled-hour",
+        type=int,
         default=None,
-        help="Scheduled hour (CronJob metadata, ignored)",
+        help="Scheduled hour in the configured timezone for cron/startup recording.",
     )
     p_run.add_argument(
         "--scheduled-minute",
+        type=int,
         default=None,
-        help="Scheduled minute (CronJob metadata, ignored)",
+        help="Scheduled minute in the configured timezone for cron/startup recording.",
+    )
+    p_run.add_argument(
+        "--scheduled-timezone",
+        default=job_run_helper.BEIJING_TZ_NAME,
+        help="Timezone used to derive scheduled_at when running as cron/startup.",
+    )
+    p_run.add_argument(
+        "--scheduled-at",
+        default=None,
+        help="Optional explicit scheduled_at timestamp in ISO format.",
     )
 
     args = parser.parse_args(argv)
@@ -108,7 +120,22 @@ def main(argv: list[str] | None = None) -> None:
 
 def _run_with_tracking(args) -> None:
     _init_db_connection()
-    scheduled_at = job_run_helper.utc_now_naive()
+    if args.scheduled_at:
+        scheduled_at = job_run_helper.normalize_datetime(
+            datetime.datetime.fromisoformat(args.scheduled_at)
+        )
+    elif (
+        args.trigger in {"cron", "startup"}
+        and args.scheduled_hour is not None
+        and args.scheduled_minute is not None
+    ):
+        scheduled_at = job_run_helper.compute_daily_schedule_at(
+            args.scheduled_hour,
+            args.scheduled_minute,
+            timezone_name=args.scheduled_timezone,
+        )
+    else:
+        scheduled_at = job_run_helper.utc_now_naive()
 
     context = job_run_helper.JobRunContext(
         job_name=args.job_name,
