@@ -3,7 +3,7 @@
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 from flask import Blueprint, jsonify, request
@@ -269,10 +269,18 @@ def run():
             try:
                 key = int(k)
             except (ValueError, TypeError):
-                return None  # caller handles error
+                return None
             if key not in {5, 20, 60}:
                 return None
-            out[key] = float(v)
+            try:
+                val = float(v)
+            except (ValueError, TypeError):
+                return None
+            import math
+
+            if math.isnan(val) or math.isinf(val):
+                return None
+            out[key] = val
         return out
 
     consensus_entry = _normalize_threshold_dict(
@@ -571,10 +579,11 @@ def optimize():
 
         # Run on test period if using split
         if use_split:
+            test_start = val_end + timedelta(days=1)
             test_r = run_backtest(
                 stock_code=stock_code,
                 strategy=strategy,
-                start_date=val_end,
+                start_date=test_start,
                 end_date=end_date,
                 initial_cash=initial_cash,
                 save_result=False,
@@ -610,7 +619,7 @@ def optimize():
                 "horizon": horizon,
                 "date_range": {
                     "selection_end": val_end.isoformat(),
-                    "test_start": val_end.isoformat(),
+                    "test_start": (val_end + timedelta(days=1)).isoformat(),
                     "test_end": end_date.isoformat(),
                 }
                 if use_split

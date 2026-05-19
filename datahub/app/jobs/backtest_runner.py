@@ -204,12 +204,18 @@ def run_optimize(args) -> dict:
     app.config["TESTING"] = True
 
     param_grid = {}
-    if args.entry_range:
-        entry_vals = [float(v) for v in args.entry_range.split(",")]
-        param_grid["entry_threshold"] = entry_vals
-    if args.exit_range:
-        exit_vals = [float(v) for v in args.exit_range.split(",")]
-        param_grid["exit_threshold"] = exit_vals
+    if args.strategy == "SCORE_THRESHOLD":
+        if args.entry_range:
+            entry_vals = [float(v) for v in args.entry_range.split(",")]
+            param_grid["entry_threshold"] = entry_vals
+        if args.exit_range:
+            exit_vals = [float(v) for v in args.exit_range.split(",")]
+            param_grid["exit_threshold"] = exit_vals
+    elif args.strategy == "SCORE_MOMENTUM":
+        if args.score_delta_range:
+            delta_vals = [float(v) for v in args.score_delta_range.split(",")]
+            param_grid["score_delta"] = delta_vals
+
     if args.stop_loss_range:
         sl_vals = [float(v) for v in args.stop_loss_range.split(",")]
         param_grid["stop_loss_pct"] = sl_vals
@@ -309,6 +315,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_optimize.add_argument("--horizon", type=int, required=True)
     p_optimize.add_argument("--entry-range", help="Comma-separated: 50,60,70")
     p_optimize.add_argument("--exit-range", help="Comma-separated: 30,40,50")
+    p_optimize.add_argument(
+        "--score-delta-range", help="Comma-separated: 5,10,15 (SCORE_MOMENTUM)"
+    )
     p_optimize.add_argument("--stop-loss-range", help="Comma-separated: -3,-5,-8")
     p_optimize.add_argument("--initial-cash", default=100000)
     p_optimize.add_argument(

@@ -1688,11 +1688,11 @@ def _simulate(
         stop_loss_price: Optional[float] = None
         pending_signal: Optional[str] = None
 
-        # Consistent defaults matching run_backtest documentation
+        # Merge user-supplied thresholds with documented defaults
         entry_defaults = {5: 60.0, 20: 55.0, 60: 50.0}
         exit_defaults = {5: 30.0, 20: 35.0, 60: 40.0}
-        _entry_t = consensus_entry_thresholds or entry_defaults
-        _exit_t = consensus_exit_thresholds or exit_defaults
+        _entry_t = {**entry_defaults, **(consensus_entry_thresholds or {})}
+        _exit_t = {**exit_defaults, **(consensus_exit_thresholds or {})}
 
         for i, day in enumerate(trading_days):
             quote = quote_map[day]
@@ -1711,8 +1711,11 @@ def _simulate(
             if len(available_horizons) >= 2:
                 # Check if all available horizons meet entry thresholds
                 entry_ok = all(
-                    (horizon_scores[h] or 0) >= _entry_t.get(h, 60)
-                    for h in available_horizons
+                    (horizon_scores[h] or 0) >= _entry_t[h] for h in available_horizons
+                )
+                # Check if ANY horizon drops below exit threshold
+                exit_triggered = any(
+                    (horizon_scores[h] or 0) < _exit_t[h] for h in available_horizons
                 )
                 # Check if ANY horizon drops below exit threshold
                 exit_triggered = any(
