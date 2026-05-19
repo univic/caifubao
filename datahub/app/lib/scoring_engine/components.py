@@ -90,8 +90,7 @@ def signal_strength_component(
     if bullish_signals:
         # Live signals — normal computation
         strengths = [
-            float(getattr(signal, "strength", 1.0) or 1.0)
-            for signal in bullish_signals
+            float(getattr(signal, "strength", 1.0) or 1.0) for signal in bullish_signals
         ]
         normalized = clamp(sum(strengths) / max(len(strengths), 1))
         evidence = {
@@ -118,7 +117,7 @@ def signal_strength_component(
     if days_since_signal is not None and last_signal_strengths:
         strengths = last_signal_strengths
         full_normalized = clamp(sum(strengths) / max(len(strengths), 1))
-        decay = decay_factor ** days_since_signal
+        decay = decay_factor**days_since_signal
         normalized = round(full_normalized * decay, 4)
         evidence = {
             "signals": [

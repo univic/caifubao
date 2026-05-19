@@ -15,7 +15,7 @@ SCORE_BUCKETS = (
     (80, 100),
 )
 
-MISCALIBRATION_BUY_RATE_MIN = 0.03   # flag when BUY percentage < 3%
+MISCALIBRATION_BUY_RATE_MIN = 0.03  # flag when BUY percentage < 3%
 MISCALIBRATION_AVOID_RATE_MAX = 0.50  # flag when AVOID percentage > 50%
 
 
@@ -58,9 +58,7 @@ class ScoreCalibrationReport:
         """Compute score distribution, recommendation counts, and miscalibration
         flags.
         """
-        scores = sorted(
-            [item.score for item in predictions if (item.score or 0) >= 0]
-        )
+        scores = sorted([item.score for item in predictions if (item.score or 0) >= 0])
         if not scores:
             return {
                 "count": 0,
@@ -75,9 +73,7 @@ class ScoreCalibrationReport:
 
         n = len(scores)
         mean_val = round(sum(scores) / n, 2)
-        std_val = round(
-            (sum((x - mean_val) ** 2 for x in scores) / n) ** 0.5, 2
-        )
+        std_val = round((sum((x - mean_val) ** 2 for x in scores) / n) ** 0.5, 2)
 
         def pct(p: int) -> float:
             idx = max(0, min(n - 1, int(round(n * p / 100.0))))
@@ -117,14 +113,10 @@ class ScoreCalibrationReport:
         avoid_pct = recommendations["AVOID"]["pct"]
         if buy_pct < MISCALIBRATION_BUY_RATE_MIN * 100:
             threshold_pct = MISCALIBRATION_BUY_RATE_MIN * 100
-            flags.append(
-                f"BUY_rate_too_low:{buy_pct:.1f}% < {threshold_pct:.1f}%"
-            )
+            flags.append(f"BUY_rate_too_low:{buy_pct:.1f}% < {threshold_pct:.1f}%")
         if avoid_pct > MISCALIBRATION_AVOID_RATE_MAX * 100:
             threshold_pct = MISCALIBRATION_AVOID_RATE_MAX * 100
-            flags.append(
-                f"AVOID_rate_too_high:{avoid_pct:.1f}% > {threshold_pct:.1f}%"
-            )
+            flags.append(f"AVOID_rate_too_high:{avoid_pct:.1f}% > {threshold_pct:.1f}%")
         if median_val := percentiles.get("p50", 0):
             if median_val <= 25:
                 flags.append(f"median_score_low:{median_val}")
