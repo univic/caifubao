@@ -1717,11 +1717,6 @@ def _simulate(
                 exit_triggered = any(
                     (horizon_scores[h] or 0) < _exit_t[h] for h in available_horizons
                 )
-                # Check if ANY horizon drops below exit threshold
-                exit_triggered = any(
-                    (horizon_scores[h] or 0) < _exit_t.get(h, 30)
-                    for h in available_horizons
-                )
 
                 if shares == 0 and entry_ok:
                     pending_signal = "BUY"

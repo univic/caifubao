@@ -672,12 +672,20 @@ def compare():
     if has_scores:
         for horizon in (5, 20, 60):
             strategies.append(
-                ("SCORE_THRESHOLD", {"horizon": horizon, "label": f"Score{horizon}"})
+                (
+                    "SCORE_THRESHOLD",
+                    {"horizon": horizon, "label": f"SCORE_THRESHOLD Score{horizon}"},
+                )
             )
             strategies.append(
-                ("SCORE_MOMENTUM", {"horizon": horizon, "label": f"Score{horizon}"})
+                (
+                    "SCORE_MOMENTUM",
+                    {"horizon": horizon, "label": f"SCORE_MOMENTUM Score{horizon}"},
+                )
             )
-        strategies.append(("MULTI_HORIZON_CONSENSUS", {"label": "Consensus"}))
+        strategies.append(
+            ("MULTI_HORIZON_CONSENSUS", {"label": "MULTI_HORIZON_CONSENSUS"})
+        )
 
     results = []
     best_sharpe = float("-inf")
@@ -922,8 +930,6 @@ def walk_forward():
         return _fail("start_date and end_date are required")
 
     # Load trading days
-    from app.services.backtest_service import _load_quotes_helper
-
     quotes = _load_quotes_helper(stock_code, start_date, end_date)
     if not quotes:
         return _fail("No quote data for this stock in range")
@@ -954,7 +960,7 @@ def walk_forward():
                 horizon=horizon,
             )
         except Exception:
-            start_idx += max(1, step_days // 10)
+            start_idx += max(1, step_days)
             continue
 
         if "error" not in r:
@@ -970,7 +976,7 @@ def walk_forward():
                 }
             )
 
-        start_idx += max(1, step_days // 10)
+        start_idx += max(1, step_days)
 
     # Stability analysis
     sharpes = [w["sharpe_ratio"] for w in windows if w["sharpe_ratio"] is not None]
@@ -1018,7 +1024,6 @@ def _load_quotes_helper(stock_code, start_date, end_date):
             StockDailyQuote.objects(code=stock_code)
             .filter(date__gte=start_date, date__lte=end_date)
             .order_by("date")
-            .only("date")
         )
     except Exception:
         return []
@@ -1135,6 +1140,16 @@ def regime_breakdown(result_id: str):
     if total_days == 0:
         return _fail("Unable to classify any trading days", status_code=404)
 
+    # Compute per-regime return (equity change over days in each regime)
+    def _regime_return(days_data: list) -> float:
+        if len(days_data) < 2:
+            return 0.0
+        first_eq = days_data[0].get("equity", 0) or 0
+        last_eq = days_data[-1].get("equity", 0) or 0
+        if first_eq == 0:
+            return 0.0
+        return round((last_eq - first_eq) / first_eq * 100, 2)
+
     return jsonify(
         _ok(
             data={
@@ -1144,14 +1159,17 @@ def regime_breakdown(result_id: str):
                 "bull": {
                     "days": len(regimes["bull"]),
                     "pct": round(len(regimes["bull"]) / total_days * 100, 1),
+                    "return_pct": _regime_return(regimes["bull"]),
                 },
                 "bear": {
                     "days": len(regimes["bear"]),
                     "pct": round(len(regimes["bear"]) / total_days * 100, 1),
+                    "return_pct": _regime_return(regimes["bear"]),
                 },
                 "sideways": {
                     "days": len(regimes["sideways"]),
                     "pct": round(len(regimes["sideways"]) / total_days * 100, 1),
+                    "return_pct": _regime_return(regimes["sideways"]),
                 },
                 "total_days": total_days,
             }
