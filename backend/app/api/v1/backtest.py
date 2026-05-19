@@ -757,14 +757,15 @@ def component_contribution(result_id: str):
         }
         contributions.append(entry)
 
-        # Aggregate P&L by dominant component
-        pnl = trade.get("pnl") or 0
-        component_pnl.setdefault(dom_id, 0.0)
-        component_pnl[dom_id] += pnl
-        component_trades.setdefault(dom_id, 0)
-        component_trades[dom_id] += 1
-        if pnl > 0:
-            win_count += 1
+        # Aggregate P&L by dominant component (SELL trades only)
+        if side == "SELL":
+            pnl = trade.get("pnl") or 0
+            component_pnl.setdefault(dom_id, 0.0)
+            component_pnl[dom_id] += pnl
+            component_trades.setdefault(dom_id, 0)
+            component_trades[dom_id] += 1
+            if pnl > 0:
+                win_count += 1
 
     # Build per-component summary
     component_summary = []
@@ -829,15 +830,20 @@ def evaluate_factor():
     if not isinstance(horizons, list) or not horizons:
         return _fail("horizons must be a non-empty list")
 
+    horizon_filter = payload.get("score_horizon")  # optional: 5, 20, or 60
+
     from app.model.scoring import StockScorePrediction
 
     # Build factor_values dict from StockScorePrediction explanations
-    predictions = list(
-        StockScorePrediction.objects(
-            date__gte=start_date,
-            date__lte=end_date,
-        ).only("stock_code", "date", "explanation")
+    pred_query = StockScorePrediction.objects(
+        date__gte=start_date,
+        date__lte=end_date,
     )
+    if horizon_filter is not None:
+        if horizon_filter not in (5, 20, 60):
+            return _fail("score_horizon must be 5, 20, or 60")
+        pred_query = pred_query.filter(horizon=horizon_filter)
+    predictions = list(pred_query.only("stock_code", "date", "explanation", "horizon"))
 
     if not predictions:
         return _fail("No score predictions found in date range")
@@ -848,27 +854,41 @@ def evaluate_factor():
         for comp in exp.get("components", []):
             if comp.get("id") == component_id:
                 sc = pred.stock_code
+                # Key by (stock, date, horizon) to avoid cross-horizon overwrite
+                h = getattr(pred, "horizon", "?")
                 ds = pred.date.isoformat()
+                key = f"{ds}_h{h}"
                 nv = comp.get("normalized_value", 0) or 0
                 if sc not in factor_values:
                     factor_values[sc] = {}
-                factor_values[sc][ds] = nv
+                factor_values[sc][key] = nv
                 break
 
     if not factor_values:
         return _fail(f"Component '{component_id}' not found in any predictions")
 
+    import importlib.util
     import os
-    import sys
 
-    _datahub_app = os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "..", "datahub", "app"
+    _factor_eval_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "..",
+        "..",
+        "datahub",
+        "app",
+        "lib",
+        "scoring_engine",
+        "factor_eval.py",
     )
-    _datahub_app = os.path.abspath(_datahub_app)
-    if _datahub_app not in sys.path:
-        sys.path.insert(0, _datahub_app)
-
-    from app.lib.scoring_engine.factor_eval import FactorEvaluationService
+    _factor_eval_path = os.path.abspath(_factor_eval_path)
+    spec = importlib.util.spec_from_file_location(
+        "caifubao_factor_eval", _factor_eval_path
+    )
+    _fe_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(_fe_mod)
+    FactorEvaluationService = _fe_mod.FactorEvaluationService
 
     service = FactorEvaluationService()
     result = service.evaluate(
