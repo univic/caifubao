@@ -55,7 +55,9 @@ class ScoreCalibrationReport:
         }
 
     def _distribution_stats(self, predictions):
-        """Compute score distribution, recommendation counts, and miscalibration flags."""
+        """Compute score distribution, recommendation counts, and miscalibration
+        flags.
+        """
         scores = sorted(
             [item.score for item in predictions if (item.score or 0) >= 0]
         )
@@ -96,11 +98,17 @@ class ScoreCalibrationReport:
         for item in predictions:
             rec_counter[item.recommendation or "NONE"] += 1
         total = sum(rec_counter.values())
+
+        def _rec_entry(key: str) -> dict:
+            cnt = rec_counter.get(key, 0)
+            pct_val = round(cnt / total * 100, 2) if total else 0
+            return {"count": cnt, "pct": pct_val}
+
         recommendations = {
-            "BUY": {"count": rec_counter.get("BUY", 0), "pct": round(rec_counter.get("BUY", 0) / total * 100, 2) if total else 0},
-            "WATCH": {"count": rec_counter.get("WATCH", 0), "pct": round(rec_counter.get("WATCH", 0) / total * 100, 2) if total else 0},
-            "NONE": {"count": rec_counter.get("NONE", 0), "pct": round(rec_counter.get("NONE", 0) / total * 100, 2) if total else 0},
-            "AVOID": {"count": rec_counter.get("AVOID", 0), "pct": round(rec_counter.get("AVOID", 0) / total * 100, 2) if total else 0},
+            "BUY": _rec_entry("BUY"),
+            "WATCH": _rec_entry("WATCH"),
+            "NONE": _rec_entry("NONE"),
+            "AVOID": _rec_entry("AVOID"),
         }
 
         # Miscalibration flags
@@ -108,12 +116,14 @@ class ScoreCalibrationReport:
         buy_pct = recommendations["BUY"]["pct"]
         avoid_pct = recommendations["AVOID"]["pct"]
         if buy_pct < MISCALIBRATION_BUY_RATE_MIN * 100:
+            threshold_pct = MISCALIBRATION_BUY_RATE_MIN * 100
             flags.append(
-                f"BUY_rate_too_low:{buy_pct:.1f}% < {MISCALIBRATION_BUY_RATE_MIN*100:.1f}%"
+                f"BUY_rate_too_low:{buy_pct:.1f}% < {threshold_pct:.1f}%"
             )
         if avoid_pct > MISCALIBRATION_AVOID_RATE_MAX * 100:
+            threshold_pct = MISCALIBRATION_AVOID_RATE_MAX * 100
             flags.append(
-                f"AVOID_rate_too_high:{avoid_pct:.1f}% > {MISCALIBRATION_AVOID_RATE_MAX*100:.1f}%"
+                f"AVOID_rate_too_high:{avoid_pct:.1f}% > {threshold_pct:.1f}%"
             )
         if median_val := percentiles.get("p50", 0):
             if median_val <= 25:
