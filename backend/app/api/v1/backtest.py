@@ -731,17 +731,44 @@ def compare():
             "excess_return_pct": r.get("excess_return_pct", 0),
             "information_ratio": r.get("information_ratio", 0),
         }
+
+        # Composite score and anti-overfitting flags
+        from app.services.backtest_service import (
+            anti_overfitting_flags,
+            composite_score,
+        )
+
+        comp = composite_score(
+            excess_return_pct=entry["excess_return_pct"],
+            max_drawdown=entry["max_drawdown"],
+            information_ratio=entry["information_ratio"],
+            total_trades=entry["total_trades"],
+            daily_values=r.get("daily_values"),
+            trades=r.get("trades"),
+        )
+        flags = anti_overfitting_flags(
+            total_trades=entry["total_trades"],
+            daily_values=r.get("daily_values"),
+            trades=r.get("trades"),
+        )
+
+        entry["composite_score"] = comp["score"]
+        entry["composite_breakdown"] = comp.get("breakdown", {})
+        entry["flags"] = list(set(comp.get("flags", []) + flags.get("flags", [])))
+        entry["rankable"] = comp["rankable"]
+
         results.append(entry)
 
-        sharpe = entry.get("sharpe_ratio", 0) or 0
-        if sharpe > best_sharpe:
-            best_sharpe = sharpe
+        if comp["rankable"] and comp["score"] > best_sharpe:
+            best_sharpe = comp["score"]
             best_strategy = entry["strategy"]
 
-    # Sort by Sharpe
+    # Sort by composite score (rankable first)
     results.sort(
-        key=lambda x: x.get("sharpe_ratio", 0) or 0,
-        reverse=True,
+        key=lambda x: (
+            -(x.get("rankable", False)),
+            -(x.get("composite_score", -999) or -999),
+        ),
     )
 
     return jsonify(
@@ -857,18 +884,28 @@ def scan():
         if min_trades > 0 and r.get("total_trades", 0) < min_trades:
             continue
 
-        results.append(
-            {
-                "stock_code": stock.code,
-                "stock_name": stock.name or stock.code,
-                "total_return_pct": r.get("total_return_pct", 0),
-                "sharpe_ratio": r.get("sharpe_ratio", 0),
-                "max_drawdown": r.get("max_drawdown", 0),
-                "total_trades": r.get("total_trades", 0),
-                "win_rate": r.get("win_rate", 0),
-                "excess_return_pct": r.get("excess_return_pct", 0),
-            }
+        entry = {
+            "stock_code": stock.code,
+            "stock_name": stock.name or stock.code,
+            "total_return_pct": r.get("total_return_pct", 0),
+            "sharpe_ratio": r.get("sharpe_ratio", 0),
+            "max_drawdown": r.get("max_drawdown", 0),
+            "total_trades": r.get("total_trades", 0),
+            "win_rate": r.get("win_rate", 0),
+            "excess_return_pct": r.get("excess_return_pct", 0),
+        }
+
+        # Anti-overfitting flags
+        from app.services.backtest_service import anti_overfitting_flags
+
+        aof = anti_overfitting_flags(
+            total_trades=entry["total_trades"],
+            daily_values=r.get("daily_values"),
+            trades=r.get("trades"),
         )
+        entry["flags"] = aof["flags"]
+
+        results.append(entry)
 
     # Sort by Sharpe
     results.sort(
