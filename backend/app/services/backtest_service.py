@@ -40,6 +40,116 @@ MIN_COMMISSION = 5.0  # minimum 5 CNY
 STAMP_DUTY_RATE = 0.001  # 0.1% sell side only
 SLIPPAGE = 0.001  # 0.1% default
 
+# Composite scoring weights
+COMPOSITE_EXCESS_WEIGHT = 1.0
+COMPOSITE_DRAWDOWN_PENALTY = 0.5
+COMPOSITE_IR_WEIGHT = 2.0
+COMPOSITE_TURNOVER_PENALTY = 0.1
+COMPOSITE_CONCENTRATION_PENALTY = 1.0
+MIN_TRADES_FOR_RANKING = 5
+MIN_TRADING_DAYS = 120
+CONCENTRATION_THRESHOLD = 0.40  # 40% of return from single episode = flag
+
+
+def composite_score(
+    excess_return_pct: float,
+    max_drawdown: float,
+    information_ratio: float,
+    total_trades: int,
+    daily_values: list | None = None,
+    trades: list | None = None,
+) -> dict:
+    """Compute composite strategy ranking score (higher = better).
+
+    Penalizes overfitting-prone configurations: <5 trades excluded,
+    >40% concentration flagged, extreme drawdowns penalized.
+    """
+    trades = trades or []
+    if total_trades < MIN_TRADES_FOR_RANKING:
+        return {"score": -999.0, "flags": ["low_sample"], "rankable": False}
+
+    # Base: excess return + information ratio contribution
+    base = (excess_return_pct or 0) * COMPOSITE_EXCESS_WEIGHT
+    ir_contrib = (information_ratio or 0) * COMPOSITE_IR_WEIGHT
+
+    # Drawdown penalty (non-linear above 20%)
+    dd = abs(max_drawdown or 0)
+    dd_penalty = (
+        dd * COMPOSITE_DRAWDOWN_PENALTY
+        if dd <= 20
+        else (
+            20 * COMPOSITE_DRAWDOWN_PENALTY + (dd - 20) * COMPOSITE_DRAWDOWN_PENALTY * 2
+        )
+    )
+
+    # Turnover penalty
+    trade_rate = total_trades / max(len(daily_values or []), 1)
+    turnover_penalty = trade_rate * COMPOSITE_TURNOVER_PENALTY
+
+    # Concentration penalty
+    concentration_penalty = 0.0
+    single_best_contrib = 0.0
+    flags = []
+    if trades:
+        total_pnl = sum((t.get("pnl") or 0) for t in trades if t.get("side") == "SELL")
+        if total_pnl > 0:
+            best_pnl = max(
+                (t.get("pnl") or 0) for t in trades if t.get("side") == "SELL"
+            )
+            single_best_contrib = best_pnl / total_pnl
+            if single_best_contrib > CONCENTRATION_THRESHOLD:
+                concentration_penalty = (
+                    single_best_contrib * COMPOSITE_CONCENTRATION_PENALTY
+                )
+                flags.append(f"concentrated_returns:{single_best_contrib:.0%}")
+
+    if dd > 30:
+        flags.append("high_drawdown")
+    if len(daily_values or []) < MIN_TRADING_DAYS:
+        flags.append("insufficient_period")
+
+    score = base + ir_contrib - dd_penalty - turnover_penalty - concentration_penalty
+
+    return {
+        "score": round(score, 4),
+        "rankable": True,
+        "flags": flags,
+        "breakdown": {
+            "excess_contrib": round(base, 4),
+            "ir_contrib": round(ir_contrib, 4),
+            "dd_penalty": round(dd_penalty, 4),
+            "turnover_penalty": round(turnover_penalty, 4),
+            "concentration_penalty": round(concentration_penalty, 4),
+            "single_best_pnl_pct": round(single_best_contrib, 4),
+        },
+    }
+
+
+def anti_overfitting_flags(
+    total_trades: int,
+    daily_values: list | None = None,
+    trades: list | None = None,
+) -> dict:
+    """Return anti-overfitting flags for a backtest result."""
+    flags = []
+    daily_values = daily_values or []
+    trades = trades or []
+
+    if total_trades < MIN_TRADES_FOR_RANKING:
+        flags.append("low_sample")
+    if len(daily_values) < MIN_TRADING_DAYS:
+        flags.append("insufficient_period")
+
+    # Concentration detection
+    total_pnl = sum((t.get("pnl") or 0) for t in trades if t.get("side") == "SELL")
+    if total_pnl > 0 and trades:
+        best_pnl = max((t.get("pnl") or 0) for t in trades if t.get("side") == "SELL")
+        if best_pnl / total_pnl > CONCENTRATION_THRESHOLD:
+            flags.append(f"concentrated_returns:{best_pnl / total_pnl:.0%}")
+
+    return {"flags": flags, "trades": total_trades, "days": len(daily_values)}
+
+
 # Multi-stock / portfolio constants
 LOT_SIZE = 100  # A-share minimum trading unit (整手)
 
@@ -1716,11 +1826,6 @@ def _simulate(
                 # Check if ANY horizon drops below exit threshold
                 exit_triggered = any(
                     (horizon_scores[h] or 0) < _exit_t[h] for h in available_horizons
-                )
-                # Check if ANY horizon drops below exit threshold
-                exit_triggered = any(
-                    (horizon_scores[h] or 0) < _exit_t.get(h, 30)
-                    for h in available_horizons
                 )
 
                 if shares == 0 and entry_ok:

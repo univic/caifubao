@@ -634,6 +634,438 @@ def optimize():
     ), 200
 
 
+@backtest_bp.route("/compare", methods=["POST"])
+def compare():
+    """Compare all eligible strategies on a single stock.
+
+    Request body (JSON):
+        stock_code    : str (required)
+        start_date    : str (required)   YYYY-MM-DD
+        end_date      : str (required)   YYYY-MM-DD
+        initial_cash  : float (optional) default 100000
+        benchmark_code: str (optional)   default "sh000300"
+    """
+    payload = request.get_json(silent=True) or {}
+
+    stock_code = (payload.get("stock_code") or "").strip()
+    start_date = _parse_date(payload.get("start_date"))
+    end_date = _parse_date(payload.get("end_date"))
+    initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+    benchmark_code = (payload.get("benchmark_code") or "sh000300").strip()
+
+    if not stock_code:
+        return _fail("stock_code is required")
+    if not start_date or not end_date:
+        return _fail("start_date and end_date are required")
+    if start_date > end_date:
+        return _fail("start_date must be <= end_date")
+
+    # Determine which strategies are eligible based on data availability
+    # Always eligible: BUY_HOLD, MA_CROSS
+    strategies = [
+        ("BUY_HOLD", {}),
+        ("MA_CROSS", {}),
+    ]
+
+    # Score-driven strategies require score data
+    has_scores = _check_score_data_available(stock_code, start_date, end_date)
+    if has_scores:
+        for horizon in (5, 20, 60):
+            strategies.append(
+                (
+                    "SCORE_THRESHOLD",
+                    {"horizon": horizon, "label": f"SCORE_THRESHOLD Score{horizon}"},
+                )
+            )
+            strategies.append(
+                (
+                    "SCORE_MOMENTUM",
+                    {"horizon": horizon, "label": f"SCORE_MOMENTUM Score{horizon}"},
+                )
+            )
+        strategies.append(
+            ("MULTI_HORIZON_CONSENSUS", {"label": "MULTI_HORIZON_CONSENSUS"})
+        )
+
+    results = []
+    best_sharpe = float("-inf")
+    best_strategy = None
+
+    for strategy, opts in strategies:
+        try:
+            r = run_backtest(
+                stock_code=stock_code,
+                strategy=strategy,
+                start_date=start_date,
+                end_date=end_date,
+                initial_cash=initial_cash,
+                save_result=False,
+                benchmark_code=benchmark_code,
+                horizon=opts.get("horizon"),
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "strategy": opts.get("label", strategy),
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        if "error" in r:
+            results.append(
+                {
+                    "strategy": opts.get("label", strategy),
+                    "error": r["error"],
+                }
+            )
+            continue
+
+        entry = {
+            "strategy": opts.get("label", strategy),
+            "total_return_pct": r.get("total_return_pct", 0),
+            "sharpe_ratio": r.get("sharpe_ratio", 0),
+            "max_drawdown": r.get("max_drawdown", 0),
+            "win_rate": r.get("win_rate", 0),
+            "total_trades": r.get("total_trades", 0),
+            "excess_return_pct": r.get("excess_return_pct", 0),
+            "information_ratio": r.get("information_ratio", 0),
+        }
+
+        # Composite score and anti-overfitting flags
+        from app.services.backtest_service import (
+            anti_overfitting_flags,
+            composite_score,
+        )
+
+        comp = composite_score(
+            excess_return_pct=entry["excess_return_pct"],
+            max_drawdown=entry["max_drawdown"],
+            information_ratio=entry["information_ratio"],
+            total_trades=entry["total_trades"],
+            daily_values=r.get("daily_values"),
+            trades=r.get("trades"),
+        )
+        flags = anti_overfitting_flags(
+            total_trades=entry["total_trades"],
+            daily_values=r.get("daily_values"),
+            trades=r.get("trades"),
+        )
+
+        entry["composite_score"] = comp["score"]
+        entry["composite_breakdown"] = comp.get("breakdown", {})
+        entry["flags"] = list(set(comp.get("flags", []) + flags.get("flags", [])))
+        entry["rankable"] = comp["rankable"]
+
+        results.append(entry)
+
+        if comp["rankable"] and comp["score"] > best_sharpe:
+            best_sharpe = comp["score"]
+            best_strategy = entry["strategy"]
+
+    # Sort by composite score (rankable first)
+    results.sort(
+        key=lambda x: (
+            -(x.get("rankable", False)),
+            -(x.get("composite_score", -999) or -999),
+        ),
+    )
+
+    return jsonify(
+        _ok(
+            data={
+                "stock_code": stock_code,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "comparison_count": len(results),
+                "best_strategy": best_strategy,
+                "results": results,
+            }
+        )
+    ), 200
+
+
+def _check_score_data_available(stock_code, start_date, end_date) -> bool:
+    """Check if any StockScorePrediction exists for the stock in range."""
+    try:
+        from app.model.scoring import StockScorePrediction
+
+        return (
+            StockScorePrediction.objects(
+                stock_code=stock_code,
+                date__gte=start_date,
+                date__lte=end_date,
+            ).count()
+            > 0
+        )
+    except Exception:
+        return False
+
+
+@backtest_bp.route("/scan", methods=["POST"])
+def scan():
+    """Scan one strategy across all active stocks.
+
+    Request body (JSON):
+        strategy      : str (required)
+        start_date    : str (required)
+        end_date      : str (required)
+        horizon       : int (required for score-driven strategies)
+        initial_cash  : float (optional) default 100000
+        page          : int (optional)   default 1
+        per_page      : int (optional)   default 20, max 200
+        min_trades    : int (optional)   filter: minimum trade count
+    """
+    payload = request.get_json(silent=True) or {}
+
+    strategy = (payload.get("strategy") or "").strip()
+    start_date = _parse_date(payload.get("start_date"))
+    end_date = _parse_date(payload.get("end_date"))
+    horizon = _parse_int(payload.get("horizon"), None)
+    initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+    page = _parse_int(payload.get("page"), 1, minimum=1)
+    per_page = _parse_int(payload.get("per_page"), 20, minimum=1, maximum=200)
+    min_trades = _parse_int(payload.get("min_trades"), 0, minimum=0)
+
+    if not strategy:
+        return _fail("strategy is required")
+    if not start_date or not end_date:
+        return _fail("start_date and end_date are required")
+
+    strategy_norm = strategy.strip().upper()
+    if strategy_norm not in (
+        "MA_CROSS",
+        "BUY_HOLD",
+        "SCORE_THRESHOLD",
+        "SCORE_MOMENTUM",
+        "MULTI_HORIZON_CONSENSUS",
+    ):
+        return _fail(f"Unsupported strategy: {strategy_norm}")
+    if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
+        if horizon is None or horizon not in (5, 20, 60):
+            return _fail("horizon is required for score-driven strategies")
+
+    # Get active stocks
+    try:
+        from app.model.stock import IndividualStock
+
+        stocks = list(
+            IndividualStock.objects(active_status=0).only("code", "name").limit(3000)
+        )
+    except Exception:
+        stocks = []
+
+    if not stocks:
+        return _fail("No active stocks found")
+
+    total = len(stocks)
+    results = []
+    errors = 0
+
+    for stock in stocks:
+        try:
+            r = run_backtest(
+                stock_code=stock.code,
+                strategy=strategy_norm,
+                start_date=start_date,
+                end_date=end_date,
+                initial_cash=initial_cash,
+                save_result=False,
+                horizon=horizon,
+            )
+        except Exception:
+            errors += 1
+            continue
+
+        if "error" in r:
+            errors += 1
+            continue
+
+        if min_trades > 0 and r.get("total_trades", 0) < min_trades:
+            continue
+
+        entry = {
+            "stock_code": stock.code,
+            "stock_name": stock.name or stock.code,
+            "total_return_pct": r.get("total_return_pct", 0),
+            "sharpe_ratio": r.get("sharpe_ratio", 0),
+            "max_drawdown": r.get("max_drawdown", 0),
+            "total_trades": r.get("total_trades", 0),
+            "win_rate": r.get("win_rate", 0),
+            "excess_return_pct": r.get("excess_return_pct", 0),
+        }
+
+        # Anti-overfitting flags
+        from app.services.backtest_service import anti_overfitting_flags
+
+        aof = anti_overfitting_flags(
+            total_trades=entry["total_trades"],
+            daily_values=r.get("daily_values"),
+            trades=r.get("trades"),
+        )
+        entry["flags"] = aof["flags"]
+
+        results.append(entry)
+
+    # Sort by Sharpe
+    results.sort(
+        key=lambda x: x.get("sharpe_ratio", 0) or 0,
+        reverse=True,
+    )
+
+    # Paginate
+    total_results = len(results)
+    start_idx = (page - 1) * per_page
+    paged = results[start_idx : start_idx + per_page]
+
+    return jsonify(
+        _ok(
+            data={
+                "strategy": strategy_norm,
+                "horizon": horizon,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "total_stocks": total,
+                "scanned": total - errors,
+                "errors": errors,
+                "results": total_results,
+                "page": page,
+                "per_page": per_page,
+                "items": paged,
+            }
+        )
+    ), 200
+
+
+@backtest_bp.route("/walk-forward", methods=["POST"])
+def walk_forward():
+    """Rolling-window validation of a strategy.
+
+    Request body (JSON):
+        stock_code    : str (required)
+        strategy      : str (required)
+        start_date    : str (required)
+        end_date      : str (required)
+        window_days   : int (optional)  default 120 trading days
+        step_days     : int (optional)  default 60 trading days
+        horizon       : int (optional)  for score-driven strategies
+    """
+    payload = request.get_json(silent=True) or {}
+
+    stock_code = (payload.get("stock_code") or "").strip()
+    strategy = (payload.get("strategy") or "").strip()
+    start_date = _parse_date(payload.get("start_date"))
+    end_date = _parse_date(payload.get("end_date"))
+    horizon = _parse_int(payload.get("horizon"), None)
+    window_days = _parse_int(payload.get("window_days"), 120, minimum=40)
+    step_days = _parse_int(payload.get("step_days"), 60, minimum=10)
+    initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+
+    if not stock_code or not strategy:
+        return _fail("stock_code and strategy are required")
+    if not start_date or not end_date:
+        return _fail("start_date and end_date are required")
+
+    # Load trading days
+    quotes = _load_quotes_helper(stock_code, start_date, end_date)
+    if not quotes:
+        return _fail("No quote data for this stock in range")
+
+    trading_days = sorted(
+        {q.date.replace(hour=0, minute=0, second=0, microsecond=0) for q in quotes}
+    )
+    if len(trading_days) < window_days:
+        return _fail(
+            f"Need at least {window_days} trading days, got {len(trading_days)}"
+        )
+
+    windows = []
+    start_idx = 0
+    while start_idx + window_days <= len(trading_days):
+        end_idx = start_idx + window_days - 1
+        w_start = trading_days[start_idx]
+        w_end = trading_days[end_idx]
+
+        try:
+            r = run_backtest(
+                stock_code=stock_code,
+                strategy=strategy.strip().upper(),
+                start_date=w_start,
+                end_date=w_end,
+                initial_cash=initial_cash,
+                save_result=False,
+                horizon=horizon,
+            )
+        except Exception:
+            start_idx += max(1, step_days)
+            continue
+
+        if "error" not in r:
+            windows.append(
+                {
+                    "start_date": w_start.isoformat(),
+                    "end_date": w_end.isoformat(),
+                    "total_return_pct": r.get("total_return_pct", 0),
+                    "sharpe_ratio": r.get("sharpe_ratio", 0),
+                    "max_drawdown": r.get("max_drawdown", 0),
+                    "total_trades": r.get("total_trades", 0),
+                    "win_rate": r.get("win_rate", 0),
+                }
+            )
+
+        start_idx += max(1, step_days)
+
+    # Stability analysis
+    sharpes = [w["sharpe_ratio"] for w in windows if w["sharpe_ratio"] is not None]
+    stability_score = None
+    performance_decay = False
+    if len(sharpes) >= 6:
+        mid = len(sharpes) // 2
+        first_half_sharpe = sum(sharpes[:mid]) / mid if sharpes[:mid] else 0
+        second_half_sharpe = (
+            sum(sharpes[mid:]) / (len(sharpes) - mid) if sharpes[mid:] else 0
+        )
+        if first_half_sharpe != 0:
+            decay = (first_half_sharpe - second_half_sharpe) / abs(first_half_sharpe)
+            performance_decay = decay > 0.2
+
+        import statistics
+
+        stability_score = (
+            round(statistics.stdev(sharpes), 4) if len(sharpes) >= 2 else None
+        )
+
+    return jsonify(
+        _ok(
+            data={
+                "stock_code": stock_code,
+                "strategy": strategy.strip().upper(),
+                "horizon": horizon,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "total_windows": len(windows),
+                "stability_score": stability_score,
+                "performance_decay": performance_decay,
+                "windows": windows,
+            }
+        )
+    ), 200
+
+
+def _load_quotes_helper(stock_code, start_date, end_date):
+    """Load quotes for a stock — used by walk-forward and regime."""
+    try:
+        from app.model.stock import StockDailyQuote
+
+        return list(
+            StockDailyQuote.objects(code=stock_code)
+            .filter(date__gte=start_date, date__lte=end_date)
+            .order_by("date")
+        )
+    except Exception:
+        return []
+
+
 @backtest_bp.route("", methods=["GET"])
 def list_backtests():
     """List completed backtests ordered by created_at desc.
@@ -659,6 +1091,138 @@ def list_backtests():
             }
         )
     ), 200
+
+
+@backtest_bp.route("/<result_id>/regime", methods=["GET"])
+def regime_breakdown(result_id: str):
+    """Market regime breakdown for a completed backtest.
+
+    Classifies each trading day into bull/bear/sideways using CSI 300 trend.
+    """
+    try:
+        row = BacktestResult.objects(id=result_id).first()
+    except Exception:
+        row = None
+    if row is None:
+        return _fail("Backtest result not found", status_code=404)
+    if not row.daily_values:
+        return _fail("No daily values in backtest result", status_code=404)
+
+    # Load CSI 300 data for regime classification
+    from datetime import timedelta
+
+    lookback = 60
+    csi_start = parse_date_raw(row.start_date) - timedelta(days=lookback + 30)
+    csi_end = parse_date_raw(row.end_date)
+
+    csi_quotes = _load_quotes_helper("sh000300", csi_start, csi_end)
+
+    csi_prices: dict = {}
+    for q in csi_quotes:
+        d = q.date.replace(hour=0, minute=0, second=0, microsecond=0)
+        csi_prices[d] = q.close_hfq or q.close or 0
+
+    # Classify each trading day
+    regimes = {"bull": [], "bear": [], "sideways": []}
+
+    for dv in row.daily_values:
+        day_str = dv.get("date", "")
+        try:
+            day = datetime.fromisoformat(day_str).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+        except (ValueError, TypeError):
+            continue
+
+        # Find CSI 300 price on or before this day
+        csi_price = None
+        for offset in range(7):  # look back up to 7 days
+            check = day - timedelta(days=offset)
+            if check in csi_prices:
+                csi_price = csi_prices[check]
+                break
+
+        if csi_price is None:
+            continue
+
+        # Look back 60 days for trend
+        lookback_day = day - timedelta(days=lookback)
+        lookback_price = None
+        for offset in range(7):
+            check = lookback_day + timedelta(days=offset)
+            if check in csi_prices:
+                lookback_price = csi_prices[check]
+                break
+
+        if lookback_price is None or lookback_price == 0:
+            continue
+
+        csi_change = (csi_price - lookback_price) / lookback_price
+        if csi_change > 0.10:
+            regime = "bull"
+        elif csi_change < -0.10:
+            regime = "bear"
+        else:
+            regime = "sideways"
+
+        regimes[regime].append(
+            {
+                "date": day_str,
+                "equity": dv.get("equity", 0),
+                "close": dv.get("close", 0),
+            }
+        )
+
+    total_days = sum(len(v) for v in regimes.values())
+    if total_days == 0:
+        return _fail("Unable to classify any trading days", status_code=404)
+
+    # Compute per-regime return (equity change over days in each regime)
+    def _regime_return(days_data: list) -> float:
+        if len(days_data) < 2:
+            return 0.0
+        first_eq = days_data[0].get("equity", 0) or 0
+        last_eq = days_data[-1].get("equity", 0) or 0
+        if first_eq == 0:
+            return 0.0
+        return round((last_eq - first_eq) / first_eq * 100, 2)
+
+    return jsonify(
+        _ok(
+            data={
+                "result_id": result_id,
+                "stock_code": row.stock_code,
+                "strategy": row.strategy,
+                "bull": {
+                    "days": len(regimes["bull"]),
+                    "pct": round(len(regimes["bull"]) / total_days * 100, 1),
+                    "return_pct": _regime_return(regimes["bull"]),
+                },
+                "bear": {
+                    "days": len(regimes["bear"]),
+                    "pct": round(len(regimes["bear"]) / total_days * 100, 1),
+                    "return_pct": _regime_return(regimes["bear"]),
+                },
+                "sideways": {
+                    "days": len(regimes["sideways"]),
+                    "pct": round(len(regimes["sideways"]) / total_days * 100, 1),
+                    "return_pct": _regime_return(regimes["sideways"]),
+                },
+                "total_days": total_days,
+            }
+        )
+    ), 200
+
+
+def parse_date_raw(val):
+    """Parse a stored date field (may be datetime or string)."""
+    from datetime import datetime as dt
+
+    if isinstance(val, dt):
+        return val
+    if isinstance(val, str):
+        return dt.fromisoformat(val.replace("Z", "+00:00"))
+    return val
 
 
 @backtest_bp.route("/<result_id>", methods=["GET"])
