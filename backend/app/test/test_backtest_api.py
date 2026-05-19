@@ -2,7 +2,6 @@
 """Tests for the MVP backtest API endpoints."""
 
 import datetime
-import sys
 from types import SimpleNamespace
 
 
