@@ -1239,6 +1239,246 @@ def get_backtest(result_id: str):
     return jsonify(_ok(data=_serialize_result(row, include_details=True))), 200
 
 
+@backtest_bp.route("/<result_id>/component-contribution", methods=["GET"])
+def component_contribution(result_id: str):
+    """Analyze which scoring components drove entry/exit for each trade.
+
+    For score-driven backtests (SCORE_THRESHOLD, SCORE_MOMENTUM,
+    MULTI_HORIZON_CONSENSUS), retrieves the StockScorePrediction
+    explanation at entry and exit to attribute P&L to specific
+    components.
+    """
+    try:
+        row = BacktestResult.objects(id=result_id).first()
+    except Exception:
+        row = None
+    if row is None:
+        return _fail("Backtest result not found", status_code=404)
+    if not row.trades:
+        return _fail("No trades in this backtest result", status_code=404)
+
+    # Only applicable for score-driven strategies
+    if row.strategy not in (
+        "SCORE_THRESHOLD",
+        "SCORE_MOMENTUM",
+        "MULTI_HORIZON_CONSENSUS",
+    ):
+        return _fail(
+            f"Component contribution not available for strategy '{row.strategy}'",
+            status_code=400,
+        )
+
+    from app.model.scoring import StockScorePrediction
+
+    contributions = []
+    win_count = 0
+    component_pnl: dict = {}
+    component_trades: dict = {}
+
+    for trade in row.trades:
+        side = trade.get("side", "")
+        trade_date_str = trade.get("date", "")
+        try:
+            trade_date = datetime.fromisoformat(trade_date_str).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+        except (ValueError, TypeError):
+            continue
+
+        # Find the score prediction for this trade date, filtered by horizon
+        pred_query = StockScorePrediction.objects(
+            stock_code=row.stock_code,
+            date=trade_date,
+        )
+        if getattr(row, "horizon", None):
+            pred_query = pred_query.filter(horizon=row.horizon)
+        pred = pred_query.order_by("-date").first()
+
+        if not pred or not pred.explanation:
+            continue
+
+        explanation = pred.explanation or {}
+        components = explanation.get("components", [])
+        if not components:
+            continue
+
+        # Find dominant component (highest absolute contribution)
+        dominant = max(components, key=lambda c: abs(c.get("contribution", 0)))
+        dom_id = dominant.get("id", "unknown")
+        dom_contrib = dominant.get("contribution", 0)
+        dom_label = dominant.get("label", dom_id)
+
+        entry = {
+            "trade_date": trade_date_str,
+            "side": side,
+            "pnl": trade.get("pnl"),
+            "dominant_component": dom_id,
+            "dominant_label": dom_label,
+            "dominant_contribution": dom_contrib,
+            "component_scores": {
+                c.get("id", "?"): c.get("contribution", 0) for c in components
+            },
+        }
+        contributions.append(entry)
+
+        # Aggregate P&L by dominant component (SELL trades only)
+        if side == "SELL":
+            pnl = trade.get("pnl") or 0
+            component_pnl.setdefault(dom_id, 0.0)
+            component_pnl[dom_id] += pnl
+            component_trades.setdefault(dom_id, 0)
+            component_trades[dom_id] += 1
+            if pnl > 0:
+                win_count += 1
+
+    # Build per-component summary
+    component_summary = []
+    for comp_id in sorted(component_trades.keys()):
+        cnt = component_trades[comp_id]
+        total_pnl = component_pnl.get(comp_id, 0)
+        component_summary.append(
+            {
+                "component_id": comp_id,
+                "trades": cnt,
+                "total_pnl": round(total_pnl, 2),
+                "avg_pnl": round(total_pnl / cnt, 2) if cnt else 0,
+                "win_rate": round(
+                    sum(
+                        1
+                        for c in contributions
+                        if c["dominant_component"] == comp_id and (c["pnl"] or 0) > 0
+                    )
+                    / cnt
+                    * 100,
+                    1,
+                )
+                if cnt
+                else 0,
+            }
+        )
+
+    return jsonify(
+        _ok(
+            data={
+                "result_id": result_id,
+                "stock_code": row.stock_code,
+                "strategy": row.strategy,
+                "total_trades": len(contributions),
+                "component_summary": component_summary,
+                "trades": contributions,
+            }
+        )
+    ), 200
+
+
+@backtest_bp.route("/evaluate-factor", methods=["POST"])
+def evaluate_factor():
+    """Evaluate predictive power of a scoring component or external factor.
+
+    Request body:
+        component_id : str (required)  e.g. "momentum", "signal_strength"
+        start_date   : str (required)
+        end_date     : str (required)
+        horizons     : list[int] (optional) default [5,20,60]
+    """
+    payload = request.get_json(silent=True) or {}
+    component_id = (payload.get("component_id") or "").strip()
+    start_date = _parse_date(payload.get("start_date"))
+    end_date = _parse_date(payload.get("end_date"))
+    horizons = payload.get("horizons") or [5, 20, 60]
+
+    if not component_id:
+        return _fail("component_id is required")
+    if not start_date or not end_date:
+        return _fail("start_date and end_date are required")
+    if not isinstance(horizons, list) or not horizons:
+        return _fail("horizons must be a non-empty list")
+
+    horizon_filter = payload.get("score_horizon")  # optional: 5, 20, or 60
+
+    from app.model.scoring import StockScorePrediction
+
+    # Build factor_values dict from StockScorePrediction explanations
+    pred_query = StockScorePrediction.objects(
+        date__gte=start_date,
+        date__lte=end_date,
+    )
+    if horizon_filter is not None:
+        if horizon_filter not in (5, 20, 60):
+            return _fail("score_horizon must be 5, 20, or 60")
+        pred_query = pred_query.filter(horizon=horizon_filter)
+    predictions = list(pred_query.only("stock_code", "date", "explanation", "horizon"))
+
+    if not predictions:
+        return _fail("No score predictions found in date range")
+
+    factor_values: dict = {}
+    for pred in predictions:
+        exp = pred.explanation or {}
+        for comp in exp.get("components", []):
+            if comp.get("id") == component_id:
+                sc = pred.stock_code
+                # Key by (stock, date, horizon) to avoid cross-horizon overwrite
+                h = getattr(pred, "horizon", "?")
+                ds = pred.date.isoformat()
+                key = f"{ds}_h{h}"
+                nv = comp.get("normalized_value", 0) or 0
+                if sc not in factor_values:
+                    factor_values[sc] = {}
+                factor_values[sc][key] = nv
+                break
+
+    if not factor_values:
+        return _fail(f"Component '{component_id}' not found in any predictions")
+
+    import importlib.util
+    import os
+
+    _factor_eval_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "..",
+        "..",
+        "datahub",
+        "app",
+        "lib",
+        "scoring_engine",
+        "factor_eval.py",
+    )
+    _factor_eval_path = os.path.abspath(_factor_eval_path)
+    spec = importlib.util.spec_from_file_location(
+        "caifubao_factor_eval", _factor_eval_path
+    )
+    _fe_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(_fe_mod)
+    FactorEvaluationService = _fe_mod.FactorEvaluationService
+
+    service = FactorEvaluationService()
+    result = service.evaluate(
+        factor_values=factor_values,
+        start_date=start_date,
+        end_date=end_date,
+        forward_horizons=horizons,
+    )
+
+    return jsonify(
+        _ok(
+            data={
+                "component_id": component_id,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "observation_count": result.get("observation_count", 0),
+                "ic": result.get("ic", {}),
+                "icir": result.get("icir", {}),
+                "quintiles": result.get("quintiles", {}),
+                "decay": result.get("decay", {}),
+                "correlation": result.get("correlation", {}),
+            }
+        )
+    ), 200
+
+
 @backtest_bp.route("/<result_id>", methods=["DELETE"])
 def delete_backtest(result_id: str):
     """Delete a backtest result."""

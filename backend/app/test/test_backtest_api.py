@@ -804,3 +804,80 @@ class TestConsensusThresholdValidation:
         # Keys should be normalized to int
         assert captured.get("consensus_entry_thresholds") == {5: 45.0}
         assert captured.get("consensus_exit_thresholds") == {5: 20.0}
+
+
+# ============================================================================
+# Component contribution tests
+# ============================================================================
+class TestComponentContributionAPI:
+    """GET /api/backtest/<id>/component-contribution"""
+
+    def test_component_contribution_not_found(self, client, monkeypatch):
+        """Returns 404 for missing backtest."""
+        from app.model import backtest as bt_mod
+
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([]))
+        resp = client.get("/api/backtest/nonexistent/component-contribution")
+        assert resp.status_code == 404
+
+    def test_component_contribution_rejects_non_score_strategy(
+        self, client, monkeypatch
+    ):
+        """Returns 400 for non-score-driven strategies."""
+        from app.model import backtest as bt_mod
+
+        row = SimpleNamespace(
+            id="bt_comp_2",
+            stock_code="sz000977",
+            strategy="MA_CROSS",
+            horizon=None,
+            trades=[{"date": "2025-06-15T00:00:00", "side": "BUY", "pnl": None}],
+        )
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([row]))
+        resp = client.get("/api/backtest/bt_comp_2/component-contribution")
+        assert resp.status_code == 400, resp.get_json()
+
+
+# ============================================================================
+# Factor evaluation tests
+# ============================================================================
+class TestFactorEvaluateAPI:
+    """POST /api/backtest/evaluate-factor"""
+
+    def test_evaluate_factor_requires_component_id(self, client):
+        """Rejects request without component_id."""
+        resp = client.post(
+            "/api/backtest/evaluate-factor",
+            json={
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+            },
+        )
+        assert resp.status_code != 200
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_evaluate_factor_rejects_invalid_horizons(self, client):
+        """Rejects non-list horizons."""
+        resp = client.post(
+            "/api/backtest/evaluate-factor",
+            json={
+                "component_id": "momentum",
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+                "horizons": "not_a_list",
+            },
+        )
+        assert resp.status_code != 200
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_evaluate_factor_missing_dates(self, client):
+        """Rejects missing dates."""
+        resp = client.post(
+            "/api/backtest/evaluate-factor",
+            json={"component_id": "momentum"},
+        )
+        assert resp.status_code != 200
+        body = resp.get_json()
+        assert body["success"] is False
