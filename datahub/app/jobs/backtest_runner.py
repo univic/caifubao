@@ -23,6 +23,7 @@ SUPPORTED_STRATEGIES = [
     "SCORE_THRESHOLD",
     "SCORE_MOMENTUM",
     "TOP_N_ROTATION",
+    "MULTI_HORIZON_CONSENSUS",
 ]
 
 
@@ -70,6 +71,10 @@ def run_single(args) -> dict:
         params["score_delta"] = float(args.score_delta)
     if args.model_version:
         params["model_version"] = args.model_version
+    if args.consensus_entry:
+        params["consensus_entry_thresholds"] = json.loads(args.consensus_entry)
+    if args.consensus_exit:
+        params["consensus_exit_thresholds"] = json.loads(args.consensus_exit)
 
     result = run_backtest(**params)
 
@@ -267,6 +272,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_single.add_argument("--stop-loss", type=float, help="Stop loss % (negative)")
     p_single.add_argument("--score-delta", type=float, help="Score momentum delta")
     p_single.add_argument("--model-version")
+    p_single.add_argument(
+        "--consensus-entry",
+        help='Consensus entry thresholds as JSON: \'{"5":60,"20":55}\'',
+    )
+    p_single.add_argument(
+        "--consensus-exit",
+        help='Consensus exit thresholds as JSON: \'{"5":30,"20":35}\'',
+    )
     p_single.add_argument("--no-save", action="store_true", help="Don't persist to DB")
 
     # --- multi ---
