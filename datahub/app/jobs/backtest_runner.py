@@ -202,7 +202,6 @@ def run_compare(args) -> dict:
 def run_optimize(args) -> dict:
     """Run parameter optimization sweep."""
     _init_db()
-    # Build a mock Flask request context for the optimize endpoint
     from flask import Flask
 
     app = Flask(__name__)
@@ -251,6 +250,88 @@ def run_optimize(args) -> dict:
             else response.get_json()
         )
         print(json.dumps(data, default=str, ensure_ascii=False, indent=2))
+        return data or {}
+
+
+def run_compare_all(args) -> dict:
+    """Compare all eligible strategies on one stock via API."""
+    _init_db()
+    from flask import Flask
+
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+
+    from backend.app.api.v1.backtest import compare as cmp_handler
+
+    with app.test_request_context(
+        method="POST",
+        json={
+            "stock_code": args.stock_code,
+            "start_date": args.start_date,
+            "end_date": args.end_date,
+            "initial_cash": float(args.initial_cash),
+            "benchmark_code": args.benchmark_code,
+        },
+    ):
+        response = cmp_handler()
+        data = (
+            response[0].get_json()
+            if isinstance(response, tuple)
+            else response.get_json()
+        )
+        print(json.dumps(data, default=str, ensure_ascii=False, indent=2))
+        return data or {}
+
+
+def run_scan(args) -> dict:
+    """Scan one strategy across all active stocks via API."""
+    _init_db()
+    from flask import Flask
+
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+
+    from backend.app.api.v1.backtest import scan as scan_handler
+
+    json_payload = {
+        "strategy": args.strategy,
+        "start_date": args.start_date,
+        "end_date": args.end_date,
+        "initial_cash": float(args.initial_cash),
+        "page": args.page,
+        "per_page": args.per_page,
+    }
+    if args.horizon:
+        json_payload["horizon"] = int(args.horizon)
+    if args.min_trades:
+        json_payload["min_trades"] = args.min_trades
+
+    with app.test_request_context(method="POST", json=json_payload):
+        response = scan_handler()
+        data = (
+            response[0].get_json()
+            if isinstance(response, tuple)
+            else response.get_json()
+        )
+        # Print summary only (items list is large)
+        summary = {
+            k: v for k, v in (data.get("data", data) or {}).items() if k != "items"
+        }
+        print(json.dumps(summary, default=str, ensure_ascii=False, indent=2))
+        # Print top-5 items
+        items = (data.get("data", data) or {}).get("items", [])
+        if items:
+            print("\nTop-5 results:")
+            for item in items[:5]:
+                flags = item.get("flags", [])
+                flag_str = f" [{', '.join(flags)}]" if flags else ""
+                print(
+                    f"  {item.get('stock_code', '?')} "
+                    f"{item.get('stock_name', '?')}: "
+                    f"Sharpe={item.get('sharpe_ratio', 0):.2f} "
+                    f"Return={item.get('total_return_pct', 0):+.1f}%"
+                    f"{flag_str}"
+                )
         return data or {}
 
 
@@ -337,6 +418,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-split", action="store_true", help="Don't use train/val/test split"
     )
 
+    # --- compare-all ---
+    p_cmp_all = subparsers.add_parser(
+        "compare-all", help="Compare all strategies on one stock"
+    )
+    p_cmp_all.add_argument("stock_code")
+    p_cmp_all.add_argument("start_date", help="YYYY-MM-DD")
+    p_cmp_all.add_argument("end_date", help="YYYY-MM-DD")
+    p_cmp_all.add_argument("--initial-cash", default=100000)
+    p_cmp_all.add_argument("--benchmark-code", default="sh000300")
+
+    # --- scan ---
+    p_scan = subparsers.add_parser("scan", help="Scan one strategy across market")
+    p_scan.add_argument("strategy", choices=SUPPORTED_STRATEGIES)
+    p_scan.add_argument("start_date", help="YYYY-MM-DD")
+    p_scan.add_argument("end_date", help="YYYY-MM-DD")
+    p_scan.add_argument("--horizon", type=int, help="Score horizon (5/20/60)")
+    p_scan.add_argument("--initial-cash", default=100000)
+    p_scan.add_argument("--page", type=int, default=1)
+    p_scan.add_argument("--per-page", type=int, default=20)
+    p_scan.add_argument("--min-trades", type=int, help="Minimum trade count filter")
+
     return parser
 
 
@@ -352,6 +454,10 @@ def main():
         run_compare(args)
     elif args.command == "optimize":
         run_optimize(args)
+    elif args.command == "compare-all":
+        run_compare_all(args)
+    elif args.command == "scan":
+        run_scan(args)
     else:
         parser.print_help()
 
