@@ -594,3 +594,213 @@ class TestBacktestResponseEnvelope:
         assert "request_id" in body
         assert "generated_at" in body
         assert body["data"] is None
+
+
+# ============================================================================
+# Optimize endpoint tests
+# ============================================================================
+class TestBacktestOptimizeAPI:
+    """POST /api/backtest/optimize"""
+
+    @staticmethod
+    def _make_run_backtest(*, sharpe=1.0, return_pct=10.0, trades=10):
+        """Factory for mock run_backtest results."""
+        return {
+            "sharpe_ratio": sharpe,
+            "total_return_pct": return_pct,
+            "max_drawdown": -15.0,
+            "total_trades": trades,
+            "excess_return_pct": 5.0,
+        }
+
+    def test_optimize_runs_and_returns_best(self, client, monkeypatch):
+        """Happy path: optimize with param_grid, returns ranked results."""
+
+        # Mock run_backtest to return deterministic results based on entry_threshold
+        def _mock_run(**kw):
+            entry = kw.get("entry_threshold", 70)
+            sharpe = 2.0 if entry == 60 else 1.0 if entry == 70 else 0.5
+            return self._make_run_backtest(sharpe=sharpe)
+
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", _mock_run)
+
+        resp = client.post(
+            "/api/backtest/optimize",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2025-12-31",
+                "horizon": 5,
+                "use_split": False,
+                "param_grid": {
+                    "entry_threshold": [50, 60, 70],
+                },
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+        data = body["data"]
+        assert data["strategy"] == "SCORE_THRESHOLD"
+        assert data["horizon"] == 5
+        assert data["total_combinations"] == 3
+        assert data["completed"] == 3
+        # Best should be entry=60 (Sharpe 2.0)
+        assert data["best"]["params"]["entry_threshold"] == 60
+        assert data["best"]["val_sharpe_ratio"] == 2.0
+        assert len(data["results"]) == 3
+        # Results sorted by val Sharpe descending
+        assert (
+            data["results"][0]["val_sharpe_ratio"]
+            >= data["results"][-1]["val_sharpe_ratio"]
+        )
+
+    def test_optimize_requires_strategy(self, client):
+        """Rejects unknown strategies."""
+        resp = client.post(
+            "/api/backtest/optimize",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "MA_CROSS",
+                "start_date": "2025-01-01",
+                "end_date": "2025-12-31",
+                "horizon": 5,
+                "param_grid": {"entry_threshold": [50]},
+            },
+        )
+        assert resp.status_code != 200
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_optimize_rejects_unknown_param_key(self, client):
+        """Rejects param keys not in the per-strategy whitelist."""
+        resp = client.post(
+            "/api/backtest/optimize",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2025-12-31",
+                "horizon": 5,
+                "param_grid": {
+                    "entry_threshold": [50],
+                    "invalid_param": [10, 20],
+                },
+            },
+        )
+        body = resp.get_json()
+        assert body["success"] is False
+        assert (
+            "invalid_param" in body["message"].lower() or "Unknown" in body["message"]
+        )
+
+    def test_optimize_rejects_non_list_param_value(self, client):
+        """Rejects param_grid values that are not lists."""
+        resp = client.post(
+            "/api/backtest/optimize",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2025-12-31",
+                "horizon": 5,
+                "param_grid": {"entry_threshold": 50},
+            },
+        )
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "non-empty list" in body["message"]
+
+    def test_optimize_empty_param_grid(self, client):
+        """Rejects empty param_grid."""
+        resp = client.post(
+            "/api/backtest/optimize",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2025-12-31",
+                "horizon": 5,
+                "param_grid": {},
+            },
+        )
+        body = resp.get_json()
+        assert body["success"] is False
+
+
+# ============================================================================
+# Consensus threshold validation tests
+# ============================================================================
+class TestConsensusThresholdValidation:
+    """POST /api/backtest/run with MULTI_HORIZON_CONSENSUS thresholds."""
+
+    def test_rejects_non_integer_threshold_keys(self, client, monkeypatch):
+        """Consensus threshold dict keys must be integers 5/20/60."""
+        # Mock run_backtest to avoid actual DB
+        monkeypatch.setattr(
+            "app.api.v1.backtest.run_backtest",
+            lambda **kw: {"error": None, "id": "test", "total_return": 0},
+        )
+
+        resp = client.post(
+            "/api/backtest/run",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "MULTI_HORIZON_CONSENSUS",
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+                "consensus_entry_thresholds": {"wrong_key": 50},
+            },
+        )
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "key" in body["message"].lower()
+
+    def test_accepts_string_keys_that_are_valid(self, client, monkeypatch):
+        """String keys '5', '20', '60' are normalized to int."""
+        captured = {}
+
+        def _capture(**kw):
+            captured.update(kw)
+            return {
+                "id": "test",
+                "total_return": 10000.0,
+                "total_return_pct": 10.0,
+                "total_trades": 0,
+                "total_commission": 0.0,
+                "total_stamp_duty": 0.0,
+                "total_slippage": 0.0,
+                "sharpe_ratio": 1.0,
+                "max_drawdown": 0.0,
+                "win_rate": 100.0,
+                "profit_trades": 0,
+                "loss_trades": 0,
+                "best_trade": 0.0,
+                "worst_trade": 0.0,
+                "gross_return": 10000.0,
+                "gross_return_pct": 10.0,
+                "annualized_return": 10.0,
+                "max_drawdown_duration": 0,
+                "trades": [],
+                "daily_values": [],
+            }
+
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", _capture)
+
+        resp = client.post(
+            "/api/backtest/run",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "MULTI_HORIZON_CONSENSUS",
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+                "consensus_entry_thresholds": {"5": 45},
+                "consensus_exit_thresholds": {"5": 20},
+            },
+        )
+        assert resp.status_code == 200, resp.get_json()
+        # Keys should be normalized to int
+        assert captured.get("consensus_entry_thresholds") == {5: 45.0}
+        assert captured.get("consensus_exit_thresholds") == {5: 20.0}
