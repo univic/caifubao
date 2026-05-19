@@ -655,7 +655,7 @@ class TestMultiHorizonConsensus:
         trades = result["trades"]
         assert len(trades) >= 1
         assert trades[0]["side"] == "BUY"
-        assert trades[0]["shares"] > 0
+        assert trades[0]["quantity"] > 0
 
     def test_sell_when_one_horizon_below_exit(self):
         """SELL when ANY horizon drops below its exit threshold."""
