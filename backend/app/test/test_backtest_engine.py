@@ -710,14 +710,22 @@ class TestMultiHorizonConsensus:
         }
         factor_map = {}
 
-        # Day 0: all above → BUY at 100
-        # Day 1: only Score5 has data (<2 horizons → skip consensus, but stop-loss checks)
-        # Day 2: price=94, stop_loss=95 → SELL
+        # Day 0: all 3 horizons above → BUY at 100, stop_loss_price=95
+        # Day 1: only Score5 has data (<2 horizons → skip consensus signals)
+        # Day 2: price=94 < stop_loss=95 → SELL (stop-loss fires despite missing data)
         score_maps = {
             5: {
                 days[0]: SimpleNamespace(score=70.0),
                 days[1]: SimpleNamespace(score=70.0),
                 days[2]: SimpleNamespace(score=70.0),
+            },
+            20: {
+                days[0]: SimpleNamespace(score=60.0),
+                # days[1] and days[2] intentionally missing
+            },
+            60: {
+                days[0]: SimpleNamespace(score=55.0),
+                # days[1] and days[2] intentionally missing
             },
         }
 
