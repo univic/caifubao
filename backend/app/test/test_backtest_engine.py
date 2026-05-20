@@ -843,19 +843,22 @@ class TestPermutationTest:
     """permutation_test — significance of observed Sharpe."""
 
     def test_significant_positive_returns(self):
-        """Alternating returns with net positive → observed Sharpe > 0."""
+        """Strategy with high Sharpe should be significant."""
         from app.services.backtest_service import permutation_test
 
-        # 100 days +1%, then 100 days flat → positive Sharpe with temporal structure
         daily_ret = [0.01] * 100 + [0.0] * 100
         equity = 100000.0
         dv = []
         for r in daily_ret:
             equity *= 1 + r
             dv.append({"equity": equity})
-        result = permutation_test(dv, 100000.0, iterations=200)
+        result = permutation_test(dv, 100000.0, iterations=300)
         assert result["p_value"] is not None
         assert result["observed_sharpe"] > 0
+        assert result["significant"] is True, (
+            f"Expected significant with observed_sharpe={result['observed_sharpe']}, "
+            f"p_value={result['p_value']}"
+        )
 
     def test_random_returns_insignificant(self):
         """Zero returns → not significant."""

@@ -2572,15 +2572,16 @@ def _error(message: str, detail: str = "") -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 def permutation_test(
     daily_values: List[Dict[str, Any]],
-    initial_cash: float,
+    initial_cash: float = 100000.0,
     iterations: int = PERMUTATION_ITERATIONS,
     significance: float = PERMUTATION_SIGNIFICANCE,
 ) -> Dict[str, Any]:
-    """Permutation test: is the observed Sharpe significantly different from random?
+    """Permutation test of H0: strategy has no directional edge (mean=0).
 
-    Shuffles trade returns randomly (breaks temporal structure) to create
-    a null distribution of Sharpe ratios. Returns p-value and whether the
-    strategy is significant at the given level.
+    Centers returns (subtracts observed mean), shuffles centered returns,
+    recomputes Sharpe.  This builds the null distribution of Sharpe ratios
+    under the hypothesis that the true mean return is zero.  The p-value
+    is the fraction of null Sharpes >= observed Sharpe.
     """
     import random
 
@@ -2594,6 +2595,70 @@ def permutation_test(
             "iterations": 0,
             "reason": "insufficient data (<20 daily values)",
         }
+
+    equity_values = [dv.get("equity", 0) or 0 for dv in daily_values]
+    if not any(equity_values):
+        return {
+            "significant": False,
+            "p_value": None,
+            "iterations": 0,
+            "reason": "invalid equity data (all zero)",
+        }
+
+    # Build daily returns
+    daily_ret = []
+    for i in range(1, len(equity_values)):
+        if equity_values[i - 1] != 0:
+            daily_ret.append(
+                (equity_values[i] - equity_values[i - 1]) / equity_values[i - 1]
+            )
+
+    if len(daily_ret) < 10:
+        return {
+            "significant": False,
+            "p_value": None,
+            "iterations": 0,
+            "reason": "insufficient returns (<10)",
+        }
+
+    # Observed Sharpe
+    obs_avg = sum(daily_ret) / len(daily_ret)
+    obs_std = (sum((r - obs_avg) ** 2 for r in daily_ret) / len(daily_ret)) ** 0.5
+    obs_sharpe = obs_avg / max(obs_std, 1e-8) * (252**0.5) if obs_std > 0 else 0.0
+
+    # Center returns (remove mean) so H0: μ=0 is true after centering
+    centered = [r - obs_avg for r in daily_ret]
+
+    # Null distribution: shuffle CENTERED returns, then add back a random
+    # sign-flip per return to break residual structure
+    null_sharpes = []
+    for _ in range(iterations):
+        random.shuffle(centered)
+        # Random sign-flip to remove any residual directional bias
+        flipped = [c if random.random() < 0.5 else -c for c in centered]
+        avg_r = sum(flipped) / len(flipped)
+        std_r = (sum((x - avg_r) ** 2 for x in flipped) / len(flipped)) ** 0.5
+        sr = avg_r / max(std_r, 1e-8) * (252**0.5)
+        null_sharpes.append(sr)
+
+    null_mean = sum(null_sharpes) / len(null_sharpes)
+    null_std = (
+        sum((s - null_mean) ** 2 for s in null_sharpes) / len(null_sharpes)
+    ) ** 0.5
+
+    # One-sided p-value: fraction of null >= observed
+    p_value = sum(1 for s in null_sharpes if s >= obs_sharpe) / iterations
+    significant = p_value < significance and obs_sharpe > 0
+
+    return {
+        "significant": significant,
+        "p_value": round(p_value, 4),
+        "significance_level": significance,
+        "observed_sharpe": round(obs_sharpe, 4),
+        "null_mean": round(null_mean, 4),
+        "null_std": round(null_std, 4),
+        "iterations": iterations,
+    }
 
     equity_values = [dv.get("equity", 0) or 0 for dv in daily_values]
     if not equity_values or equity_values[0] == 0:
@@ -2660,10 +2725,13 @@ def bootstrap_ci(
     iterations: int = BOOTSTRAP_ITERATIONS,
     confidence: float = BOOTSTRAP_CONFIDENCE,
 ) -> Dict[str, Any]:
-    """Bootstrap confidence intervals for strategy metrics.
+    """Bootstrap confidence intervals for total return and Sharpe ratio.
 
-    Resamples daily returns with replacement to estimate the sampling
-    distribution of total return, Sharpe, and max drawdown.
+    Resamples daily returns with replacement (IID bootstrap) to estimate
+    the sampling distribution.  NOTE: IID bootstrap assumes independent
+    returns; financial time series exhibit volatility clustering and
+    autocorrelation, so CI width may be underestimated.  For production
+    use, consider a stationary block bootstrap.
     """
     import random
 
