@@ -101,18 +101,18 @@
 Based on live backtest findings (2026-05-18: sz000977 Score5 median=21, only 1% BUY).
 
 - [ ] 12d.1 Generate full-market calibration report first; propose hybrid percentile+absolute thresholds based on distribution; bump model version only after full-market validation (NOT single-stock observation)
-- [ ] 12d.2 Signal persistence decay: exponential decay factor 0.7/day when signal disappears
-- [ ] 12d.3 Config entries: signal_decay_factor, signal_decay_max_days per horizon
+- [x] 12d.2 Signal persistence decay: exponential decay factor 0.7/day when signal disappears
+- [x] 12d.3 Config entries: signal_decay_factor, signal_decay_max_days per horizon
 - [ ] 12d.4 Score distribution metrics in calibration report; flag BUY<3% or AVOID>50% as miscalibrated
 - [ ] 12d.5 Backfill with new model version across FULL MARKET; compare calibration reports between old and new model versions
 - [ ] 12d.6 Update scoring tests for signal decay and hybrid threshold logic
 
 ### 12e. Backtest Optimization Quick Wins (2 days)
 
-- [ ] 12e.1 POST /api/backtest/optimize: param sweep with train/val/test split (60/20/20); select best params on train+val; report final result on test period only; warn if <300 trading days total
-- [ ] 12e.2 MULTI_HORIZON_CONSENSUS: BUY when all horizons >= entry, SELL when any < exit
-- [ ] 12e.3 Consensus strategy in _simulate() with partial data handling
-- [ ] 12e.4 optimize subcommand in backtest_runner.py CLI with --split flag
+- [x] 12e.1 POST /api/backtest/optimize: param sweep with train/val/test split (60/20/20); select best params on train+val; report final result on test period only; warn if <300 trading days total
+- [x] 12e.2 MULTI_HORIZON_CONSENSUS: BUY when all horizons >= entry, SELL when any < exit
+- [x] 12e.3 Consensus strategy in _simulate() with partial data handling
+- [x] 12e.4 optimize subcommand in backtest_runner.py CLI with --split flag
 - [ ] 12e.5 Validate on sz000977: consensus + optimize vs baselines; check train/test Sharpe decay
 
 ## 13. Phase 1.5 — Strategy Discovery & Screening (3 days)
@@ -137,7 +137,7 @@ ranking (not pure Sharpe).
 
 ## 14. Phase 2 — Scoring Scheme Combinatorial Optimization (4 days)
 
-- [ ] 14.1 GridSearchTask: weight-grid + threshold-grid auto-generate N experiments
+- [~] 14.1 GridSearchService: weight-grid + threshold-grid auto-generate N experiments (draft PR #89)
 - [ ] 14.2 Run score-driven backtest per experiment; capture composite score, Sharpe, hit rate, max DD
 - [ ] 14.3 Enforce weight-sum constraint (sum to 100, vary enabled components only)
 - [ ] 14.4 ExperimentComparisonReport: metrics table with statistical significance
