@@ -445,6 +445,28 @@ def run_backtest(
         quotes = quotes[: last_hfq_idx + 1]
         end_date = quotes[-1].date.replace(hour=0, minute=0, second=0, microsecond=0)
 
+    # Filter to only days with valid adjusted close — interior HFQ gaps
+    # (before the last HFQ-positive day) would otherwise corrupt returns
+    # via the raw-close fallback in _closing_price().
+    hfq_quotes = [q for q in quotes if q.close_hfq]
+    if len(hfq_quotes) < len(quotes):
+        interior_gaps = len(quotes) - len(hfq_quotes)
+        logger.warning(
+            "Interior HFQ gaps: %d quote day(s) lack adjusted close. "
+            "(Trailing truncation already handled; these are gaps before "
+            "the last HFQ-valid day.) Filtering to %d usable days.",
+            interior_gaps,
+            len(hfq_quotes),
+        )
+        quotes = hfq_quotes
+        if not quotes:
+            return _error(
+                "No valid HFQ data",
+                f"No usable quote days for {stock_code} — "
+                f"check factor data for adjusted close.",
+            )
+        end_date = quotes[-1].date.replace(hour=0, minute=0, second=0, microsecond=0)
+
     # Build quote lookup keyed by date
     quote_map: Dict[datetime, StockDailyQuote] = {
         q.date.replace(hour=0, minute=0, second=0, microsecond=0): q for q in quotes
@@ -2639,10 +2661,25 @@ def _data_coverage_report(
 
     # Check score data coverage
     if score_maps is not None:
+        quote_dates = {
+            q.date.replace(hour=0, minute=0, second=0, microsecond=0) for q in quotes
+        }
         for horizon, h_map in score_maps.items():
             if not h_map:
                 warnings.append(
                     f"Score{horizon} data: 0 records (no score predictions)"
+                )
+                continue
+            score_dates = {
+                s.date.replace(hour=0, minute=0, second=0, microsecond=0)
+                for s in h_map.values()
+            }
+            missing_score = quote_dates - score_dates
+            if missing_score:
+                warnings.append(
+                    f"Score{horizon} missing on {len(missing_score)} trading days "
+                    f"(first: {min(missing_score).isoformat()[:10]}). "
+                    f"Score-driven strategies may miss signals on these dates."
                 )
         if not score_maps:
             warnings.append("No score data for any horizon")
