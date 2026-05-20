@@ -2595,9 +2595,7 @@ def permutation_test(
             "reason": "insufficient data (<20 daily values)",
         }
 
-    equity_values = [
-        dv.get("equity", 0) or 0 for dv in daily_values
-    ]
+    equity_values = [dv.get("equity", 0) or 0 for dv in daily_values]
     if not equity_values or equity_values[0] == 0:
         return {
             "significant": False,
@@ -2611,8 +2609,7 @@ def permutation_test(
     for i in range(1, len(equity_values)):
         if equity_values[i - 1] != 0:
             daily_ret.append(
-                (equity_values[i] - equity_values[i - 1])
-                / equity_values[i - 1]
+                (equity_values[i] - equity_values[i - 1]) / equity_values[i - 1]
             )
 
     if len(daily_ret) < 10:
@@ -2625,10 +2622,8 @@ def permutation_test(
 
     # Observed Sharpe
     obs_avg = sum(daily_ret) / len(daily_ret)
-    obs_std = (
-        (sum((r - obs_avg) ** 2 for r in daily_ret) / len(daily_ret)) ** 0.5
-    )
-    obs_sharpe = obs_avg / max(obs_std, 1e-8) * (252 ** 0.5)
+    obs_std = (sum((r - obs_avg) ** 2 for r in daily_ret) / len(daily_ret)) ** 0.5
+    obs_sharpe = obs_avg / max(obs_std, 1e-8) * (252**0.5)
 
     # Null distribution: shuffle returns to break temporal structure
     null_sharpes = []
@@ -2636,10 +2631,8 @@ def permutation_test(
     for _ in range(iterations):
         random.shuffle(returns)
         avg_r = sum(returns) / len(returns)
-        std_r = (
-            sum((r - avg_r) ** 2 for r in returns) / len(returns)
-        ) ** 0.5
-        sr = avg_r / max(std_r, 1e-8) * (252 ** 0.5)
+        std_r = (sum((r - avg_r) ** 2 for r in returns) / len(returns)) ** 0.5
+        sr = avg_r / max(std_r, 1e-8) * (252**0.5)
         null_sharpes.append(sr)
 
     null_mean = sum(null_sharpes) / len(null_sharpes)
@@ -2682,15 +2675,12 @@ def bootstrap_ci(
             "reason": "insufficient data",
         }
 
-    equity_values = [
-        dv.get("equity", 0) or 0 for dv in daily_values
-    ]
+    equity_values = [dv.get("equity", 0) or 0 for dv in daily_values]
     daily_ret = []
     for i in range(1, len(equity_values)):
         if equity_values[i - 1] != 0:
             daily_ret.append(
-                (equity_values[i] - equity_values[i - 1])
-                / equity_values[i - 1]
+                (equity_values[i] - equity_values[i - 1]) / equity_values[i - 1]
             )
 
     if len(daily_ret) < 10:
@@ -2713,7 +2703,7 @@ def bootstrap_ci(
         # Sharpe
         avg = sum(sample) / n
         std = (sum((x - avg) ** 2 for x in sample) / n) ** 0.5
-        sharpe_samples.append(avg / max(std, 1e-8) * (252 ** 0.5))
+        sharpe_samples.append(avg / max(std, 1e-8) * (252**0.5))
 
     return_samples.sort()
     sharpe_samples.sort()

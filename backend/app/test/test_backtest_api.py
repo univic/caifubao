@@ -889,16 +889,16 @@ class TestFactorEvaluateAPI:
 class TestSignificanceAPI:
     """GET /api/backtest/<id>/significance"""
 
-    def test_significance_returns_permutation_and_bootstrap(
-        self, client, monkeypatch
-    ):
+    def test_significance_returns_permutation_and_bootstrap(self, client, monkeypatch):
         """Returns both permutation and bootstrap results."""
         from app.model import backtest as bt_mod
 
-        dv = [
-            {"equity": 100000.0 * (1.001) ** i, "close": 10.0}
-            for i in range(252)
-        ]
+        daily_ret = [0.005] * 200 + [-0.15] * 10 + [0.005] * 42
+        equity = 100000.0
+        dv = []
+        for r in daily_ret:
+            equity *= 1 + r
+            dv.append({"equity": equity, "close": 10.0})
         row = SimpleNamespace(
             id="sig_test_1",
             stock_code="sz000977",
@@ -906,9 +906,7 @@ class TestSignificanceAPI:
             daily_values=dv,
             initial_cash=100000.0,
         )
-        monkeypatch.setattr(
-            bt_mod.BacktestResult, "objects", FakeQuery([row])
-        )
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([row]))
 
         resp = client.get("/api/backtest/sig_test_1/significance")
         assert resp.status_code == 200
@@ -921,8 +919,6 @@ class TestSignificanceAPI:
         """404 for missing backtest."""
         from app.model import backtest as bt_mod
 
-        monkeypatch.setattr(
-            bt_mod.BacktestResult, "objects", FakeQuery([])
-        )
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([]))
         resp = client.get("/api/backtest/nonexistent/significance")
         assert resp.status_code == 404
