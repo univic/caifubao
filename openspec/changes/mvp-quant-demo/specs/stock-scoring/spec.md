@@ -126,6 +126,27 @@ Datahub SHALL be able to replay a stored score experiment using its saved factor
 - **AND** backfill predictions under the experiment model version
 - **AND** verify predictions and write reports back to the experiment when not in dry-run mode.
 
+### Requirement: Automated Grid Experiment Generation
+
+Datahub SHALL support automated batch creation of score experiments from
+parameter grids to enable systematic exploration of factor weight and
+threshold configurations.
+
+#### Scenario: Operator generates experiments from weight and threshold grids
+
+- **GIVEN** a weight grid (e.g., `"momentum": [20, 25]`) and a threshold grid
+  (e.g., `"buy_threshold": [60, 70]`)
+- **WHEN** the grid-search CLI command is invoked with a date range and
+  configuration prefix
+- **THEN** datahub SHALL create one `ScoreExperiment` per Cartesian product
+  combination of weight values × threshold values per horizon
+- **AND** each experiment SHALL receive a unique `model_version` derived from
+  the naming prefix and a combination suffix
+- **AND** the operator SHALL be able to preview generated experiments via
+  `--dry-run` without writing to the database
+- **AND** experiments SHALL be replayable through the existing
+  `scoring_runner experiment --id <id>` command.
+
 ### Requirement: Score Read APIs
 
 The backend SHALL expose score predictions through stable read APIs.
