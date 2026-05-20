@@ -42,7 +42,7 @@ class GridSearchService:
         errors = []
 
         for horizon in horizons:
-            horizon_experiments = self._generate_horizon_combos(
+            horizon_count = self._generate_horizon_combos(
                 name_prefix=name_prefix,
                 horizon=horizon,
                 start_date=start_date,
@@ -51,8 +51,9 @@ class GridSearchService:
                 threshold_grid=threshold_grid,
                 baseline_model_version=baseline_model_version,
                 dry_run=dry_run,
+                errors=errors,
             )
-            experiments_created += horizon_experiments
+            experiments_created += horizon_count
 
         return {
             "total_experiments": experiments_created,
@@ -71,62 +72,54 @@ class GridSearchService:
         threshold_grid: dict,
         baseline_model_version: str | None,
         dry_run: bool,
+        errors: list,
     ) -> int:
-        """Generate experiments for one horizon from grid combinations."""
-        created = 0
-        # Generate weight combinations
+        """Generate one experiment per (weight_combo × threshold_combo).
+
+        Empty sub-grids produce a single no-op entry (default weights/thresholds).
+        """
         weight_keys = list(weight_grid.keys())
-        weight_values_lists = [weight_grid[k] for k in weight_keys]
+        weight_values = [weight_grid[k] for k in weight_keys] if weight_keys else []
+        threshold_keys = list(threshold_grid.keys())
+        threshold_values = (
+            [threshold_grid[k] for k in threshold_keys] if threshold_keys else []
+        )
 
-        for weight_combo in itertools.product(*weight_values_lists):
-            # Build config with overridden weights
-            config = {
-                str(horizon): {
-                    "weights": dict(zip(weight_keys, weight_combo)),
-                }
-            }
+        # Build combo lists (at least one entry for product to work)
+        weight_combos = (
+            list(itertools.product(*weight_values)) if weight_values else [()]
+        )
+        threshold_combos = (
+            list(itertools.product(*threshold_values)) if threshold_values else [()]
+        )
 
-            # Add threshold overrides directly
-            if threshold_grid:
-                config[str(horizon)].update(threshold_grid)
+        created = 0
+        suffix = 0
 
-            model_version = f"{name_prefix}_h{horizon}_w{created + 1}"
-            combo_label = "_".join(
-                f"{k[:3]}{v}" for k, v in zip(weight_keys, weight_combo)
-            )
-            name = f"{name_prefix} horizon={horizon} weights={combo_label}"
+        for w_combo in weight_combos:
+            for t_combo in threshold_combos:
+                suffix += 1
+                config_entry: dict = {}
 
-            if not dry_run:
-                try:
-                    exp = self.experiment_model(
-                        name=name,
-                        model_version=model_version,
-                        baseline_model_version=baseline_model_version,
-                        start_date=start_date,
-                        end_date=end_date,
-                        horizons=[horizon],
-                        config=config,
+                if weight_keys:
+                    config_entry["weights"] = dict(zip(weight_keys, w_combo))
+                if threshold_keys:
+                    config_entry.update(dict(zip(threshold_keys, t_combo)))
+
+                config = {str(horizon): config_entry}
+                model_version = f"{name_prefix}_h{horizon}_c{suffix}"
+                name_parts = []
+                if weight_keys:
+                    name_parts.append(
+                        "w="
+                        + ",".join(f"{k}:{v}" for k, v in zip(weight_keys, w_combo))
                     )
-                    exp.save()
-                except Exception as exc:
-                    logger.error("Failed to create experiment: %s", exc)
-                    continue
-
-            created += 1
-
-        # Generate threshold-only combinations (no weight change)
-        if threshold_grid:
-            threshold_keys = list(threshold_grid.keys())
-            threshold_values_lists = [threshold_grid[k] for k in threshold_keys]
-            for threshold_combo in itertools.product(*threshold_values_lists):
-                config = {
-                    str(horizon): dict(zip(threshold_keys, threshold_combo)),
-                }
-                model_version = f"{name_prefix}_h{horizon}_t{created + 1}"
-                combo_label = "_".join(
-                    f"{k[:3]}{v}" for k, v in zip(threshold_keys, threshold_combo)
-                )
-                name = f"{name_prefix} horizon={horizon} thresholds={combo_label}"
+                if threshold_keys:
+                    name_parts.append(
+                        "t="
+                        + ",".join(f"{k}:{v}" for k, v in zip(threshold_keys, t_combo))
+                    )
+                name = f"{name_prefix} h={horizon} {' '.join(name_parts)}"
 
                 if not dry_run:
                     try:
@@ -141,7 +134,9 @@ class GridSearchService:
                         )
                         exp.save()
                     except Exception as exc:
-                        logger.error("Failed to create experiment: %s", exc)
+                        msg = f"Failed to save experiment '{name}': {exc}"
+                        logger.error(msg)
+                        errors.append(msg)
                         continue
 
                 created += 1
