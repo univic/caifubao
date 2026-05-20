@@ -881,3 +881,44 @@ class TestFactorEvaluateAPI:
         assert resp.status_code != 200
         body = resp.get_json()
         assert body["success"] is False
+
+
+# ============================================================================
+# Significance test endpoint
+# ============================================================================
+class TestSignificanceAPI:
+    """GET /api/backtest/<id>/significance"""
+
+    def test_significance_returns_permutation_and_bootstrap(self, client, monkeypatch):
+        """Returns both permutation and bootstrap results."""
+        from app.model import backtest as bt_mod
+
+        daily_ret = [0.01] * 100 + [0.0] * 100
+        equity = 100000.0
+        dv = []
+        for r in daily_ret:
+            equity *= 1 + r
+            dv.append({"equity": equity, "close": 10.0})
+        row = SimpleNamespace(
+            id="sig_test_1",
+            stock_code="sz000977",
+            strategy="MA_CROSS",
+            daily_values=dv,
+            initial_cash=100000.0,
+        )
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([row]))
+
+        resp = client.get("/api/backtest/sig_test_1/significance")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        data = body["data"]
+        assert "permutation" in data
+        assert "bootstrap" in data
+
+    def test_significance_not_found(self, client, monkeypatch):
+        """404 for missing backtest."""
+        from app.model import backtest as bt_mod
+
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([]))
+        resp = client.get("/api/backtest/nonexistent/significance")
+        assert resp.status_code == 404

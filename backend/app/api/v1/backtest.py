@@ -1479,6 +1479,37 @@ def evaluate_factor():
     ), 200
 
 
+@backtest_bp.route("/<result_id>/significance", methods=["GET"])
+def significance_test(result_id: str):
+    """Statistical significance: permutation test + bootstrap CI."""
+    try:
+        row = BacktestResult.objects(id=result_id).first()
+    except Exception:
+        row = None
+    if row is None or not row.daily_values:
+        return _fail("Backtest result not found or no daily values", status_code=404)
+
+    from app.services.backtest_service import bootstrap_ci, permutation_test
+
+    perms = permutation_test(
+        daily_values=row.daily_values or [],
+        initial_cash=row.initial_cash or 100000.0,
+    )
+    bootstrap = bootstrap_ci(daily_values=row.daily_values or [])
+
+    return jsonify(
+        _ok(
+            data={
+                "result_id": result_id,
+                "stock_code": row.stock_code,
+                "strategy": row.strategy,
+                "permutation": perms,
+                "bootstrap": bootstrap,
+            }
+        )
+    ), 200
+
+
 @backtest_bp.route("/<result_id>", methods=["DELETE"])
 def delete_backtest(result_id: str):
     """Delete a backtest result."""
