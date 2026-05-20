@@ -17,7 +17,7 @@ decisions_bp = Blueprint("decisions", __name__, url_prefix="/api/decisions")
 
 def _now_utc() -> datetime.datetime:
     return datetime.datetime.now(datetime.UTC).replace(
-        hour=0, minute=0, second=0, microsecond=0
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
     )
 
 
