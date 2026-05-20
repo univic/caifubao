@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Decision support API — score alerts and quality monitoring."""
+"""Decision support API — score alerts, quality monitoring, daily dashboard."""
 
 import datetime
 import logging
@@ -21,17 +21,46 @@ def _now_utc() -> datetime.datetime:
     )
 
 
-def _confidence_metadata(predictions: list, current_score: float) -> dict:
-    """Build confidence metadata from historical verified predictions."""
-    if not predictions:
-        return {"confidence": "low", "sample_size": 0, "hit_rate": None}
+def _latest_score_date(horizon: int) -> datetime.datetime | None:
+    """Return most recent date with score predictions for a horizon."""
+    pred = (
+        StockScorePrediction.objects(horizon=horizon)
+        .order_by("-date")
+        .only("date")
+        .first()
+    )
+    if pred and pred.date:
+        return pred.date.replace(hour=0, minute=0, second=0, microsecond=0)
+    return None
 
-    # Filter predictions in similar score bucket (±10 points)
+
+def _get_horizon_config(horizon: int) -> dict:
+    """Return per-horizon config for invalidation conditions."""
+    try:
+        from app.lib.scoring_engine.config import get_horizon_config
+
+        return get_horizon_config(horizon)
+    except Exception:
+        return {}
+
+
+def _confidence_metadata(predictions: list, current_score: float) -> dict:
+    """Confidence from same-bucket hit rate over last 90 days.
+
+    Trend compares most recent 30 days vs prior 60 days.
+    """
+    if not predictions:
+        return {
+            "confidence": "low",
+            "sample_size": 0,
+            "hit_rate": None,
+            "trend": "stable",
+        }
+
     bucket_low = max(0, (current_score or 0) - 10)
     bucket_high = min(100, (current_score or 0) + 10)
     bucket = [p for p in predictions if bucket_low <= (p.score or 0) <= bucket_high]
 
-    # Recent trend: last 30 days vs previous 30
     cutoff = _now_utc() - datetime.timedelta(days=30)
     recent = [p for p in bucket if p.date and p.date >= cutoff]
     older = [p for p in bucket if p.date and p.date < cutoff]
@@ -42,13 +71,14 @@ def _confidence_metadata(predictions: list, current_score: float) -> dict:
         hits = sum(1 for p in ps if (p.verification or {}).get("hit_target_close"))
         return round(hits / len(ps), 4)
 
+    overall_hr = _hit_rate(bucket)
     recent_hr = _hit_rate(recent)
     older_hr = _hit_rate(older)
     trend = (
         "improving"
         if recent_hr is not None and older_hr is not None and recent_hr > older_hr
         else "declining"
-        if recent_hr is not None and older_hr is not None
+        if recent_hr is not None and older_hr is not None and recent_hr < older_hr
         else "stable"
     )
 
@@ -61,7 +91,8 @@ def _confidence_metadata(predictions: list, current_score: float) -> dict:
             else "low"
         ),
         "sample_size": len(bucket),
-        "hit_rate": recent_hr,
+        "hit_rate": overall_hr,
+        "recent_hit_rate": recent_hr,
         "trend": trend,
     }
 
@@ -73,48 +104,56 @@ def _confidence_metadata(predictions: list, current_score: float) -> dict:
 def daily_dashboard():
     """Comprehensive daily decision support.
 
+    Uses latest available score date per horizon (not exact UTC midnight)
+    so dashboard works on weekends, before scoring runs, or when data lags.
+
     Query params:
         horizon : int (default 5) — primary horizon for ranking
         limit   : int (default 20) — top-N per horizon
     """
     horizon = int(request.args.get("horizon", 5))
-    limit = min(int(request.args.get("limit", 20)), 100)
-
-    today = _now_utc()
-    yesterday = today - datetime.timedelta(days=1)
+    n_limit = min(int(request.args.get("limit", 20)), 100)
 
     def _load_for(h: int) -> dict:
-        today_preds = list(
-            StockScorePrediction.objects(date=today, horizon=h)
-            .order_by("-score")
-            .limit(limit)
-        )
-        yesterday_preds = list(
-            StockScorePrediction.objects(date__lte=yesterday, horizon=h)
-            .order_by("-date")
-            .limit(limit)
-        )
-        yday_date = yesterday_preds[0].date if yesterday_preds else None
-        yday_scores = {
-            p.stock_code: p
-            for p in yesterday_preds
-            if yday_date and p.date == yday_date
-        }
+        score_date = _latest_score_date(h)
+        if not score_date:
+            return {"horizon": h, "date": None, "count": 0, "items": []}
 
-        # Load historical VERIFIED for confidence
-        conf_start = today - datetime.timedelta(days=90)
+        today_preds = list(
+            StockScorePrediction.objects(date=score_date, horizon=h)
+            .order_by("-score")
+            .limit(n_limit)
+        )
+
+        # Previous score date — fetch all scores for today's stock codes
+        prev = (
+            StockScorePrediction.objects(date__lt=score_date, horizon=h)
+            .order_by("-date")
+            .only("date")
+            .first()
+        )
+        prev_date = prev.date if prev else None
+        yday_scores = {}
+        if prev_date:
+            today_codes = [p.stock_code for p in today_preds]
+            for p in StockScorePrediction.objects(
+                date=prev_date, horizon=h, stock_code__in=today_codes
+            ):
+                yday_scores[p.stock_code] = p
+
+        # Historical VERIFIED for confidence
+        conf_start = score_date - datetime.timedelta(days=90)
         verified = list(
             StockScorePrediction.objects(
-                horizon=h,
-                status="VERIFIED",
-                date__gte=conf_start,
+                horizon=h, status="VERIFIED", date__gte=conf_start
             )
         )
 
-        top = []
+        cfg = _get_horizon_config(h)
+        items = []
         for pred in today_preds:
-            prev = yday_scores.get(pred.stock_code)
-            prev_score = prev.score if prev else None
+            prev_p = yday_scores.get(pred.stock_code)
+            prev_score = prev_p.score if prev_p else None
             delta = (
                 round((pred.score or 0) - (prev_score or 0), 1)
                 if prev_score is not None
@@ -122,7 +161,7 @@ def daily_dashboard():
             )
             conf = _confidence_metadata(verified, pred.score)
 
-            top.append(
+            items.append(
                 {
                     "stock_code": pred.stock_code,
                     "stock_name": pred.stock_name,
@@ -138,8 +177,8 @@ def daily_dashboard():
                     "hit_rate": conf["hit_rate"],
                     "trend": conf["trend"],
                     "invalidation": {
-                        "exit_threshold": (50 if h == 5 else 50 if h == 20 else 50),
-                        "stop_loss_pct": -5.0,
+                        "exit_threshold": cfg.get("watch_threshold", 50),
+                        "stop_loss_pct": cfg.get("stop_loss_threshold", -5.0),
                         "expiry_days": h,
                     },
                 }
@@ -147,13 +186,12 @@ def daily_dashboard():
 
         return {
             "horizon": h,
-            "date": today.isoformat(),
-            "count": len(top),
-            "items": top,
+            "date": score_date.isoformat(),
+            "count": len(items),
+            "items": items,
         }
 
     data = {
-        "date": today.isoformat(),
         "primary_horizon": horizon,
         "score5": _load_for(5),
         "score20": _load_for(20),
@@ -175,8 +213,6 @@ def score_alerts():
         jump_threshold : float (default 15) — min score increase to alert
         strong_threshold : float (default 80) — min absolute score for strong signal
         limit       : int (default 20)
-
-    Returns alerts for: BUY signals with strong scores, and score jumps vs yesterday.
     """
     horizon = int(request.args.get("horizon", 20))
     jump_threshold = float(request.args.get("jump_threshold", 15))
@@ -185,16 +221,13 @@ def score_alerts():
 
     today = _now_utc()
 
-    # Get today's predictions
     today_preds = list(
         StockScorePrediction.objects(date=today, horizon=horizon)
         .order_by("-score")
         .limit(limit * 2)
     )
 
-    # Get yesterday's predictions for jump detection
     yesterday = today - datetime.timedelta(days=1)
-    # Find last trading day
     yesterday_preds_list = list(
         StockScorePrediction.objects(date__lte=yesterday, horizon=horizon)
         .order_by("-date")
@@ -212,22 +245,20 @@ def score_alerts():
         alert_type = None
         alert_detail = ""
 
-        # Strong BUY signal
         if (
             pred.score
             and pred.score >= strong_threshold
             and pred.recommendation == "BUY"
         ):
             alert_type = "strong_buy"
-            alert_detail = f"Score{pred.horizon}={pred.score:.0f} — 强买入信号"
+            alert_detail = f"Score{pred.horizon}={pred.score:.0f} 强买入信号"
 
-        # Score jump vs yesterday
         prev_score = yesterday_scores.get(pred.stock_code)
         if prev_score is not None and pred.score is not None:
             delta = pred.score - prev_score
             if delta >= jump_threshold:
                 alert_type = alert_type or "score_jump"
-                alert_detail = f"{alert_detail} (Δ+{delta:.0f} vs 昨日)".strip()
+                alert_detail = f"{alert_detail} (+{delta:.0f} vs 昨日)".strip()
 
         if alert_type:
             alerts.append(
@@ -263,7 +294,7 @@ def score_alerts():
 
 
 # ---------------------------------------------------------------------------
-# Score Quality Monitoring — rolling hit rates and decay detection
+# Score Quality Monitoring — rolling hit rates, decay, drift
 # ---------------------------------------------------------------------------
 @decisions_bp.route("/quality", methods=["GET"])
 def score_quality():
@@ -279,14 +310,11 @@ def score_quality():
     lookback_days = int(request.args.get("lookback_days", 90))
 
     today = _now_utc()
-    start_date = today - datetime.timedelta(days=lookback_days * 2)  # generous range
+    start_date = today - datetime.timedelta(days=lookback_days * 2)
 
-    # Get all verified predictions in the lookback
     predictions = list(
         StockScorePrediction.objects(
-            date__gte=start_date,
-            horizon=horizon,
-            status="VERIFIED",
+            date__gte=start_date, horizon=horizon, status="VERIFIED"
         ).order_by("date")
     )
 
@@ -298,14 +326,12 @@ def score_quality():
             }
         )
 
-    # Group by date
     by_date: Dict[datetime.datetime, list] = defaultdict(list)
     for p in predictions:
         by_date[p.date].append(p)
 
     sorted_dates = sorted(by_date.keys())
 
-    # Compute daily hit rates
     daily_hit_rates = []
     for date in sorted_dates:
         day_preds = by_date[date]
@@ -323,7 +349,6 @@ def score_quality():
             }
         )
 
-    # Compute rolling window hit rates
     rolling_hit_rates = []
     for i in range(len(daily_hit_rates)):
         window = daily_hit_rates[max(0, i - window_days + 1) : i + 1]
@@ -340,7 +365,7 @@ def score_quality():
                 }
             )
 
-    # Detect decay: compare latest window to historical baseline
+    # Decay detection
     decay_detected = False
     decay_detail = ""
     if len(rolling_hit_rates) >= 2:
@@ -358,40 +383,37 @@ def score_quality():
                     f"vs baseline ({latest:.2%} vs {baseline:.2%})"
                 )
 
-    # Model drift: score distribution shift detection
+    # Model drift: score distribution shift
     drift_detected = False
     drift_detail = ""
-    recent_predictions = [
+    recent_preds = [
         p
         for p in predictions
         if p.date and p.date >= today - datetime.timedelta(days=20)
     ]
-    older_predictions = [
+    older_preds = [
         p
         for p in predictions
         if p.date and p.date < today - datetime.timedelta(days=20)
     ]
-    if recent_predictions and older_predictions:
+    if recent_preds and older_preds:
 
-        def _pct(preds, p):
-            scores = sorted([s.score or 0 for s in preds])
+        def _pct(pred_list, p):
+            scores = sorted([s.score or 0 for s in pred_list])
             if not scores:
                 return 0
             idx = int(len(scores) * p / 100)
             return scores[min(idx, len(scores) - 1)]
 
-        recent_p50 = _pct(recent_predictions, 50)
-        older_p50 = _pct(older_predictions, 50)
-        recent_p90 = _pct(recent_predictions, 90)
-        older_p90 = _pct(older_predictions, 90)
-
-        p50_shift = abs(recent_p50 - older_p50)
-        p90_shift = abs(recent_p90 - older_p90)
-        if p50_shift > 10 or p90_shift > 10:
+        rp50 = _pct(recent_preds, 50)
+        op50 = _pct(older_preds, 50)
+        rp90 = _pct(recent_preds, 90)
+        op90 = _pct(older_preds, 90)
+        if abs(rp50 - op50) > 10 or abs(rp90 - op90) > 10:
             drift_detected = True
             drift_detail = (
-                f"Score distribution shift: P50 {older_p50}→{recent_p50} "
-                f"(Δ{p50_shift:.0f}), P90 {older_p90}→{recent_p90} (Δ{p90_shift:.0f})"
+                f"Score distribution shift: P50 {op50}->{rp50} "
+                f"({rp50 - op50:+d}), P90 {op90}->{rp90} ({rp90 - op90:+d})"
             )
 
     return jsonify(
