@@ -834,3 +834,60 @@ class TestMultiHorizonConsensus:
         trades = result["trades"]
         assert len(trades) >= 1
         assert trades[0]["side"] == "BUY"
+
+
+# ============================================================================
+# Statistical significance tests
+# ============================================================================
+class TestPermutationTest:
+    """permutation_test — significance of observed Sharpe."""
+
+    def test_significant_positive_returns(self):
+        """Consistent positive returns → significant."""
+        from app.services.backtest_service import permutation_test
+
+        dv = [{"equity": 100000.0 * (1.001) ** i} for i in range(252)]
+        result = permutation_test(dv, 100000.0, iterations=200)
+        assert result["significant"] is True
+        assert result["p_value"] is not None
+        assert result["p_value"] < 0.1
+
+    def test_random_returns_insignificant(self):
+        """Zero returns → not significant."""
+        from app.services.backtest_service import permutation_test
+
+        dv = [{"equity": 100000.0} for _ in range(100)]
+        result = permutation_test(dv, 100000.0, iterations=200)
+        assert result["significant"] is False
+
+    def test_insufficient_data(self):
+        """Too few data → reason returned."""
+        from app.services.backtest_service import permutation_test
+
+        dv = [{"equity": 100000.0} for _ in range(5)]
+        result = permutation_test(dv, 100000.0)
+        assert result["significant"] is False
+        assert result["reason"] is not None
+
+
+class TestBootstrapCI:
+    """bootstrap_ci — confidence intervals."""
+
+    def test_returns_ci_bounds(self):
+        """CI brackets mean return."""
+        from app.services.backtest_service import bootstrap_ci
+
+        dv = [{"equity": 100000.0 * (1.001) ** i} for i in range(252)]
+        result = bootstrap_ci(dv, iterations=200)
+        assert result["return_ci"] is not None
+        assert result["return_ci"][0] <= result["return_ci"][1]
+        assert result["mean_return"] > 0
+
+    def test_insufficient_data(self):
+        """Too few data → None CI."""
+        from app.services.backtest_service import bootstrap_ci
+
+        dv = [{"equity": 100000.0}] * 5
+        result = bootstrap_ci(dv)
+        assert result["return_ci"] is None
+        assert result["reason"] is not None

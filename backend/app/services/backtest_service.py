@@ -50,6 +50,12 @@ MIN_TRADES_FOR_RANKING = 5
 MIN_TRADING_DAYS = 120
 CONCENTRATION_THRESHOLD = 0.40  # 40% of return from single episode = flag
 
+# Permutation test parameters
+PERMUTATION_ITERATIONS = 1000
+PERMUTATION_SIGNIFICANCE = 0.05
+BOOTSTRAP_ITERATIONS = 5000
+BOOTSTRAP_CONFIDENCE = 0.95
+
 
 def composite_score(
     excess_return_pct: float,
@@ -2559,3 +2565,173 @@ def _resolve_stock_name(stock_code: str) -> str:
 def _error(message: str, detail: str = "") -> Dict[str, Any]:
     logger.warning("Backtest error: %s – %s", message, detail)
     return {"error": message, "detail": detail}
+
+
+# ---------------------------------------------------------------------------
+# Statistical significance & robustness
+# ---------------------------------------------------------------------------
+def permutation_test(
+    daily_values: List[Dict[str, Any]],
+    initial_cash: float,
+    iterations: int = PERMUTATION_ITERATIONS,
+    significance: float = PERMUTATION_SIGNIFICANCE,
+) -> Dict[str, Any]:
+    """Permutation test: is the observed Sharpe significantly different from random?
+
+    Shuffles trade returns randomly (breaks temporal structure) to create
+    a null distribution of Sharpe ratios. Returns p-value and whether the
+    strategy is significant at the given level.
+    """
+    import random
+
+    if not daily_values or len(daily_values) < 20:
+        return {
+            "significant": False,
+            "p_value": None,
+            "observed_sharpe": 0,
+            "null_mean": 0,
+            "null_std": 0,
+            "iterations": 0,
+            "reason": "insufficient data (<20 daily values)",
+        }
+
+    equity_values = [
+        dv.get("equity", 0) or 0 for dv in daily_values
+    ]
+    if not equity_values or equity_values[0] == 0:
+        return {
+            "significant": False,
+            "p_value": None,
+            "iterations": 0,
+            "reason": "invalid equity data",
+        }
+
+    # Build daily returns
+    daily_ret = []
+    for i in range(1, len(equity_values)):
+        if equity_values[i - 1] != 0:
+            daily_ret.append(
+                (equity_values[i] - equity_values[i - 1])
+                / equity_values[i - 1]
+            )
+
+    if len(daily_ret) < 10:
+        return {
+            "significant": False,
+            "p_value": None,
+            "iterations": 0,
+            "reason": "insufficient returns (<10)",
+        }
+
+    # Observed Sharpe
+    obs_avg = sum(daily_ret) / len(daily_ret)
+    obs_std = (
+        (sum((r - obs_avg) ** 2 for r in daily_ret) / len(daily_ret)) ** 0.5
+    )
+    obs_sharpe = obs_avg / max(obs_std, 1e-8) * (252 ** 0.5)
+
+    # Null distribution: shuffle returns to break temporal structure
+    null_sharpes = []
+    returns = list(daily_ret)
+    for _ in range(iterations):
+        random.shuffle(returns)
+        avg_r = sum(returns) / len(returns)
+        std_r = (
+            sum((r - avg_r) ** 2 for r in returns) / len(returns)
+        ) ** 0.5
+        sr = avg_r / max(std_r, 1e-8) * (252 ** 0.5)
+        null_sharpes.append(sr)
+
+    null_mean = sum(null_sharpes) / len(null_sharpes)
+    null_std = (
+        sum((s - null_mean) ** 2 for s in null_sharpes) / len(null_sharpes)
+    ) ** 0.5
+
+    # One-sided p-value: fraction of null >= observed
+    p_value = sum(1 for s in null_sharpes if s >= obs_sharpe) / iterations
+    significant = p_value < significance
+
+    return {
+        "significant": significant,
+        "p_value": round(p_value, 4),
+        "significance_level": significance,
+        "observed_sharpe": round(obs_sharpe, 4),
+        "null_mean": round(null_mean, 4),
+        "null_std": round(null_std, 4),
+        "iterations": iterations,
+    }
+
+
+def bootstrap_ci(
+    daily_values: List[Dict[str, Any]],
+    iterations: int = BOOTSTRAP_ITERATIONS,
+    confidence: float = BOOTSTRAP_CONFIDENCE,
+) -> Dict[str, Any]:
+    """Bootstrap confidence intervals for strategy metrics.
+
+    Resamples daily returns with replacement to estimate the sampling
+    distribution of total return, Sharpe, and max drawdown.
+    """
+    import random
+
+    if not daily_values or len(daily_values) < 20:
+        return {
+            "return_ci": None,
+            "sharpe_ci": None,
+            "iterations": 0,
+            "reason": "insufficient data",
+        }
+
+    equity_values = [
+        dv.get("equity", 0) or 0 for dv in daily_values
+    ]
+    daily_ret = []
+    for i in range(1, len(equity_values)):
+        if equity_values[i - 1] != 0:
+            daily_ret.append(
+                (equity_values[i] - equity_values[i - 1])
+                / equity_values[i - 1]
+            )
+
+    if len(daily_ret) < 10:
+        return {"iterations": 0, "reason": "insufficient returns"}
+
+    n = len(daily_ret)
+    tail = (1 - confidence) / 2
+
+    return_samples = []
+    sharpe_samples = []
+
+    for _ in range(iterations):
+        sample = [random.choice(daily_ret) for _ in range(n)]
+        # Compound return
+        compound = 1.0
+        for r in sample:
+            compound *= 1 + r
+        return_samples.append(compound - 1)
+
+        # Sharpe
+        avg = sum(sample) / n
+        std = (sum((x - avg) ** 2 for x in sample) / n) ** 0.5
+        sharpe_samples.append(avg / max(std, 1e-8) * (252 ** 0.5))
+
+    return_samples.sort()
+    sharpe_samples.sort()
+
+    lo_idx = int(tail * iterations)
+    hi_idx = int((1 - tail) * iterations)
+
+    return {
+        "return_ci": (
+            round(return_samples[lo_idx], 4),
+            round(return_samples[hi_idx], 4),
+        ),
+        "sharpe_ci": (
+            round(sharpe_samples[lo_idx], 4),
+            round(sharpe_samples[hi_idx], 4),
+        ),
+        "mean_return": round(sum(return_samples) / iterations, 4),
+        "mean_sharpe": round(sum(sharpe_samples) / iterations, 4),
+        "confidence": confidence,
+        "iterations": iterations,
+    }
