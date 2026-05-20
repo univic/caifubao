@@ -148,6 +148,35 @@ def run_experiment(args):
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
+def run_grid_search(args):
+    _init_db_connection()
+    from app.lib.scoring_engine.grid_search import GridSearchService
+
+    weight_grid = {}
+    if args.weight_grid:
+        weight_grid = json.loads(args.weight_grid)
+    threshold_grid = {}
+    if args.threshold_grid:
+        threshold_grid = json.loads(args.threshold_grid)
+
+    horizons = None
+    if args.horizons:
+        horizons = [int(h.strip()) for h in args.horizons.split(",")]
+
+    service = GridSearchService()
+    result = service.create_experiments(
+        name_prefix=args.name_prefix,
+        start_date=parse_date(args.from_date),
+        end_date=parse_date(args.to_date),
+        weight_grid=weight_grid,
+        threshold_grid=threshold_grid,
+        horizons=horizons,
+        baseline_model_version=args.baseline_version,
+        dry_run=args.dry_run,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+
+
 def _check_dependency() -> bool:
     """Check if the required upstream job family has a SUCCESS record for today.
 
@@ -236,6 +265,24 @@ def main(argv: list[str] | None = None) -> None:
     p_experiment.add_argument("--replace", action="store_true")
     p_experiment.add_argument("--dry-run", action="store_true")
 
+    # grid-search command
+    p_grid = subparsers.add_parser(
+        "grid-search", help="Auto-generate experiments from weight/threshold grids"
+    )
+    p_grid.add_argument("--name-prefix", default="grid", help="Experiment name prefix")
+    add_common_options(p_grid, include_range=True)
+    p_grid.add_argument(
+        "--weight-grid",
+        help='JSON weight grid: \'{"momentum":[20,25],"trend_alignment":[15,20]}\'',
+    )
+    p_grid.add_argument(
+        "--threshold-grid",
+        help='JSON threshold grid: \'{"buy_threshold":[60,70]}\'',
+    )
+    p_grid.add_argument("--horizons", help="Comma-separated: 5,20,60")
+    p_grid.add_argument("--baseline-version", help="Baseline model version")
+    p_grid.add_argument("--dry-run", action="store_true")
+
     # Add job tracking args to the "run" subparser
     p_run.add_argument(
         "--job-name",
@@ -303,6 +350,9 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "experiment":
         _init_db_connection()
         run_experiment(args)
+    elif args.command == "grid-search":
+        _init_db_connection()
+        run_grid_search(args)
     else:
         parser.print_help()
 
