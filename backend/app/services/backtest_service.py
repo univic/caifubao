@@ -487,6 +487,13 @@ def run_backtest(
     if consensus_exit_thresholds is None:
         consensus_exit_thresholds = {5: 30.0, 20: 35.0, 60: 40.0}
 
+    # Data coverage check before simulation
+    coverage = _data_coverage_report(
+        quotes=quotes,
+        factors=list(factor_map.values()) if factor_map else None,
+        score_maps=score_maps if score_maps else None,
+    )
+
     # Run the strategy simulation
     sim_result = _simulate(
         strategy=strategy_norm,
@@ -547,6 +554,7 @@ def run_backtest(
         sim_result["excess_return_pct"] = 0.0
         sim_result["information_ratio"] = 0.0
 
+    sim_result["data_coverage"] = coverage
     # Persist
     if save_result:
         ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -2539,9 +2547,81 @@ def _blocked_reason(quote, side: str) -> str:
 # Internal helpers – data access
 # ---------------------------------------------------------------------------
 def _closing_price(quote: StockDailyQuote) -> float:
-    """Return the HFQ-adjusted close, falling back to raw close."""
-    price = quote.close_hfq or quote.close or 0.0
-    return float(price)
+    """Return the HFQ-adjusted close, falling back to raw close.
+
+    Logs a warning when raw close is used as fallback and differs
+    significantly from the last known adjusted close — this indicates
+    missing factor/signal data that silently corrupts backtest results.
+    """
+    hfq = quote.close_hfq
+    raw = quote.close or 0.0
+    if hfq:
+        return float(hfq)
+    # Fallback to raw close — may indicate stale factor data
+    logger.warning(
+        "No HFQ close for %s on %s — falling back to raw close %.2f. "
+        "Backtest results on/after this date may be unreliable.",
+        getattr(quote, "code", "?"),
+        getattr(quote, "date", "?"),
+        raw,
+    )
+    return float(raw)
+
+
+def _data_coverage_report(
+    quotes: List[StockDailyQuote],
+    factors: List | None = None,
+    score_maps: Dict | None = None,
+) -> Dict[str, Any]:
+    """Check data consistency — flag missing HFQ, stale factors, score gaps.
+
+    Returns warnings dict that should be included in backtest results.
+    """
+    warnings = []
+
+    # Check for HFQ gaps (missing adjusted prices)
+    hfq_gaps = []
+    for q in quotes:
+        if not q.close_hfq and q.close:
+            hfq_gaps.append(getattr(q, "date", datetime(2000, 1, 1)).isoformat()[:10])
+    if hfq_gaps:
+        warnings.append(
+            f"HFQ missing for {len(hfq_gaps)} days (using raw close): "
+            f"{hfq_gaps[:5]}{'...' if len(hfq_gaps) > 5 else ''}"
+        )
+
+    # Check factor coverage vs quote coverage
+    if factors is not None:
+        quote_dates = {
+            q.date.replace(hour=0, minute=0, second=0, microsecond=0) for q in quotes
+        }
+        factor_dates = {
+            f.date.replace(hour=0, minute=0, second=0, microsecond=0) for f in factors
+        }
+        missing_factor = quote_dates - factor_dates
+        if missing_factor:
+            earliest = min(missing_factor)
+            warnings.append(
+                f"Factor data missing for {len(missing_factor)} trading days "
+                f"(first: {earliest.isoformat()[:10]}). Strategies using MA "
+                f"values will be unreliable on/after this date."
+            )
+
+    # Check score data coverage
+    if score_maps is not None:
+        for horizon, h_map in score_maps.items():
+            if not h_map:
+                warnings.append(
+                    f"Score{horizon} data: 0 records (no score predictions)"
+                )
+        if not score_maps:
+            warnings.append("No score data for any horizon")
+
+    return {
+        "warnings": warnings,
+        "has_hfq_gaps": len(hfq_gaps) > 0,
+        "hfq_gap_count": len(hfq_gaps),
+    }
 
 
 def _resolve_stock_name(stock_code: str) -> str:
