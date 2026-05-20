@@ -145,6 +145,7 @@ def _serialize_result(
         "information_ratio": row.information_ratio,
         "horizon": row.horizon,
         "score_config": row.score_config,
+        "data_coverage": row.data_coverage or {},
         "created_at": _format_dt(row.created_at),
         "completed_at": _format_dt(row.completed_at),
     }

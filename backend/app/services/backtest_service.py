@@ -418,6 +418,27 @@ def run_backtest(
             f"No StockDailyQuote for {stock_code} in [{start_date.date()}, {end_date.date()}]",
         )
 
+    # Truncate to last day with valid HFQ — raw-close fallback corrupts returns
+    last_hfq_idx = None
+    for i, q in enumerate(quotes):
+        if q.close_hfq:
+            last_hfq_idx = i
+    if last_hfq_idx is not None and last_hfq_idx < len(quotes) - 1:
+        dropped = len(quotes) - last_hfq_idx - 1
+        dropped_dates = [
+            quotes[j].date.strftime("%Y-%m-%d")
+            for j in range(last_hfq_idx + 1, len(quotes))
+        ]
+        logger.warning(
+            "HFQ missing for %d day(s) at end of range (%s). "
+            "Truncating backtest to %s to avoid raw-close corruption.",
+            dropped,
+            ", ".join(dropped_dates),
+            quotes[last_hfq_idx].date.strftime("%Y-%m-%d"),
+        )
+        quotes = quotes[: last_hfq_idx + 1]
+        end_date = quotes[-1].date.replace(hour=0, minute=0, second=0, microsecond=0)
+
     # Build quote lookup keyed by date
     quote_map: Dict[datetime, StockDailyQuote] = {
         q.date.replace(hour=0, minute=0, second=0, microsecond=0): q for q in quotes
@@ -491,7 +512,9 @@ def run_backtest(
     coverage = _data_coverage_report(
         quotes=quotes,
         factors=list(factor_map.values()) if factor_map else None,
-        score_maps=score_maps if score_maps else None,
+        score_maps=score_maps
+        if score_maps
+        else ({horizon: score_map} if score_map and horizon else None),
     )
 
     # Run the strategy simulation
@@ -621,6 +644,7 @@ def run_backtest(
             horizon=horizon
             if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM")
             else None,
+            data_coverage=coverage,
             completed_at=datetime.now(timezone.utc),
         )
         doc.save()
