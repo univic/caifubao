@@ -232,10 +232,11 @@ def rsi_14(quotes: list, window: int = 14) -> dict:
 def real_relative_strength(
     stock_quotes: list, index_quotes: list, lookback: int = 20
 ) -> dict:
-    """Stock alpha vs index — replaces self-proxy with CSI 300 comparison.
+    """Stock alpha vs CSI 300 — standalone helper (NOT in ALL_TECHNICAL_FACTORS).
 
-    Computes relative strength as stock return minus index return over
-    lookback days. Requires index quotes aligned with stock quotes by date.
+    Requires index quotes aligned with stock quotes by date.
+    Not in the registry because it needs index_quotes — call directly
+    or integrate via scoring components.
     """
     result = {}
     if not index_quotes or not stock_quotes:
@@ -301,5 +302,5 @@ ALL_TECHNICAL_FACTORS = {
     "gap_ratio": gap_ratio,
     "yearly_position": yearly_position,
     "rsi_14": rsi_14,
-    "real_relative_strength": real_relative_strength,
 }
+# real_relative_strength excluded — needs index_quotes parameter
