@@ -229,6 +229,68 @@ def rsi_14(quotes: list, window: int = 14) -> dict:
     return result
 
 
+def real_relative_strength(
+    stock_quotes: list, index_quotes: list, lookback: int = 20
+) -> dict:
+    """Stock alpha vs index — replaces self-proxy with CSI 300 comparison.
+
+    Computes relative strength as stock return minus index return over
+    lookback days. Requires index quotes aligned with stock quotes by date.
+    """
+    result = {}
+    if not index_quotes or not stock_quotes:
+        return result
+
+    # Build a price lookup keyed by date.isoformat()
+    index_prices = {}
+    for q in index_quotes:
+        idx_close = _closing_price(q)
+        if idx_close and idx_close > 0:
+            index_prices[q.date.isoformat()] = idx_close
+
+    stock_prices = {}
+    for q in stock_quotes:
+        sc = _closing_price(q)
+        if sc and sc > 0:
+            stock_prices[q.date.isoformat()] = (q.date.isoformat(), sc)
+
+    stock_dates = sorted(stock_prices.keys())
+    index_dates = sorted(index_prices.keys())
+
+    for i, date_key in enumerate(stock_dates):
+        if i < lookback:
+            continue
+        _, current_sc = stock_prices[date_key]
+        old_date_key = stock_dates[i - lookback]
+        _, old_sc = stock_prices[old_date_key]
+
+        # Find closest index prices (not guaranteed same trading days)
+        idx_curr = _closest_price(index_prices, index_dates, date_key)
+        idx_old = _closest_price(index_prices, index_dates, old_date_key)
+
+        if old_sc == 0 or idx_old == 0:
+            continue
+
+        stock_return = (current_sc - old_sc) / old_sc
+        index_return = (idx_curr - idx_old) / idx_old
+        alpha = stock_return - index_return
+
+        # Clamp to ±0.3 for reasonable bounds
+        result[date_key] = round(max(-0.3, min(0.3, alpha)), 6)
+
+    return result
+
+
+def _closest_price(prices: dict, sorted_dates: list, target_date: str) -> float:
+    """Find the closest price on or before target_date."""
+    import bisect
+
+    idx = bisect.bisect_right(sorted_dates, target_date)
+    if idx > 0:
+        return prices[sorted_dates[idx - 1]]
+    return 0.0
+
+
 # Registry for easy iteration over all technical factor functions
 ALL_TECHNICAL_FACTORS = {
     "volume_ratio": volume_ratio,
@@ -239,4 +301,5 @@ ALL_TECHNICAL_FACTORS = {
     "gap_ratio": gap_ratio,
     "yearly_position": yearly_position,
     "rsi_14": rsi_14,
+    "real_relative_strength": real_relative_strength,
 }
