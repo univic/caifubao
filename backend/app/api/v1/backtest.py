@@ -2,6 +2,7 @@
 """Backtest API blueprint for the MVP single-stock daily backtesting feature."""
 
 import logging
+import statistics
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
@@ -10,7 +11,9 @@ from flask import Blueprint, jsonify, request
 from mongoengine import ValidationError
 
 from app.model.backtest import BacktestResult
-from app.services.backtest_service import run_backtest, run_multi_stock_backtest
+from app.services.backtest_service import (
+    run_backtest, run_multi_stock_backtest, composite_score
+)
 
 logger = logging.getLogger(__name__)
 
@@ -476,6 +479,8 @@ def optimize():
         return _fail("stock_code and strategy are required")
     if not start_date or not end_date:
         return _fail("start_date and end_date are required")
+    if start_date > end_date:
+        return _fail("start_date must be <= end_date")
     if not isinstance(param_grid, dict) or not param_grid:
         return _fail("param_grid must be a non-empty dict")
     # Validate each value is a non-empty iterable
@@ -874,7 +879,11 @@ def scan():
                 save_result=False,
                 horizon=horizon,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "scan backtest failed for %s: %s",
+                stock.code, exc,
+            )
             errors += 1
             continue
 
@@ -1475,6 +1484,588 @@ def evaluate_factor():
                 "quintiles": result.get("quintiles", {}),
                 "decay": result.get("decay", {}),
                 "correlation": result.get("correlation", {}),
+            }
+        )
+    ), 200
+
+
+# ===========================================================================
+# Decay analysis endpoint (Task 17.2)
+# ===========================================================================
+
+
+@backtest_bp.route("/decay-analysis", methods=["POST"])
+def decay_analysis():
+    """Train vs test Sharpe decay analysis per rolling window.
+
+    Request body (JSON):
+        stock_code    : str (required)
+        strategy      : str (required)
+        start_date    : str (required)   YYYY-MM-DD
+        end_date      : str (required)   YYYY-MM-DD
+        window_days   : int (optional)   default 120 trading days
+        step_days     : int (optional)   default 60 trading days
+        horizon       : int (optional)   for score-driven strategies
+        initial_cash  : float (optional) default 100000
+    """
+    payload = request.get_json(silent=True) or {}
+
+    stock_code = (payload.get("stock_code") or "").strip()
+    strategy = (payload.get("strategy") or "").strip()
+    start_date = _parse_date(payload.get("start_date"))
+    end_date = _parse_date(payload.get("end_date"))
+    horizon = _parse_int(payload.get("horizon"), None)
+    window_days = _parse_int(payload.get("window_days"), 120, minimum=40)
+    step_days = _parse_int(payload.get("step_days"), 60, minimum=10)
+    initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+
+    if not stock_code or not strategy:
+        return _fail("stock_code and strategy are required")
+    if not start_date or not end_date:
+        return _fail("start_date and end_date are required")
+
+    # Load trading days
+    quotes = _load_quotes_helper(stock_code, start_date, end_date)
+    if not quotes:
+        return _fail("No quote data for this stock in range")
+
+    trading_days = sorted(
+        {q.date.replace(hour=0, minute=0, second=0, microsecond=0) for q in quotes}
+    )
+    total_trading_days = len(trading_days)
+    if total_trading_days < window_days + step_days:
+        return _fail(
+            f"Need at least {window_days + step_days} trading days, "
+            f"got {total_trading_days}"
+        )
+
+    warnings = []
+    if total_trading_days < 300:
+        warnings.append(
+            f"Total trading days ({total_trading_days}) is below 300 — "
+            f"decay analysis may be unreliable"
+        )
+
+    strategy_norm = strategy.strip().upper()
+
+    windows = []
+    start_idx = 0
+    while start_idx + window_days + step_days <= total_trading_days:
+        train_end_idx = start_idx + window_days - 1
+        test_end_idx = train_end_idx + step_days
+
+        train_start_dt = trading_days[start_idx]
+        train_end_dt = trading_days[train_end_idx]
+        test_start_dt = trading_days[train_end_idx + 1]
+        test_end_dt = trading_days[min(test_end_idx, total_trading_days - 1)]
+
+        # Run train backtest
+        try:
+            train_r = run_backtest(
+                stock_code=stock_code,
+                strategy=strategy_norm,
+                start_date=train_start_dt,
+                end_date=train_end_dt,
+                initial_cash=initial_cash,
+                save_result=False,
+                horizon=horizon,
+            )
+        except Exception as exc:
+            logger.warning(
+                "decay-analysis train backtest failed for window %s: %s",
+                train_start_dt.isoformat(),
+                exc,
+            )
+            start_idx += max(1, step_days)
+            continue
+
+        if "error" in train_r:
+            start_idx += max(1, step_days)
+            continue
+
+        # Run test backtest
+        try:
+            test_r = run_backtest(
+                stock_code=stock_code,
+                strategy=strategy_norm,
+                start_date=test_start_dt,
+                end_date=test_end_dt,
+                initial_cash=initial_cash,
+                save_result=False,
+                horizon=horizon,
+            )
+        except Exception as exc:
+            logger.warning(
+                "decay-analysis test backtest failed for window %s: %s",
+                test_start_dt.isoformat(),
+                exc,
+            )
+            start_idx += max(1, step_days)
+            continue
+
+        if "error" in test_r:
+            start_idx += max(1, step_days)
+            continue
+
+        train_sharpe = train_r.get("sharpe_ratio", 0) or 0
+        test_sharpe = test_r.get("sharpe_ratio", 0) or 0
+
+        # Compute per-window decay
+        denom = max(abs(train_sharpe), 0.01)
+        decay_pct = round((train_sharpe - test_sharpe) / denom * 100, 1)
+
+        windows.append(
+            {
+                "train_start": train_start_dt.isoformat(),
+                "train_end": train_end_dt.isoformat(),
+                "test_start": test_start_dt.isoformat(),
+                "test_end": test_end_dt.isoformat(),
+                "train_sharpe": round(train_sharpe, 4),
+                "test_sharpe": round(test_sharpe, 4),
+                "decay_pct": decay_pct,
+            }
+        )
+
+        start_idx += max(1, step_days)
+
+    if len(windows) < 1:
+        return _fail(
+            "No valid windows — all train/test combinations failed"
+        )
+
+    if len(windows) < 3:
+        warnings.append(
+            f"Only {len(windows)} window(s) available — "
+            f"at least 3 recommended for reliable decay analysis"
+        )
+
+    # Overall decay
+    decays = [w["decay_pct"] for w in windows]
+    mean_decay = round(sum(decays) / len(decays), 1) if decays else 0.0
+    overfit = mean_decay > 20.0
+
+    return jsonify(
+        _ok(
+            data={
+                "stock_code": stock_code,
+                "strategy": strategy_norm,
+                "horizon": horizon,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "total_trading_days": total_trading_days,
+                "windows": windows,
+                "mean_decay_pct": mean_decay,
+                "overfit": overfit,
+                "total_windows": len(windows),
+                "warnings": warnings,
+            }
+        )
+    ), 200
+
+
+# ===========================================================================
+# Parameter landscape endpoint (Task 17.6)
+# ===========================================================================
+
+
+@backtest_bp.route("/landscape", methods=["POST"])
+def landscape():
+    """2D parameter grid for identifying flat vs sharp optima.
+
+    Request body (JSON):
+        stock_code    : str (required)
+        strategy      : str (required)   SCORE_THRESHOLD / SCORE_MOMENTUM
+        start_date    : str (required)   YYYY-MM-DD
+        end_date      : str (required)   YYYY-MM-DD
+        param_x       : str (required)   e.g. "entry_threshold"
+        x_values      : list (required)  e.g. [50, 60, 70, 80]
+        param_y       : str (required)   e.g. "stop_loss_pct"
+        y_values      : list (required)  e.g. [-0.10, -0.05, 0.0]
+        horizon       : int (required)   5, 20, or 60
+        initial_cash  : float (optional) default 100000
+    """
+    payload = request.get_json(silent=True) or {}
+
+    stock_code = (payload.get("stock_code") or "").strip()
+    strategy = (payload.get("strategy") or "").strip()
+    start_date = _parse_date(payload.get("start_date"))
+    end_date = _parse_date(payload.get("end_date"))
+    horizon = _parse_int(payload.get("horizon"), None)
+    initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+    param_x = (payload.get("param_x") or "").strip()
+    param_y = (payload.get("param_y") or "").strip()
+    x_values = payload.get("x_values")
+    y_values = payload.get("y_values")
+
+    if not stock_code or not strategy:
+        return _fail("stock_code and strategy are required")
+    if not start_date or not end_date:
+        return _fail("start_date and end_date are required")
+    if start_date > end_date:
+        return _fail("start_date must be <= end_date")
+    if not param_x or not isinstance(x_values, list) or len(x_values) == 0:
+        return _fail("param_x and x_values (non-empty list) are required")
+    if not param_y or not isinstance(y_values, list) or len(y_values) == 0:
+        return _fail("param_y and y_values (non-empty list) are required")
+    if horizon is None or horizon not in (5, 20, 60):
+        return _fail("horizon (5, 20, or 60) is required for landscape")
+
+    strategy_norm = strategy.strip().upper()
+    if strategy_norm not in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
+        return _fail(
+            "landscape supports SCORE_THRESHOLD and SCORE_MOMENTUM only"
+        )
+
+    # Validate param names against strategy whitelist
+    VALID_PARAM_KEYS = {
+        "SCORE_THRESHOLD": {"entry_threshold", "exit_threshold", "stop_loss_pct"},
+        "SCORE_MOMENTUM": {"score_delta", "stop_loss_pct"},
+    }
+    allowed = VALID_PARAM_KEYS.get(strategy_norm, set())
+    if param_x not in allowed:
+        return _fail(
+            f"Unknown param_x '{param_x}' for strategy '{strategy_norm}'."
+            f" Allowed: {sorted(allowed)}"
+        )
+    if param_y not in allowed:
+        return _fail(
+            f"Unknown param_y '{param_y}' for strategy '{strategy_norm}'."
+            f" Allowed: {sorted(allowed)}"
+        )
+    if param_x == param_y:
+        return _fail("param_x and param_y must be different")
+
+    # Grid-size cap: prevent combinatorial explosion
+    MAX_GRID_CELLS = 225  # 15 × 15
+    total_cells = len(x_values) * len(y_values)
+    if total_cells > MAX_GRID_CELLS:
+        return _fail(
+            f"Grid size ({len(x_values)}×{len(y_values)}={total_cells}) "
+            f"exceeds maximum of {MAX_GRID_CELLS} cells"
+        )
+
+    # Build grid (cartesian product)
+    grid = []
+    best_sharpe = float("-inf")
+    best_cell = None
+
+    for x_val in x_values:
+        for y_val in y_values:
+            kw = {
+                "stock_code": stock_code,
+                "strategy": strategy_norm,
+                "start_date": start_date,
+                "end_date": end_date,
+                "initial_cash": initial_cash,
+                "save_result": False,
+                "horizon": horizon,
+            }
+            # Map param_x/param_y to run_backtest kwargs
+            kw[param_x] = x_val
+            kw[param_y] = y_val
+
+            try:
+                r = run_backtest(**kw)
+            except Exception as exc:
+                logger.warning(
+                    "landscape cell (%s=%s, %s=%s) failed for %s: %s",
+                    param_x, x_val, param_y, y_val, stock_code, exc,
+                )
+                grid.append(
+                    {
+                        "x": x_val,
+                        "y": y_val,
+                        "error": str(exc),
+                    }
+                )
+                continue
+
+            if "error" in r:
+                grid.append(
+                    {
+                        "x": x_val,
+                        "y": y_val,
+                        "error": r["error"],
+                    }
+                )
+                continue
+
+            cell = {
+                "x": x_val,
+                "y": y_val,
+                "sharpe": round(r.get("sharpe_ratio", 0) or 0, 4),
+                "return_pct": round(r.get("total_return_pct", 0) or 0, 2),
+                "trades": r.get("total_trades", 0) or 0,
+                "drawdown": round(r.get("max_drawdown", 0) or 0, 2),
+            }
+            grid.append(cell)
+
+            if cell["sharpe"] > best_sharpe:
+                best_sharpe = cell["sharpe"]
+                best_cell = {
+                    "x": x_val,
+                    "y": y_val,
+                    "sharpe": cell["sharpe"],
+                    "return_pct": cell["return_pct"],
+                }
+
+    return jsonify(
+        _ok(
+            data={
+                "stock_code": stock_code,
+                "strategy": strategy_norm,
+                "horizon": horizon,
+                "param_x": param_x,
+                "param_y": param_y,
+                "x_values": x_values,
+                "y_values": y_values,
+                "grid": grid,
+                "best": best_cell,
+                "metrics": ["sharpe", "return_pct", "trades", "drawdown"],
+            }
+        )
+    ), 200
+
+
+# ===========================================================================
+# Recommendation endpoint (Task 17.7)
+# ===========================================================================
+
+
+@backtest_bp.route("/recommendation", methods=["POST"])
+def recommendation():
+    """Aggregate best strategy config per horizon with stability and decay.
+
+    Runs backtest + walk-forward decay check for each (horizon, strategy) pair,
+    ranks by composite_score, and returns per-horizon rankings with warnings.
+
+    Request body (JSON):
+        stock_code    : str (required)
+        start_date    : str (required)   YYYY-MM-DD
+        end_date      : str (required)   YYYY-MM-DD
+        horizons      : list[int] (optional)  default [5, 20, 60]
+        strategies    : list[str] (optional)  default ["SCORE_MOMENTUM", "MA_CROSS",
+                                                     "BUY_HOLD"]
+        initial_cash  : float (optional) default 100000
+    """
+    payload = request.get_json(silent=True) or {}
+
+    stock_code = (payload.get("stock_code") or "").strip()
+    start_date = _parse_date(payload.get("start_date"))
+    end_date = _parse_date(payload.get("end_date"))
+    initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+    horizons = payload.get("horizons") or [5, 20, 60]
+    strategies_raw = payload.get("strategies") or [
+        "SCORE_MOMENTUM", "MA_CROSS", "BUY_HOLD"
+    ]
+
+    if not stock_code:
+        return _fail("stock_code is required")
+    if not start_date or not end_date:
+        return _fail("start_date and end_date are required")
+    if start_date > end_date:
+        return _fail("start_date must be <= end_date")
+    if not isinstance(horizons, list) or not horizons:
+        return _fail("horizons must be a non-empty list of integers")
+    if not isinstance(strategies_raw, list) or not strategies_raw:
+        return _fail("strategies must be a non-empty list")
+
+    # Normalize horizons
+    valid_horizons = []
+    for h in horizons:
+        if isinstance(h, int) and h in (5, 20, 60):
+            valid_horizons.append(h)
+        elif isinstance(h, str) and h.isdigit():
+            h_int = int(h)
+            if h_int in (5, 20, 60):
+                valid_horizons.append(h_int)
+    if not valid_horizons:
+        return _fail("horizons must contain at least one of 5, 20, or 60")
+
+    # Normalize strategies
+    ALLOWED_STRATEGIES = {
+        "MA_CROSS", "BUY_HOLD", "SCORE_THRESHOLD",
+        "SCORE_MOMENTUM", "MULTI_HORIZON_CONSENSUS",
+    }
+    strategies = []
+    for s in strategies_raw:
+        sn = str(s).strip().upper()
+        if sn in ALLOWED_STRATEGIES:
+            strategies.append(sn)
+    if not strategies:
+        return _fail(
+            "strategies must contain at least one valid strategy from: "
+            + ", ".join(sorted(ALLOWED_STRATEGIES))
+        )
+
+    # Combination cap: prevent excessive backtest workload
+    MAX_COMBINATIONS = 15  # 3 horizons × 5 strategies
+    total_combos = len(valid_horizons) * len(strategies)
+    if total_combos > MAX_COMBINATIONS:
+        return _fail(
+            f"horizons ({len(valid_horizons)}) × strategies ({len(strategies)}) "
+            f"= {total_combos} exceeds maximum of {MAX_COMBINATIONS}"
+        )
+
+    # Load trading days once for walk-forward
+    quotes = _load_quotes_helper(stock_code, start_date, end_date)
+    trading_days = sorted(
+        {q.date.replace(hour=0, minute=0, second=0, microsecond=0) for q in quotes}
+    ) if quotes else []
+
+    WINDOW_DAYS = 120
+    STEP_DAYS = 60
+
+    # Per-horizon results
+    per_horizon: dict = {}
+
+    for h in valid_horizons:
+        rankings = []
+        warnings = []
+        benchmark = None
+
+        for s in strategies:
+            score_kw: dict = {
+                "stock_code": stock_code,
+                "strategy": s,
+                "start_date": start_date,
+                "end_date": end_date,
+                "initial_cash": initial_cash,
+                "save_result": False,
+            }
+            # Only pass horizon for score-driven and multi-horizon strategies
+            if s in ("SCORE_THRESHOLD", "SCORE_MOMENTUM", "MULTI_HORIZON_CONSENSUS"):
+                score_kw["horizon"] = h
+
+            try:
+                r = run_backtest(**score_kw)
+            except Exception as exc:
+                logger.error(
+                    "recommendation backtest failed for %s strategy=%s horizon=%s: %s",
+                    stock_code, s, h, exc,
+                )
+                warnings.append(f"{s} horizon={h}: exception — {exc}")
+                continue
+
+            if "error" in r:
+                warnings.append(f"{s} horizon={h}: {r['error']}")
+                continue
+
+            # Basic metrics
+            entry_metrics = {
+                "strategy": s,
+                "sharpe": round(r.get("sharpe_ratio", 0) or 0, 4),
+                "return_pct": round(r.get("total_return_pct", 0) or 0, 2),
+                "drawdown": round(r.get("max_drawdown", 0) or 0, 2),
+                "trades": r.get("total_trades", 0) or 0,
+                "win_rate": round(r.get("win_rate", 0) or 0, 1),
+                "excess_return_pct": round(r.get("excess_return_pct", 0) or 0, 2),
+                "information_ratio": round(r.get("information_ratio", 0) or 0, 4),
+            }
+
+            # Walk-forward stability check
+            stability_score = None
+            performance_decay = False
+            if trading_days and len(trading_days) >= WINDOW_DAYS:
+                wf_sharpes = []
+                wf_start_idx = 0
+                while wf_start_idx + WINDOW_DAYS <= len(trading_days):
+                    wf_end_idx = wf_start_idx + WINDOW_DAYS - 1
+                    wf_start_dt = trading_days[wf_start_idx]
+                    wf_end_dt = trading_days[wf_end_idx]
+                    wf_kw = dict(score_kw)
+                    wf_kw["start_date"] = wf_start_dt
+                    wf_kw["end_date"] = wf_end_dt
+                    try:
+                        wf_r = run_backtest(**wf_kw)
+                    except Exception as exc:
+                        logger.warning(
+                            "recommendation walk-forward failed for %s "
+                            "strategy=%s horizon=%s window=%s: %s",
+                            stock_code, s, h,
+                            wf_start_dt.isoformat(), exc,
+                        )
+                    else:
+                        if "error" not in wf_r:
+                            wf_sharpes.append(
+                                wf_r.get("sharpe_ratio", 0) or 0
+                            )
+                        else:
+                            wf_sharpes.append(0.0)
+                    wf_start_idx += max(1, STEP_DAYS)
+
+                # Compute stability (std of window Sharpes)
+                nonzero_sharpes = [v for v in wf_sharpes if v != 0.0]
+                if len(nonzero_sharpes) >= 2:
+                    stability_score = round(statistics.stdev(nonzero_sharpes), 4)
+
+                # Performance decay (first-half vs second-half)
+                if len(nonzero_sharpes) >= 6:
+                    mid = len(nonzero_sharpes) // 2
+                    first_half = (
+                        sum(nonzero_sharpes[:mid]) / mid
+                        if nonzero_sharpes[:mid]
+                        else 0
+                    )
+                    second_half = (
+                        sum(nonzero_sharpes[mid:]) / (len(nonzero_sharpes) - mid)
+                        if nonzero_sharpes[mid:]
+                        else 0
+                    )
+                    decay = (
+                        (first_half - second_half)
+                        / max(abs(first_half), 0.01)
+                    )
+                    performance_decay = decay > 0.2
+
+            entry_metrics["stability_score"] = stability_score
+            entry_metrics["performance_decay"] = performance_decay
+
+            # Composite score
+            comp = composite_score(
+                excess_return_pct=entry_metrics["excess_return_pct"],
+                max_drawdown=entry_metrics["drawdown"],
+                information_ratio=entry_metrics["information_ratio"],
+                total_trades=entry_metrics["trades"],
+                daily_values=r.get("daily_values"),
+                trades=r.get("trades"),
+            )
+            entry_metrics["composite_score"] = comp["score"]
+
+            if performance_decay:
+                warnings.append(
+                    f"{s} horizon={h}: performance decay detected "
+                    f"(second-half Sharpe >20% below first-half)"
+                )
+
+            # Separate BUY_HOLD as benchmark
+            if s == "BUY_HOLD":
+                benchmark = entry_metrics
+            else:
+                rankings.append(entry_metrics)
+
+        # Sort rankings by composite_score (higher = better), rankable first
+        rankings.sort(
+            key=lambda x: (
+                -(x.get("composite_score", -999) or -999),
+            ),
+        )
+
+        per_horizon[str(h)] = {
+            "rankings": rankings,
+            "benchmark": benchmark,
+            "warnings": warnings,
+        }
+
+    return jsonify(
+        _ok(
+            data={
+                "stock_code": stock_code,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "horizons": valid_horizons,
+                "strategies": strategies,
+                "per_horizon": per_horizon,
             }
         )
     ), 200
