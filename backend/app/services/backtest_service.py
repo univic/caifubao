@@ -2629,12 +2629,10 @@ def permutation_test(
     # Center returns (remove mean) so H0: μ=0 is true after centering
     centered = [r - obs_avg for r in daily_ret]
 
-    # Null distribution: shuffle CENTERED returns, then add back a random
-    # sign-flip per return to break residual structure
+    # Null distribution: shuffle CENTERED returns, random sign-flip
     null_sharpes = []
     for _ in range(iterations):
         random.shuffle(centered)
-        # Random sign-flip to remove any residual directional bias
         flipped = [c if random.random() < 0.5 else -c for c in centered]
         avg_r = sum(flipped) / len(flipped)
         std_r = (sum((x - avg_r) ** 2 for x in flipped) / len(flipped)) ** 0.5
@@ -2646,68 +2644,8 @@ def permutation_test(
         sum((s - null_mean) ** 2 for s in null_sharpes) / len(null_sharpes)
     ) ** 0.5
 
-    # One-sided p-value: fraction of null >= observed
     p_value = sum(1 for s in null_sharpes if s >= obs_sharpe) / iterations
     significant = p_value < significance and obs_sharpe > 0
-
-    return {
-        "significant": significant,
-        "p_value": round(p_value, 4),
-        "significance_level": significance,
-        "observed_sharpe": round(obs_sharpe, 4),
-        "null_mean": round(null_mean, 4),
-        "null_std": round(null_std, 4),
-        "iterations": iterations,
-    }
-
-    equity_values = [dv.get("equity", 0) or 0 for dv in daily_values]
-    if not equity_values or equity_values[0] == 0:
-        return {
-            "significant": False,
-            "p_value": None,
-            "iterations": 0,
-            "reason": "invalid equity data",
-        }
-
-    # Build daily returns
-    daily_ret = []
-    for i in range(1, len(equity_values)):
-        if equity_values[i - 1] != 0:
-            daily_ret.append(
-                (equity_values[i] - equity_values[i - 1]) / equity_values[i - 1]
-            )
-
-    if len(daily_ret) < 10:
-        return {
-            "significant": False,
-            "p_value": None,
-            "iterations": 0,
-            "reason": "insufficient returns (<10)",
-        }
-
-    # Observed Sharpe
-    obs_avg = sum(daily_ret) / len(daily_ret)
-    obs_std = (sum((r - obs_avg) ** 2 for r in daily_ret) / len(daily_ret)) ** 0.5
-    obs_sharpe = obs_avg / max(obs_std, 1e-8) * (252**0.5)
-
-    # Null distribution: shuffle returns to break temporal structure
-    null_sharpes = []
-    returns = list(daily_ret)
-    for _ in range(iterations):
-        random.shuffle(returns)
-        avg_r = sum(returns) / len(returns)
-        std_r = (sum((r - avg_r) ** 2 for r in returns) / len(returns)) ** 0.5
-        sr = avg_r / max(std_r, 1e-8) * (252**0.5)
-        null_sharpes.append(sr)
-
-    null_mean = sum(null_sharpes) / len(null_sharpes)
-    null_std = (
-        sum((s - null_mean) ** 2 for s in null_sharpes) / len(null_sharpes)
-    ) ** 0.5
-
-    # One-sided p-value: fraction of null >= observed
-    p_value = sum(1 for s in null_sharpes if s >= obs_sharpe) / iterations
-    significant = p_value < significance
 
     return {
         "significant": significant,
@@ -2724,6 +2662,7 @@ def bootstrap_ci(
     daily_values: List[Dict[str, Any]],
     iterations: int = BOOTSTRAP_ITERATIONS,
     confidence: float = BOOTSTRAP_CONFIDENCE,
+    initial_cash: float = 100000.0,
 ) -> Dict[str, Any]:
     """Bootstrap confidence intervals for total return and Sharpe ratio.
 
@@ -2744,6 +2683,8 @@ def bootstrap_ci(
         }
 
     equity_values = [dv.get("equity", 0) or 0 for dv in daily_values]
+    # Include initial_cash as first equity point (matches backtest metrics)
+    equity_values.insert(0, initial_cash)
     daily_ret = []
     for i in range(1, len(equity_values)):
         if equity_values[i - 1] != 0:
@@ -2768,10 +2709,11 @@ def bootstrap_ci(
             compound *= 1 + r
         return_samples.append(compound - 1)
 
-        # Sharpe
+        # Sharpe (matching _compute_sharpe: 0 when std is zero)
         avg = sum(sample) / n
         std = (sum((x - avg) ** 2 for x in sample) / n) ** 0.5
-        sharpe_samples.append(avg / max(std, 1e-8) * (252**0.5))
+        sr = avg / std * (252**0.5) if std > 1e-12 else 0.0
+        sharpe_samples.append(sr)
 
     return_samples.sort()
     sharpe_samples.sort()
