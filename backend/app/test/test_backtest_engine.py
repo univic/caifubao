@@ -843,11 +843,11 @@ class TestPermutationTest:
     """permutation_test — significance of observed Sharpe."""
 
     def test_significant_positive_returns(self):
-        """Alternating positive/negative returns with net positive → significant."""
+        """Alternating returns with net positive → observed Sharpe > 0."""
         from app.services.backtest_service import permutation_test
 
-        # Structured returns: win small often, lose big rarely
-        daily_ret = [0.005] * 200 + [-0.15] * 10 + [0.005] * 42
+        # 100 days +1%, then 100 days flat → positive Sharpe with temporal structure
+        daily_ret = [0.01] * 100 + [0.0] * 100
         equity = 100000.0
         dv = []
         for r in daily_ret:
@@ -882,7 +882,7 @@ class TestBootstrapCI:
         """CI brackets mean return."""
         from app.services.backtest_service import bootstrap_ci
 
-        daily_ret = [0.005] * 200 + [-0.15] * 10 + [0.005] * 42
+        daily_ret = [0.01] * 100 + [0.0] * 100
         equity = 100000.0
         dv = []
         for r in daily_ret:

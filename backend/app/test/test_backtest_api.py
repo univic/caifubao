@@ -893,7 +893,7 @@ class TestSignificanceAPI:
         """Returns both permutation and bootstrap results."""
         from app.model import backtest as bt_mod
 
-        daily_ret = [0.005] * 200 + [-0.15] * 10 + [0.005] * 42
+        daily_ret = [0.01] * 100 + [0.0] * 100
         equity = 100000.0
         dv = []
         for r in daily_ret:
