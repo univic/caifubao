@@ -90,7 +90,7 @@ class GridSearchService:
             if threshold_grid:
                 config[str(horizon)].update(threshold_grid)
 
-            model_version = f"{name_prefix}_h{horizon}_w{created+1}"
+            model_version = f"{name_prefix}_h{horizon}_w{created + 1}"
             combo_label = "_".join(
                 f"{k[:3]}{v}" for k, v in zip(weight_keys, weight_combo)
             )
@@ -117,16 +117,12 @@ class GridSearchService:
         # Generate threshold-only combinations (no weight change)
         if threshold_grid:
             threshold_keys = list(threshold_grid.keys())
-            threshold_values_lists = [
-                threshold_grid[k] for k in threshold_keys
-            ]
+            threshold_values_lists = [threshold_grid[k] for k in threshold_keys]
             for threshold_combo in itertools.product(*threshold_values_lists):
                 config = {
-                    str(horizon): dict(
-                        zip(threshold_keys, threshold_combo)
-                    ),
+                    str(horizon): dict(zip(threshold_keys, threshold_combo)),
                 }
-                model_version = f"{name_prefix}_h{horizon}_t{created+1}"
+                model_version = f"{name_prefix}_h{horizon}_t{created + 1}"
                 combo_label = "_".join(
                     f"{k[:3]}{v}" for k, v in zip(threshold_keys, threshold_combo)
                 )

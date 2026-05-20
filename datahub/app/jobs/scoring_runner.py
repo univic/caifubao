@@ -277,7 +277,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     p_grid.add_argument(
         "--threshold-grid",
-        help='JSON threshold grid: \'{"buy_threshold":[60,70]}\'',
+        help="JSON threshold grid: '{\"buy_threshold\":[60,70]}'",
     )
     p_grid.add_argument("--horizons", help="Comma-separated: 5,20,60")
     p_grid.add_argument("--baseline-version", help="Baseline model version")
