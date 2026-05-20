@@ -77,7 +77,10 @@ class ScoreVerificationService:
         metrics = self._build_metrics(prediction, future_quotes)
         expected = prediction.horizon
         target_reached = len(future_quotes) >= expected
-        target_date_passed = prediction.target_date and prediction.target_date <= today
+        target_date_passed = (
+            prediction.target_date
+            and prediction.target_date <= today.replace(tzinfo=None)
+        )
         if target_reached:
             status = "VERIFIED"
         elif target_date_passed:
