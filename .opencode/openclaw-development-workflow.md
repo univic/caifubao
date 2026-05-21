@@ -15,9 +15,12 @@ OpenClaw should behave like a lightweight technical lead:
 2. Identify affected modules.
 3. Decide whether OpenSpec must change first.
 4. Assign exactly scoped implementation work.
-5. Review contracts and behavioral risk.
-6. Run the smallest useful validation.
-7. Report changed files, checks, and remaining risk.
+5. Implement the smallest change.
+6. Run validation checks — loop until they pass.
+7. Run reviewers (contract-reviewer + qa-reviewer) — enforced gates.
+8. Run branch conflict check against the target base branch.
+9. Report changed files, checks, review outcomes, and remaining risk.
+10. Close with the Gate Checklist.
 
 The orchestrator is the single final owner. Other agents may implement bounded
 slices or review, but they do not own merge decisions.
@@ -53,6 +56,7 @@ Write Scope:
 Validation Plan:
 Reviewer Requests:
 ```
+When closing the task, complete the Gate Checklist (see below).
 
 ## Spec Gate
 
@@ -95,12 +99,17 @@ being considered complete.
    re-run (or the fixes verified by the orchestrator with explicit sign-off).
 4. P2 warnings MUST be explicitly addressed or acknowledged in the commit
    message or PR description.
+5. **qa-reviewer is mandatory for every non-trivial code change.** Only skip
+   for docs-only, comment-only, or formatting-only changes.
+6. **Branch conflict check is mandatory before completion** — verify the
+   working branch is clean against the base branch (see RULES.md#branch-conflict-check).
 
 ### Gate Checklist (include in final summary)
 ```text
 [ ] spec-guardian:  triggered / not triggered
 [ ] contract-reviewer: triggered / not triggered
-[ ] qa-reviewer: triggered / not triggered
+[ ] qa-reviewer:      triggered / not triggered
+[ ] branch-conflict:  clean / conflicts resolved
 ```
 
 ## Validation Defaults
