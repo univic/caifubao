@@ -13,8 +13,10 @@ from app.model.portfolio import (
     PortfolioTransaction,
 )
 from app.model.stock import IndividualStock, StockDailyQuote
+from app.lib.auth_decorators import block_service_tokens
 
 portfolios_bp = Blueprint("portfolios", __name__, url_prefix="/api/portfolios")
+portfolios_bp.before_request(block_service_tokens)
 
 
 def _parse_datetime(value):

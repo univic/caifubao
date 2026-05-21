@@ -9,10 +9,12 @@ from typing import Dict
 from flask import Blueprint, jsonify, request
 
 from app.model.scoring import StockScorePrediction
+from app.lib.auth_decorators import block_service_tokens
 
 logger = logging.getLogger(__name__)
 
 decisions_bp = Blueprint("decisions", __name__, url_prefix="/api/decisions")
+decisions_bp.before_request(block_service_tokens)
 
 
 def _now_utc() -> datetime.datetime:
