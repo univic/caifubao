@@ -284,8 +284,10 @@ class StockScoringService:
                 percentile=p.percentile,
             )
             if new_rec != p.recommendation:
+                from pymongo import UpdateOne
+
                 bulk_ops.append(
-                    self.prediction_model._get_collection().update_one(
+                    UpdateOne(
                         {"_id": p.id},
                         {"$set": {"recommendation": new_rec}},
                     )

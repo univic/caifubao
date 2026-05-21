@@ -16,7 +16,7 @@ score_strategies_bp = Blueprint(
 
 SUPPORTED_HORIZONS = {5, 20, 60}
 SCORE_BUCKETS = ((0, 20), (20, 40), (40, 60), (60, 80), (80, 100))
-DEFAULT_MODEL_VERSION = "score_v2_202605"
+DEFAULT_MODEL_VERSION = "score_v2_202605b"
 
 
 def _parse_datetime(value):
