@@ -51,3 +51,38 @@ def service_token_required(scope=None):
         return decorated_function
 
     return decorator
+
+
+# ---------------------------------------------------------------------------
+# Shared before_request handler — block service tokens from compute endpoints
+# ---------------------------------------------------------------------------
+
+
+def block_service_tokens():
+    """Drop service-token (st_...) requests with 403 on non-OpenClaw endpoints.
+
+    Use as: @blueprint.before_request(block_service_tokens)
+
+    OpenClaw service tokens are only valid on /api/v1/integrations/openclaw/*
+    routes. Compute/mutation/admin endpoints must reject them explicitly.
+    """
+    import uuid
+    from datetime import datetime, timezone
+
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer st_"):
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "message": (
+                        "Service tokens are not allowed on this endpoint. "
+                        "Use /api/v1/integrations/openclaw/* for data access."
+                    ),
+                    "request_id": str(uuid.uuid4()),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "data": None,
+                }
+            ),
+            403,
+        )

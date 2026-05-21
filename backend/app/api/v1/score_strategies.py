@@ -9,10 +9,12 @@ from collections import defaultdict
 from flask import Blueprint, jsonify, request
 
 from app.model.scoring import StockScorePrediction
+from app.lib.auth_decorators import block_service_tokens
 
 score_strategies_bp = Blueprint(
     "score_strategies", __name__, url_prefix="/api/score-strategies"
 )
+score_strategies_bp.before_request(block_service_tokens)
 
 SUPPORTED_HORIZONS = {5, 20, 60}
 SCORE_BUCKETS = ((0, 20), (20, 40), (40, 60), (60, 80), (80, 100))

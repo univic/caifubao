@@ -16,10 +16,12 @@ from app.services.backtest_service import (
     run_multi_stock_backtest,
     composite_score,
 )
+from app.lib.auth_decorators import block_service_tokens
 
 logger = logging.getLogger(__name__)
 
 backtest_bp = Blueprint("backtest", __name__, url_prefix="/api/backtest")
+backtest_bp.before_request(block_service_tokens)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1520,7 +1522,6 @@ def significance_test(result_id: str):
 # Decay analysis endpoint (Task 17.2)
 # ===========================================================================
 
-
 @backtest_bp.route("/decay-analysis", methods=["POST"])
 def decay_analysis():
     """Train vs test Sharpe decay analysis per rolling window.
@@ -1692,7 +1693,6 @@ def decay_analysis():
 # Parameter landscape endpoint (Task 17.6)
 # ===========================================================================
 
-
 @backtest_bp.route("/landscape", methods=["POST"])
 def landscape():
     """2D parameter grid for identifying flat vs sharp optima.
@@ -1858,7 +1858,6 @@ def landscape():
 # ===========================================================================
 # Recommendation endpoint (Task 17.7)
 # ===========================================================================
-
 
 @backtest_bp.route("/recommendation", methods=["POST"])
 def recommendation():
