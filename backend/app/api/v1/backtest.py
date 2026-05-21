@@ -1522,6 +1522,7 @@ def significance_test(result_id: str):
 # Decay analysis endpoint (Task 17.2)
 # ===========================================================================
 
+
 @backtest_bp.route("/decay-analysis", methods=["POST"])
 def decay_analysis():
     """Train vs test Sharpe decay analysis per rolling window.
@@ -1693,6 +1694,7 @@ def decay_analysis():
 # Parameter landscape endpoint (Task 17.6)
 # ===========================================================================
 
+
 @backtest_bp.route("/landscape", methods=["POST"])
 def landscape():
     """2D parameter grid for identifying flat vs sharp optima.
@@ -1858,6 +1860,7 @@ def landscape():
 # ===========================================================================
 # Recommendation endpoint (Task 17.7)
 # ===========================================================================
+
 
 @backtest_bp.route("/recommendation", methods=["POST"])
 def recommendation():

@@ -183,6 +183,7 @@ All responses follow this standard structure:
 | :--- | :--- | :--- |
 | 401 | Missing or invalid Authorization header | Token is missing or incorrectly formatted. |
 | 401 | Invalid or inactive token | The token is wrong, revoked, or expired. |
+| 403 | Token missing required scope | The token is valid but doesn't have permission for this API. |
 | 403 | Service tokens are not allowed on this endpoint | The token is valid but compute/mutation endpoints are blocked for service tokens. Use only /api/v1/integrations/openclaw/* endpoints. |
 | 429 | Too Many Requests | Rate limit exceeded (contract-based). |
 
@@ -228,6 +229,8 @@ Service tokens are **explicitly blocked** on all compute and mutation endpoints,
 - `/api/tasks` — compute-task creation and management
 - `/api/score-experiments` — experiment grid search
 - `/api/score-strategies` — score-strategy calibration
+- `/api/portfolios/*` — portfolio creation, position management, transactions
+- `/api/decisions/*` — decision dashboard, alerts, quality monitoring
 - `/api/datahub/*` — datahub status and control
 
 Requests to these endpoints with a valid service token receive HTTP **403**.
