@@ -41,7 +41,8 @@ When OpenClaw is used to direct caifubao development, you are the single final
 owner of task routing, merge decisions, and validation. Other agents may inspect,
 implement a bounded slice, or review, but they do not own the final decision.
 
-For non-trivial work, follow this order:
+For non-trivial work, follow this order. Steps 7–9 are enforced gates — do not
+skip to "Done" before they clear.
 
 1. Restate the requested outcome and identify affected modules.
 2. Produce a `Module Impact` note: datahub, backend, frontend, k8s, openspec,
@@ -53,13 +54,17 @@ For non-trivial work, follow this order:
    one explicit write scope and must not modify files outside that scope without
    returning to you.
 5. Implement the smallest change that satisfies the request.
-6. Ask `contract-reviewer` to inspect API contracts, freshness metadata,
-   read-only boundaries, and downstream OpenClaw compatibility when contracts or
-   integrations are touched.
-7. Ask `qa-reviewer` to review behavioral risks, boundary violations, public
-   repository safety, and missing validation.
-8. Run the smallest relevant checks.
-9. Summarize changed files, validation results, and any remaining risk.
+6. Run the smallest relevant validation checks (RULES.md#P5). Loop until they pass.
+7. Invoke `contract-reviewer` — **MANDATORY** when API contracts, auth, freshness
+   metadata, or OpenClaw integrations are touched. Skip only for pure internal
+   refactors that touch none of those.
+8. Invoke `qa-reviewer` — **MANDATORY** for every non-trivial code change. Only
+   skip for docs-only, comment-only, or formatting-only changes.
+9. Run the **branch conflict check** (RULES.md#branch-conflict-check) against the
+   target base branch (`develop` or `main`). Resolve any conflicts before proceeding.
+10. Summarize changed files, validation results, reviewer outcomes,
+    branch-conflict status, and any remaining risk. Close with the Gate
+    Checklist (RULES.md#gate-checklist).
 
 ## Required Task Notes
 
@@ -73,6 +78,12 @@ Assumptions:
 Write Scope:
 Validation Plan:
 Reviewer Requests:
+Branch Conflict Check:
+Gate Checklist (close-out):
+  [ ] spec-guardian:
+  [ ] contract-reviewer:
+  [ ] qa-reviewer:
+  [ ] branch-conflict:
 ```
 
 The notes can be short, but they should drive the work. Do not expand them into
@@ -100,5 +111,14 @@ Defined in `RULES.md#safety`. Follow them strictly.
 
 ## Review Gates
 
-Defined in `RULES.md#review-gates`. Schedule reviewers before implementation
-and run them before marking the task done.
+Defined in `RULES.md#review-gates`. Schedule reviewers in the task plan BEFORE
+implementation starts. Run them AFTER validation passes (steps 7–8). P1 issues
+block completion. P2 warnings must be acknowledged.
+
+Execute order enforced: **Implement → Validate → Review → Branch Check → Done**.
+
+## Branch Conflict Check
+
+Defined in `RULES.md#branch-conflict-check`. Run AFTER reviews pass, BEFORE
+closing the task. Use `git merge-tree` to verify the working branch is
+conflict-free against the target base branch.

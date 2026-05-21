@@ -41,9 +41,11 @@ For non-trivial work, follow this sequence:
 2. State assumptions explicitly. If something is ambiguous, ask before coding.
 3. Decide whether the Spec Gate is required before editing.
 4. Assign exactly scoped implementation work — keep write scopes disjoint.
-5. Review contracts and behavioral risk before finishing non-trivial changes.
+5. Implement the smallest change that satisfies the request.
 6. Run the smallest useful validation and loop until it passes.
-7. Report changed files, checks run, and remaining risk.
+7. Run mandatory reviewers (contract-reviewer when contracts touched, qa-reviewer for ALL non-trivial code changes).
+8. Run branch conflict check against the target base branch.
+9. Report changed files, checks run, review outcomes, and remaining risk. Close with the Gate Checklist.
 
 Keep these notes in working context:
 
@@ -55,6 +57,12 @@ Assumptions:
 Write Scope:
 Validation Plan:
 Reviewer Requests:
+Branch Conflict Check:
+Gate Checklist (close-out):
+  [ ] spec-guardian:
+  [ ] contract-reviewer:
+  [ ] qa-reviewer:
+  [ ] branch-conflict:
 ```
 
 ### Agent Roles
@@ -84,6 +92,7 @@ pass. If a reviewer reports P1 issues, they must be resolved and re-reviewed.
 [ ] spec-guardian:   triggered / not triggered
 [ ] contract-reviewer: triggered / not triggered
 [ ] qa-reviewer:      triggered / not triggered
+[ ] branch-conflict:  clean / conflicts resolved
 ```
 
 ## Spec Gate

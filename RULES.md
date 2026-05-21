@@ -117,16 +117,54 @@ Reviewer Requests:
 
 ## Review Gates (for orchestrator)
 
-For non-trivial changes, schedule these reviewers BEFORE implementation:
+### Execution Order (enforced)
+
+Reviews run AFTER implementation completes and validation passes. The orchestrator
+MUST invoke them — they do not self-activate.
+
+1. **Implement** → 2. **Validate** (P5 checks) → 3. **Review** (below) → 4. **Branch check** → 5. **Done**
+
+Do not skip to "Done" before all gates clear.
+
+### Auto-Trigger Table
+
+Schedule reviewers in the task plan BEFORE implementation starts:
 
 | Reviewer | Auto-trigger when |
 |----------|-------------------|
 | `spec-guardian` | New API endpoint, auth change, scoring semantics change, boundary shift |
 | `contract-reviewer` | API contract change, auth change, freshness metadata change, OpenClaw integration touched |
-| `qa-reviewer` | Cross-module change, new mutation endpoints, new auth code, MongoDB document changes |
+| `qa-reviewer` | **Any non-trivial code change** (Python, JS/TS, k8s manifests, CI, DB models, auth, scoring, API). Only skip for: docs-only, comment-only, formatting-only changes. |
 
-After implementation and validation pass, run reviewers before marking task done.
 P1 issues must be resolved and re-reviewed. P2 warnings must be acknowledged.
+
+### Gate Checklist (include in final summary)
+
+Every non-trivial change MUST close with this checklist in the final summary:
+
+```text
+[ ] spec-guardian:  triggered / not triggered
+[ ] contract-reviewer: triggered / not triggered
+[ ] qa-reviewer:      triggered / not triggered
+[ ] branch-conflict:  clean / conflicts resolved
+```
+
+## Branch Conflict Check (enforced)
+
+Before any change is marked "done," the orchestrator MUST verify the working
+branch is conflict-free against the target base branch (`develop` or `main`):
+
+```bash
+git fetch origin develop --quiet
+git merge-tree $(git merge-base HEAD origin/develop) origin/develop HEAD
+```
+
+- If output contains conflict markers (`<<<<<<<` / `>>>>>>>`) → resolve before completing.
+- If output is clean → proceed.
+- If the repo has no remote or the check cannot run → state exactly why in the summary.
+
+This check runs AFTER reviews pass and BEFORE the orchestrator closes the task.
+It replaces the manual step in `.project-rules.md#5` for agent-driven workflows.
 
 ## Review Format
 
