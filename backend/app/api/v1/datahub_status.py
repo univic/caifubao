@@ -14,8 +14,10 @@ from app.utilities.trading_day_helper import (
     determine_most_recent_previous_complete_trading_day,
     determine_pervious_trading_day,
 )
+from app.lib.auth_decorators import block_service_tokens
 
 datahub_status_bp = Blueprint("datahub_status", __name__, url_prefix="/api/datahub")
+datahub_status_bp.before_request(block_service_tokens)
 STATUS_CACHE_TTL_SECONDS = 60
 _status_cache_lock = threading.RLock()
 _status_cache = {"expires_at": 0, "payload": None}

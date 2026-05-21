@@ -183,5 +183,52 @@ All responses follow this standard structure:
 | :--- | :--- | :--- |
 | 401 | Missing or invalid Authorization header | Token is missing or incorrectly formatted. |
 | 401 | Invalid or inactive token | The token is wrong, revoked, or expired. |
-| 403 | Token missing required scope | The token is valid but doesn't have permission for this API. |
+| 403 | Service tokens are not allowed on this endpoint | The token is valid but compute/mutation endpoints are blocked for service tokens. Use only /api/v1/integrations/openclaw/* endpoints. |
+| 429 | Too Many Requests | Rate limit exceeded (contract-based). |
+
+## 5. Recommendations Endpoints
+
+In addition to raw score data, OpenClaw can consume pre-aggregated recommendations.
+
+### 5.1 Daily Recommendations
+`GET /recommendations/daily`
+
+Fetch top-scoring predictions for a given date and horizon.
+
+**Parameters:**
+- `date`: `YYYY-MM-DD` — evaluation date
+- `horizon`: `5`, `20`, or `60` (default: 5)
+- `min_score`: Minimum score threshold (default: 60.0)
+- `limit`: Maximum results (default: 20)
+- `model_version`: Filter by model version (optional)
+
+### 5.2 Scoring Performance
+`GET /recommendations/performance`
+
+Aggregate statistics on scoring prediction effectiveness.
+
+**Parameters:**
+- `horizon`: `5`, `20`, or `60` (default: 5)
+- `model_version`: Filter by model version (optional)
+
+**Response Fields:**
+| Field | Description |
+|:------|:------------|
+| `total_verified` | Count of VERIFIED predictions |
+| `effective_predictions` | Count where `hit_target_close` is true |
+| `accuracy_rate` | effective / total |
+| `top_recommendations_count` | Count of top-scoring (>= 60) predictions |
+| `avg_max_profit_top` | Average `max_return` among top recommendations |
+
+## 6. Compute Endpoint Restriction
+
+Service tokens are **explicitly blocked** on all compute and mutation endpoints, including:
+
+- `/api/backtest/*` — backtesting, optimization, scanning, walk-forward
+- `/api/tasks` — compute-task creation and management
+- `/api/score-experiments` — experiment grid search
+- `/api/score-strategies` — score-strategy calibration
+- `/api/datahub/*` — datahub status and control
+
+Requests to these endpoints with a valid service token receive HTTP **403**.
 | 429 | Too Many Requests | Rate limit exceeded (contract-based). |

@@ -16,10 +16,12 @@ from app.services.backtest_service import (
     run_multi_stock_backtest,
     composite_score,
 )
+from app.lib.auth_decorators import block_service_tokens
 
 logger = logging.getLogger(__name__)
 
 backtest_bp = Blueprint("backtest", __name__, url_prefix="/api/backtest")
+backtest_bp.before_request(block_service_tokens)
 
 # ---------------------------------------------------------------------------
 # Helpers

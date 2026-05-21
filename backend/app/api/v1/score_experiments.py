@@ -11,6 +11,7 @@ from flask import Blueprint, jsonify, request
 from mongoengine import ValidationError
 
 from app.model.scoring import ScoreExperiment, StockScorePrediction
+from app.lib.auth_decorators import block_service_tokens
 
 # Allow backend to import datahub scoring-engine utilities
 sys.path.insert(
@@ -21,6 +22,7 @@ sys.path.insert(
 score_experiments_bp = Blueprint(
     "score_experiments", __name__, url_prefix="/api/score-experiments"
 )
+score_experiments_bp.before_request(block_service_tokens)
 
 SUPPORTED_HORIZONS = {5, 20, 60}
 SCORE_BUCKETS = ((0, 20), (20, 40), (40, 60), (60, 80), (80, 100))
