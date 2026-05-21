@@ -487,3 +487,86 @@ def _run_experiment(experiment):
         experiment.error_msg = str(exc)
     experiment.save()
     return experiment
+
+
+@score_experiments_bp.route("/consensus", methods=["GET"])
+def multi_horizon_consensus():
+    """Detect consensus or divergence across Score5/20/60 for a stock+date.
+
+    Requires predictions for all 3 horizons to form a valid consensus.
+    Returns partial=true with available data when fewer than 3 horizons
+    have predictions.
+
+    Query params:
+        stock_code : str (required)
+        date       : str (required)  YYYY-MM-DD
+        model_version : str (optional) defaults from scoring config
+    """
+    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION as _DEF_MV
+
+    stock_code = (request.args.get("stock_code") or "").strip()
+    date = _parse_datetime(request.args.get("date"))
+    model_version = (request.args.get("model_version") or "").strip() or _DEF_MV
+
+    if not stock_code or not date:
+        return jsonify(
+            {"success": False, "message": "stock_code and date are required"}
+        ), 400
+
+    predictions = {}
+    for h in SUPPORTED_HORIZONS:
+        pred = StockScorePrediction.objects(
+            stock_code=stock_code,
+            date=date,
+            horizon=h,
+            model_version=model_version,
+        ).first()
+        if pred:
+            predictions[str(h)] = {
+                "score": pred.score,
+                "rank": pred.rank,
+                "percentile": pred.percentile,
+                "recommendation": pred.recommendation,
+            }
+
+    if not predictions:
+        return jsonify(
+            {"success": False, "message": "No predictions found for this stock+date"}
+        ), 404
+
+    required_horizons = set(str(h) for h in SUPPORTED_HORIZONS)
+    have_all_horizons = required_horizons.issubset(set(predictions.keys()))
+
+    # Detect consensus/divergence
+    recs = {v["recommendation"] for v in predictions.values()}
+    consensus = len(recs) == 1
+    all_bullish = all(
+        v["recommendation"] in ("BUY", "WATCH") for v in predictions.values()
+    )
+    all_bearish = all(
+        v["recommendation"] in ("AVOID", "NONE") for v in predictions.values()
+    )
+    all_neutral = all(v["recommendation"] == "NONE" for v in predictions.values())
+
+    label = "consensus" if consensus else "divergence"
+    if consensus:
+        rec_value = (list(recs)[0] or "unknown").lower()
+        label += f"_{rec_value}"
+
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "stock_code": stock_code,
+                "date": _format_datetime(date),
+                "model_version": model_version,
+                "label": label,
+                "predictions": predictions,
+                "consensus": consensus,
+                "have_all_horizons": have_all_horizons,
+                "all_bullish": all_bullish,
+                "all_bearish": all_bearish,
+                "all_neutral": all_neutral,
+            },
+        }
+    ), 200
