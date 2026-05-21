@@ -2,9 +2,11 @@
 # Author : Gemini CLI
 # Date: 2026-04-16
 
+import uuid
+from datetime import datetime, timezone
 from functools import wraps
 from flask import request, jsonify, g
-import datetime
+
 from app.utilities.auth_util import verify_service_token
 
 
@@ -19,7 +21,7 @@ def service_token_required(scope=None):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             auth_header = request.headers.get("Authorization")
-            if not auth_header or not auth_header.startswith("Bearer "):
+            if not auth_header or not auth_header.lower().startswith("bearer "):
                 return jsonify(
                     {
                         "success": False,
@@ -39,7 +41,7 @@ def service_token_required(scope=None):
 
             # Update tracking info
             token_doc.update(
-                set__last_used_at=datetime.datetime.now(datetime.UTC),
+                set__last_used_at=datetime.now(timezone.utc),
                 set__last_used_ip=request.remote_addr,
             )
 
@@ -66,11 +68,8 @@ def block_service_tokens():
     OpenClaw service tokens are only valid on /api/v1/integrations/openclaw/*
     routes. Compute/mutation/admin endpoints must reject them explicitly.
     """
-    import uuid
-    from datetime import datetime, timezone
-
     auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer st_"):
+    if auth.lower().startswith("bearer st_"):
         return (
             jsonify(
                 {
@@ -79,6 +78,7 @@ def block_service_tokens():
                         "Service tokens are not allowed on this endpoint. "
                         "Use /api/v1/integrations/openclaw/* for data access."
                     ),
+                    "error_code": "SERVICE_TOKEN_BLOCKED",
                     "request_id": str(uuid.uuid4()),
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                     "data": None,

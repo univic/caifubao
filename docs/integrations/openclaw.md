@@ -231,4 +231,3 @@ Service tokens are **explicitly blocked** on all compute and mutation endpoints,
 - `/api/datahub/*` — datahub status and control
 
 Requests to these endpoints with a valid service token receive HTTP **403**.
-| 429 | Too Many Requests | Rate limit exceeded (contract-based). |
