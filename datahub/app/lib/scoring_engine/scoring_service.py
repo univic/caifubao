@@ -114,6 +114,9 @@ class StockScoringService:
             if not dry_run:
                 self.assign_ranks(date, current_horizon)
 
+                # Apply hybrid recommendation logic using percentile rankings
+                self._upgrade_recommendations(date, current_horizon)
+
                 # Aggregate industry metrics per horizon
                 horizon_predictions = list(
                     self.prediction_model.objects(
@@ -246,6 +249,44 @@ class StockScoringService:
             prediction.rank = idx
             prediction.percentile = round(1 - ((idx - 1) / total), 4) if total else None
             prediction.save()
+
+    def _upgrade_recommendations(self, date: datetime.datetime, horizon: int) -> None:
+        """Re-compute recommendations using hybrid logic after ranks are assigned.
+
+        Called after assign_ranks() so that percentiles are available.
+        Updates the recommendation field in-place for all predictions on this
+        date/horizon/model_version.
+        """
+        predictions = list(
+            self.prediction_model.objects(
+                date=normalize_date(date),
+                horizon=horizon,
+                model_version=self.model_version,
+            )
+        )
+        if not predictions:
+            return
+
+        config = self._get_horizon_config(horizon)
+        updated = 0
+        for p in predictions:
+            new_rec = self._recommendation(
+                score=p.score,
+                config=config,
+                percentile=p.percentile,
+            )
+            if new_rec != p.recommendation:
+                p.recommendation = new_rec
+                p.save()
+                updated += 1
+
+        logger.info(
+            "Hybrid recommendations updated for %s h=%d: %d/%d changed",
+            date.strftime("%Y-%m-%d"),
+            horizon,
+            updated,
+            len(predictions),
+        )
 
     def _find_existing_prediction(self, stock_code, date, horizon):
         return self.prediction_model.objects(
@@ -407,14 +448,44 @@ class StockScoringService:
         score += sum(item["contribution"] for item in penalties)
         return round(max(0.0, min(100.0, score)), 2)
 
-    def _recommendation(self, score: float, config: dict) -> str:
-        if score >= config["buy_threshold"]:
-            return "BUY"
-        if score >= config["watch_threshold"]:
-            return "WATCH"
-        if score <= 20:
-            return "AVOID"
-        return "NONE"
+    def _recommendation(self, score: float, config: dict, percentile: float | None = None) -> str:
+        """Determine recommendation using hybrid absolute + percentile thresholds.
+
+        When percentile is available (post-ranking), uses percentile as the primary
+        driver with absolute thresholds as guards. Without percentile, falls back
+        to pure absolute thresholds.
+        """
+        buy_abs = config["buy_threshold"]
+        watch_abs = config["watch_threshold"]
+        avoid_abs = config.get("avoid_threshold", 20.0)
+
+        if percentile is not None and percentile > 0:
+            buy_pct = config.get("buy_percentile", 0.95)
+            watch_pct = config.get("watch_percentile", 0.80)
+            avoid_pct = config.get("avoid_percentile", 0.20)
+
+            # BUY: must pass BOTH absolute guard AND percentile threshold
+            if score >= buy_abs and percentile >= buy_pct:
+                return "BUY"
+            # WATCH: either passes absolute guard with weaker percentile, or
+            #        passes BUY absolute but not BUY percentile
+            if score >= watch_abs and percentile >= watch_pct:
+                return "WATCH"
+            if score >= buy_abs and percentile < buy_pct:
+                return "WATCH"
+            # AVOID: bottom percentile OR below absolute floor
+            if score <= avoid_abs or percentile <= avoid_pct:
+                return "AVOID"
+            return "NONE"
+        else:
+            # Fallback: pure absolute thresholds (used before ranking)
+            if score >= buy_abs:
+                return "WATCH"  # placeholder — will be upgraded post-ranking
+            if score >= watch_abs:
+                return "WATCH"
+            if score <= avoid_abs:
+                return "AVOID"
+            return "NONE"
 
     def _build_explanation(self, horizon, score, components, penalties, config):
         positive = [
