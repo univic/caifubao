@@ -15,10 +15,12 @@ from flask import Blueprint, jsonify, request
 from mongoengine import ValidationError
 
 from app.model.compute_task import ComputeTask, VALID_TASK_TYPES
+from app.lib.auth_decorators import block_service_tokens
 
 logger = logging.getLogger(__name__)
 
 tasks_bp = Blueprint("tasks", __name__, url_prefix="/api/tasks")
+tasks_bp.before_request(block_service_tokens)
 
 # ---------------------------------------------------------------------------
 # Helpers

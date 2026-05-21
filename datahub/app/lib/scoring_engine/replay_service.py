@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 
 import datetime
+import logging
 
 from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION, SUPPORTED_HORIZONS
 from app.lib.scoring_engine.scoring_service import StockScoringService, normalize_date
+
+logger = logging.getLogger(__name__)
 
 
 class ScoreReplayService:
@@ -48,6 +51,23 @@ class ScoreReplayService:
                         replace=replace,
                     )
                     scored_count += 1
+                    # Assign ranks and apply hybrid recommendations even
+                    # for single-stock backfill. With only one stock in the
+                    # cohort the percentile is degenerate (always 1.0), but
+                    # the absolute-guard path still works correctly.
+                    if not dry_run:
+                        self.scoring_service.assign_ranks(date, current_horizon)
+                        try:
+                            self.scoring_service._upgrade_recommendations(
+                                date, current_horizon
+                            )
+                        except Exception as exc:
+                            logger.exception(
+                                "Failed to upgrade recommendations for %s h=%d: %s",
+                                stock_code,
+                                current_horizon,
+                                exc,
+                            )
                 else:
                     result = self.scoring_service.score_all_stocks(
                         date=date,
