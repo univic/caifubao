@@ -62,12 +62,12 @@
 
 ## 11. Phase 0 — Compute-Worker Infrastructure (2 days)
 
-- [ ] 11.1 Create `compute-worker/` service directory
-- [ ] 11.2 Define `ComputeTask` MongoDB schema
-- [ ] 11.3 Implement worker loop: poll -> dispatch -> execute -> write
-- [ ] 11.4 Add backend API: `POST /api/tasks`, `GET /api/tasks/<id>`
-- [ ] 11.5 Add K3s Deployment manifest with 5600X affinity
-- [ ] 11.6 Define node-role split: cloud vs batch compute
+- [x] 11.1 Create `compute-worker/` service directory (worker.py, handlers.py, Dockerfile, etc.)
+- [x] 11.2 Define `ComputeTask` MongoDB schema (8 task types)
+- [x] 11.3 Implement worker loop: poll -> dispatch -> execute -> write (atomic claim + status mgmt)
+- [x] 11.4 Add backend API: `POST /api/tasks`, `GET /api/tasks/<id>`
+- [x] 11.5 Add K3s Deployment manifest with node-type=compute affinity
+- [ ] 11.6 Define node-role split: cloud vs batch compute (node-role document TBD)
 
 ## 12. Phase 1 — Score-driven Backtest + Hardening (6 days)
 
@@ -98,12 +98,14 @@
 
 ### 12d. Scoring Engine Quick Wins (2 days)
 
-Based on live backtest findings (2026-05-18: sz000977 Score5 median=21, only 1% BUY).
+Hybrid percentile+absolute thresholds implemented in `score_v2_202605b` (PR #97).
+Calibration report flags miscalibration (BUY<3%, AVOID>50%). Full-market backfill
+mechanism exists but old-vs-new model version comparison is manual.
 
-- [ ] 12d.1 Generate full-market calibration report first; propose hybrid percentile+absolute thresholds based on distribution; bump model version only after full-market validation (NOT single-stock observation)
+- [x] 12d.1 Generate full-market calibration report first; propose hybrid percentile+absolute thresholds based on distribution; bump model version only after full-market validation (NOT single-stock observation)
 - [x] 12d.2 Signal persistence decay: exponential decay factor 0.7/day when signal disappears
 - [x] 12d.3 Config entries: signal_decay_factor, signal_decay_max_days per horizon
-- [ ] 12d.4 Score distribution metrics in calibration report; flag BUY<3% or AVOID>50% as miscalibrated
+- [x] 12d.4 Score distribution metrics in calibration report; flag BUY<3% or AVOID>50% as miscalibrated
 - [ ] 12d.5 Backfill with new model version across FULL MARKET; compare calibration reports between old and new model versions
 - [ ] 12d.6 Update scoring tests for signal decay and hybrid threshold logic
 
@@ -169,34 +171,34 @@ predictive power, redundancy, and regime sensitivity.
 Each factor: compute -> factor eval (Phase 3) -> integrate as scoring component
 -> grid-search weight (Phase 2) -> rolling validate (Phase 5).
 
-- [ ] 16.1 volume_ratio: volume / MA20(volume)
-- [ ] 16.2 bb_position: (close - BB_lower) / (BB_upper - BB_lower), BB(20, 2)
-- [ ] 16.3 atr_ratio: ATR(14) / close
-- [ ] 16.4 consecutive_up: consecutive days close > open
-- [ ] 16.5 turnover_accel: turnover_rate / MA5(turnover_rate)
-- [ ] 16.6 gap_ratio: (open - prev_close) / prev_close
-- [ ] 16.7 yearly_position: (close - 52w_low) / (52w_high - 52w_low)
-- [ ] 16.8 rsi_14: standard RSI(14)
-- [ ] 16.9 real_relative_strength: replace self-proxy with alpha vs CSI 300/500 index
-- [ ] 16.10 Add FactorRunner steps for new factors; update StockFactorDaily
+- [x] 16.1 volume_ratio: volume / MA20(volume)
+- [x] 16.2 bb_position: (close - BB_lower) / (BB_upper - BB_lower), BB(20, 2)
+- [x] 16.3 atr_ratio: ATR(14) / close
+- [x] 16.4 consecutive_up: consecutive days close > open
+- [x] 16.5 turnover_accel: turnover_rate / MA5(turnover_rate)
+- [x] 16.6 gap_ratio: (open - prev_close) / prev_close
+- [x] 16.7 yearly_position: (close - 52w_low) / (52w_high - 52w_low)
+- [x] 16.8 rsi_14: standard RSI(14)
+- [ ] 16.9 real_relative_strength: replace self-proxy with alpha vs CSI 300/500 index (function exists but excluded from registry — needs index_quotes parameter)
+- [x] 16.10 Add FactorRunner steps for new factors; update StockFactorDaily
 
 ## 17. Phase 5 — Walk-forward Validation + Robustness (3 days)
 
-- [ ] 17.1 RollingValidationTask: train on year Y, test on Y+1, slide forward
-- [ ] 17.2 Decay analysis: train Sharpe vs test Sharpe; flag >20% drop as overfit
+- [x] 17.1 RollingValidationTask: train on year Y, test on Y+1, slide forward
+- [x] 17.2 Decay analysis: train Sharpe vs test Sharpe; flag >20% drop as overfit
 - [ ] 17.3 Market-regime split reporting per config; flag regime-specific failures
 - [ ] 17.4 Stability check: small weight perturbation -> large outcome change?
-- [ ] 17.5 Statistical significance: permutation test and bootstrap CI for strategy returns
+- [x] 17.5 Statistical significance: permutation test and bootstrap CI for strategy returns
 - [ ] 17.6 Parameter landscape visualization: identify flat vs sharp optima
 - [ ] 17.7 Generate final recommendation: best config per horizon with CI and regime robustness
 
 ## 18. Phase 6 — Decision Dashboard + Alerts (3 days)
 
-- [ ] 18.1 Daily decision dashboard: top scores per horizon, score deltas, position match
+- [x] 18.1 Daily decision dashboard: top scores per horizon, score deltas, position match
 - [ ] 18.2 Actionable recommendations: each BUY/WATCH/AVOID includes confidence (historical hit rate + sample size + trend), invalidation conditions (exit threshold, stop-loss, expiry), position sizing (target weight, capacity check)
-- [ ] 18.3 Score alert detection: score jump >= 15 points, threshold crossing, quality degradation
-- [ ] 18.4 Score quality monitoring: rolling 30-day hit rate, distribution shift detection
-- [ ] 18.5 Model drift detection: P50/P90 score shift > 10 points in 20 days
+- [x] 18.3 Score alert detection: score jump >= 15 points, threshold crossing, quality degradation
+- [x] 18.4 Score quality monitoring: rolling 30-day hit rate, distribution shift detection
+- [x] 18.5 Model drift detection: P50/P90 score shift > 10 points in 20 days
 - [ ] 18.6 Decision journal: log recommended vs executed with P&L
 - [ ] 18.7 Journal tracks missed recommendations: system recommended BUY but user did not execute; compute opportunity P&L
 - [ ] 18.8 Journal tracks user deviations: user executed trade NOT recommended by system; separate P&L tracking
@@ -207,11 +209,11 @@ Each factor: compute -> factor eval (Phase 3) -> integrate as scoring component
 
 ## 19. Phase 7 — OpenClaw Score-Read + Completion (1 day)
 
-- [ ] 19.1 Add openclaw:score-read scope to service-token model and auth decorators
-- [ ] 19.2 Expose score endpoints under /api/v1/integrations/openclaw/scores
-- [ ] 19.3 Include explanation, input-snapshot freshness, verification in response
-- [ ] 19.4 Enforce 403 on compute endpoints for OpenClaw
-- [ ] 19.5 Document complete OpenClaw API surface
+- [x] 19.1 Add openclaw:score-read scope to service-token model and auth decorators
+- [x] 19.2 Expose score endpoints under /api/v1/integrations/openclaw/scores
+- [x] 19.3 Include explanation, input-snapshot freshness, verification in response
+- [x] 19.4 Enforce 403 on compute endpoints for OpenClaw
+- [x] 19.5 Document complete OpenClaw API surface
 
 ## 20. Success Criteria
 
