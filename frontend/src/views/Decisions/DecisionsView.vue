@@ -96,18 +96,131 @@
         </div>
       </div>
     </section>
+
+    <!-- Daily Recommendations -->
+    <section class="section">
+      <h2>
+        每日推荐
+        <span class="badge">{{ dashboardItems.length }}</span>
+      </h2>
+
+      <div class="dashboard-horizon-bar">
+        <button
+          v-for="h in [5, 20, 60]"
+          :key="h"
+          class="hz-btn"
+          :class="{ active: dashHorizon === h }"
+          @click="dashHorizon = h; fetchDashboard()"
+        >Score{{ h }}</button>
+      </div>
+
+      <div v-if="dashLoading" class="loading">加载中...</div>
+      <el-alert
+        v-else-if="dashError"
+        class="quality-alert"
+        type="error"
+        :title="dashError"
+        show-icon
+        :closable="false"
+      />
+      <div v-else-if="!dashboardItems.length" class="empty">暂无今日推荐数据</div>
+
+      <div v-else class="dashboard-table-wrap">
+        <el-table
+          :data="dashboardItems"
+          size="small"
+          class="dashboard-table"
+          empty-text="暂无推荐数据"
+        >
+          <el-table-column label="股票代码" width="110">
+            <template #default="{ row }">
+              <router-link
+                :to="{ name: 'QuoteDetail', params: { symbol: row.stock_code } }"
+                class="stock-link"
+              >
+                {{ row.stock_code }}
+              </router-link>
+            </template>
+          </el-table-column>
+          <el-table-column label="股票名称" min-width="100">
+            <template #default="{ row }">
+              <span class="stock-name-text">{{ row.stock_name || '--' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="评分" width="70" align="right">
+            <template #default="{ row }">
+              <span class="score-val">{{ row.score?.toFixed(0) || '--' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="排名" width="60" align="right" prop="rank" />
+          <el-table-column label="推荐" width="80" align="center">
+            <template #default="{ row }">
+              <span class="rec-tag" :class="row.recommendation?.toLowerCase()">
+                {{ recLabel(row.recommendation) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="信心度" width="80" align="center">
+            <template #default="{ row }">
+              <span class="confidence-tag" :class="row.confidence">
+                {{ confidenceLabel(row.confidence) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="命中率" width="80" align="right">
+            <template #default="{ row }">
+              <span :class="{ good: row.hit_rate > 0.5, bad: row.hit_rate != null && row.hit_rate <= 0.5 }">
+                {{ formatPct(row.hit_rate) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="趋势" width="70" align="center">
+            <template #default="{ row }">
+              <span class="trend-arrow">{{ trendArrow(row.trend) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="失效条件" min-width="140">
+            <template #default="{ row }">
+              <span v-if="row.invalidation" class="invalidation-text">
+                <template v-if="row.invalidation.exit_threshold != null">退出 &lt; {{ row.invalidation.exit_threshold }}</template>
+                <template v-if="row.invalidation.stop_loss_pct != null">
+                  <span v-if="row.invalidation.exit_threshold != null">, </span>止损 {{ row.invalidation.stop_loss_pct }}%
+                </template>
+                <template v-if="!row.invalidation.exit_threshold && row.invalidation.stop_loss_pct == null">--</template>
+              </span>
+              <span v-else class="text-dim">--</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="仓位建议" width="110" align="right">
+            <template #default="{ row }">
+              <span v-if="row.position_sizing?.target_weight_pct != null" class="position-text">
+                {{ row.position_sizing.target_weight_pct.toFixed(1) }}% / {{ row.position_sizing.max_shares || '--' }}股
+              </span>
+              <span v-else class="text-dim">--</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import axios from 'axios'
+import { decisionsApi, type DecisionDashboardItem } from '@/api/decisions'
 
 const horizon = ref(20)
 const loading = ref(false)
 const qualityLoading = ref(false)
 const alerts = ref<any[]>([])
 const quality = ref<any>(null)
+
+// Dashboard state
+const dashHorizon = ref(20)
+const dashLoading = ref(false)
+const dashError = ref('')
+const dashboardItems = ref<DecisionDashboardItem[]>([])
 
 async function fetchAlerts() {
   loading.value = true
@@ -142,12 +255,60 @@ function fetchAll() {
   fetchQuality()
 }
 
+async function fetchDashboard() {
+  dashLoading.value = true
+  dashError.value = ''
+  try {
+    const res = await decisionsApi.getDashboard({
+      horizon: dashHorizon.value,
+      limit: 20
+    })
+    const data = res.data
+    const key = `score${dashHorizon.value}` as 'score5' | 'score20' | 'score60'
+    const horizonData = data[key]
+    dashboardItems.value = horizonData?.items || []
+    if (!dashboardItems.value.length) {
+      dashError.value = ''
+    }
+  } catch (e: any) {
+    dashError.value = e?.response?.data?.message || '获取推荐数据失败'
+    console.error('Failed to fetch dashboard', e)
+    dashboardItems.value = []
+  } finally {
+    dashLoading.value = false
+  }
+}
+
 function formatPct(val: number | null | undefined): string {
   if (val == null) return '--'
   return (val * 100).toFixed(1) + '%'
 }
 
-onMounted(fetchAll)
+function recLabel(val: string): string {
+  if (val === 'BUY') return '买入'
+  if (val === 'WATCH') return '关注'
+  if (val === 'AVOID') return '回避'
+  return val || '--'
+}
+
+function confidenceLabel(val: string): string {
+  if (val === 'high') return '高'
+  if (val === 'medium') return '中'
+  if (val === 'low') return '低'
+  return val || '--'
+}
+
+function trendArrow(val: string): string {
+  if (val === 'improving') return '↑'
+  if (val === 'declining') return '↓'
+  if (val === 'stable') return '→'
+  return '--'
+}
+
+onMounted(() => {
+  fetchAll()
+  fetchDashboard()
+})
 watch(horizon, fetchAll)
 </script>
 
@@ -229,4 +390,86 @@ watch(horizon, fetchAll)
     &:hover { opacity: 1; }
   }
 }
+
+.dashboard-horizon-bar {
+  display: flex; gap: 4px; margin-bottom: 16px;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 8px; padding: 3px; width: fit-content;
+  .hz-btn {
+    font-size: 12px; font-weight: 590; padding: 6px 16px; border: none; border-radius: 6px;
+    background: transparent; color: #62666d; cursor: pointer;
+    &.active { background: #5e6ad2; color: #f7f8f8; }
+    &:hover:not(.active) { color: #d0d6e0; }
+  }
+}
+
+.dashboard-table-wrap {
+  overflow-x: auto;
+}
+
+.dashboard-table {
+  font-size: 13px;
+}
+
+.stock-link {
+  color: #7170ff;
+  text-decoration: none;
+  font-family: 'Berkeley Mono', monospace;
+  font-size: 12px;
+  &:hover { text-decoration: underline; }
+}
+
+.stock-name-text {
+  color: #f7f8f8;
+  font-weight: 510;
+}
+
+.score-val {
+  font-weight: 590;
+  color: #f7f8f8;
+}
+
+.confidence-tag {
+  font-size: 11px;
+  font-weight: 510;
+  padding: 2px 8px;
+  border-radius: 4px;
+  &.high {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+  }
+  &.medium {
+    background: rgba(245, 158, 11, 0.1);
+    color: #f59e0b;
+  }
+  &.low {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+  }
+}
+
+.trend-arrow {
+  font-size: 16px;
+  font-weight: 590;
+}
+
+.invalidation-text {
+  font-size: 11px;
+  color: #8a8f98;
+  font-family: 'Berkeley Mono', monospace;
+}
+
+.position-text {
+  font-size: 12px;
+  color: #d0d6e0;
+  font-family: 'Berkeley Mono', monospace;
+}
+
+.text-dim {
+  font-size: 12px;
+  color: #62666d;
+}
+
+.good { color: #10b981; font-weight: 510; }
+.bad { color: #ef4444; font-weight: 510; }
 </style>

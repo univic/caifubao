@@ -1,18 +1,23 @@
 # -*- coding: utf-8 -*-
-"""Factor evaluation report model."""
+"""Factor evaluation report model — shared with datahub collection."""
 
 import datetime
 from mongoengine import (
     DateTimeField,
     DictField,
+    Document,
     IntField,
     StringField,
 )
-from app.lib.db_watcher.mongoengine_tool import db
 
 
-class FactorEvalReport(db.Document):
-    """Stores a factor evaluation report for later retrieval and comparison."""
+class FactorEvalReport(Document):
+    """Stores a factor evaluation report for later retrieval and comparison.
+
+    Shares the ``factor_eval_reports`` collection with the datahub
+    module so that datahub-produced reports are directly readable by
+    the backend API.
+    """
 
     factor_name = StringField(required=True)
     factor_description = StringField()

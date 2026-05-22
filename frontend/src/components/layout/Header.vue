@@ -72,6 +72,11 @@
             <span>评分实验</span>
           </el-menu-item>
 
+          <el-menu-item index="/factor-eval">
+            <el-icon><Histogram /></el-icon>
+            <span>因子评估</span>
+          </el-menu-item>
+
           <el-sub-menu v-if="userStore.isAdmin" index="/admin/users">
             <template #title>
               <el-icon><Setting /></el-icon>
@@ -177,6 +182,11 @@
           <span>评分实验</span>
         </el-menu-item>
 
+        <el-menu-item index="/factor-eval">
+          <el-icon><Histogram /></el-icon>
+          <span>因子评估</span>
+        </el-menu-item>
+
         <el-sub-menu v-if="userStore.isAdmin" index="/admin/users">
           <template #title>
             <el-icon><Setting /></el-icon>
@@ -202,6 +212,7 @@ import {
   DataBoard,
   DataLine,
   Grid,
+  Histogram,
   Menu,
   PieChart,
   Search,
@@ -227,6 +238,7 @@ const activeMenu = computed(() => {
   if (route.path.startsWith('/indices')) return '/indices'
   if (route.path.startsWith('/signals')) return '/signals'
   if (route.path.startsWith('/score-experiments')) return '/score-experiments'
+  if (route.path.startsWith('/factor-eval')) return '/factor-eval'
   if (route.path.startsWith('/decisions')) return '/decisions'
   if (route.path.startsWith('/portfolio')) return '/portfolio'
   if (route.path.startsWith('/backtest')) return '/backtest'

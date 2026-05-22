@@ -570,20 +570,109 @@ def _handle_grid_search(task: Any) -> None:
 def _handle_factor_eval(task: Any) -> None:
     _mark_started(task)
     try:
-        params = task.params or {}
-        _update_progress(task, 0.1, "Evaluating factor...")
+        import datetime as _dt
+        import sys as _sys
+        import os as _os
 
-        result = {
-            "factor_name": params.get("factor_name", "unknown"),
-            "ic_mean": None,
-            "ic_std": None,
-            "icir": None,
-            "quintile_returns": [],
-            "correlations": {},
-            "note": "Factor evaluation skeleton — IC/IR computation needs factor data pipeline",
+        # Ensure datahub is on path for FactorEvaluationService imports
+        _datahub_path = _os.path.join(
+            _os.path.dirname(__file__), "..", "..", "datahub", "app"
+        )
+        if _datahub_path not in _sys.path:
+            _sys.path.insert(0, _datahub_path)
+
+        from app.lib.scoring_engine.factor_eval import FactorEvaluationService
+
+        params = task.params or {}
+        factor_name = params.get("factor_name", "")
+        start_date = _dt.datetime.fromisoformat(params["start_date"])
+        end_date = _dt.datetime.fromisoformat(params["end_date"])
+        horizon = int(params.get("horizon", 20))
+        stock_code = params.get("stock_code")
+
+        svc = FactorEvaluationService()
+
+        # Load factor values from StockFactorDaily
+        from app.model.factor import StockFactorDaily
+
+        factor_docs = list(
+            StockFactorDaily.objects(
+                date__gte=start_date, date__lte=end_date
+            ).only("stock_code", "date", factor_name)
+        )
+        if not factor_docs:
+            _mark_completed(task, {"error": f"No factor data for {factor_name}"})
+            return
+
+        factor_values: dict[str, dict[str, float]] = {}
+        for doc in factor_docs:
+            val = getattr(doc, factor_name, None)
+            if val is not None:
+                code = doc.stock_code
+                dstr = doc.date.isoformat() if hasattr(doc.date, "isoformat") else str(
+                    doc.date
+                )
+                factor_values.setdefault(code, {})[dstr] = float(val)
+
+        _update_progress(task, 0.3, f"Running factor evaluation on {len(factor_values)} stocks...")
+
+        result = svc.evaluate(
+            factor_values,
+            start_date,
+            end_date,
+            forward_horizons=[5, 20, 60],
+            regime_split=True,
+        )
+
+        # P&L attribution for a specific stock (if requested)
+        attribution = None
+        win_rates = None
+        if stock_code:
+            _update_progress(task, 0.7, "Computing component attribution...")
+            attribution = svc.evaluate_component_contribution(
+                stock_code, start_date, end_date, horizon=horizon
+            )
+            win_rates = svc.win_rate_by_component(
+                stock_code, start_date, end_date, horizon=horizon
+            )
+
+        _update_progress(task, 0.9, "Saving FactorEvalReport...")
+
+        result_data = {
+            "factor_name": factor_name,
+            "observation_count": result.get("observation_count", 0),
+            "ic": result.get("ic", {}),
+            "icir": result.get("icir", {}),
+            "quintiles": result.get("quintiles", {}),
+            "decay": result.get("decay", {}),
+            "regime_ic": result.get("regime_ic", {}),
+            "component_contribution": attribution,
+            "win_rate_by_component": win_rates,
         }
 
-        _mark_completed(task, result)
+        # Persist as FactorEvalReport for the API
+        try:
+            from app.model.factor_eval import FactorEvalReport
+
+            report = FactorEvalReport(
+                factor_name=factor_name,
+                start_date=start_date,
+                end_date=end_date,
+                observation_count=result.get("observation_count", 0),
+                ic_summary=result.get("ic", {}),
+                icir_summary=result.get("icir", {}),
+                quintile_analysis=result.get("quintiles", {}),
+                decay_curve=result.get("decay", {}),
+                regime_ic=result.get("regime_ic"),
+                component_contribution=attribution,
+                win_rate_by_component=win_rates,
+            )
+            report.save()
+            result_data["report_id"] = str(report.id)
+        except Exception as save_err:
+            logger.warning("Failed to save FactorEvalReport: %s", save_err)
+
+        _mark_completed(task, result_data)
     except Exception:
         _mark_failed(task, traceback.format_exc())
 
