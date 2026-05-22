@@ -230,7 +230,7 @@ def rsi_14(quotes: list, window: int = 14) -> dict:
 
 
 def real_relative_strength(
-    stock_quotes: list, index_quotes: list, lookback: int = 20
+    stock_quotes: list, index_quotes: list = None, lookback: int = 20
 ) -> dict:
     """Stock alpha vs CSI 300 — standalone helper (NOT in ALL_TECHNICAL_FACTORS).
 
@@ -302,5 +302,7 @@ ALL_TECHNICAL_FACTORS = {
     "gap_ratio": gap_ratio,
     "yearly_position": yearly_position,
     "rsi_14": rsi_14,
+    "real_relative_strength": real_relative_strength,
 }
-# real_relative_strength excluded — needs index_quotes parameter
+# real_relative_strength requires index_quotes for full alpha computation;
+# returns empty results when index_quotes is None (caller should provide it).

@@ -530,3 +530,121 @@ def aggregate_industry_metrics(
             results.append(doc)
 
     return results
+
+
+def real_relative_strength_component(
+    stock_code: str,
+    quote,
+    history_quotes: list,
+    weight: float,
+    lookback: int = 20,
+) -> dict:
+    """Real relative strength: alpha vs CSI 300 index.
+
+    Computes excess return over the lookback period against the CSI 300
+    benchmark. When index data is unavailable, falls back to a self-proxy
+    calculation (own price change, matching the relative_strength_component
+    behaviour).
+    """
+    close = quote_price(quote)
+    if close is None or not history_quotes:
+        return build_component(
+            "real_relative_strength",
+            "relative_strength",
+            "Real relative strength (vs CSI 300)",
+            None,
+            0.0,
+            weight,
+        )
+
+    # Combine today's quote with history for the stock quote list
+    stock_quotes = sorted(
+        history_quotes + [quote], key=lambda q: q.date if hasattr(q, "date") else ""
+    )
+
+    # Try loading CSI 300 index quotes for the same date range
+    try:
+        from app.model.stock import StockDailyQuote
+
+        dates = [q.date for q in stock_quotes if hasattr(q, "date")]
+        if not dates:
+            raise ValueError("No valid dates in stock quotes")
+
+        start_date = min(dates)
+        end_date = max(dates)
+        index_quotes = list(
+            StockDailyQuote.objects(code="sh000300")
+            .filter(date__gte=start_date, date__lte=end_date)
+            .order_by("date")
+        )
+
+        if index_quotes:
+            from app.lib.scoring_engine.technical_factors import (
+                real_relative_strength,
+            )
+
+            alpha_map = real_relative_strength(
+                stock_quotes=stock_quotes,
+                index_quotes=index_quotes,
+                lookback=lookback,
+            )
+
+            date_key = quote.date.isoformat() if hasattr(quote, "date") else ""
+            if date_key in alpha_map:
+                alpha = alpha_map[date_key]
+                normalized = clamp((alpha + 0.05) / 0.15)
+                return build_component(
+                    "real_relative_strength",
+                    "relative_strength",
+                    "Real relative strength (alpha vs CSI 300)",
+                    round(alpha, 6),
+                    normalized,
+                    weight,
+                    evidence={
+                        "lookback": lookback,
+                        "alpha": round(alpha, 6),
+                        "benchmark": "CSI 300 (sh000300)",
+                    },
+                )
+    except Exception:
+        pass  # fall through to self-proxy fallback
+
+    # Fallback: self-proxy (same logic as relative_strength_component)
+    old_close = quote_price(history_quotes[-1])
+    if not old_close:
+        normalized = 0.0
+        change = None
+    else:
+        change = (close - old_close) / old_close
+        normalized = clamp((change + 0.05) / 0.15)
+
+    return build_component(
+        "real_relative_strength",
+        "relative_strength",
+        "Real relative strength (self-proxy fallback)",
+        round(change, 6) if change is not None else None,
+        normalized,
+        weight,
+        evidence={
+            "note": "Index data unavailable; using self-proxy (own price change).",
+            "lookback": lookback,
+        },
+    )
+
+
+#: Registry mapping component ids to their builder functions.
+ALL_COMPONENTS = {}  # populated below as functions are defined
+
+
+def _register_component(component_id: str, fn) -> None:
+    ALL_COMPONENTS[component_id] = fn
+
+
+_register_component("signal_strength", signal_strength_component)
+_register_component("trend_alignment", trend_alignment_component)
+_register_component("momentum", momentum_component)
+_register_component("breakout_or_position", breakout_or_position_component)
+_register_component("relative_strength", relative_strength_component)
+_register_component("industry_momentum", industry_momentum_component)
+_register_component("real_relative_strength", real_relative_strength_component)
+_register_component("risk_penalty", risk_penalty)

@@ -56,6 +56,9 @@ PERMUTATION_SIGNIFICANCE = 0.05
 BOOTSTRAP_ITERATIONS = 5000
 BOOTSTRAP_CONFIDENCE = 0.95
 
+# Bonferroni correction
+BONFERRONI_ALPHA = 0.05
+
 
 def composite_score(
     excess_return_pct: float,
@@ -135,6 +138,8 @@ def anti_overfitting_flags(
     total_trades: int,
     daily_values: list | None = None,
     trades: list | None = None,
+    num_comparisons: int | None = None,
+    p_value: float | None = None,
 ) -> dict:
     """Return anti-overfitting flags for a backtest result."""
     flags = []
@@ -153,7 +158,58 @@ def anti_overfitting_flags(
         if best_pnl / total_pnl > CONCENTRATION_THRESHOLD:
             flags.append(f"concentrated_returns:{best_pnl / total_pnl:.0%}")
 
+    # Bonferroni multiple-comparison
+    if num_comparisons is not None and num_comparisons > 1:
+        flags.append(f"bonferroni_applied:n={num_comparisons:.0f}")
+        if p_value is not None:
+            bonf_flag = multiple_comparison_flag(p_value, num_comparisons)
+            if bonf_flag:
+                flags.append(bonf_flag)
+
     return {"flags": flags, "trades": total_trades, "days": len(daily_values)}
+
+
+def bonferroni_correction(num_comparisons: int, alpha: float | None = None) -> dict:
+    """Bonferroni correction for multiple comparisons.
+
+    Returns corrected alpha and a flagging helper.
+    When num_comparisons <= 1, no correction is needed.
+    """
+    if alpha is None:
+        alpha = BONFERRONI_ALPHA
+    if num_comparisons <= 1:
+        return {
+            "corrected_alpha": alpha,
+            "applied": False,
+            "num_comparisons": num_comparisons,
+            "note": "No correction needed (single comparison)",
+        }
+    corrected_alpha = alpha / num_comparisons
+    return {
+        "corrected_alpha": round(corrected_alpha, 6),
+        "applied": True,
+        "num_comparisons": num_comparisons,
+        "note": f"Bonferroni: alpha={alpha} / n={num_comparisons} = {corrected_alpha:.6f}",
+    }
+
+
+def multiple_comparison_flag(
+    p_value: float | None,
+    num_comparisons: int,
+    alpha: float | None = None,
+) -> str | None:
+    """Return a flag string if p_value fails Bonferroni-corrected threshold.
+
+    Returns None if p_value is None, num_comparisons <= 1, or p_value passes.
+    """
+    if alpha is None:
+        alpha = BONFERRONI_ALPHA
+    if p_value is None or num_comparisons <= 1:
+        return None
+    corrected = alpha / num_comparisons
+    if p_value > corrected:
+        return f"not_significant_after_bonferroni:p={p_value:.4f}>alpha_corrected={corrected:.6f}"
+    return None
 
 
 # Multi-stock / portfolio constants
@@ -207,6 +263,136 @@ def _can_trade(quote, side: str) -> bool:
     if side == "SELL" and change_rate <= -9.9:
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight executability constraints (Task 13.8)
+# ---------------------------------------------------------------------------
+
+MIN_LIQUIDITY_CNY = 5_000_000  # 5M CNY daily average turnover
+MAX_POSITION_PCT_OF_VOLUME = 0.01  # 1% of daily volume
+
+
+def check_liquidity(stock_code: str, lookback_days: int = 20) -> dict:
+    """Check if a stock meets minimum liquidity requirements.
+
+    Returns:
+        dict with: pass (bool), avg_turnover_cny (float), reason (str or None)
+    """
+    try:
+        from datetime import datetime, timedelta
+
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=lookback_days * 2)  # generous window
+
+        quotes = list(
+            StockDailyQuote.objects(code=stock_code)
+            .filter(date__gte=start_date, date__lte=end_date)
+            .order_by("-date")
+            .limit(lookback_days)
+        )
+
+        if len(quotes) < max(lookback_days // 2, 5):
+            return {
+                "pass": False,
+                "avg_turnover_cny": 0.0,
+                "reason": f"Insufficient quote data: {len(quotes)} days",
+            }
+
+        turnovers = []
+        for q in quotes:
+            price = q.close_hfq or q.close or 0
+            volume = q.volume or 0
+            if price > 0 and volume > 0:
+                turnovers.append(price * volume)
+
+        if not turnovers:
+            return {
+                "pass": False,
+                "avg_turnover_cny": 0.0,
+                "reason": "No valid turnover data",
+            }
+
+        avg_turnover = sum(turnovers) / len(turnovers)
+        return {
+            "pass": avg_turnover >= MIN_LIQUIDITY_CNY,
+            "avg_turnover_cny": round(avg_turnover, 2),
+            "reason": None
+            if avg_turnover >= MIN_LIQUIDITY_CNY
+            else f"Avg turnover {avg_turnover:,.0f} CNY < {MIN_LIQUIDITY_CNY:,.0f} CNY minimum",
+        }
+    except Exception as e:
+        return {"pass": False, "avg_turnover_cny": 0.0, "reason": f"Error: {e}"}
+
+
+def check_trading_status(stock_code: str) -> dict:
+    """Check if a stock is currently suspended or ST.
+
+    Returns:
+        dict with: pass (bool), is_suspended (bool), is_st (bool), reasons (list)
+    """
+    try:
+        stock = IndividualStock.objects(code=stock_code).first()
+        if stock is None:
+            return {
+                "pass": False,
+                "is_suspended": True,
+                "is_st": False,
+                "reasons": ["Stock not found"],
+            }
+
+        active_status = getattr(stock, "active_status", 0)
+        stock_name = getattr(stock, "name", "") or ""
+
+        reasons = []
+        is_st = "ST" in stock_name.upper() or "*ST" in stock_name.upper()
+        is_suspended = active_status != 0
+
+        if is_st:
+            reasons.append("ST/*ST stock — restricted trading")
+        if is_suspended:
+            reasons.append("Stock is suspended or delisted")
+
+        return {
+            "pass": not is_st and not is_suspended,
+            "is_suspended": is_suspended,
+            "is_st": is_st,
+            "reasons": reasons,
+        }
+    except Exception as e:
+        return {
+            "pass": False,
+            "is_suspended": True,
+            "is_st": False,
+            "reasons": [f"Error: {e}"],
+        }
+
+
+def preflight_check(stock_code: str, check_liquidity_flag: bool = True) -> dict:
+    """Run all pre-flight executability checks.
+
+    Returns:
+        dict with: pass (bool), checks (list of individual check results), summary (str)
+    """
+    checks = []
+    status = check_trading_status(stock_code)
+    checks.append({"type": "trading_status", **status})
+
+    if check_liquidity_flag and status.get("pass", False):
+        liq = check_liquidity(stock_code)
+        checks.append({"type": "liquidity", **liq})
+
+    all_pass = all(c.get("pass", False) for c in checks)
+    failing = [c.get("type", "") for c in checks if not c.get("pass", False)]
+
+    return {
+        "pass": all_pass,
+        "stock_code": stock_code,
+        "checks": checks,
+        "summary": "All checks passed"
+        if all_pass
+        else f"Failed checks: {', '.join(failing)}",
+    }
 
 
 def _round_to_lot(quantity: float) -> int:

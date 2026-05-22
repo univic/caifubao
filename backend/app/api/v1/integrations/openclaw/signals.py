@@ -4,7 +4,7 @@
 
 from flask import request
 
-from app.api.v1.integrations.openclaw.utils import wrap_response
+from app.api.v1.integrations.openclaw.utils import _get_latest_date, wrap_response
 from app.api.v1.quotes import _format_datetime, _parse_datetime
 from app.lib.auth_decorators import service_token_required
 from app.model.signal import StockSignalDaily
@@ -54,11 +54,16 @@ def get_signals():
     total = signals_qs.count()
     items = signals_qs.skip((page - 1) * per_page).limit(per_page)
 
+    data_as_of = (
+        _get_latest_date(StockSignalDaily, filter_kwargs=query) if query else None
+    )
+
     return wrap_response(
         data={
             "items": [_serialize_signal_claw(s) for s in items],
             "total": total,
             "page": page,
             "per_page": per_page,
-        }
+        },
+        data_as_of=data_as_of,
     )

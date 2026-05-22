@@ -4,7 +4,7 @@
 
 from flask import request
 
-from app.api.v1.integrations.openclaw.utils import wrap_response
+from app.api.v1.integrations.openclaw.utils import _get_latest_date, wrap_response
 from app.api.v1.quotes import _format_datetime, _normalize_symbol, _parse_datetime
 from app.lib.auth_decorators import service_token_required
 from app.model.stock import StockDailyQuote
@@ -58,11 +58,16 @@ def get_daily_quotes():
     total = quotes_qs.count()
     items = quotes_qs.skip((page - 1) * per_page).limit(per_page)
 
+    data_as_of = (
+        _get_latest_date(StockDailyQuote, filter_kwargs=query) if query else None
+    )
+
     return wrap_response(
         data={
             "items": [_serialize_quote_claw(q) for q in items],
             "total": total,
             "page": page,
             "per_page": per_page,
-        }
+        },
+        data_as_of=data_as_of,
     )

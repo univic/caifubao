@@ -19,6 +19,7 @@ from mongoengine import (
 VALID_TASK_TYPES = (
     "BACKTEST_SINGLE",
     "BACKTEST_MULTI",
+    "BACKTEST_SCAN",
     "GRID_SEARCH",
     "SCORE_REPLAY",
     "SCORE_VERIFY",

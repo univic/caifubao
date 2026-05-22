@@ -5,9 +5,9 @@
 from flask import request
 from mongoengine.queryset.visitor import Q
 
-from app.api.v1.integrations.openclaw.utils import wrap_response
+from app.api.v1.integrations.openclaw.utils import _get_latest_date, wrap_response
 from app.lib.auth_decorators import service_token_required
-from app.model.stock import BasicStock, FinanceMarket, StockExchange
+from app.model.stock import BasicStock, FinanceMarket, StockDailyQuote, StockExchange
 
 from . import openclaw_bp
 
@@ -85,5 +85,6 @@ def list_stocks():
             "total": total,
             "page": page,
             "per_page": per_page,
-        }
+        },
+        data_as_of=_get_latest_date(StockDailyQuote),
     )

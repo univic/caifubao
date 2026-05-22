@@ -4,7 +4,7 @@
 
 from flask import request
 
-from app.api.v1.integrations.openclaw.utils import wrap_response
+from app.api.v1.integrations.openclaw.utils import _get_latest_date, wrap_response
 from app.api.v1.quotes import _format_datetime, _normalize_symbol
 from app.lib.auth_decorators import service_token_required
 from app.model.data_asset_status import DataAssetStatus
@@ -51,9 +51,18 @@ def get_data_quality():
     # Limitation for safety
     items = quality_qs.limit(500)
 
+    data_as_of = (
+        _get_latest_date(
+            DataAssetStatus, date_field="last_calculated_at", filter_kwargs=query
+        )
+        if query
+        else None
+    )
+
     return wrap_response(
         data={
             "items": [_serialize_quality_claw(q) for q in items],
             "total": quality_qs.count(),
-        }
+        },
+        data_as_of=data_as_of,
     )

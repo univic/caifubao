@@ -21,6 +21,8 @@ def handle_task(task: Any) -> None:
         _handle_backtest_single(task)
     elif task_type == "BACKTEST_MULTI":
         _handle_backtest_multi(task)
+    elif task_type == "BACKTEST_SCAN":
+        _handle_backtest_scan(task)
     elif task_type == "GRID_SEARCH":
         _handle_grid_search(task)
     elif task_type == "SCORE_REPLAY":
@@ -99,7 +101,17 @@ def _handle_backtest_single(task: Any) -> None:
             _mark_failed(task, result["error"])
         else:
             _update_progress(task, 1.0, "Complete")
-            _mark_completed(task, {"backtest_id": result.get("id"), "summary": {k: v for k, v in result.items() if k not in ("trades", "daily_values")}})
+            _mark_completed(
+                task,
+                {
+                    "backtest_id": result.get("id"),
+                    "summary": {
+                        k: v
+                        for k, v in result.items()
+                        if k not in ("trades", "daily_values")
+                    },
+                },
+            )
     except Exception:
         _mark_failed(task, traceback.format_exc())
 
@@ -137,7 +149,160 @@ def _handle_backtest_multi(task: Any) -> None:
         if result.get("error"):
             _mark_failed(task, result["error"])
         else:
-            _mark_completed(task, {"backtest_id": result.get("id"), "summary": {k: v for k, v in result.items() if k not in ("trades", "daily_values")}})
+            _mark_completed(
+                task,
+                {
+                    "backtest_id": result.get("id"),
+                    "summary": {
+                        k: v
+                        for k, v in result.items()
+                        if k not in ("trades", "daily_values")
+                    },
+                },
+            )
+    except Exception:
+        _mark_failed(task, traceback.format_exc())
+
+
+# ---------------------------------------------------------------------------
+# Backtest scan (one strategy across all active stocks)
+# ---------------------------------------------------------------------------
+
+
+def _handle_backtest_scan(task: Any) -> None:
+    """Scan one strategy across all active stocks and rank results."""
+    _mark_started(task)
+    try:
+        from datetime import datetime as _dt
+        from backend.app.model.stock import IndividualStock
+        from backend.app.services.backtest_service import (
+            run_backtest,
+            composite_score,
+            anti_overfitting_flags,
+            bonferroni_correction,
+        )
+
+        params = task.params or {}
+
+        strategy = params["strategy"]
+        start_date = _dt.fromisoformat(params["start_date"])
+        end_date = _dt.fromisoformat(params["end_date"])
+        horizon = params.get("horizon")
+        initial_cash = float(params.get("initial_cash", 100_000))
+        min_trades = int(params.get("min_trades", 0))
+        page = int(params.get("page", 1))
+        per_page = int(params.get("per_page", 20))
+
+        _update_progress(task, 0.0, "Loading active stocks...")
+
+        stocks = list(
+            IndividualStock.objects(active_status=0).only("code", "name").limit(3000)
+        )
+
+        if not stocks:
+            _mark_failed(task, "No active stocks found")
+            return
+
+        total = len(stocks)
+        _update_progress(task, 0.02, f"Scanning {total} stocks...")
+
+        results = []
+        errors = 0
+
+        for idx, stock in enumerate(stocks):
+            try:
+                r = run_backtest(
+                    stock_code=stock.code,
+                    strategy=strategy,
+                    start_date=start_date,
+                    end_date=end_date,
+                    initial_cash=initial_cash,
+                    save_result=False,
+                    horizon=horizon,
+                )
+            except Exception:
+                errors += 1
+                continue
+
+            if "error" in r:
+                errors += 1
+                continue
+
+            if min_trades > 0 and r.get("total_trades", 0) < min_trades:
+                continue
+
+            entry = {
+                "stock_code": stock.code,
+                "stock_name": stock.name or stock.code,
+                "total_return_pct": r.get("total_return_pct", 0),
+                "sharpe_ratio": r.get("sharpe_ratio", 0),
+                "max_drawdown": r.get("max_drawdown", 0),
+                "total_trades": r.get("total_trades", 0),
+                "win_rate": r.get("win_rate", 0),
+                "excess_return_pct": r.get("excess_return_pct", 0),
+                "information_ratio": r.get("information_ratio", 0),
+            }
+
+            comp = composite_score(
+                excess_return_pct=entry["excess_return_pct"],
+                max_drawdown=entry["max_drawdown"],
+                information_ratio=entry["information_ratio"],
+                total_trades=entry["total_trades"],
+                daily_values=r.get("daily_values"),
+                trades=r.get("trades"),
+            )
+            aof = anti_overfitting_flags(
+                total_trades=entry["total_trades"],
+                daily_values=r.get("daily_values"),
+                trades=r.get("trades"),
+                num_comparisons=total,
+            )
+            entry["flags"] = list(set(comp.get("flags", []) + aof.get("flags", [])))
+            entry["composite_score"] = comp["score"]
+            entry["composite_breakdown"] = comp.get("breakdown", {})
+            entry["rankable"] = comp["rankable"]
+
+            results.append(entry)
+
+            # Publish progress periodically
+            progress = 0.02 + 0.93 * ((idx + 1) / total)
+            if (idx + 1) % 10 == 0 or idx == total - 1:
+                _update_progress(
+                    task, progress, f"Scanned {idx + 1}/{total} ({errors} errors)"
+                )
+
+        # Sort by composite score: rankable first, then descending composite_score
+        results.sort(
+            key=lambda x: (
+                -(x.get("rankable", False)),
+                -(x.get("composite_score", -999) or -999),
+            ),
+        )
+
+        # Paginate
+        total_results = len(results)
+        start_idx = (page - 1) * per_page
+        paged = results[start_idx : start_idx + per_page]
+
+        bonf = bonferroni_correction(total_results)
+
+        _mark_completed(
+            task,
+            {
+                "strategy": strategy,
+                "horizon": horizon,
+                "start_date": params["start_date"],
+                "end_date": params["end_date"],
+                "total_stocks": total,
+                "scanned": total - errors,
+                "errors": errors,
+                "total": total_results,
+                "bonferroni": bonf,
+                "page": page,
+                "per_page": per_page,
+                "items": paged,
+            },
+        )
     except Exception:
         _mark_failed(task, traceback.format_exc())
 
@@ -181,15 +346,21 @@ def _handle_score_replay(task: Any) -> None:
 def _handle_score_verify(task: Any) -> None:
     _mark_started(task)
     try:
-        from datahub.app.lib.scoring_engine.verification_service import ScoreVerificationService
+        from datahub.app.lib.scoring_engine.verification_service import (
+            ScoreVerificationService,
+        )
 
         params = task.params or {}
         _update_progress(task, 0.1, "Running verification...")
 
         service = ScoreVerificationService(model_version=params.get("model_version"))
         result = service.verify_predictions(
-            start_date=datetime.fromisoformat(params["start_date"]) if params.get("start_date") else None,
-            end_date=datetime.fromisoformat(params["end_date"]) if params.get("end_date") else None,
+            start_date=datetime.fromisoformat(params["start_date"])
+            if params.get("start_date")
+            else None,
+            end_date=datetime.fromisoformat(params["end_date"])
+            if params.get("end_date")
+            else None,
             horizon=params.get("horizon"),
         )
 
@@ -206,7 +377,9 @@ def _handle_score_verify(task: Any) -> None:
 def _handle_calibration_report(task: Any) -> None:
     _mark_started(task)
     try:
-        from datahub.app.lib.scoring_engine.calibration_report import ScoreCalibrationReport
+        from datahub.app.lib.scoring_engine.calibration_report import (
+            ScoreCalibrationReport,
+        )
 
         params = task.params or {}
         _update_progress(task, 0.1, "Generating calibration report...")
@@ -235,9 +408,15 @@ def _handle_grid_search(task: Any) -> None:
 
         params = task.params or {}
         horizons = params.get("horizons", [20])
-        weight_grid = params.get("weight_grid", {})   # e.g. {"signal_strength": [10,20,30], ...}
-        threshold_grid = params.get("threshold_grid", {"entry": [60,70,80], "exit": [40,50]})
-        date_range = params.get("date_range", {"start": "2024-01-01", "end": "2024-06-30"})
+        weight_grid = params.get(
+            "weight_grid", {}
+        )  # e.g. {"signal_strength": [10,20,30], ...}
+        threshold_grid = params.get(
+            "threshold_grid", {"entry": [60, 70, 80], "exit": [40, 50]}
+        )
+        date_range = params.get(
+            "date_range", {"start": "2024-01-01", "end": "2024-06-30"}
+        )
 
         # Build weight combinations
         component_ids = list(weight_grid.keys())
@@ -254,7 +433,9 @@ def _handle_grid_search(task: Any) -> None:
             for combo in product(*weight_values):
                 total = sum(combo)
                 # Normalize to 100
-                normalized = {k: round(v / total * 100, 1) for k, v in zip(component_ids, combo)}
+                normalized = {
+                    k: round(v / total * 100, 1) for k, v in zip(component_ids, combo)
+                }
                 weight_combos.append(normalized)
 
         # Limit to most distinct combinations
@@ -264,7 +445,9 @@ def _handle_grid_search(task: Any) -> None:
         # Build threshold combinations
         threshold_keys = list(threshold_grid.keys())
         threshold_values = [threshold_grid[k] for k in threshold_keys]
-        threshold_combos = [dict(zip(threshold_keys, combo)) for combo in product(*threshold_values)]
+        threshold_combos = [
+            dict(zip(threshold_keys, combo)) for combo in product(*threshold_values)
+        ]
 
         # Build all experiments
         experiments = []
@@ -272,11 +455,13 @@ def _handle_grid_search(task: Any) -> None:
             for wc in weight_combos:
                 for tc in threshold_combos:
                     config = {"weights": wc}
-                    experiments.append({
-                        "horizon": horizon,
-                        "config": config,
-                        **tc,
-                    })
+                    experiments.append(
+                        {
+                            "horizon": horizon,
+                            "config": config,
+                            **tc,
+                        }
+                    )
 
         total_experiments = len(experiments)
         _update_progress(task, 0.05, f"Running {total_experiments} experiments...")
@@ -284,12 +469,22 @@ def _handle_grid_search(task: Any) -> None:
         results = []
         for idx, exp in enumerate(experiments):
             progress = 0.05 + 0.90 * (idx / total_experiments)
-            _update_progress(task, progress, f"Experiment {idx+1}/{total_experiments}: horizon={exp['horizon']}")
+            _update_progress(
+                task,
+                progress,
+                f"Experiment {idx + 1}/{total_experiments}: horizon={exp['horizon']}",
+            )
 
             try:
-                from datahub.app.lib.scoring_engine.replay_service import ScoreReplayService
-                from datahub.app.lib.scoring_engine.verification_service import ScoreVerificationService
-                from datahub.app.lib.scoring_engine.calibration_report import ScoreCalibrationReport
+                from datahub.app.lib.scoring_engine.replay_service import (
+                    ScoreReplayService,
+                )
+                from datahub.app.lib.scoring_engine.verification_service import (
+                    ScoreVerificationService,
+                )
+                from datahub.app.lib.scoring_engine.calibration_report import (
+                    ScoreCalibrationReport,
+                )
 
                 model_version = f"grid_{idx}_{exp['horizon']}h"
 
@@ -318,36 +513,51 @@ def _handle_grid_search(task: Any) -> None:
                     horizon=exp["horizon"],
                 )
 
-                results.append({
-                    "experiment_idx": idx,
-                    "horizon": exp["horizon"],
-                    **exp,
-                    "hit_rate": cal.get("score_buckets", [{}])[-1].get("hit_rate"),
-                    "top10_hit_rate": cal.get("top_n", {}).get("top_10", {}).get("hit_rate"),
-                    "avg_return": cal.get("score_buckets", [{}])[-1].get("avg_return_at_target"),
-                })
+                results.append(
+                    {
+                        "experiment_idx": idx,
+                        "horizon": exp["horizon"],
+                        **exp,
+                        "hit_rate": cal.get("score_buckets", [{}])[-1].get("hit_rate"),
+                        "top10_hit_rate": cal.get("top_n", {})
+                        .get("top_10", {})
+                        .get("hit_rate"),
+                        "avg_return": cal.get("score_buckets", [{}])[-1].get(
+                            "avg_return_at_target"
+                        ),
+                    }
+                )
             except Exception as exc:
-                results.append({
-                    "experiment_idx": idx,
-                    "horizon": exp["horizon"],
-                    **exp,
-                    "error": str(exc),
-                })
+                results.append(
+                    {
+                        "experiment_idx": idx,
+                        "horizon": exp["horizon"],
+                        **exp,
+                        "error": str(exc),
+                    }
+                )
 
         # Rank results
         ranked = sorted(
-            [r for r in results if "error" not in r and r.get("top10_hit_rate") is not None],
+            [
+                r
+                for r in results
+                if "error" not in r and r.get("top10_hit_rate") is not None
+            ],
             key=lambda r: r.get("top10_hit_rate", 0) or 0,
             reverse=True,
         )
 
-        _mark_completed(task, {
-            "total_experiments": total_experiments,
-            "completed": len([r for r in results if "error" not in r]),
-            "failed": len([r for r in results if "error" in r]),
-            "top_20": ranked[:20],
-            "all_results": results,
-        })
+        _mark_completed(
+            task,
+            {
+                "total_experiments": total_experiments,
+                "completed": len([r for r in results if "error" not in r]),
+                "failed": len([r for r in results if "error" in r]),
+                "top_20": ranked[:20],
+                "all_results": results,
+            },
+        )
     except Exception:
         _mark_failed(task, traceback.format_exc())
 
@@ -394,8 +604,12 @@ def _handle_rolling_validation(task: Any) -> None:
     _mark_started(task)
     try:
         from datahub.app.lib.scoring_engine.replay_service import ScoreReplayService
-        from datahub.app.lib.scoring_engine.verification_service import ScoreVerificationService
-        from datahub.app.lib.scoring_engine.calibration_report import ScoreCalibrationReport
+        from datahub.app.lib.scoring_engine.verification_service import (
+            ScoreVerificationService,
+        )
+        from datahub.app.lib.scoring_engine.calibration_report import (
+            ScoreCalibrationReport,
+        )
 
         params = task.params or {}
         model_version = params.get("model_version", "score_v2_202605")
@@ -421,7 +635,8 @@ def _handle_rolling_validation(task: Any) -> None:
 
             progress = (step_idx / total_steps) if total_steps else 0
             _update_progress(
-                task, progress,
+                task,
+                progress,
                 f"Validating: train={train_year}, test={test_year}",
             )
 
@@ -444,7 +659,8 @@ def _handle_rolling_validation(task: Any) -> None:
                 # --- Train period ---
                 replay = ScoreReplayService(model_version=model_version)
                 replay.backfill_predictions(
-                    train_start, train_end,
+                    train_start,
+                    train_end,
                     horizon=horizon,
                     stock_code=stock_code,
                     replace=True,
@@ -452,7 +668,8 @@ def _handle_rolling_validation(task: Any) -> None:
 
                 verifier = ScoreVerificationService(model_version=model_version)
                 verifier.verify_predictions(
-                    train_start, train_end,
+                    train_start,
+                    train_end,
                     horizon=horizon,
                 )
 
@@ -462,7 +679,8 @@ def _handle_rolling_validation(task: Any) -> None:
                 # --- Test period ---
                 test_replay = ScoreReplayService(model_version=test_model_version)
                 test_replay.backfill_predictions(
-                    test_start, test_end,
+                    test_start,
+                    test_end,
                     horizon=horizon,
                     stock_code=stock_code,
                     replace=True,
@@ -472,7 +690,8 @@ def _handle_rolling_validation(task: Any) -> None:
                     model_version=test_model_version,
                 )
                 test_verifier.verify_predictions(
-                    test_start, test_end,
+                    test_start,
+                    test_end,
                     horizon=horizon,
                 )
 
@@ -486,17 +705,16 @@ def _handle_rolling_validation(task: Any) -> None:
                 test_buckets = test_cal.get("score_buckets", [])
 
                 train_hit = (
-                    (train_buckets[-1].get("hit_rate") or 0)
-                    if train_buckets else 0
+                    (train_buckets[-1].get("hit_rate") or 0) if train_buckets else 0
                 )
                 test_hit = (
-                    (test_buckets[-1].get("hit_rate") or 0)
-                    if test_buckets else 0
+                    (test_buckets[-1].get("hit_rate") or 0) if test_buckets else 0
                 )
 
                 decay = (
                     (train_hit - test_hit) / max(train_hit, 0.001)
-                    if train_hit > 0 else 0
+                    if train_hit > 0
+                    else 0
                 )
                 overfit = decay > 0.20
                 if overfit:
@@ -516,14 +734,16 @@ def _handle_rolling_validation(task: Any) -> None:
 
             windows.append(window_result)
 
-        _mark_completed(task, {
-            "model_version": model_version,
-            "windows": windows,
-            "overfit_flags": overfit_flags,
-            "verdict": (
-                "Overfit detected" if overfit_flags
-                else "Stable across windows"
-            ),
-        })
+        _mark_completed(
+            task,
+            {
+                "model_version": model_version,
+                "windows": windows,
+                "overfit_flags": overfit_flags,
+                "verdict": (
+                    "Overfit detected" if overfit_flags else "Stable across windows"
+                ),
+            },
+        )
     except Exception:
         _mark_failed(task, traceback.format_exc())

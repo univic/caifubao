@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """Backtest API blueprint for the MVP single-stock daily backtesting feature."""
 
+import csv
+import io
 import logging
 import statistics
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 from mongoengine import ValidationError
 
 from app.model.backtest import BacktestResult
@@ -15,6 +17,7 @@ from app.services.backtest_service import (
     run_backtest,
     run_multi_stock_backtest,
     composite_score,
+    bonferroni_correction,
 )
 from app.lib.auth_decorators import block_service_tokens
 
@@ -22,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 backtest_bp = Blueprint("backtest", __name__, url_prefix="/api/backtest")
 backtest_bp.before_request(block_service_tokens)
+
+SCAN_ASYNC_THRESHOLD = 100
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,6 +66,21 @@ def _fail(message: str, status_code: int = 400) -> tuple:
     )
 
 
+def _build_csv(rows: list, fields: list[str], headers: list[str]) -> Response:
+    """Build a CSV response from rows of dicts."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(headers)
+    for row in rows:
+        writer.writerow([row.get(f, "") for f in fields])
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=backtest_export.csv"},
+    )
+
+
 def _parse_date(value: Any) -> datetime | None:
     """Parse a YYYY-MM-DD string to a day-resolution datetime."""
     if value is None:
@@ -92,11 +112,17 @@ def _parse_float(value: Any, default: float) -> float:
         return default
 
 
-def _parse_int(value: Any, default: int, minimum: int = 0) -> int:
+def _parse_int(
+    value: Any, default: int, minimum: int = 0, maximum: int | None = None
+) -> int:
     if value is None:
         return default
     try:
-        return max(int(value), minimum)
+        v = int(value)
+        v = max(v, minimum)
+        if maximum is not None:
+            v = min(v, maximum)
+        return v
     except (TypeError, ValueError):
         return default
 
@@ -779,6 +805,9 @@ def compare():
         ),
     )
 
+    # Bonferroni correction metadata for multi-strategy comparison
+    bonf = bonferroni_correction(len(results))
+
     return jsonify(
         _ok(
             data={
@@ -787,6 +816,7 @@ def compare():
                 "end_date": end_date.isoformat(),
                 "comparison_count": len(results),
                 "best_strategy": best_strategy,
+                "bonferroni": bonf,
                 "results": results,
             }
         )
@@ -867,6 +897,52 @@ def scan():
         return _fail("No active stocks found")
 
     total = len(stocks)
+
+    # ---- async dispatch for large scans ----
+    async_mode = request.args.get("async", "").lower().strip()
+    if not async_mode:
+        async_mode = (payload.get("async") or "").lower().strip()
+
+    should_dispatch = async_mode == "force" or (
+        async_mode != "false" and total > SCAN_ASYNC_THRESHOLD
+    )
+
+    if should_dispatch:
+        from app.model.compute_task import ComputeTask
+
+        task = ComputeTask(
+            task_type="BACKTEST_SCAN",
+            params={
+                "strategy": strategy_norm,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "horizon": horizon,
+                "initial_cash": initial_cash,
+                "min_trades": min_trades,
+                "page": page,
+                "per_page": per_page,
+            },
+        )
+        task.save()
+        return (
+            jsonify(
+                _ok(
+                    data={
+                        "task_id": str(task.id),
+                        "status": "PENDING",
+                        "total_stocks": total,
+                        "note": (
+                            f"Scan dispatched asynchronously "
+                            f"({total} stocks > {SCAN_ASYNC_THRESHOLD} threshold). "
+                            f"Poll GET /api/tasks/{task.id} for results."
+                        ),
+                    }
+                )
+            ),
+            202,
+        )
+    # ---- end async dispatch ----
+
     results = []
     errors = 0
 
@@ -901,30 +977,47 @@ def scan():
             "total_trades": r.get("total_trades", 0),
             "win_rate": r.get("win_rate", 0),
             "excess_return_pct": r.get("excess_return_pct", 0),
+            "information_ratio": r.get("information_ratio", 0),
         }
 
         # Anti-overfitting flags
         from app.services.backtest_service import anti_overfitting_flags
 
-        aof = anti_overfitting_flags(
+        comp = composite_score(
+            excess_return_pct=entry["excess_return_pct"],
+            max_drawdown=entry["max_drawdown"],
+            information_ratio=entry["information_ratio"],
             total_trades=entry["total_trades"],
             daily_values=r.get("daily_values"),
             trades=r.get("trades"),
         )
-        entry["flags"] = aof["flags"]
+        aof = anti_overfitting_flags(
+            total_trades=entry["total_trades"],
+            daily_values=r.get("daily_values"),
+            trades=r.get("trades"),
+            num_comparisons=total,
+        )
+        entry["flags"] = list(set(comp.get("flags", []) + aof.get("flags", [])))
+        entry["composite_score"] = comp["score"]
+        entry["composite_breakdown"] = comp.get("breakdown", {})
+        entry["rankable"] = comp["rankable"]
 
         results.append(entry)
 
-    # Sort by Sharpe
+    # Sort by composite score: rankable first, then descending composite_score
     results.sort(
-        key=lambda x: x.get("sharpe_ratio", 0) or 0,
-        reverse=True,
+        key=lambda x: (
+            -(x.get("rankable", False)),
+            -(x.get("composite_score", -999) or -999),
+        ),
     )
 
     # Paginate
     total_results = len(results)
     start_idx = (page - 1) * per_page
     paged = results[start_idx : start_idx + per_page]
+
+    bonf = bonferroni_correction(total_results)
 
     return jsonify(
         _ok(
@@ -936,7 +1029,8 @@ def scan():
                 "total_stocks": total,
                 "scanned": total - errors,
                 "errors": errors,
-                "results": total_results,
+                "total": total_results,
+                "bonferroni": bonf,
                 "page": page,
                 "per_page": per_page,
                 "items": paged,
@@ -1058,6 +1152,340 @@ def walk_forward():
             }
         )
     ), 200
+
+
+@backtest_bp.route("/export/compare", methods=["POST"])
+def export_compare_csv():
+    """CSV export for strategy comparison results."""
+    payload = request.get_json(silent=True) or {}
+
+    stock_code = (payload.get("stock_code") or "").strip()
+    start_date = _parse_date(payload.get("start_date"))
+    end_date = _parse_date(payload.get("end_date"))
+    initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+    benchmark_code = (payload.get("benchmark_code") or "sh000300").strip()
+
+    if not stock_code:
+        return _fail("stock_code is required")
+    if not start_date or not end_date:
+        return _fail("start_date and end_date are required")
+    if start_date > end_date:
+        return _fail("start_date must be <= end_date")
+
+    from app.services.backtest_service import anti_overfitting_flags
+
+    strategies = [("BUY_HOLD", {}), ("MA_CROSS", {})]
+    has_scores = _check_score_data_available(stock_code, start_date, end_date)
+    if has_scores:
+        for horizon in (5, 20, 60):
+            strategies.append(
+                (
+                    "SCORE_THRESHOLD",
+                    {"horizon": horizon, "label": f"SCORE_THRESHOLD Score{horizon}"},
+                )
+            )
+            strategies.append(
+                (
+                    "SCORE_MOMENTUM",
+                    {"horizon": horizon, "label": f"SCORE_MOMENTUM Score{horizon}"},
+                )
+            )
+        strategies.append(
+            ("MULTI_HORIZON_CONSENSUS", {"label": "MULTI_HORIZON_CONSENSUS"})
+        )
+
+    rows = []
+    for strategy, opts in strategies:
+        try:
+            r = run_backtest(
+                stock_code=stock_code,
+                strategy=strategy,
+                start_date=start_date,
+                end_date=end_date,
+                initial_cash=initial_cash,
+                save_result=False,
+                benchmark_code=benchmark_code,
+                horizon=opts.get("horizon"),
+            )
+        except Exception:
+            continue
+        if "error" in r:
+            continue
+
+        comp = composite_score(
+            excess_return_pct=r.get("excess_return_pct", 0),
+            max_drawdown=r.get("max_drawdown", 0),
+            information_ratio=r.get("information_ratio", 0),
+            total_trades=r.get("total_trades", 0),
+            daily_values=r.get("daily_values"),
+            trades=r.get("trades"),
+        )
+        aof = anti_overfitting_flags(
+            total_trades=r.get("total_trades", 0),
+            daily_values=r.get("daily_values"),
+            trades=r.get("trades"),
+        )
+
+        rows.append(
+            {
+                "strategy": opts.get("label", strategy),
+                "total_return_pct": r.get("total_return_pct", 0),
+                "sharpe_ratio": r.get("sharpe_ratio", 0),
+                "max_drawdown": r.get("max_drawdown", 0),
+                "win_rate": r.get("win_rate", 0),
+                "total_trades": r.get("total_trades", 0),
+                "excess_return_pct": r.get("excess_return_pct", 0),
+                "information_ratio": r.get("information_ratio", 0),
+                "composite_score": comp.get("score", ""),
+                "rankable": "Yes" if comp.get("rankable") else "No",
+                "flags": "; ".join(aof.get("flags", [])),
+            }
+        )
+
+    fields = [
+        "strategy",
+        "total_return_pct",
+        "sharpe_ratio",
+        "max_drawdown",
+        "win_rate",
+        "total_trades",
+        "excess_return_pct",
+        "information_ratio",
+        "composite_score",
+        "rankable",
+        "flags",
+    ]
+    headers = [
+        "策略",
+        "总收益(%)",
+        "Sharpe",
+        "最大回撤(%)",
+        "胜率(%)",
+        "交易次数",
+        "超额收益(%)",
+        "信息比率",
+        "综合评分",
+        "可排名",
+        "反过拟合标记",
+    ]
+    return _build_csv(rows, fields, headers)
+
+
+@backtest_bp.route("/export/scan", methods=["POST"])
+def export_scan_csv():
+    """CSV export for market scan results."""
+    payload = request.get_json(silent=True) or {}
+    strategy = (payload.get("strategy") or "").strip()
+    start_date = _parse_date(payload.get("start_date"))
+    end_date = _parse_date(payload.get("end_date"))
+    horizon = _parse_int(payload.get("horizon"), None)
+    initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+    min_trades = _parse_int(payload.get("min_trades"), 0)
+
+    strategy_norm = strategy.upper()
+    if strategy_norm not in (
+        "MA_CROSS",
+        "BUY_HOLD",
+        "SCORE_THRESHOLD",
+        "SCORE_MOMENTUM",
+        "MULTI_HORIZON_CONSENSUS",
+    ):
+        return _fail(f"Unsupported strategy: {strategy_norm}")
+    if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
+        if horizon is None or horizon not in (5, 20, 60):
+            return _fail("horizon is required for score-driven strategies")
+
+    from app.model.stock import IndividualStock
+    from app.services.backtest_service import anti_overfitting_flags
+
+    try:
+        stocks = list(
+            IndividualStock.objects(active_status=0).only("code", "name").limit(3000)
+        )
+    except Exception:
+        stocks = []
+
+    total = len(stocks)
+    rows = []
+    for stock in stocks:
+        try:
+            r = run_backtest(
+                stock_code=stock.code,
+                strategy=strategy_norm,
+                start_date=start_date,
+                end_date=end_date,
+                initial_cash=initial_cash,
+                save_result=False,
+                horizon=horizon,
+            )
+        except Exception:
+            continue
+        if "error" in r:
+            continue
+        if min_trades > 0 and r.get("total_trades", 0) < min_trades:
+            continue
+
+        comp = composite_score(
+            excess_return_pct=r.get("excess_return_pct", 0),
+            max_drawdown=r.get("max_drawdown", 0),
+            information_ratio=r.get("information_ratio", 0),
+            total_trades=r.get("total_trades", 0),
+            daily_values=r.get("daily_values"),
+            trades=r.get("trades"),
+        )
+        aof = anti_overfitting_flags(
+            total_trades=r.get("total_trades", 0),
+            daily_values=r.get("daily_values"),
+            trades=r.get("trades"),
+            num_comparisons=total,
+        )
+
+        rows.append(
+            {
+                "stock_code": stock.code,
+                "stock_name": stock.name or stock.code,
+                "total_return_pct": r.get("total_return_pct", 0),
+                "sharpe_ratio": r.get("sharpe_ratio", 0),
+                "max_drawdown": r.get("max_drawdown", 0),
+                "win_rate": r.get("win_rate", 0),
+                "total_trades": r.get("total_trades", 0),
+                "excess_return_pct": r.get("excess_return_pct", 0),
+                "information_ratio": r.get("information_ratio", 0),
+                "composite_score": comp.get("score", ""),
+                "rankable": "Yes" if comp.get("rankable") else "No",
+                "flags": "; ".join(aof.get("flags", [])),
+            }
+        )
+
+    rows.sort(
+        key=lambda x: (
+            -(x["rankable"] == "Yes"),
+            -(float(x["composite_score"]) if x["composite_score"] != "" else -999),
+        )
+    )
+
+    fields = [
+        "stock_code",
+        "stock_name",
+        "total_return_pct",
+        "sharpe_ratio",
+        "max_drawdown",
+        "win_rate",
+        "total_trades",
+        "excess_return_pct",
+        "information_ratio",
+        "composite_score",
+        "rankable",
+        "flags",
+    ]
+    headers = [
+        "股票代码",
+        "股票名称",
+        "总收益(%)",
+        "Sharpe",
+        "最大回撤(%)",
+        "胜率(%)",
+        "交易次数",
+        "超额收益(%)",
+        "信息比率",
+        "综合评分",
+        "可排名",
+        "反过拟合标记",
+    ]
+    return _build_csv(rows, fields, headers)
+
+
+@backtest_bp.route("/export/walk-forward", methods=["POST"])
+def export_walk_forward_csv():
+    """CSV export for walk-forward validation results."""
+    payload = request.get_json(silent=True) or {}
+    stock_code = (payload.get("stock_code") or "").strip()
+    strategy = (payload.get("strategy") or "").strip()
+    start_date = _parse_date(payload.get("start_date"))
+    end_date = _parse_date(payload.get("end_date"))
+    horizon = _parse_int(payload.get("horizon"), None)
+    window_days = _parse_int(payload.get("window_days"), 120, minimum=40)
+    step_days = _parse_int(payload.get("step_days"), 60, minimum=10)
+    initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+
+    if not stock_code or not strategy:
+        return _fail("stock_code and strategy are required")
+    if not start_date or not end_date:
+        return _fail("start_date and end_date are required")
+
+    quotes = _load_quotes_helper(stock_code, start_date, end_date)
+    if not quotes:
+        return _fail("No quote data for this stock in range")
+
+    trading_days = sorted(
+        {q.date.replace(hour=0, minute=0, second=0, microsecond=0) for q in quotes}
+    )
+    if len(trading_days) < window_days:
+        return _fail(
+            f"Need at least {window_days} trading days, got {len(trading_days)}"
+        )
+
+    rows = []
+    start_idx = 0
+    while start_idx + window_days <= len(trading_days):
+        end_idx = start_idx + window_days - 1
+        w_start = trading_days[start_idx]
+        w_end = trading_days[end_idx]
+
+        try:
+            r = run_backtest(
+                stock_code=stock_code,
+                strategy=strategy.strip().upper(),
+                start_date=w_start,
+                end_date=w_end,
+                initial_cash=initial_cash,
+                save_result=False,
+                horizon=horizon,
+            )
+        except Exception:
+            start_idx += max(1, step_days)
+            continue
+
+        if "error" not in r:
+            rows.append(
+                {
+                    "start_date": w_start.isoformat(),
+                    "end_date": w_end.isoformat(),
+                    "total_return_pct": r.get("total_return_pct", 0),
+                    "sharpe_ratio": r.get("sharpe_ratio", 0),
+                    "max_drawdown": r.get("max_drawdown", 0),
+                    "total_trades": r.get("total_trades", 0),
+                    "win_rate": r.get("win_rate", 0),
+                    "excess_return_pct": r.get("excess_return_pct", 0),
+                    "information_ratio": r.get("information_ratio", 0),
+                }
+            )
+
+        start_idx += max(1, step_days)
+
+    fields = [
+        "start_date",
+        "end_date",
+        "total_return_pct",
+        "sharpe_ratio",
+        "max_drawdown",
+        "total_trades",
+        "win_rate",
+        "excess_return_pct",
+        "information_ratio",
+    ]
+    headers = [
+        "窗口起始",
+        "窗口结束",
+        "总收益(%)",
+        "Sharpe",
+        "最大回撤(%)",
+        "交易次数",
+        "胜率(%)",
+        "超额收益(%)",
+        "信息比率",
+    ]
+    return _build_csv(rows, fields, headers)
 
 
 def _load_quotes_helper(stock_code, start_date, end_date):

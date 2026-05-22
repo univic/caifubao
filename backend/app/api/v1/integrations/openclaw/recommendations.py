@@ -4,7 +4,7 @@
 
 from flask import request
 from app.api.v1.integrations.openclaw import openclaw_bp
-from app.api.v1.integrations.openclaw.utils import wrap_response
+from app.api.v1.integrations.openclaw.utils import _get_latest_date, wrap_response
 from app.lib.auth_decorators import service_token_required
 from app.model.scoring import StockScorePrediction
 from app.api.v1.quotes import _parse_datetime, _format_datetime
@@ -68,12 +68,15 @@ def get_daily_recommendations():
 
     scores = StockScorePrediction.objects(**query).order_by("-score").limit(limit)
 
+    data_as_of = _get_latest_date(StockScorePrediction, filter_kwargs=query)
+
     return wrap_response(
         data={
             "items": [_serialize_score_claw(s) for s in scores],
             "total": scores.count(),
             "horizon": horizon,
-        }
+        },
+        data_as_of=data_as_of,
     )
 
 
@@ -126,5 +129,6 @@ def get_scoring_performance():
             "accuracy_rate": round(effective / total, 4) if total > 0 else 0,
             "top_recommendations_count": top_total,
             "avg_max_profit_top": round(avg_max_profit, 4) if avg_max_profit else 0,
-        }
+        },
+        data_as_of=_get_latest_date(StockScorePrediction, filter_kwargs=query),
     )
