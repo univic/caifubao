@@ -335,6 +335,64 @@ def run_scan(args) -> dict:
         return data or {}
 
 
+def run_walk_forward(args) -> dict:
+    """Run walk-forward validation via API."""
+    _init_db()
+    from flask import Flask
+
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+
+    from backend.app.api.v1.backtest import walk_forward as wf_handler
+
+    json_payload = {
+        "stock_code": args.stock_code,
+        "strategy": args.strategy,
+        "start_date": args.start_date,
+        "end_date": args.end_date,
+        "window_days": args.window_days,
+        "step_days": args.step_days,
+        "initial_cash": float(args.initial_cash),
+    }
+    if args.horizon:
+        json_payload["horizon"] = int(args.horizon)
+
+    with app.test_request_context(method="POST", json=json_payload):
+        response = wf_handler()
+        data = (
+            response[0].get_json()
+            if isinstance(response, tuple)
+            else response.get_json()
+        )
+        # Print summary
+        if data and data.get("data"):
+            d = data["data"]
+            print(f"Stock: {d.get('stock_code')}")
+            print(f"Strategy: {d.get('strategy')}")
+            print(f"Horizon: {d.get('horizon')}")
+            print(f"Total windows: {d.get('total_windows')}")
+            print(f"Stability score: {d.get('stability_score')}")
+            print(f"Performance decay: {d.get('performance_decay')}")
+            print()
+            windows = d.get("windows", [])
+            if windows:
+                print("Window results:")
+                for i, w in enumerate(windows):
+                    print(
+                        f"  {i + 1}: {w.get('start_date')} -> {w.get('end_date')}"
+                        f"  Return={w.get('total_return_pct', 0):+.1f}%"
+                        f"  Sharpe={w.get('sharpe_ratio', 0):.2f}"
+                        f"  MaxDD={w.get('max_drawdown', 0):+.1f}%"
+                        f"  Trades={w.get('total_trades', 0)}"
+                        f"  WinRate={w.get('win_rate', 0):.0f}%"
+                    )
+            else:
+                print("No valid windows produced.")
+        else:
+            print(json.dumps(data, default=str, ensure_ascii=False, indent=2))
+        return data or {}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Standalone backtest CLI runner")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -439,6 +497,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--per-page", type=int, default=20)
     p_scan.add_argument("--min-trades", type=int, help="Minimum trade count filter")
 
+    # --- walk-forward ---
+    p_walk_forward = subparsers.add_parser(
+        "walk-forward", help="Rolling-window walk-forward validation"
+    )
+    p_walk_forward.add_argument("stock_code", help="e.g. sh600519")
+    p_walk_forward.add_argument("strategy", choices=SUPPORTED_STRATEGIES)
+    p_walk_forward.add_argument("start_date", help="YYYY-MM-DD")
+    p_walk_forward.add_argument("end_date", help="YYYY-MM-DD")
+    p_walk_forward.add_argument("--window-days", type=int, default=120)
+    p_walk_forward.add_argument("--step-days", type=int, default=60)
+    p_walk_forward.add_argument("--horizon", type=int, help="Score horizon (5/20/60)")
+    p_walk_forward.add_argument("--initial-cash", default=100000)
+
     return parser
 
 
@@ -458,6 +529,8 @@ def main():
         run_compare_all(args)
     elif args.command == "scan":
         run_scan(args)
+    elif args.command == "walk-forward":
+        run_walk_forward(args)
     else:
         parser.print_help()
 

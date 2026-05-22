@@ -113,6 +113,59 @@ export interface RunMultiBacktestPayload {
   model_version?: string
 }
 
+// Strategy Discovery types
+
+export interface CompareResult {
+  strategy: string
+  total_return_pct: number
+  sharpe_ratio: number
+  max_drawdown: number
+  win_rate: number
+  total_trades: number
+  excess_return_pct: number
+  information_ratio: number
+  composite_score?: number
+  composite_breakdown?: Record<string, number>
+  flags?: string[]
+  rankable?: boolean
+  error?: string
+}
+
+export interface ScanItem {
+  stock_code: string
+  stock_name: string
+  total_return_pct: number
+  sharpe_ratio: number
+  max_drawdown: number
+  total_trades: number
+  win_rate: number
+  excess_return_pct: number
+  information_ratio: number
+  composite_score?: number
+  composite_breakdown?: Record<string, number>
+  flags?: string[]
+  rankable?: boolean
+}
+
+export interface ComparePayload {
+  stock_code: string
+  start_date: string
+  end_date: string
+  initial_cash?: number
+  benchmark_code?: string
+}
+
+export interface ScanPayload {
+  strategy: string
+  start_date: string
+  end_date: string
+  horizon?: number
+  initial_cash?: number
+  page?: number
+  per_page?: number
+  min_trades?: number
+}
+
 export const backtestApi = {
   list() {
     return api.get<any>('/backtest').then((res: any) => res.data) as Promise<{ total: number; limit: number; offset: number; items: BacktestResult[] }>
@@ -128,5 +181,17 @@ export const backtestApi = {
   },
   delete(id: string) {
     return api.delete<any>(`/backtest/${id}`).then((res: any) => res.data) as Promise<{ message: string }>
+  },
+  compare(payload: ComparePayload) {
+    return api.post<any>('/backtest/compare', payload).then((res: any) => res.data)
+  },
+  scan(payload: ScanPayload) {
+    return api.post<any>('/backtest/scan', payload)
+  },
+  scanExport(payload: any) {
+    return api.post<any>('/backtest/export/scan', payload)
+  },
+  getTask(taskId: string) {
+    return api.get<any>(`/tasks/${taskId}`).then((res: any) => res.data)
   }
 }

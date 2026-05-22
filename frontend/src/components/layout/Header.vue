@@ -47,6 +47,11 @@
             <span>回测</span>
           </el-menu-item>
 
+          <el-menu-item index="/discovery">
+            <el-icon><Search /></el-icon>
+            <span>策略发现</span>
+          </el-menu-item>
+
           <el-menu-item index="/portfolio">
             <el-icon><Wallet /></el-icon>
             <span>自选与组合</span>
@@ -147,6 +152,11 @@
           <span>回测</span>
         </el-menu-item>
 
+        <el-menu-item index="/discovery">
+          <el-icon><Search /></el-icon>
+          <span>策略发现</span>
+        </el-menu-item>
+
         <el-menu-item index="/portfolio">
           <el-icon><Wallet /></el-icon>
           <span>自选与组合</span>
@@ -194,6 +204,7 @@ import {
   Grid,
   Menu,
   PieChart,
+  Search,
   Setting,
   SwitchButton,
   TrendCharts,
@@ -219,6 +230,7 @@ const activeMenu = computed(() => {
   if (route.path.startsWith('/decisions')) return '/decisions'
   if (route.path.startsWith('/portfolio')) return '/portfolio'
   if (route.path.startsWith('/backtest')) return '/backtest'
+  if (route.path.startsWith('/discovery')) return '/discovery'
   if (route.path.startsWith('/admin')) return '/admin/users'
   if (route.path === '/profile') return 'profile'
   return '/'

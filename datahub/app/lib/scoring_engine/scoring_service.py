@@ -9,6 +9,7 @@ from app.lib.scoring_engine.components import (
     industry_momentum_component,
     momentum_component,
     quote_price,
+    real_relative_strength_component,
     relative_strength_component,
     risk_penalty,
     signal_strength_component,
@@ -449,6 +450,13 @@ class StockScoringService:
                 quote,
                 history_quotes[: config["momentum_lookback"]],
                 weights["relative_strength"],
+            ),
+            real_relative_strength_component(
+                stock_code=stock_code,
+                quote=quote,
+                history_quotes=history_quotes,
+                weight=weights.get("real_relative_strength", 0.0),
+                lookback=config.get("momentum_lookback", 10),
             ),
             industry_momentum_component(
                 stock_code=stock_code,
