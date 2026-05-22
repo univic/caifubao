@@ -14,6 +14,8 @@
 - ~评分校准不同于完整交易回测；MVP 阶段不引入外部回测框架~ ✅ 已完成
 - 补充 OpenClaw 作为下游消费者的数据访问规格，明确 caifubao 提供稳定数据 API，OpenClaw 负责投资分析
 - 补充 OpenClaw service token 鉴权方案，明确只读 scope、hashed token 存储、请求审计、过期与吊销预期
+- 补充 Karpathy autoresearch skill suite 的项目适配规格，用于把评分、因子、阈值和策略研究收束为可验证实验循环
+- 明确 autoresearch 只能优化研究指标，不能生成收益承诺、投资建议或绕过全市场验证
 - 将旧 `openspec/changes/frontend` 视为历史参考，而不是当前执行清单
 
 ## Scope
@@ -34,3 +36,4 @@
 - 不把评分机制伪装成收益承诺；评分表示机会强度，必须展示验证口径和风险状态
 - 不在评分回放/校准阶段引入 `backtrader`、`vectorbt`、`zipline`、`rqalpha` 等完整交易回测框架
 - 不在评分第一阶段实现组合调仓、撮合、手续费、滑点、仓位约束或策略参数网格优化
+- 不允许 autoresearch 自动修改生产默认模型版本、公开 API 契约、鉴权、OpenClaw 集成或部署配置

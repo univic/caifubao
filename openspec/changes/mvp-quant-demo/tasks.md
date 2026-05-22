@@ -198,3 +198,34 @@ Each factor follows the same pipeline: compute → factor eval (Phase 3) → int
 - [ ] 18.3 Include per-component explanation, input-snapshot freshness, and verification metrics in OpenClaw score response
 - [ ] 18.4 Enforce that OpenClaw cannot trigger backtests, experiments, or scoring runs (403 on compute endpoints)
 - [ ] 18.5 Document complete OpenClaw API surface in `docs/integrations/openclaw.md`
+## 19. Autoresearch-Guided Profitability Research
+
+Autoresearch adapts Karpathy's autonomous experiment loop to Caifubao's scoring
+and strategy research. The goal is research throughput and robustness, not
+investment advice or guaranteed profit.
+
+- [ ] 19.1 Diagnose Caifubao as `v1-bootstrap-fit` and write
+  `docs/autoresearch/specs/<date>-caifubao-profitability-design.md`
+  with frozen runtime, metric, edit scope, baseline, git policy, and logging
+  fields
+- [ ] 19.2 Define `research_profitability_score` as a single numeric metric
+  extracted from test-period reports only; include net excess return,
+  information ratio, max drawdown penalty, turnover penalty, concentration
+  penalty, sample-size penalty, and overfit penalty
+- [ ] 19.3 Add a thin adapter plan for producing `autoresearch/profile.yaml`,
+  `autoresearch/state.yaml`, `autoresearch/results.tsv`, and
+  `autoresearch/ledger.jsonl` without changing production defaults
+- [ ] 19.4 Restrict initial edit scope to research configuration files,
+  candidate scoring weights, threshold profiles, and candidate factor drafts;
+  exclude auth, OpenClaw endpoints, k8s, public API response contracts, and
+  production default model version changes
+- [ ] 19.5 Run baseline full-market validation before the first experiment and
+  record the baseline report path and git ref
+- [ ] 19.6 Require every kept experiment to pass train/validation/test split,
+  full-market or top-50 validation, walk-forward decay, minimum trade count,
+  and concentration checks
+- [ ] 19.7 Persist discarded and crashed experiments in the ledger with the
+  rejection reason so model-selection bias can be audited
+- [ ] 19.8 Document that autoresearch output is research evidence only; any
+  production promotion still requires OpenSpec review, model version bump,
+  calibration comparison, and normal validation gates

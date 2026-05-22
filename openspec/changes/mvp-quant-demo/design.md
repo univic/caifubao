@@ -105,6 +105,35 @@ MVP 闭环稳定后，下一步任务是保障 OpenClaw 可以调取本项目的
 - service token 只授予只读 scope，backend 记录 request id、token id、endpoint、状态码和 data-as-of，方便追溯投资分析输入。
 - 保持 backend API 为集成契约，避免 OpenClaw 依赖 Mongo 集合细节。
 
+## Next Phase: Autoresearch-Guided Profitability Research
+
+Karpathy autoresearch skill suite 已安装为 Codex 外部 skills，但 Caifubao 不是小型训练仓库，不能直接按“编辑 `train.py` 并最小化单个 loss”的方式运行。项目适配标签为 `v1-bootstrap-fit`：需要一个薄适配层，把评分配置、因子候选、策略参数和验证命令冻结成单一、机械可提取的研究指标。
+
+该能力的目标是提升研究流程发现“更有盈利潜力且更稳健”的评分/策略配置的效率，而不是承诺真实交易盈利。所有实验输出都必须保留交易摩擦、全市场样本、训练/验证/测试拆分、walk-forward 衰减、样本量和集中度风险。
+
+推荐适配方式：
+
+- `datahub` 负责生成候选评分配置、因子评估和 full-market replay。
+- `backend` 负责暴露已有 backtest / compare / scan / optimize 能力，不承担自动实验调度。
+- `frontend` 只展示通过验证的实验报告和风险标记，不把 autoresearch 中间结果包装成推荐。
+- autoresearch edit scope 初期只允许修改研究配置、实验 profile 和候选因子草案，不允许直接修改生产默认模型版本或 API 契约。
+- 单一优化指标使用机械数值，例如 `research_profitability_score`，由测试期 net excess return、information ratio、max drawdown penalty、turnover penalty、concentration penalty 和 overfit penalty 组合得到。
+- 任何进入生产候选的配置必须重新跑 full-market calibration report，并和上一模型版本比较。
+
+Autoresearch 适合驱动以下闭环：
+
+1. 评分阈值和权重候选搜索。
+2. 新技术因子进入评分前的 standalone IC / quintile / redundancy 评估。
+3. SCORE-driven 策略参数搜索。
+4. 研究报告复盘：保留失败实验和过拟合标记，而不是只展示最好结果。
+
+Autoresearch 不适合直接驱动：
+
+- 实盘交易、下单、调仓或仓位建议。
+- OpenClaw 集成端点变更。
+- 鉴权、部署、数据库 schema 的自动探索式修改。
+- 基于单股票结果的模型版本升级。
+
 ## Historical Reference
 
 `openspec/changes/frontend` 保留为早期前端蓝图参考，不再作为当前执行清单。
