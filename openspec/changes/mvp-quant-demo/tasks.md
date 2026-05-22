@@ -249,3 +249,42 @@ workflows.
 5. **Finally 18.x** — Decision dashboard:
    - Only after research pipeline quality is validated
    - Dashboard should display signals from a proven pipeline, not pretty-print unstable signals
+
+6. **Autoresearch after 12d/12e and 13.x guardrails** — Use the Karpathy
+   autoresearch loop only after a mechanical metric, full-market validation
+   command, and edit scope are frozen.
+   - Start with score threshold / weight research, not production API changes
+   - Promote no result without full-market calibration and walk-forward checks
+   - Preserve failed and discarded experiments for bias review
+
+## 22. Autoresearch-Guided Profitability Research
+
+Autoresearch adapts Karpathy's autonomous experiment loop to Caifubao's scoring
+and strategy research. The goal is research throughput and robustness, not
+investment advice or guaranteed profit.
+
+- [ ] 22.1 Diagnose Caifubao as `v1-bootstrap-fit` and write
+  `docs/autoresearch/specs/<date>-caifubao-profitability-design.md`
+  with frozen runtime, metric, edit scope, baseline, git policy, and logging
+  fields
+- [ ] 22.2 Define `research_profitability_score` as a single numeric metric
+  extracted from test-period reports only; include net excess return,
+  information ratio, max drawdown penalty, turnover penalty, concentration
+  penalty, sample-size penalty, and overfit penalty
+- [ ] 22.3 Add a thin adapter plan for producing `autoresearch/profile.yaml`,
+  `autoresearch/state.yaml`, `autoresearch/results.tsv`, and
+  `autoresearch/ledger.jsonl` without changing production defaults
+- [ ] 22.4 Restrict initial edit scope to research configuration files,
+  candidate scoring weights, threshold profiles, and candidate factor drafts;
+  exclude auth, OpenClaw endpoints, k8s, public API response contracts, and
+  production default model version changes
+- [ ] 22.5 Run baseline full-market validation before the first experiment and
+  record the baseline report path and git ref
+- [ ] 22.6 Require every kept experiment to pass train/validation/test split,
+  full-market or top-50 validation, walk-forward decay, minimum trade count,
+  and concentration checks
+- [ ] 22.7 Persist discarded and crashed experiments in the ledger with the
+  rejection reason so model-selection bias can be audited
+- [ ] 22.8 Document that autoresearch output is research evidence only; any
+  production promotion still requires OpenSpec review, model version bump,
+  calibration comparison, and normal validation gates
