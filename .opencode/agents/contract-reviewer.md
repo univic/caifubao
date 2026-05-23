@@ -65,3 +65,19 @@ Summary
 
 If there are no issues, say so clearly and still mention residual validation
 gaps.
+
+## Running Validation Commands
+
+You have `bash: allow` permission. Proactively run the smallest relevant check
+to verify your contract findings:
+
+| Change area | Command |
+|-------------|---------|
+| Backend API changes | `cd backend && python -m pytest app/test/ -x -q --tb=short` |
+| Python lint | `ruff check <paths>` and `ruff format --check <paths>` |
+| OpenSpec | `openspec validate mvp-quant-demo --strict` |
+| Frontend API client | `cd frontend && npm run lint` |
+
+Also run `git diff HEAD~1..HEAD --stat` to confirm which files actually changed,
+so you don't review files that weren't touched. If a check cannot be run, state
+exactly why.

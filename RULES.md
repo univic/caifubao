@@ -126,17 +126,34 @@ MUST invoke them — they do not self-activate.
 
 Do not skip to "Done" before all gates clear.
 
-### Auto-Trigger Table
+### Review Gate Table
 
-Schedule reviewers in the task plan BEFORE implementation starts:
+Schedule reviewers in the task plan BEFORE implementation starts. These do NOT
+self-trigger — the orchestrator MUST explicitly invoke them as subagents.
 
-| Reviewer | Auto-trigger when |
-|----------|-------------------|
+| Reviewer | Required when |
+|----------|---------------|
 | `spec-guardian` | New API endpoint, auth change, scoring semantics change, boundary shift |
 | `contract-reviewer` | API contract change, auth change, freshness metadata change, OpenClaw integration touched |
 | `qa-reviewer` | **Any non-trivial code change** (Python, JS/TS, k8s manifests, CI, DB models, auth, scoring, API). Only skip for: docs-only, comment-only, formatting-only changes. |
 
 P1 issues must be resolved and re-reviewed. P2 warnings must be acknowledged.
+
+### Draft PR + CI Gate (enforced)
+
+Before any change is considered ready for review:
+
+1. **Always create PRs as Draft** (`gh pr create --draft --base develop`).
+   A regular PR implies the work is ready for human review and merge. Draft
+   status signals that CI validation is still pending.
+2. **Wait for all CI checks to pass.** Inspect every job in the CI workflow.
+   If any job fails, fix the issue and push again. Do NOT convert to a regular
+   PR while any check is failing or still running.
+3. **After all CI passes**, convert the Draft to "Ready for review":
+   `gh pr ready <PR_NUMBER>`
+
+This gate runs in parallel with the review gates above. Both must clear before
+the orchestrator considers the task complete.
 
 ### Gate Checklist (include in final summary)
 

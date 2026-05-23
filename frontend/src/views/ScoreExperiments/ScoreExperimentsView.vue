@@ -230,6 +230,183 @@
         </el-table>
       </div>
     </el-dialog>
+
+    <!-- ─── Top Rankings (Task 14.8) ──────────────────────────────────── -->
+    <section class="rankings-panel">
+      <div class="panel-header">
+        <div>
+          <h2>实验排名</h2>
+          <p>按综合得分排序的评分实验，含 Bonferroni 多重比较校正</p>
+        </div>
+        <div class="horizon-bar">
+          <button
+            v-for="h in [5, 20, 60]"
+            :key="h"
+            class="hz-btn"
+            :class="{ active: rankingsHorizon === h }"
+            @click="rankingsHorizon = h; fetchRankings()"
+          >Score{{ h }}</button>
+        </div>
+      </div>
+
+      <el-alert
+        v-if="rankingsData?.bonferroni"
+        class="bonferroni-alert"
+        type="info"
+        :closable="false"
+        show-icon
+      >
+        <template #title>
+          Bonferroni 校正阈值：p &lt; {{ rankingsData.bonferroni.corrected_alpha.toExponential(2) }}
+          （基于 {{ rankingsData.bonferroni.num_comparisons }} 次比对）
+        </template>
+      </el-alert>
+
+      <div class="table-wrapper" v-loading="rankingsLoading">
+        <el-alert
+          v-if="rankingsError"
+          class="quality-alert"
+          type="error"
+          :title="rankingsError"
+          show-icon
+          :closable="false"
+        />
+        <el-table
+          v-else-if="rankingsData?.rankings.length"
+          :data="rankingsData.rankings"
+          class="rankings-table"
+          empty-text="暂无排名数据"
+        >
+          <el-table-column label="#" width="50" align="right">
+            <template #default="{ row }">
+              <span class="rank-num" :class="{ top: row.rank <= 3 }">{{ row.rank }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="实验名称" min-width="200">
+            <template #default="{ row }">
+              <div class="name-cell">
+                <strong>{{ row.name }}</strong>
+                <span>{{ row.model_version }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="周期" width="80" align="center" prop="horizon" />
+          <el-table-column label="综合得分" width="100" align="right">
+            <template #default="{ row }">
+              <span class="mono-value" :class="{ positive: row.composite_score > 0, negative: row.composite_score < 0 }">
+                {{ formatRankingNum(row.composite_score) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="信息比率" width="90" align="right">
+            <template #default="{ row }">{{ formatRankingNum(row.metrics?.information_ratio) }}</template>
+          </el-table-column>
+          <el-table-column label="最大回撤" width="100" align="right">
+            <template #default="{ row }">
+              <span class="mono-value danger">{{ formatPctVal(row.metrics?.max_drawdown) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="交易数" width="80" align="right">
+            <template #default="{ row }">{{ row.metrics?.total_trades ?? '--' }}</template>
+          </el-table-column>
+          <el-table-column label="标记" min-width="200">
+            <template #default="{ row }">
+              <div class="flags-cell">
+                <el-tag
+                  v-for="flag in parseRankingFlags(row.flags)"
+                  :key="flag.text"
+                  :type="flag.type"
+                  size="small"
+                  class="flag-tag"
+                  effect="dark"
+                >
+                  {{ flag.text }}
+                </el-tag>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="权重" min-width="240">
+            <template #default="{ row }">
+              <div class="weights-cell">
+                <el-tag
+                  v-for="(weight, comp) in sortedWeights(row.weights)"
+                  :key="comp"
+                  size="small"
+                  class="weight-pill"
+                >
+                  {{ comp }}:{{ weight }}
+                </el-tag>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-else-if="!rankingsLoading" description="暂无排名数据，请先创建并运行评分实验" />
+      </div>
+    </section>
+
+    <!-- ─── Weight Heatmap (Task 14.8) ────────────────────────────────── -->
+    <section class="heatmap-panel">
+      <div class="panel-header">
+        <div>
+          <h2>权重热力图</h2>
+          <p>评分组件对的平均综合得分，点击单元格可按组件对筛选实验</p>
+        </div>
+        <div class="horizon-bar">
+          <button
+            v-for="h in [5, 20, 60]"
+            :key="h"
+            class="hz-btn"
+            :class="{ active: heatmapHorizon === h }"
+            @click="heatmapHorizon = h; fetchHeatmap()"
+          >Score{{ h }}</button>
+        </div>
+      </div>
+
+      <div class="table-wrapper" v-loading="heatmapLoading">
+        <el-alert
+          v-if="heatmapError"
+          class="quality-alert"
+          type="error"
+          :title="heatmapError"
+          show-icon
+          :closable="false"
+        />
+        <div v-else-if="heatmapData?.components.length" class="heatmap-grid" :style="heatmapGridStyle">
+          <!-- Top-left empty corner -->
+          <div class="heatmap-cell corner" />
+          <!-- Column headers -->
+          <div
+            v-for="c in heatmapData.components"
+            :key="c"
+            class="heatmap-cell header"
+            :title="c"
+          >{{ formatHeatmapLabel(c) }}</div>
+          <!-- Rows -->
+          <template v-for="(rowComp, i) in heatmapData.components" :key="rowComp">
+            <div class="heatmap-cell row-label" :title="rowComp">{{ formatHeatmapLabel(rowComp) }}</div>
+            <div
+              v-for="(colComp, j) in heatmapData.components"
+              :key="colComp"
+              class="heatmap-cell data-cell"
+              :style="heatmapCellStyle(i, j)"
+              :title="`${formatHeatmapLabel(rowComp)} × ${formatHeatmapLabel(colComp)}: ${heatmapCellValue(i, j)}`"
+              @click="handleHeatmapCellClick(i, j)"
+            >
+              <span class="cell-value">{{ heatmapCellValue(i, j) }}</span>
+            </div>
+          </template>
+        </div>
+        <el-empty v-else-if="!heatmapLoading" description="暂无热力图数据" />
+      </div>
+
+      <div v-if="heatmapCellInfo" class="heatmap-info">
+        <span class="heatmap-info-label">选中组件对：</span>
+        <strong>{{ formatHeatmapLabel(heatmapCellInfo.row) }} × {{ formatHeatmapLabel(heatmapCellInfo.col) }}</strong>
+        <span class="heatmap-info-score">
+          平均得分 {{ formatRankingNum(heatmapCellInfo.value) }}
+        </span>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -239,6 +416,8 @@ import { ElMessage } from 'element-plus'
 import {
   scoreExperimentApi,
   type CompareResult,
+  type HeatmapResponse,
+  type RankingsResponse,
   type ScoreExperiment,
   type ScoreExperimentHorizonReport,
   type ScoreMetricSummary
@@ -269,6 +448,18 @@ const form = reactive({
   baseline_model_version: '',
   horizons: [5, 20, 60]
 })
+
+// ─── Rankings & Heatmap state (Task 14.8) ─────────────────────────────────
+const rankingsHorizon = ref(20)
+const rankingsLoading = ref(false)
+const rankingsError = ref('')
+const rankingsData = ref<RankingsResponse | null>(null)
+
+const heatmapHorizon = ref(20)
+const heatmapLoading = ref(false)
+const heatmapError = ref('')
+const heatmapData = ref<HeatmapResponse | null>(null)
+const heatmapCellInfo = ref<{ row: string; col: string; value: number | null } | null>(null)
 
 const selectedReport = computed(() => selectedExperiment.value?.report as { horizons?: Record<string, ScoreExperimentHorizonReport> } | undefined)
 
@@ -508,7 +699,161 @@ function statusType(value: string) {
   return 'info'
 }
 
-onMounted(fetchExperiments)
+// ─── Rankings & Heatmap (Task 14.8) ───────────────────────────────────────
+
+async function fetchRankings() {
+  rankingsLoading.value = true
+  rankingsError.value = ''
+  try {
+    const response = await scoreExperimentApi.getRankings({ horizon: rankingsHorizon.value })
+    // API wraps in { success, data: { rankings, ... } }, axios interceptor unwraps to that
+    const inner: any = (response as any)?.data ?? response
+    rankingsData.value = inner?.rankings ? inner : (response as any)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '获取排名数据失败'
+    rankingsError.value = msg
+    rankingsData.value = null
+  } finally {
+    rankingsLoading.value = false
+  }
+}
+
+async function fetchHeatmap() {
+  heatmapLoading.value = true
+  heatmapError.value = ''
+  try {
+    const response = await scoreExperimentApi.getHeatmap({ horizon: heatmapHorizon.value })
+    const inner: any = (response as any)?.data ?? response
+    heatmapData.value = inner?.matrix ? inner : (response as any)
+    heatmapCellInfo.value = null
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '获取热力图数据失败'
+    heatmapError.value = msg
+    heatmapData.value = null
+    heatmapCellInfo.value = null
+  } finally {
+    heatmapLoading.value = false
+  }
+}
+
+function formatRankingNum(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '--'
+  return value.toFixed(2)
+}
+
+function formatPctVal(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '--'
+  return `${value.toFixed(1)}%`
+}
+
+interface ParsedFlag {
+  text: string
+  type: 'warning' | 'danger' | 'info'
+}
+
+function parseRankingFlags(flags: string[] | undefined): ParsedFlag[] {
+  if (!flags || !Array.isArray(flags)) return []
+  return flags.map(flag => {
+    if (flag.startsWith('concentrated_returns')) {
+      const pct = flag.split(':')[1] || '?'
+      return { text: `集中收益:${pct}`, type: 'danger' as const }
+    }
+    if (flag === 'low_sample') return { text: '样本不足', type: 'warning' as const }
+    if (flag === 'insufficient_period') return { text: '周期不足', type: 'warning' as const }
+    if (flag === 'high_drawdown') return { text: '高回撤', type: 'danger' as const }
+    if (flag === 'performance_decay') return { text: '表现衰减', type: 'warning' as const }
+    if (flag === 'overfit') return { text: '过拟合', type: 'danger' as const }
+    return { text: flag, type: 'info' as const }
+  })
+}
+
+function sortedWeights(weights: Record<string, number> | undefined): [string, number][] {
+  if (!weights) return []
+  return Object.entries(weights).sort(([, a], [, b]) => b - a)
+}
+
+// ─── Heatmap helpers ──────────────────────────────────────────────────────
+
+const heatmapGridStyle = computed(() => {
+  if (!heatmapData.value) return {}
+  const nc = heatmapData.value.components.length
+  return {
+    gridTemplateColumns: `auto repeat(${nc}, 1fr)`
+  }
+})
+
+function _heatmapEntry(i: number, j: number) {
+  const components = heatmapData.value?.components
+  const matrix = heatmapData.value?.matrix
+  if (!components || !matrix) return null
+  const cx = components[i]
+  const cy = components[j]
+  return matrix.find((e: any) => e.component_x === cx && e.component_y === cy) ?? null
+}
+
+function heatmapCellStyle(i: number, j: number) {
+  const entry = _heatmapEntry(i, j)
+  if (!entry) return { background: 'rgba(255,255,255,0.02)' }
+  const value = entry.avg_score
+  if (value === null || value === undefined || value === 0) {
+    return { background: 'rgba(255,255,255,0.02)' }
+  }
+  const clamped = Math.max(-1.5, Math.min(1.5, Number(value)))
+  const intensity = Math.abs(clamped) / 1.5
+  if (clamped >= 0) {
+    return { background: `rgba(16, 185, 129, ${(intensity * 0.7).toFixed(2)})` }
+  } else {
+    return { background: `rgba(239, 68, 68, ${(intensity * 0.7).toFixed(2)})` }
+  }
+}
+
+function heatmapCellValue(i: number, j: number): string {
+  const entry = _heatmapEntry(i, j)
+  if (!entry) return '--'
+  const value = entry.avg_score
+  if (value === null || value === undefined) return '--'
+  return Number(value).toFixed(2)
+}
+
+function formatHeatmapLabel(component: string): string {
+  const map: Record<string, string> = {
+    trend_alignment: '趋势对齐',
+    momentum: '动量',
+    relative_strength: '相对强度',
+    signal_strength: '信号强度',
+    risk_penalty: '风险惩罚',
+    breakout_or_pos: '突破/位',
+    volume_ratio: '量比',
+    bb_position: '布林位',
+    atr_ratio: 'ATR比',
+    consecutive_up: '连阳',
+    turnover_accel: '换手加速',
+    gap_ratio: '缺口比',
+    yearly_position: '年位',
+    rsi_14: 'RSI14'
+  }
+  return map[component] || component
+}
+
+function handleHeatmapCellClick(i: number, j: number) {
+  const entry = _heatmapEntry(i, j)
+  const comps = heatmapData.value?.components
+  if (!comps || !entry) return
+  const rowComp = comps[i] ?? ''
+  const colComp = comps[j] ?? ''
+  if (!rowComp || !colComp) return
+  heatmapCellInfo.value = {
+    row: rowComp,
+    col: colComp,
+    value: entry.avg_score ?? null
+  }
+}
+
+onMounted(() => {
+  fetchExperiments()
+  fetchRankings()
+  fetchHeatmap()
+})
 </script>
 
 <style scoped lang="scss">
@@ -694,5 +1039,214 @@ h3 {
   margin: 18px 0 10px;
   font-size: 16px;
   font-weight: 590;
+}
+
+/* ─── Rankings & Heatmap (Task 14.8) ─────────────────────────────────────── */
+
+.rankings-panel,
+.heatmap-panel {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: var(--box-shadow-light);
+}
+
+.horizon-bar {
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 3px;
+  width: fit-content;
+}
+
+.hz-btn {
+  font-size: 12px;
+  font-weight: 590;
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-placeholder);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+
+  &.active {
+    background: var(--color-primary-dark);
+    color: var(--color-text-primary);
+  }
+
+  &:hover:not(.active) {
+    color: var(--color-text-regular);
+  }
+}
+
+.bonferroni-alert {
+  margin: 16px 0;
+  background-color: rgba(96, 165, 250, 0.1);
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  color: #93c5fd;
+}
+
+.quality-alert {
+  margin: 16px 0;
+}
+
+.table-wrapper {
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+.rankings-table {
+  font-size: 13px;
+}
+
+.rank-num {
+  font-family: 'Berkeley Mono', ui-monospace, SF Mono, Menlo, monospace;
+  font-size: 14px;
+  font-weight: 590;
+  color: var(--color-text-secondary);
+
+  &.top {
+    color: var(--color-primary);
+  }
+}
+
+.mono-value {
+  font-family: 'Berkeley Mono', ui-monospace, SF Mono, Menlo, monospace;
+  font-size: 13px;
+  color: var(--color-text-regular);
+
+  &.positive { color: var(--color-up); }
+  &.negative { color: var(--color-down); }
+  &.danger { color: var(--color-danger); }
+}
+
+.flags-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.flag-tag {
+  font-size: 11px;
+  font-weight: 510;
+  border-radius: 4px;
+  padding: 2px 8px;
+  border: none;
+}
+
+.weights-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.weight-pill {
+  font-size: 11px;
+  font-weight: 510;
+  background: rgba(113, 112, 255, 0.1);
+  color: #828fff;
+  border: 1px solid rgba(113, 112, 255, 0.18);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+/* ─── Heatmap Grid ──────────────────────────────────────────────────── */
+
+.heatmap-grid {
+  display: grid;
+  gap: 2px;
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+.heatmap-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  min-height: 40px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 510;
+  transition: background 0.15s;
+}
+
+.heatmap-cell.corner {
+  background: transparent;
+}
+
+.heatmap-cell.header,
+.heatmap-cell.row-label {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 590;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.heatmap-cell.row-label {
+  justify-content: flex-end;
+  padding-right: 10px;
+}
+
+.heatmap-cell.row-label {
+  justify-content: flex-end;
+}
+
+.heatmap-cell.data-cell {
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  color: var(--color-text-regular);
+  font-family: 'Berkeley Mono', ui-monospace, SF Mono, Menlo, monospace;
+  font-size: 11px;
+
+  &:hover {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 1px var(--color-primary);
+    z-index: 1;
+  }
+}
+
+.cell-value {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.heatmap-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-border-light);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--color-text-regular);
+
+  .heatmap-info-label {
+    color: var(--color-text-secondary);
+  }
+
+  strong {
+    color: var(--color-text-primary);
+    font-weight: 590;
+  }
+
+  .heatmap-info-score {
+    margin-left: auto;
+    font-family: 'Berkeley Mono', ui-monospace, SF Mono, Menlo, monospace;
+    font-weight: 590;
+    color: var(--color-primary);
+  }
 }
 </style>
