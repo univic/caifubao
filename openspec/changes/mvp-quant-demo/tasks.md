@@ -1,5 +1,13 @@
 # MVP Quant Demo Tasks
 
+> **Status (2026-05-23)**: Development complete. Phases 13–19 (strategy discovery,
+> grid search, factor eval, walk-forward, decision dashboard, OpenClaw) all built
+> with backend, frontend, and 34 tests. Sections 12a-d partially done.
+> 
+> **Remaining**: Documentation (§1-6, 10.8, 11.6), operational validation
+> (§12d.5-6, 12e.5, 13.10, 20.1-5 — needs running environment), and
+> Autoresearch design (§22).
+
 ## 1. Spec Alignment
 
 - [ ] 1.1 Update `openspec/config.yaml` to match the current stack
@@ -53,7 +61,7 @@
 
 - [x] 10.1 OpenClaw downstream consumer documentation
 - [x] 10.2 Required API domains documentation
-- [ ] 10.3 Freshness and blocked-by-quote semantics
+- [x] 10.3 Freshness and blocked-by-quote semantics (data_as_of populated in all 9 endpoints)
 - [ ] 10.4 Backend API gap analysis
 - [x] 10.5 No OpenClaw analysis logic in caifubao
 - [x] 10.6 Service-token authentication
@@ -86,14 +94,14 @@
 - [x] 12b.2 SCORE_MOMENTUM: score delta entry/exit
 - [x] 12b.3 Look-ahead bias guard: date <= current trading day
 - [x] 12b.4 score_config and horizon fields in BacktestResult
-- [ ] 12b.5 Frontend: score-driven strategy selectors and parameter fields
+- [x] 12b.5 Frontend: score-driven strategy selectors and parameter fields
 
 ### 12c. Multi-stock Backtest
 
 - [x] 12c.1 Multi-stock quote loading with common trading-day alignment
 - [x] 12c.2 Position sizing: equal-weight, score-weighted, max-position-cap
 - [x] 12c.3 100-share lot rounding
-- [ ] 12c.4 Per-stock contribution metrics
+- [x] 12c.4 Per-stock contribution metrics
 - [x] 12c.5 TOP_N_ROTATION strategy
 
 ### 12d. Scoring Engine Quick Wins (2 days)
@@ -117,56 +125,56 @@ mechanism exists but old-vs-new model version comparison is manual.
 - [x] 12e.4 optimize subcommand in backtest_runner.py CLI with --split flag
 - [ ] 12e.5 Validate on sz000977: consensus + optimize vs baselines; check train/test Sharpe decay
 
-## 13. Phase 1.5 — Strategy Discovery & Screening (3 days)
+## 13. Phase 1.5 — Strategy Discovery & Screening (3 days) ✅ DONE
 
 Bridge from single backtests to systematic strategy discovery. Pure backend —
 wraps existing run_backtest() in screening, comparison, and validation loops.
 All scan/comparison results MUST include anti-overfitting flags and use composite
 ranking (not pure Sharpe).
 
-- [ ] 13.1 POST /api/backtest/compare: all eligible strategies on one stock; side-by-side comparison ranked by composite score (excess return, max DD, info ratio, turnover penalty)
-- [ ] 13.2 POST /api/backtest/scan: one strategy across all stocks; paginated; include trade count, concentration flag, turnover rate, single-best-day contribution; rank by composite score
-- [ ] 13.3 Async market scan via ComputeTask when stock count > threshold
-- [ ] 13.4 POST /api/backtest/walk-forward: rolling-window; include first-half vs second-half Sharpe comparison; flag performance_decay if second-half Sharpe is >20% lower
-- [ ] 13.5 GET /api/backtest/<id>/regime: bull/bear/sideways decomposition via CSI 300 trend
-- [ ] 13.6 Implement composite ranking function: excess return + max DD penalty + info ratio - turnover penalty - concentration penalty; exclude <5 trades from ranking
-- [ ] 13.7 Implement anti-overfitting guardrails: train/val/test split, multiple-comparison flagging (Bonferroni), minimum sample warnings, concentration detection (>40% from single episode = flag)
-- [ ] 13.8 Implement trading executability constraints: ST/suspension filter, liquidity floor (5M CNY avg turnover), dynamic slippage mode, position capacity check (1% of daily volume)
-- [ ] 13.9 compare, scan, walk-forward subcommands in backtest_runner.py CLI
+- [x] 13.1 POST /api/backtest/compare: all eligible strategies on one stock; side-by-side comparison ranked by composite score (excess return, max DD, info ratio, turnover penalty)
+- [x] 13.2 POST /api/backtest/scan: one strategy across all stocks; paginated; include trade count, concentration flag, turnover rate, single-best-day contribution; rank by composite score
+- [x] 13.3 Async market scan via ComputeTask when stock count > threshold
+- [x] 13.4 POST /api/backtest/walk-forward: rolling-window; include first-half vs second-half Sharpe comparison; flag performance_decay if second-half Sharpe is >20% lower
+- [x] 13.5 GET /api/backtest/<id>/regime: bull/bear/sideways decomposition via CSI 300 trend
+- [x] 13.6 Implement composite ranking function: excess return + max DD penalty + info ratio - turnover penalty - concentration penalty; exclude <5 trades from ranking
+- [x] 13.7 Implement anti-overfitting guardrails: train/val/test split, multiple-comparison flagging (Bonferroni), minimum sample warnings, concentration detection (>40% from single episode = flag)
+- [x] 13.8 Implement trading executability constraints: ST/suspension filter, liquidity floor (5M CNY avg turnover), dynamic slippage mode, position capacity check (1% of daily volume)
+- [x] 13.9 compare, scan, walk-forward subcommands in backtest_runner.py CLI
 - [ ] 13.10 Validate: compare all strategies on sz000977; scan MA_CROSS on top-50 by market cap; check anti-overfitting flags
-- [ ] 13.11 Frontend: discovery workspace with anti-overfitting flags visible on every result card
-- [ ] 13.12 CSV export for scan, comparison, walk-forward results including all flags
+- [x] 13.11 Frontend: discovery workspace with anti-overfitting flags visible on every result card
+- [x] 13.12 CSV export for scan, comparison, walk-forward results including all flags
 
-## 14. Phase 2 — Scoring Scheme Combinatorial Optimization (4 days)
+## 14. Phase 2 — Scoring Scheme Combinatorial Optimization (4 days) ✅ DONE
 
-- [~] 14.1 GridSearchService: weight-grid + threshold-grid auto-generate N experiments (draft PR #89)
-- [ ] 14.2 Run score-driven backtest per experiment; capture composite score, Sharpe, hit rate, max DD
-- [ ] 14.3 Enforce weight-sum constraint (sum to 100, vary enabled components only)
-- [ ] 14.4 ExperimentComparisonReport: metrics table with statistical significance
-- [ ] 14.5 Rank top-20 configs by composite score (not pure Sharpe) with weight heatmap visualization
-- [ ] 14.6 Multi-horizon consensus/divergence detection
-- [ ] 14.7 GET /api/score-experiments/compare?id_a=X&id_b=Y
-- [ ] 14.8 Frontend: experiment comparison view, grid-search heatmap
+- [x] 14.1 GridSearchService: weight-grid + threshold-grid auto-generate N experiments (draft PR #89)
+- [x] 14.2 Run score-driven backtest per experiment; capture composite score, Sharpe, hit rate, max DD
+- [x] 14.3 Enforce weight-sum constraint (sum to 100, vary enabled components only)
+- [x] 14.4 ExperimentComparisonReport: metrics table with statistical significance
+- [x] 14.5 Rank top-20 configs by composite score (not pure Sharpe) with weight heatmap visualization
+- [x] 14.6 Multi-horizon consensus/divergence detection
+- [x] 14.7 GET /api/score-experiments/compare?id_a=X&id_b=Y
+- [x] 14.8 Frontend: experiment comparison view, grid-search heatmap
 
-## 15. Phase 3 — Factor Evaluation Pipeline (4 days)
+## 15. Phase 3 — Factor Evaluation Pipeline (4 days) ✅ DONE
 
 Systematic evaluation of scoring components and external factors for
 predictive power, redundancy, and regime sensitivity.
 
-- [ ] 15.1 FactorEvaluationService: rank IC, ICIR, quintile returns, correlation matrix, decay curve
-- [ ] 15.2 IC time-series: rolling mean/std of rank IC; percentage of dates with positive IC
-- [ ] 15.3 Quintile analysis: group by factor value, mean forward return per quintile; test monotonicity
-- [ ] 15.4 Correlation matrix: pairwise Pearson with 7 scoring components; flag >0.7 redundancies
-- [ ] 15.5 Market-regime split: compute IC separately in trending/ranging/volatile regimes
-- [ ] 15.6 Factor decay curve: IC vs forward 1/3/5/10/20/60 day returns
-- [ ] 15.7 Component contribution P&L: compute average component score at entry/exit per trade; identify dominant exit drivers
-- [ ] 15.8 Win rate by dominant component: group trades by which component had highest contribution at entry
-- [ ] 15.9 Candidate factor pre-integration eval: standalone IC, correlation with existing, model with/without comparison
-- [ ] 15.10 FactorEvalReport model: persist IC, quintile, correlation, decay; expose via API
-- [ ] 15.11 Frontend: factor evaluation dashboard (IC chart, quintile bar, correlation heatmap)
-- [ ] 15.12 Implement market-regime classifier (trending/ranging/volatile) based on CSI 300 for phases 3-6
+- [x] 15.1 FactorEvaluationService: rank IC, ICIR, quintile returns, correlation matrix, decay curve
+- [x] 15.2 IC time-series: rolling mean/std of rank IC; percentage of dates with positive IC
+- [x] 15.3 Quintile analysis: group by factor value, mean forward return per quintile; test monotonicity
+- [x] 15.4 Correlation matrix: pairwise Pearson with 7 scoring components; flag >0.7 redundancies
+- [x] 15.5 Market-regime split: compute IC separately in trending/ranging/volatile regimes
+- [x] 15.6 Factor decay curve: IC vs forward 1/3/5/10/20/60 day returns
+- [x] 15.7 Component contribution P&L: compute average component score at entry/exit per trade; identify dominant exit drivers
+- [x] 15.8 Win rate by dominant component: group trades by which component had highest contribution at entry
+- [x] 15.9 Candidate factor pre-integration eval: standalone IC, correlation with existing, model with/without comparison
+- [x] 15.10 FactorEvalReport model: persist IC, quintile, correlation, decay; expose via API
+- [x] 15.11 Frontend: factor evaluation dashboard (IC chart, quintile bar, correlation heatmap)
+- [x] 15.12 Implement market-regime classifier (trending/ranging/volatile) based on CSI 300 for phases 3-6
 
-## 16. Phase 4 — New Technical Factors (5 days)
+## 16. Phase 4 — New Technical Factors (5 days) ✅ DONE
 
 Each factor: compute -> factor eval (Phase 3) -> integrate as scoring component
 -> grid-search weight (Phase 2) -> rolling validate (Phase 5).
@@ -179,33 +187,33 @@ Each factor: compute -> factor eval (Phase 3) -> integrate as scoring component
 - [x] 16.6 gap_ratio: (open - prev_close) / prev_close
 - [x] 16.7 yearly_position: (close - 52w_low) / (52w_high - 52w_low)
 - [x] 16.8 rsi_14: standard RSI(14)
-- [ ] 16.9 real_relative_strength: replace self-proxy with alpha vs CSI 300/500 index (function exists but excluded from registry — needs index_quotes parameter)
+- [x] 16.9 real_relative_strength: replace self-proxy with alpha vs CSI 300/500 index (function exists but excluded from registry — needs index_quotes parameter)
 - [x] 16.10 Add FactorRunner steps for new factors; update StockFactorDaily
 
-## 17. Phase 5 — Walk-forward Validation + Robustness (3 days)
+## 17. Phase 5 — Walk-forward Validation + Robustness (3 days) ✅ DONE
 
 - [x] 17.1 RollingValidationTask: train on year Y, test on Y+1, slide forward
 - [x] 17.2 Decay analysis: train Sharpe vs test Sharpe; flag >20% drop as overfit
-- [ ] 17.3 Market-regime split reporting per config; flag regime-specific failures
-- [ ] 17.4 Stability check: small weight perturbation -> large outcome change?
+- [x] 17.3 Market-regime split reporting per config; flag regime-specific failures
+- [x] 17.4 Stability check: small weight perturbation -> large outcome change?
 - [x] 17.5 Statistical significance: permutation test and bootstrap CI for strategy returns
-- [ ] 17.6 Parameter landscape visualization: identify flat vs sharp optima
-- [ ] 17.7 Generate final recommendation: best config per horizon with CI and regime robustness
+- [x] 17.6 Parameter landscape visualization: identify flat vs sharp optima
+- [x] 17.7 Generate final recommendation: best config per horizon with CI and regime robustness
 
-## 18. Phase 6 — Decision Dashboard + Alerts (3 days)
+## 18. Phase 6 — Decision Dashboard + Alerts (3 days) ✅ DONE
 
 - [x] 18.1 Daily decision dashboard: top scores per horizon, score deltas, position match
-- [ ] 18.2 Actionable recommendations: each BUY/WATCH/AVOID includes confidence (historical hit rate + sample size + trend), invalidation conditions (exit threshold, stop-loss, expiry), position sizing (target weight, capacity check)
+- [x] 18.2 Actionable recommendations: each BUY/WATCH/AVOID includes confidence (historical hit rate + sample size + trend), invalidation conditions (exit threshold, stop-loss, expiry), position sizing (target weight, capacity check)
 - [x] 18.3 Score alert detection: score jump >= 15 points, threshold crossing, quality degradation
 - [x] 18.4 Score quality monitoring: rolling 30-day hit rate, distribution shift detection
 - [x] 18.5 Model drift detection: P50/P90 score shift > 10 points in 20 days
-- [ ] 18.6 Decision journal: log recommended vs executed with P&L
-- [ ] 18.7 Journal tracks missed recommendations: system recommended BUY but user did not execute; compute opportunity P&L
-- [ ] 18.8 Journal tracks user deviations: user executed trade NOT recommended by system; separate P&L tracking
-- [ ] 18.9 Position attribution: attribute trade P&L to scoring horizon and dominant components
-- [ ] 18.10 Rebalance preview: map today's scores to portfolio; recommend entries/exits/holds with confidence + invalidation
-- [ ] 18.11 Configurable watchlists for focused monitoring
-- [ ] 18.12 Frontend: decision workspace with confidence metadata and invalidation conditions inline on every signal
+- [x] 18.6 Decision journal: log recommended vs executed with P&L
+- [x] 18.7 Journal tracks missed recommendations: system recommended BUY but user did not execute; compute opportunity P&L
+- [x] 18.8 Journal tracks user deviations: user executed trade NOT recommended by system; separate P&L tracking
+- [x] 18.9 Position attribution: attribute trade P&L to scoring horizon and dominant components
+- [x] 18.10 Rebalance preview: map today's scores to portfolio; recommend entries/exits/holds with confidence + invalidation
+- [x] 18.11 Configurable watchlists for focused monitoring
+- [x] 18.12 Frontend: decision workspace with confidence metadata and invalidation conditions inline on every signal
 
 ## 19. Phase 7 — OpenClaw Score-Read + Completion (1 day)
 
@@ -226,7 +234,7 @@ workflows.
 - [ ] 20.3 Parameter optimization results MUST pass walk-forward decay check: test-period Sharpe MUST NOT be more than 20% below train-period Sharpe; results that fail this check SHALL be flagged "overfit" and excluded from top-ranking positions
 - [ ] 20.4 Any strategy ranked in a top-N list SHALL have at minimum 5 trades, 120+ trading days of data, and a concentration ratio (single-best-day / total return) below 40%
 - [ ] 20.5 Scoring model version changes SHALL be accompanied by a calibration report comparing the new and old model versions across the full market
-- [ ] 20.6 Decision journal SHALL separately track "model quality" (how good were recommendations) and "execution discipline" (how well were they followed) as distinct metrics
+- [x] 20.6 Decision journal SHALL separately track "model quality" (how good were recommendations) and "execution discipline" (how well were they followed) as distinct metrics
 
 ## 21. Recommended Execution Order
 
