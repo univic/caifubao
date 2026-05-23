@@ -52,6 +52,14 @@ git fetch origin develop --quiet
 git checkout -b feature/<name> origin/develop   # or fix/<name>
 ```
 
+After confirming the branch, lock it to this session so the pre-commit hook
+can detect if another session switches the branch underneath you:
+
+```bash
+mkdir -p .opencode
+echo "$(git branch --show-current)" > .opencode/.current-session-branch
+```
+
 Never edit on another task's branch. Never edit on `develop` or `main` directly.
 This is non-negotiable — skip this step and you will cause branch conflicts and
 lost work.
