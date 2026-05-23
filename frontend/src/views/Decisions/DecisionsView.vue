@@ -375,14 +375,14 @@
           <div class="summary-grid">
             <div class="summary-card">
               <span class="s-label">模型质量命中率</span>
-              <span class="s-value" :class="journalSummary.model_quality?.hit_rate > 0.5 ? 'good' : 'bad'">
-                {{ formatPct(journalSummary.model_quality?.hit_rate) }}
+              <span class="s-value" :class="journalSummary.model_quality > 0.5 ? 'good' : 'bad'">
+                {{ formatPct(journalSummary.model_quality) }}
               </span>
             </div>
             <div class="summary-card">
               <span class="s-label">执行纪律</span>
-              <span class="s-value" :class="journalSummary.execution_discipline?.follow_through_rate > 0.5 ? 'good' : 'bad'">
-                {{ formatPct(journalSummary.execution_discipline?.follow_through_rate) }}
+              <span class="s-value" :class="journalSummary.execution_discipline > 0.5 ? 'good' : 'bad'">
+                {{ formatPct(journalSummary.execution_discipline) }}
               </span>
             </div>
             <div class="summary-card">
@@ -906,6 +906,7 @@ async function handlePostJournal() {
   journalPostError.value = ''
   try {
     await decisionsApi.postJournal({
+      date: new Date().toISOString().slice(0, 10),
       stock_code: journalForm.stock_code.trim(),
       recommended_action: journalForm.recommended_action,
       confidence: journalForm.confidence,
@@ -966,7 +967,7 @@ async function handleRebalance() {
       portfolio_stocks: portfolioStocks,
       cash: rebalanceCash.value
     })
-    rebalanceItems.value = res.data?.items || []
+    rebalanceItems.value = res.data?.recommendations || []
     rebalanceRan.value = true
   } catch (e: any) {
     rebalanceError.value = e?.response?.data?.message || '获取再平衡预览失败'

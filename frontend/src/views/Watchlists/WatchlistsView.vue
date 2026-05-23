@@ -63,23 +63,23 @@
           </el-table-column>
           <el-table-column label="Score 5" width="80" align="right">
             <template #default="{ row }">
-              <span class="score-val">{{ row.score5?.toFixed(0) || '--' }}</span>
+              <span class="score-val">{{ row.scores?.score5?.value?.toFixed(0) || '--' }}</span>
             </template>
           </el-table-column>
           <el-table-column label="Score 20" width="80" align="right">
             <template #default="{ row }">
-              <span class="score-val">{{ row.score20?.toFixed(0) || '--' }}</span>
+              <span class="score-val">{{ row.scores?.score20?.value?.toFixed(0) || '--' }}</span>
             </template>
           </el-table-column>
           <el-table-column label="Score 60" width="80" align="right">
             <template #default="{ row }">
-              <span class="score-val">{{ row.score60?.toFixed(0) || '--' }}</span>
+              <span class="score-val">{{ row.scores?.score60?.value?.toFixed(0) || '--' }}</span>
             </template>
           </el-table-column>
           <el-table-column label="推荐" width="80" align="center">
             <template #default="{ row }">
-              <span class="rec-tag" :class="row.recommendation?.toLowerCase()">
-                {{ recLabel(row.recommendation) }}
+              <span class="rec-tag" :class="row.scores?.score20?.recommendation?.toLowerCase()">
+                {{ recLabel(row.scores?.score20?.recommendation) }}
               </span>
             </template>
           </el-table-column>
