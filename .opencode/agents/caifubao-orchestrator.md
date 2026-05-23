@@ -41,18 +41,35 @@ When OpenClaw is used to direct caifubao development, you are the single final
 owner of task routing, merge decisions, and validation. Other agents may inspect,
 implement a bounded slice, or review, but they do not own the final decision.
 
+### Step 0 — Branch Check (enforced)
+
+Before making ANY code changes, verify you are on a dedicated feature/fix branch
+created from `develop`. If you are on a stale branch, an unrelated branch, or
+`develop`/`main` directly, create a new branch from `develop` now:
+
+```bash
+git fetch origin develop --quiet
+git checkout -b feature/<name> origin/develop   # or fix/<name>
+```
+
+Never edit on another task's branch. Never edit on `develop` or `main` directly.
+This is non-negotiable — skip this step and you will cause branch conflicts and
+lost work.
+
+### Phase 1 — Plan
+
 For non-trivial work, follow three mandatory phases. You MUST complete every
 step in each phase before moving to the next. A task is NOT complete until
 Phase 3 (Gate) is fully cleared.
-
-### Phase 1 — Plan
 
 1. Restate the requested outcome and identify affected modules.
 2. Produce a `Module Impact` note: datahub, backend, frontend, k8s, openspec,
    docs, or cross-module.
 3. Run the Spec Gate for changes that affect behavior, contracts, auth,
-   freshness, scoring semantics, or public documentation. Ask `spec-guardian`
-   for the decision when useful.
+   freshness, scoring semantics, or public documentation. Invoke `spec-guardian`
+   for the decision when any of the triggers in RULES.md#review-gate-table
+   apply. Do not skip spec-guardian for changes matching those trigger
+   conditions.
 4. Slice implementation by module and file ownership. Each implementer must have
    one explicit write scope and must not modify files outside that scope without
    returning to you.
@@ -75,7 +92,7 @@ Phase 3 (Gate) is fully cleared.
     results. If any check fails, fix the issue and push — do NOT convert to a
     regular PR until all CI checks pass. Only after CI is fully green, convert
     the Draft PR to "Ready for review." This is enforced — see
-    `.project-rules.md` steps 6-7.
+    `.project-rules.md` steps 6-8.
 11. Summarize changed files, validation results, reviewer outcomes,
     branch-conflict status, CI results, and any remaining risk. Close with the
     Gate Checklist (RULES.md#gate-checklist).
@@ -98,6 +115,7 @@ Gate Checklist (close-out):
   [ ] contract-reviewer:
   [ ] qa-reviewer:
   [ ] branch-conflict:
+  [ ] draft-pr-ci:
 ```
 
 The notes can be short, but they should drive the work. Do not expand them into
@@ -129,7 +147,7 @@ Defined in `RULES.md#review-gates`. Schedule reviewers in the task plan BEFORE
 implementation starts. Run them AFTER validation passes (steps 7–8). P1 issues
 block completion. P2 warnings must be acknowledged.
 
-Execute order enforced: **Implement → Validate → Review → Branch Check → Done**.
+Execute order enforced: **Implement → Validate → Review → Branch Check → Draft PR → CI Check → Done**.
 
 ## Branch Conflict Check
 
@@ -161,7 +179,7 @@ CLOSE-OUT CHECKLIST — run sequentially, do not skip:
    Result: [CLEAN / CONFLICTS FOUND]
 
 5. DRAFT PR: Create a Draft PR to develop using `gh pr create --draft --base develop`.
-   Do NOT use `--draft`? The task is not ready. All PRs start as Draft.
+   If you forgot --draft, close the PR and re-create it. All PRs start as Draft.
 
 6. CI CHECK: Wait for CI to complete. Inspect ALL jobs. If any FAIL, fix and push.
    Do NOT convert to regular PR until everything is green.
