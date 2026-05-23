@@ -5,6 +5,7 @@ import datetime
 from collections import defaultdict
 from statistics import correlation, mean, pstdev
 
+from app.lib.market_regime import MarketRegimeService
 from app.model.scoring import StockScorePrediction
 
 
@@ -32,10 +33,15 @@ class FactorEvaluationService:
         start_date,
         end_date,
         forward_horizons=None,
+        regime_split=False,
     ):
         """Run full evaluation pipeline on a factor.
 
         factor_values format: {stock_code: {date.isoformat(): float_value}}
+
+        If regime_split=True, compute IC separately for bull/bear/sideways
+        regimes using MarketRegimeService.  Adds a "regime_ic" key to the
+        returned dict.
         """
         if forward_horizons is None:
             forward_horizons = [5, 20, 60]
@@ -53,7 +59,7 @@ class FactorEvaluationService:
         )
         decay_results = self._compute_decay(factor_values, start_date, end_date)
 
-        return {
+        results = {
             "ic": ic_results,
             "icir": {
                 str(h): round(
@@ -69,6 +75,12 @@ class FactorEvaluationService:
             "decay": decay_results,
             "observation_count": len(dataset),
         }
+
+        # Regime-split IC computation
+        if regime_split:
+            results["regime_ic"] = self._compute_regime_ic(dataset, forward_horizons)
+
+        return results
 
     def _build_dataset(self, factor_values, start_date, end_date, horizons):
         """Build list of {factor_value, {horizon: forward_return}} dicts."""
@@ -174,6 +186,33 @@ class FactorEvaluationService:
 
         return results
 
+    def _compute_regime_ic(self, dataset, horizons):
+        """Compute IC split by market regime (bull / bear / sideways)."""
+        regime_svc = MarketRegimeService()
+
+        # Tag each observation with its regime
+        for d in dataset:
+            d["regime"] = regime_svc.classify_date(d["date"])
+
+        regime_ic = {}
+        all_regimes = ["bull", "bear", "sideways", "unknown"]
+        for regime_name in all_regimes:
+            regime_dataset = [d for d in dataset if d.get("regime") == regime_name]
+            if len(regime_dataset) >= 10:
+                regime_ic[regime_name] = self._compute_ic(regime_dataset, horizons)
+            else:
+                regime_ic[regime_name] = {
+                    str(h): {
+                        "ic_mean": None,
+                        "ic_std": None,
+                        "ic_values": [],
+                        "count": len(regime_dataset),
+                    }
+                    for h in horizons
+                }
+
+        return regime_ic
+
     def _compute_quintiles(self, dataset, horizons):
         """Group by factor quintile and compute mean forward return."""
         results = {}
@@ -204,7 +243,7 @@ class FactorEvaluationService:
                         "quintile": q + 1,
                         "count": len(group),
                         "avg_factor_value": round(avg_factor, 6),
-                        "avg_forward_return": (
+                        "avg_return": (
                             round(mean(group_returns), 6) if group_returns else None
                         ),
                     }
@@ -274,6 +313,132 @@ class FactorEvaluationService:
         return {
             str(h): ic_results.get(str(h), {}).get("ic_mean") for h in decay_horizons
         }
+
+    # ------------------------------------------------------------------
+    # P&L attribution & dominant-component analysis (15.7–15.8)
+    # ------------------------------------------------------------------
+
+    def evaluate_component_contribution(
+        self, stock_code, start_date, end_date, horizon=20
+    ):
+        """Compute average per-component scores for entry and exit predictions.
+
+        Entry predictions are those with recommendation == "BUY"; exit
+        predictions are those with recommendation == "AVOID".
+
+        Returns a dict with keys "entry_contributions", "exit_contributions",
+        "dominant_entry_component", and "dominant_exit_component".
+        """
+        predictions = list(
+            StockScorePrediction.objects(
+                stock_code=stock_code,
+                date__gte=start_date.replace(hour=0, minute=0, second=0, microsecond=0),
+                date__lte=end_date.replace(hour=0, minute=0, second=0, microsecond=0),
+                horizon=horizon,
+                status="VERIFIED",
+            )
+        )
+
+        entry_scores = defaultdict(list)
+        exit_scores = defaultdict(list)
+
+        for pred in predictions:
+            exp = pred.explanation or {}
+            components = exp.get("components", [])
+            if not components:
+                continue
+
+            target = entry_scores if pred.recommendation == "BUY" else exit_scores
+            for comp in components:
+                comp_id = comp.get("id")
+                if comp_id:
+                    norm = comp.get("normalized_value", 0) or 0
+                    target[comp_id].append(float(norm))
+
+        entry_contributions = {}
+        exit_contributions = {}
+        dominant_entry = None
+        dominant_exit = None
+        best_entry_score = -float("inf")
+        best_exit_score = -float("inf")
+
+        for comp_id, scores in entry_scores.items():
+            avg = round(mean(scores), 4) if scores else 0.0
+            entry_contributions[comp_id] = avg
+            if avg > best_entry_score:
+                best_entry_score = avg
+                dominant_entry = comp_id
+
+        for comp_id, scores in exit_scores.items():
+            avg = round(mean(scores), 4) if scores else 0.0
+            exit_contributions[comp_id] = avg
+            if avg > best_exit_score:
+                best_exit_score = avg
+                dominant_exit = comp_id
+
+        return {
+            "entry_contributions": entry_contributions,
+            "exit_contributions": exit_contributions,
+            "dominant_entry_component": dominant_entry,
+            "dominant_exit_component": dominant_exit,
+        }
+
+    def win_rate_by_component(self, stock_code, start_date, end_date, horizon=20):
+        """Compute win rate grouped by the dominant (highest-scoring) component.
+
+        For each VERIFIED prediction, the component with the highest
+        normalized_value is the "dominant" component.  Predictions are
+        grouped by their dominant component and the win rate
+        (hit_target_close == True) is computed per group.
+
+        Returns a dict: {component_id: {"trades": N, "win_rate": 0.XX}, ...}
+        """
+        predictions = list(
+            StockScorePrediction.objects(
+                stock_code=stock_code,
+                date__gte=start_date.replace(hour=0, minute=0, second=0, microsecond=0),
+                date__lte=end_date.replace(hour=0, minute=0, second=0, microsecond=0),
+                horizon=horizon,
+                status="VERIFIED",
+            )
+        )
+
+        component_trades = defaultdict(list)
+
+        for pred in predictions:
+            exp = pred.explanation or {}
+            components = exp.get("components", [])
+            if not components:
+                continue
+
+            # Find dominant component (highest normalized_value)
+            dominant_comp = None
+            best_score = -float("inf")
+            for comp in components:
+                comp_id = comp.get("id")
+                if comp_id:
+                    norm = comp.get("normalized_value", 0) or 0
+                    if float(norm) > best_score:
+                        best_score = float(norm)
+                        dominant_comp = comp_id
+
+            if not dominant_comp:
+                continue
+
+            verification = pred.verification or {}
+            hit = verification.get("hit_target_close", False)
+            component_trades[dominant_comp].append(hit)
+
+        results = {}
+        for comp_id, outcomes in component_trades.items():
+            wins = sum(1 for o in outcomes if o)
+            total = len(outcomes)
+            results[comp_id] = {
+                "trades": total,
+                "win_rate": round(wins / total, 4) if total > 0 else None,
+            }
+
+        return results
 
 
 def _spearman_rank(x, y):

@@ -7,8 +7,12 @@ from collections import defaultdict
 from typing import Dict
 
 from flask import Blueprint, jsonify, request
+from flask_jwt_extended import get_jwt_identity
 
 from app.model.scoring import StockScorePrediction
+from app.model.stock import StockDailyQuote, IndividualStock
+from app.model.decision_journal import DecisionJournal
+from app.model.watchlist import Watchlist
 from app.lib.auth_decorators import block_service_tokens
 
 logger = logging.getLogger(__name__)
@@ -99,6 +103,41 @@ def _confidence_metadata(predictions: list, current_score: float) -> dict:
     }
 
 
+def _position_sizing(stock_code: str, portfolio_cash: float = 100_000.0) -> dict:
+    """Compute position sizing suggestion for a stock.
+
+    Uses preflight_check for trading status and liquidity, then computes
+    max shares based on a 10 % position cap.
+    """
+    from app.services.backtest_service import preflight_check
+
+    flight = preflight_check(stock_code, check_liquidity_flag=True)
+    capacity_ok = flight.get("pass", False)
+
+    latest = (
+        StockDailyQuote.objects(code=stock_code)
+        .order_by("-date")
+        .only("close_hfq", "close", "turnover_rate", "volume")
+        .first()
+    )
+    close_price = 0.0
+    if latest:
+        close_price = latest.close_hfq or latest.close or 0.0
+
+    max_shares = 0
+    if close_price > 0:
+        target_amount = portfolio_cash * 0.10  # 10% position cap
+        raw_shares = int(target_amount / close_price)
+        max_shares = (raw_shares // 100) * 100  # round down to 100-share lots
+
+    return {
+        "target_weight_pct": 10.0,
+        "max_shares": max(max_shares, 0),
+        "capacity_check": capacity_ok,
+        "current_price": round(close_price, 2) if close_price else None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Daily Decision Dashboard
 # ---------------------------------------------------------------------------
@@ -163,6 +202,7 @@ def daily_dashboard():
             )
             conf = _confidence_metadata(verified, pred.score)
 
+            sizing = _position_sizing(pred.stock_code)
             items.append(
                 {
                     "stock_code": pred.stock_code,
@@ -178,6 +218,7 @@ def daily_dashboard():
                     "sample_size": conf["sample_size"],
                     "hit_rate": conf["hit_rate"],
                     "trend": conf["trend"],
+                    "position_sizing": sizing,
                     "invalidation": {
                         "exit_threshold": cfg.get("watch_threshold", 50),
                         "stop_loss_pct": cfg.get("stop_loss_threshold", -5.0),
@@ -432,6 +473,605 @@ def score_quality():
                 "decay_detail": decay_detail,
                 "drift_detected": drift_detected,
                 "drift_detail": drift_detail,
+            },
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rebalance Preview
+# ---------------------------------------------------------------------------
+@decisions_bp.route("/rebalance-preview", methods=["POST"])
+def rebalance_preview():
+    """Suggest portfolio adjustments based on current scores.
+
+    Request body (JSON):
+        portfolio_stocks : list[str] — current holdings (stock codes)
+        cash             : float     — available cash (default 100000)
+    """
+    payload = request.get_json(silent=True) or {}
+    portfolio_stocks = payload.get("portfolio_stocks", [])
+    cash = float(payload.get("cash", 100_000.0))
+
+    if not portfolio_stocks:
+        return jsonify(
+            {"success": False, "message": "portfolio_stocks is required", "data": None}
+        ), 400
+
+    from app.services.backtest_service import preflight_check
+
+    today = _now_utc()
+
+    recommendations = []
+    for stock_code in portfolio_stocks:
+        # Get latest score for each horizon
+        scores = {}
+        top_recommendation = None
+        for h in [5, 20, 60]:
+            pred = (
+                StockScorePrediction.objects(stock_code=stock_code, horizon=h)
+                .order_by("-date")
+                .first()
+            )
+            if pred:
+                scores[f"score{h}"] = pred.score
+                if top_recommendation is None:
+                    top_recommendation = pred.recommendation
+
+        # Get latest close price
+        quote = (
+            StockDailyQuote.objects(code=stock_code)
+            .order_by("-date")
+            .only("close_hfq", "close", "turnover_rate")
+            .first()
+        )
+        current_price = quote.close_hfq or quote.close if quote else None
+
+        # Position sizing
+        flight = preflight_check(stock_code, check_liquidity_flag=True)
+        capacity_ok = flight.get("pass", False)
+        suggested_shares = 0
+        if current_price and current_price > 0 and capacity_ok:
+            suggested_shares = int(cash * 0.10 / (current_price * 100)) * 100
+
+        # Determine action from scores
+        buy_signals = sum(1 for v in scores.values() if v is not None and v >= 60)
+        avoid_signals = sum(1 for v in scores.values() if v is not None and v < 40)
+
+        if buy_signals >= 2:
+            action = "BUY_MORE"
+        elif avoid_signals >= 2:
+            action = "SELL"
+        elif top_recommendation == "AVOID":
+            action = "REDUCE"
+        elif top_recommendation == "BUY":
+            action = "HOLD_BUY"
+        else:
+            action = "HOLD"
+
+        recommendations.append(
+            {
+                "stock_code": stock_code,
+                "current_price": round(current_price, 2) if current_price else None,
+                "scores": scores,
+                "action": action,
+                "suggested_shares": max(suggested_shares, 0),
+                "capacity_check": capacity_ok,
+            }
+        )
+
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "cash": cash,
+                "recommendations": recommendations,
+                "generated_at": today.isoformat(),
+            },
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Decision Journal — log and query executed/missed decisions
+# ---------------------------------------------------------------------------
+@decisions_bp.route("/journal", methods=["POST"])
+def create_journal():
+    """Log a decision (executed or missed).
+
+    Request body (JSON):
+        stock_code       : str (required)
+        stock_name       : str
+        date             : str (required, YYYY-MM-DD)
+        horizon          : int (5, 20, 60)
+        score            : float
+        recommendation   : str
+        recommended_action : str (BUY, SELL, HOLD, WATCH)
+        confidence       : str (high, medium, low)
+        entry_price      : float
+        target_price     : float
+        stop_loss        : float
+        position_size_pct: float
+        executed         : bool
+        executed_at      : str (ISO-8601)
+        executed_price   : float
+        executed_quantity : int
+        execution_type   : str (followed, deviated, missed)
+        realized_pnl     : float
+        realized_pnl_pct : float
+        exit_date        : str
+        exit_price       : float
+        exit_reason      : str
+        dominant_component : str
+        notes            : str
+    """
+    payload = request.get_json(silent=True) or {}
+
+    stock_code = (payload.get("stock_code") or "").strip()
+    if not stock_code:
+        return jsonify(
+            {"success": False, "message": "stock_code is required", "data": None}
+        ), 400
+
+    date_str = payload.get("date")
+    if not date_str:
+        return jsonify(
+            {"success": False, "message": "date is required", "data": None}
+        ), 400
+    try:
+        date = datetime.datetime.fromisoformat(str(date_str))
+    except (ValueError, TypeError):
+        return jsonify(
+            {"success": False, "message": "Invalid date format", "data": None}
+        ), 400
+
+    executed_at = None
+    exec_at_str = payload.get("executed_at")
+    if exec_at_str:
+        try:
+            executed_at = datetime.datetime.fromisoformat(str(exec_at_str))
+        except (ValueError, TypeError):
+            pass
+
+    exit_date = None
+    exit_date_str = payload.get("exit_date")
+    if exit_date_str:
+        try:
+            exit_date = datetime.datetime.fromisoformat(str(exit_date_str))
+        except (ValueError, TypeError):
+            pass
+
+    entry = DecisionJournal(
+        stock_code=stock_code,
+        stock_name=payload.get("stock_name"),
+        date=date,
+        horizon=payload.get("horizon"),
+        score=payload.get("score"),
+        recommendation=payload.get("recommendation"),
+        recommended_action=payload.get("recommended_action"),
+        confidence=payload.get("confidence"),
+        entry_price=payload.get("entry_price"),
+        target_price=payload.get("target_price"),
+        stop_loss=payload.get("stop_loss"),
+        position_size_pct=payload.get("position_size_pct"),
+        executed=bool(payload.get("executed", False)),
+        executed_at=executed_at,
+        executed_price=payload.get("executed_price"),
+        executed_quantity=payload.get("executed_quantity"),
+        execution_type=payload.get("execution_type"),
+        realized_pnl=payload.get("realized_pnl"),
+        realized_pnl_pct=payload.get("realized_pnl_pct"),
+        exit_date=exit_date,
+        exit_price=payload.get("exit_price"),
+        exit_reason=payload.get("exit_reason"),
+        dominant_component=payload.get("dominant_component"),
+        notes=payload.get("notes"),
+    )
+    try:
+        entry.save()
+    except Exception as exc:
+        logger.exception("Failed to save journal entry")
+        return jsonify(
+            {
+                "success": False,
+                "message": f"Failed to save: {exc}",
+                "data": None,
+            }
+        ), 500
+
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "id": str(entry.id),
+                "stock_code": entry.stock_code,
+                "date": date_str,
+                "created_at": entry.created_at.isoformat()
+                if entry.created_at
+                else None,
+            },
+        }
+    ), 201
+
+
+@decisions_bp.route("/journal", methods=["GET"])
+def list_journal():
+    """List journal entries.
+
+    Query params:
+        stock_code     : str  — filter by stock code
+        date           : str  — YYYY-MM-DD
+        execution_type : str  — followed, deviated, missed
+        page           : int  (default 1)
+        per_page       : int  (default 20, max 100)
+    """
+    stock_code = (request.args.get("stock_code") or "").strip()
+    date_str = (request.args.get("date") or "").strip()
+    execution_type = (request.args.get("execution_type") or "").strip()
+    page = max(int(request.args.get("page", 1)), 1)
+    per_page = min(int(request.args.get("per_page", 20)), 100)
+
+    query = DecisionJournal.objects()
+    if stock_code:
+        query = query.filter(stock_code=stock_code)
+    if date_str:
+        try:
+            d = datetime.datetime.fromisoformat(date_str)
+            query = query.filter(date=d)
+        except (ValueError, TypeError):
+            pass
+    if execution_type:
+        query = query.filter(execution_type=execution_type)
+
+    total = query.count()
+    entries = list(
+        query.order_by("-created_at").skip((page - 1) * per_page).limit(per_page)
+    )
+
+    def _serialize(e: DecisionJournal) -> dict:
+        return {
+            "id": str(e.id),
+            "stock_code": e.stock_code,
+            "stock_name": e.stock_name,
+            "date": e.date.isoformat() if e.date else None,
+            "horizon": e.horizon,
+            "score": e.score,
+            "recommendation": e.recommendation,
+            "recommended_action": e.recommended_action,
+            "confidence": e.confidence,
+            "entry_price": e.entry_price,
+            "target_price": e.target_price,
+            "stop_loss": e.stop_loss,
+            "position_size_pct": e.position_size_pct,
+            "executed": e.executed,
+            "executed_at": e.executed_at.isoformat() if e.executed_at else None,
+            "executed_price": e.executed_price,
+            "executed_quantity": e.executed_quantity,
+            "execution_type": e.execution_type,
+            "realized_pnl": e.realized_pnl,
+            "realized_pnl_pct": e.realized_pnl_pct,
+            "exit_date": e.exit_date.isoformat() if e.exit_date else None,
+            "exit_price": e.exit_price,
+            "exit_reason": e.exit_reason,
+            "dominant_component": e.dominant_component,
+            "notes": e.notes,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "items": [_serialize(e) for e in entries],
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+            },
+        }
+    )
+
+
+@decisions_bp.route("/journal/summary", methods=["GET"])
+def journal_summary():
+    """Aggregate journal stats: model quality + execution discipline.
+
+    Returns:
+        model_quality : hit rate of recommendations (score >= 60)
+        execution_discipline : follow-through rate (executed / total)
+    """
+    entries = list(DecisionJournal.objects())
+
+    if not entries:
+        return jsonify(
+            {
+                "success": True,
+                "data": {
+                    "total_entries": 0,
+                    "model_quality": None,
+                    "execution_discipline": None,
+                    "message": "No journal entries",
+                },
+            }
+        )
+
+    # Model quality: how many recommendations actually had positive score signals
+    high_conf = [e for e in entries if (e.score or 0) >= 60]
+    model_quality = round(len(high_conf) / len(entries), 4) if entries else None
+
+    # Execution discipline: how many recommended actions were followed
+    executed = [e for e in entries if e.executed]
+    execution_discipline = round(len(executed) / len(entries), 4) if entries else None
+
+    # P&L breakdown
+    total_pnl = sum(e.realized_pnl or 0 for e in entries)
+    positive_trades = sum(1 for e in entries if (e.realized_pnl or 0) > 0)
+    negative_trades = sum(1 for e in entries if (e.realized_pnl or 0) < 0)
+
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "total_entries": len(entries),
+                "model_quality": model_quality,
+                "execution_discipline": execution_discipline,
+                "total_pnl": round(total_pnl, 2),
+                "positive_trades": positive_trades,
+                "negative_trades": negative_trades,
+                "win_rate": (
+                    round(positive_trades / (positive_trades + negative_trades), 4)
+                    if (positive_trades + negative_trades) > 0
+                    else None
+                ),
+            },
+        }
+    )
+
+
+@decisions_bp.route("/journal/attribution", methods=["GET"])
+def journal_attribution():
+    """P&L attribution by scoring component and horizon."""
+    entries = list(DecisionJournal.objects())
+
+    if not entries:
+        return jsonify(
+            {
+                "success": True,
+                "data": {
+                    "by_component": [],
+                    "by_horizon": [],
+                    "message": "No journal entries",
+                },
+            }
+        )
+
+    # By dominant component
+    comp_pnl: dict[str, float] = defaultdict(float)
+    comp_count: dict[str, int] = defaultdict(int)
+    for e in entries:
+        comp = e.dominant_component or "unknown"
+        comp_pnl[comp] += e.realized_pnl or 0
+        comp_count[comp] += 1
+
+    by_component = sorted(
+        [
+            {
+                "component": c,
+                "total_pnl": round(pnl, 2),
+                "trade_count": comp_count[c],
+                "avg_pnl_per_trade": (
+                    round(pnl / comp_count[c], 2) if comp_count[c] > 0 else 0
+                ),
+            }
+            for c, pnl in comp_pnl.items()
+        ],
+        key=lambda x: -x["total_pnl"],
+    )
+
+    # By horizon
+    hoz_pnl: dict[int, float] = defaultdict(float)
+    hoz_count: dict[int, int] = defaultdict(int)
+    for e in entries:
+        h = e.horizon or 0
+        hoz_pnl[h] += e.realized_pnl or 0
+        hoz_count[h] += 1
+
+    by_horizon = sorted(
+        [
+            {
+                "horizon": h,
+                "total_pnl": round(pnl, 2),
+                "trade_count": hoz_count[h],
+                "avg_pnl_per_trade": (
+                    round(pnl / hoz_count[h], 2) if hoz_count[h] > 0 else 0
+                ),
+            }
+            for h, pnl in hoz_pnl.items()
+        ],
+        key=lambda x: -x["total_pnl"],
+    )
+
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "by_component": by_component,
+                "by_horizon": by_horizon,
+            },
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Watchlists — user-defined stock collections with current scores
+# ---------------------------------------------------------------------------
+@decisions_bp.route("/watchlists", methods=["POST"])
+def create_watchlist():
+    """Create or update a named watchlist.
+
+    Request body (JSON):
+        name        : str (required)
+        stock_codes : list[str]  — stock codes
+    """
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return jsonify(
+            {"success": False, "message": "name is required", "data": None}
+        ), 400
+
+    stock_codes = list(payload.get("stock_codes", []))
+    user_id = get_jwt_identity() or "anonymous"
+
+    # Find existing by name AND user_id to prevent cross-user overwrites
+    try:
+        wl = Watchlist.objects(name=name, user_id=user_id).first()
+    except Exception:
+        wl = None
+
+    if wl:
+        wl.stock_codes = stock_codes
+        try:
+            wl.save()
+        except Exception as exc:
+            logger.exception("Failed to update watchlist")
+            return jsonify(
+                {
+                    "success": False,
+                    "message": f"Failed to update: {exc}",
+                    "data": None,
+                }
+            ), 500
+    else:
+        wl = Watchlist(name=name, stock_codes=stock_codes, user_id=user_id)
+        try:
+            wl.save()
+        except Exception as exc:
+            logger.exception("Failed to create watchlist")
+            return jsonify(
+                {
+                    "success": False,
+                    "message": f"Failed to create: {exc}",
+                    "data": None,
+                }
+            ), 500
+
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "id": str(wl.id),
+                "name": wl.name,
+                "stock_codes": wl.stock_codes,
+                "created_at": wl.created_at.isoformat() if wl.created_at else None,
+            },
+        }
+    ), 201
+
+
+@decisions_bp.route("/watchlists", methods=["GET"])
+def list_watchlists():
+    """List all watchlists for the current user."""
+    user_id = get_jwt_identity() or "anonymous"
+    try:
+        wls = list(
+            Watchlist.objects(user_id=user_id)
+            .order_by("name")
+            .only("id", "name", "stock_codes", "created_at")
+        )
+    except Exception:
+        wls = []
+
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "items": [
+                    {
+                        "id": str(w.id),
+                        "name": w.name,
+                        "stock_count": len(w.stock_codes or []),
+                        "created_at": w.created_at.isoformat()
+                        if w.created_at
+                        else None,
+                    }
+                    for w in wls
+                ],
+                "total": len(wls),
+            },
+        }
+    )
+
+
+@decisions_bp.route("/watchlists/<wl_id>", methods=["GET"])
+def get_watchlist(wl_id: str):
+    """Get a watchlist with current scores for each stock."""
+    try:
+        wl = Watchlist.objects(id=wl_id).first()
+    except Exception:
+        wl = None
+
+    if wl is None:
+        return (
+            jsonify({"success": False, "message": "Watchlist not found", "data": None}),
+            404,
+        )
+
+    stocks = []
+    today = _now_utc()
+    for code in wl.stock_codes or []:
+        # Look up stock name
+        name = None
+        try:
+            ind = IndividualStock.objects(code=code).only("name").first()
+            if ind:
+                name = ind.name
+        except Exception:
+            pass
+
+        # Latest scores per horizon
+        scores = {}
+        for h in [5, 20, 60]:
+            pred = (
+                StockScorePrediction.objects(stock_code=code, horizon=h)
+                .order_by("-date")
+                .first()
+            )
+            if pred:
+                scores[f"score{h}"] = {
+                    "value": pred.score,
+                    "recommendation": pred.recommendation,
+                    "date": pred.date.isoformat() if pred.date else None,
+                }
+
+        # Latest price
+        quote = (
+            StockDailyQuote.objects(code=code)
+            .order_by("-date")
+            .only("close_hfq", "close", "date")
+            .first()
+        )
+        price = round(quote.close_hfq or quote.close or 0, 2) if quote else None
+
+        stocks.append(
+            {
+                "stock_code": code,
+                "stock_name": name,
+                "current_price": price,
+                "scores": scores,
+            }
+        )
+
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "id": str(wl.id),
+                "name": wl.name,
+                "stock_codes": wl.stock_codes,
+                "stocks": stocks,
+                "created_at": wl.created_at.isoformat() if wl.created_at else None,
+                "updated_at": wl.updated_at.isoformat() if wl.updated_at else None,
+                "generated_at": today.isoformat(),
             },
         }
     )
