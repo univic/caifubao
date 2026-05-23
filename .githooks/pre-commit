@@ -1,0 +1,21 @@
+#!/bin/bash
+# Pre-commit hook: prevent commits on branches switched by another session.
+set -euo pipefail
+LOCK_FILE=".opencode/.current-session-branch"
+if [ ! -f "$LOCK_FILE" ]; then exit 0; fi
+EXPECTED=$(cat "$LOCK_FILE")
+ACTUAL=$(git branch --show-current)
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+    cat >&2 <<MSG
+========================================
+  BRANCH SWITCHED BY ANOTHER SESSION
+========================================
+  This session was locked to: $EXPECTED
+  Current branch is:          $ACTUAL
+  To recover: git checkout $EXPECTED
+  To override: rm $LOCK_FILE
+========================================
+MSG
+    exit 1
+fi
+exit 0
