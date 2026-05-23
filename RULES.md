@@ -102,7 +102,26 @@ Assumptions:
 Write Scope:
 Validation Plan:
 Reviewer Requests:
+Branch Conflict Check:
+Gate Checklist (close-out):
+  [ ] spec-guardian:
+  [ ] contract-reviewer:
+  [ ] qa-reviewer:
+  [ ] branch-conflict:
+  [ ] draft-pr-ci:
 ```
+
+## Non-Trivial Task Definition
+
+A task is "non-trivial" (requiring full Gate and Task Notes) unless it meets ALL
+of these criteria:
+- Changes fewer than 10 lines of non-doc code
+- Touches exactly one file
+- Does not change API contracts, auth, scoring, data models, CI, or k8s manifests
+- Is a behavior-preserving fix (typo, formatting, comment, simple config value)
+
+When in doubt, treat the task as non-trivial. It is always safer to run gates
+and skip unnecessary ones than to skip a required gate.
 
 ## OpenClaw-Specific Rules
 
@@ -122,7 +141,7 @@ Reviewer Requests:
 Reviews run AFTER implementation completes and validation passes. The orchestrator
 MUST invoke them — they do not self-activate.
 
-1. **Implement** → 2. **Validate** (P5 checks) → 3. **Review** (below) → 4. **Branch check** → 5. **Done**
+1. **Implement** → 2. **Validate** (P5 checks) → 3. **Review** (below) → 4. **Branch check** → 5. **Draft PR** → 6. **CI Check** → 7. **Done**
 
 Do not skip to "Done" before all gates clear.
 
@@ -152,18 +171,26 @@ Before any change is considered ready for review:
 3. **After all CI passes**, convert the Draft to "Ready for review":
    `gh pr ready <PR_NUMBER>`
 
-This gate runs in parallel with the review gates above. Both must clear before
+This gate runs after the review gates above. Both must clear before
 the orchestrator considers the task complete.
+
+### Branch Isolation Rule (enforced)
+
+Every non-trivial task requires a dedicated feature/fix branch created from
+`develop`. Never edit on another task's branch. Never edit on `develop` or
+`main` directly. The orchestrator MUST verify the branch is clean and on-topic
+before making the first edit. If in doubt, create a new branch from develop.
 
 ### Gate Checklist (include in final summary)
 
 Every non-trivial change MUST close with this checklist in the final summary:
 
 ```text
-[ ] spec-guardian:  triggered / not triggered
+[ ] spec-guardian:   triggered / not triggered
 [ ] contract-reviewer: triggered / not triggered
 [ ] qa-reviewer:      triggered / not triggered
 [ ] branch-conflict:  clean / conflicts resolved
+[ ] draft-pr-ci:      created as draft / CI passed / converted to regular
 ```
 
 ## Branch Conflict Check (enforced)

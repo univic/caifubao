@@ -52,9 +52,19 @@
             <span>策略发现</span>
           </el-menu-item>
 
+          <el-menu-item index="/decisions">
+            <el-icon><Notebook /></el-icon>
+            <span>决策面板</span>
+          </el-menu-item>
+
           <el-menu-item index="/portfolio">
             <el-icon><Wallet /></el-icon>
             <span>自选与组合</span>
+          </el-menu-item>
+
+          <el-menu-item index="/watchlists">
+            <el-icon><Star /></el-icon>
+            <span>自选列表</span>
           </el-menu-item>
 
           <el-sub-menu index="market-data">
@@ -162,9 +172,19 @@
           <span>策略发现</span>
         </el-menu-item>
 
+        <el-menu-item index="/decisions">
+          <el-icon><Notebook /></el-icon>
+          <span>决策面板</span>
+        </el-menu-item>
+
         <el-menu-item index="/portfolio">
           <el-icon><Wallet /></el-icon>
           <span>自选与组合</span>
+        </el-menu-item>
+
+        <el-menu-item index="/watchlists">
+          <el-icon><Star /></el-icon>
+          <span>自选列表</span>
         </el-menu-item>
 
         <el-sub-menu index="market-data">
@@ -243,6 +263,7 @@ const activeMenu = computed(() => {
   if (route.path.startsWith('/portfolio')) return '/portfolio'
   if (route.path.startsWith('/backtest')) return '/backtest'
   if (route.path.startsWith('/discovery')) return '/discovery'
+  if (route.path.startsWith('/watchlists')) return '/watchlists'
   if (route.path.startsWith('/admin')) return '/admin/users'
   if (route.path === '/profile') return 'profile'
   return '/'
