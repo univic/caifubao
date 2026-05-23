@@ -375,13 +375,13 @@
           <div class="summary-grid">
             <div class="summary-card">
               <span class="s-label">模型质量命中率</span>
-              <span class="s-value" :class="journalSummary.model_quality > 0.5 ? 'good' : 'bad'">
+              <span class="s-value" :class="(journalSummary.model_quality ?? 0) > 0.5 ? 'good' : 'bad'">
                 {{ formatPct(journalSummary.model_quality) }}
               </span>
             </div>
             <div class="summary-card">
               <span class="s-label">执行纪律</span>
-              <span class="s-value" :class="journalSummary.execution_discipline > 0.5 ? 'good' : 'bad'">
+              <span class="s-value" :class="(journalSummary.execution_discipline ?? 0) > 0.5 ? 'good' : 'bad'">
                 {{ formatPct(journalSummary.execution_discipline) }}
               </span>
             </div>
@@ -393,7 +393,7 @@
             </div>
             <div class="summary-card">
               <span class="s-label">总交易数</span>
-              <span class="s-value">{{ journalSummary.total_trades ?? '--' }}</span>
+              <span class="s-value">{{ journalSummary.total_entries ?? '--' }}</span>
             </div>
           </div>
 

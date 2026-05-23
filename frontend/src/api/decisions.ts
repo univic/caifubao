@@ -194,7 +194,7 @@ export const decisionsApi = {
   // Rebalance
   postRebalancePreview(payload: RebalancePreviewPayload) {
     return api.post<any>('/decisions/rebalance-preview', payload) as unknown as Promise<{
-      data: { items: RebalancePreviewItem[] }
+      data: { recommendations: RebalancePreviewItem[] }
     }>
   },
 
