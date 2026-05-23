@@ -67,21 +67,13 @@ export interface JournalListResponse {
 }
 
 export interface JournalSummary {
-  model_quality: {
-    hit_rate: number
-    total_recommendations: number
-    effective_recommendations: number
-  }
-  execution_discipline: {
-    follow_through_rate: number
-    followed: number
-    deviated: number
-    missed: number
-  }
+  model_quality: number | null
+  execution_discipline: number | null
+  total_entries: number
   total_pnl: number
-  total_trades: number
-  total_realized_pnl: number
-  avg_realized_pnl: number
+  positive_trades: number
+  negative_trades: number
+  win_rate: number | null
 }
 
 export interface JournalAttributionRow {
@@ -98,6 +90,7 @@ export interface JournalAttribution {
 }
 
 export interface JournalCreatePayload {
+  date: string
   stock_code: string
   recommended_action: string
   confidence: string
