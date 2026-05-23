@@ -202,13 +202,503 @@
         </el-table>
       </div>
     </section>
+
+    <!-- ======================== Decision Journal ======================== -->
+    <section class="section">
+      <h2>
+        决策日志
+        <span class="badge">{{ journalTotal }}</span>
+      </h2>
+
+      <!-- Journal tabs -->
+      <div class="tab-bar">
+        <button
+          class="tab-btn"
+          :class="{ active: journalTab === 'list' }"
+          @click="journalTab = 'list'"
+        >日志列表</button>
+        <button
+          class="tab-btn"
+          :class="{ active: journalTab === 'summary' }"
+          @click="journalTab = 'summary'; fetchJournalSummary(); fetchJournalAttribution()"
+        >日志汇总</button>
+        <button
+          class="tab-btn"
+          :class="{ active: journalTab === 'create' }"
+          @click="journalTab = 'create'"
+        >记录决策</button>
+      </div>
+
+      <!-- Tab A: Journal List -->
+      <div v-if="journalTab === 'list'">
+        <!-- Filters -->
+        <div class="journal-filters">
+          <el-select
+            v-model="journalFilter.execution_type"
+            placeholder="执行类型"
+            clearable
+            class="linear-select"
+            style="width: 140px"
+            @change="fetchJournal()"
+          >
+            <el-option label="全部" value="" />
+            <el-option label="已执行" value="followed" />
+            <el-option label="偏离" value="deviated" />
+            <el-option label="错过" value="missed" />
+          </el-select>
+          <el-input
+            v-model="journalFilter.stock_code"
+            placeholder="股票代码"
+            clearable
+            class="linear-input"
+            style="width: 140px"
+            @clear="fetchJournal()"
+            @change="fetchJournal()"
+          />
+          <el-date-picker
+            v-model="journalDateRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            value-format="YYYY-MM-DD"
+            class="linear-picker"
+            style="width: 260px"
+            @change="fetchJournal()"
+          />
+        </div>
+
+        <div v-if="journalLoading" class="loading">加载中...</div>
+        <el-alert
+          v-else-if="journalError"
+          class="quality-alert"
+          type="error"
+          :title="journalError"
+          show-icon
+          :closable="false"
+        />
+        <div v-else-if="!journalItems.length" class="empty">暂无决策日志</div>
+        <div v-else class="table-wrap">
+          <el-table
+            :data="journalItems"
+            size="small"
+            empty-text="暂无数据"
+          >
+            <el-table-column label="日期" width="105" prop="date" />
+            <el-table-column label="股票代码" width="110">
+              <template #default="{ row }">
+                <router-link
+                  :to="{ name: 'QuoteDetail', params: { symbol: row.stock_code } }"
+                  class="stock-link"
+                >
+                  {{ row.stock_code }}
+                </router-link>
+              </template>
+            </el-table-column>
+            <el-table-column label="股票名称" min-width="90">
+              <template #default="{ row }">
+                <span class="stock-name-text">{{ row.stock_name || '--' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="推荐操作" width="80" align="center">
+              <template #default="{ row }">
+                <span class="action-tag" :class="row.recommended_action?.toLowerCase()">
+                  {{ actionLabel(row.recommended_action) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="信心度" width="70" align="center">
+              <template #default="{ row }">
+                <span class="confidence-tag" :class="row.confidence">
+                  {{ row.confidence === 'high' ? '高' : row.confidence === 'medium' ? '中' : '低' }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="执行" width="55" align="center">
+              <template #default="{ row }">
+                <span>{{ row.executed ? '✅' : '❌' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="执行类型" width="80" align="center">
+              <template #default="{ row }">
+                <span class="exec-tag" :class="row.execution_type">
+                  {{ execLabel(row.execution_type) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="盈亏" width="90" align="right">
+              <template #default="{ row }">
+                <span :class="pnlClass(row.realized_pnl)">
+                  {{ formatMoney(row.realized_pnl) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="盈亏%" width="80" align="right">
+              <template #default="{ row }">
+                <span :class="pnlClass(row.realized_pnl_pct)">
+                  {{ formatPct2(row.realized_pnl_pct) }}
+                </span>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <!-- Journal pagination -->
+          <div v-if="journalTotal > journalPerPage" class="journal-pagination">
+            <button
+              class="page-btn"
+              :disabled="journalPage <= 1"
+              @click="journalPage--; fetchJournal()"
+            >上一页</button>
+            <span class="page-info">{{ journalPage }} / {{ Math.ceil(journalTotal / journalPerPage) }}</span>
+            <button
+              class="page-btn"
+              :disabled="journalPage >= Math.ceil(journalTotal / journalPerPage)"
+              @click="journalPage++; fetchJournal()"
+            >下一页</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab B: Journal Summary -->
+      <div v-if="journalTab === 'summary'">
+        <div v-if="summaryLoading" class="loading">加载中...</div>
+        <el-alert
+          v-else-if="summaryError"
+          class="quality-alert"
+          type="error"
+          :title="summaryError"
+          show-icon
+          :closable="false"
+        />
+        <div v-else-if="journalSummary">
+          <!-- Summary Cards -->
+          <div class="summary-grid">
+            <div class="summary-card">
+              <span class="s-label">模型质量命中率</span>
+              <span class="s-value" :class="(journalSummary.model_quality ?? 0) > 0.5 ? 'good' : 'bad'">
+                {{ formatPct(journalSummary.model_quality) }}
+              </span>
+            </div>
+            <div class="summary-card">
+              <span class="s-label">执行纪律</span>
+              <span class="s-value" :class="(journalSummary.execution_discipline ?? 0) > 0.5 ? 'good' : 'bad'">
+                {{ formatPct(journalSummary.execution_discipline) }}
+              </span>
+            </div>
+            <div class="summary-card">
+              <span class="s-label">总盈亏</span>
+              <span class="s-value" :class="pnlClass(journalSummary.total_pnl)">
+                {{ formatMoney(journalSummary.total_pnl) }}
+              </span>
+            </div>
+            <div class="summary-card">
+              <span class="s-label">总交易数</span>
+              <span class="s-value">{{ journalSummary.total_entries ?? '--' }}</span>
+            </div>
+          </div>
+
+          <!-- Attribution Tables -->
+          <div v-if="journalAttribution" class="attribution-section">
+            <h3>盈亏归因 — 按评分组件</h3>
+            <div class="table-wrap" v-if="journalAttribution.by_component?.length">
+              <el-table :data="journalAttribution.by_component" size="small">
+                <el-table-column label="组件" prop="component_id" />
+                <el-table-column label="盈亏" width="100" align="right">
+                  <template #default="{ row }">
+                    <span :class="pnlClass(row.pnl)">{{ formatMoney(row.pnl) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="盈亏%" width="90" align="right">
+                  <template #default="{ row }">
+                    <span :class="pnlClass(row.pnl_pct)">{{ formatPct2(row.pnl_pct) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="交易数" width="80" align="right" prop="trade_count" />
+              </el-table>
+            </div>
+            <div v-else class="empty">暂无组件归因数据</div>
+
+            <h3>盈亏归因 — 按评分周期</h3>
+            <div class="table-wrap" v-if="journalAttribution.by_horizon?.length">
+              <el-table :data="journalAttribution.by_horizon" size="small">
+                <el-table-column label="周期" width="100">
+                  <template #default="{ row }">
+                    <span>Score {{ row.horizon }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="盈亏" width="100" align="right">
+                  <template #default="{ row }">
+                    <span :class="pnlClass(row.pnl)">{{ formatMoney(row.pnl) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="盈亏%" width="90" align="right">
+                  <template #default="{ row }">
+                    <span :class="pnlClass(row.pnl_pct)">{{ formatPct2(row.pnl_pct) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="交易数" width="80" align="right" prop="trade_count" />
+              </el-table>
+            </div>
+            <div v-else class="empty">暂无周期归因数据</div>
+          </div>
+        </div>
+        <div v-else class="empty">暂无汇总数据</div>
+      </div>
+
+      <!-- Tab C: Log a Decision -->
+      <div v-if="journalTab === 'create'" class="form-card">
+        <div class="card-header">
+          <h3 class="card-title">记录决策</h3>
+        </div>
+        <div class="form-body">
+          <el-alert
+            v-if="journalPostError"
+            class="quality-alert"
+            type="error"
+            :title="journalPostError"
+            show-icon
+            :closable="false"
+          />
+          <el-form label-position="top" @submit.prevent="handlePostJournal">
+            <div class="form-grid">
+              <el-form-item label="股票代码">
+                <el-input
+                  v-model="journalForm.stock_code"
+                  placeholder="例如: sh600519"
+                  class="linear-input"
+                />
+              </el-form-item>
+
+              <el-form-item label="推荐操作">
+                <el-select
+                  v-model="journalForm.recommended_action"
+                  placeholder="选择操作"
+                  class="linear-select"
+                >
+                  <el-option label="买入" value="BUY" />
+                  <el-option label="卖出" value="SELL" />
+                  <el-option label="持有" value="HOLD" />
+                  <el-option label="关注" value="WATCH" />
+                </el-select>
+              </el-form-item>
+
+              <el-form-item label="信心度">
+                <el-select
+                  v-model="journalForm.confidence"
+                  placeholder="选择信心度"
+                  class="linear-select"
+                >
+                  <el-option label="高" value="high" />
+                  <el-option label="中" value="medium" />
+                  <el-option label="低" value="low" />
+                </el-select>
+              </el-form-item>
+
+              <el-form-item label="入场价格">
+                <el-input-number
+                  v-model="journalForm.entry_price"
+                  :min="0"
+                  :precision="2"
+                  controls-position="right"
+                  class="linear-input-number"
+                />
+              </el-form-item>
+
+              <el-form-item label="目标价格">
+                <el-input-number
+                  v-model="journalForm.target_price"
+                  :min="0"
+                  :precision="2"
+                  controls-position="right"
+                  class="linear-input-number"
+                />
+              </el-form-item>
+
+              <el-form-item label="止损价格">
+                <el-input-number
+                  v-model="journalForm.stop_loss"
+                  :min="0"
+                  :precision="2"
+                  controls-position="right"
+                  class="linear-input-number"
+                />
+              </el-form-item>
+
+              <el-form-item label="仓位比例 (%)">
+                <el-input-number
+                  v-model="journalForm.position_size_pct"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  controls-position="right"
+                  class="linear-input-number"
+                />
+              </el-form-item>
+            </div>
+
+            <el-form-item label="是否已执行">
+              <el-switch v-model="journalForm.executed" />
+            </el-form-item>
+
+            <div v-if="journalForm.executed" class="form-grid">
+              <el-form-item label="执行价格">
+                <el-input-number
+                  v-model="journalForm.executed_price"
+                  :min="0"
+                  :precision="2"
+                  controls-position="right"
+                  class="linear-input-number"
+                />
+              </el-form-item>
+              <el-form-item label="执行数量">
+                <el-input-number
+                  v-model="journalForm.executed_quantity"
+                  :min="100"
+                  :step="100"
+                  controls-position="right"
+                  class="linear-input-number"
+                />
+              </el-form-item>
+            </div>
+
+            <el-form-item label="备注">
+              <el-input
+                v-model="journalForm.notes"
+                type="textarea"
+                :rows="3"
+                placeholder="可选：记录决策理由或复盘笔记"
+                class="linear-input"
+              />
+            </el-form-item>
+          </el-form>
+
+          <div class="form-actions">
+            <button
+              class="primary-btn"
+              :disabled="journalPosting"
+              @click="handlePostJournal"
+            >
+              {{ journalPosting ? '提交中...' : '提交' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== Rebalance Preview ======================== -->
+    <section class="section">
+      <h2>再平衡预览</h2>
+      <div class="form-card">
+        <div class="form-body">
+          <el-alert
+            v-if="rebalanceError"
+            class="quality-alert"
+            type="error"
+            :title="rebalanceError"
+            show-icon
+            :closable="false"
+          />
+          <el-form label-position="top" @submit.prevent="handleRebalance">
+            <div class="form-grid">
+              <el-form-item label="现金余额">
+                <el-input-number
+                  v-model="rebalanceCash"
+                  :min="0"
+                  :precision="2"
+                  controls-position="right"
+                  class="linear-input-number"
+                />
+              </el-form-item>
+            </div>
+            <el-form-item label="持仓股票代码（每行一个，逗号或换行分隔）">
+              <el-input
+                v-model="rebalanceStocks"
+                type="textarea"
+                :rows="3"
+                placeholder="sh600519&#10;sz000001"
+                class="linear-input"
+              />
+            </el-form-item>
+          </el-form>
+          <div class="form-actions">
+            <button
+              class="primary-btn"
+              :disabled="rebalanceLoading"
+              @click="handleRebalance"
+            >
+              {{ rebalanceLoading ? '计算中...' : '预览' }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rebalance results -->
+      <div v-if="rebalanceItems.length" class="table-wrap" style="margin-top: 16px;">
+        <el-table
+          :data="rebalanceItems"
+          size="small"
+          empty-text="无结果"
+        >
+          <el-table-column label="股票代码" width="110">
+            <template #default="{ row }">
+              <router-link
+                :to="{ name: 'QuoteDetail', params: { symbol: row.stock_code } }"
+                class="stock-link"
+              >
+                {{ row.stock_code }}
+              </router-link>
+            </template>
+          </el-table-column>
+          <el-table-column label="股票名称" min-width="90">
+            <template #default="{ row }">
+              <span class="stock-name-text">{{ row.stock_name || '--' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="当前评分" width="80" align="right">
+            <template #default="{ row }">
+              <span class="score-val">{{ row.current_score?.toFixed(0) || '--' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="推荐" width="80" align="center">
+            <template #default="{ row }">
+              <span class="rec-tag" :class="row.recommendation?.toLowerCase()">
+                {{ recLabel(row.recommendation) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="90" align="center">
+            <template #default="{ row }">
+              <span class="rebalance-action-tag" :class="actionClass(row.action)">
+                {{ rebalanceActionLabel(row.action) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="理由" min-width="160">
+            <template #default="{ row }">
+              <span class="reason-text">{{ row.reason || '--' }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <div v-else-if="rebalanceRan && !rebalanceLoading" class="empty" style="margin-top: 12px;">
+        暂无再平衡建议
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
-import { decisionsApi, type DecisionDashboardItem } from '@/api/decisions'
+import { ElMessage } from 'element-plus'
+import {
+  decisionsApi,
+  type DecisionDashboardItem,
+  type JournalEntry,
+  type JournalSummary,
+  type JournalAttribution,
+  type RebalancePreviewItem
+} from '@/api/decisions'
 
 const horizon = ref(20)
 const loading = ref(false)
@@ -305,9 +795,228 @@ function trendArrow(val: string): string {
   return '--'
 }
 
+// ---- Journal State ----
+const journalTab = ref<'list' | 'summary' | 'create'>('list')
+const journalLoading = ref(false)
+const journalError = ref('')
+const journalItems = ref<JournalEntry[]>([])
+const journalPage = ref(1)
+const journalPerPage = ref(20)
+const journalTotal = ref(0)
+const journalDateRange = ref<string[] | null>(null)
+const journalFilter = reactive({
+  execution_type: '' as string,
+  stock_code: '' as string
+})
+
+// Journal summary
+const summaryLoading = ref(false)
+const summaryError = ref('')
+const journalSummary = ref<JournalSummary | null>(null)
+const journalAttribution = ref<JournalAttribution | null>(null)
+
+// Journal create form
+const journalPosting = ref(false)
+const journalPostError = ref('')
+const journalForm = reactive({
+  stock_code: '',
+  recommended_action: '' as string,
+  confidence: '' as string,
+  entry_price: undefined as number | undefined,
+  target_price: undefined as number | undefined,
+  stop_loss: undefined as number | undefined,
+  position_size_pct: undefined as number | undefined,
+  executed: false,
+  executed_price: undefined as number | undefined,
+  executed_quantity: undefined as number | undefined,
+  notes: ''
+})
+
+// ---- Rebalance State ----
+const rebalanceCash = ref(100000)
+const rebalanceStocks = ref('')
+const rebalanceLoading = ref(false)
+const rebalanceError = ref('')
+const rebalanceItems = ref<RebalancePreviewItem[]>([])
+const rebalanceRan = ref(false)
+
+// ---- Journal API ----
+async function fetchJournal() {
+  journalLoading.value = true
+  journalError.value = ''
+  try {
+    const params: any = {
+      page: journalPage.value,
+      per_page: journalPerPage.value
+    }
+    if (journalFilter.execution_type) params.execution_type = journalFilter.execution_type
+    if (journalFilter.stock_code) params.stock_code = journalFilter.stock_code
+    if (journalDateRange.value?.length === 2) {
+      params.start_date = journalDateRange.value[0]
+      params.end_date = journalDateRange.value[1]
+    }
+    const res = await decisionsApi.getJournal(params)
+    journalItems.value = res.data?.items || []
+    journalTotal.value = res.data?.total || 0
+  } catch (e: any) {
+    journalError.value = e?.response?.data?.message || '获取日志失败'
+  } finally {
+    journalLoading.value = false
+  }
+}
+
+async function fetchJournalSummary() {
+  summaryLoading.value = true
+  summaryError.value = ''
+  try {
+    const res = await decisionsApi.getJournalSummary()
+    journalSummary.value = res.data
+  } catch (e: any) {
+    summaryError.value = e?.response?.data?.message || '获取汇总失败'
+  } finally {
+    summaryLoading.value = false
+  }
+}
+
+async function fetchJournalAttribution() {
+  try {
+    const res = await decisionsApi.getJournalAttribution()
+    journalAttribution.value = res.data
+  } catch {
+    // attribution may not be available — non-blocking
+    journalAttribution.value = null
+  }
+}
+
+async function handlePostJournal() {
+  if (!journalForm.stock_code.trim()) {
+    ElMessage.warning('请输入股票代码')
+    return
+  }
+  if (!journalForm.recommended_action) {
+    ElMessage.warning('请选择推荐操作')
+    return
+  }
+  if (!journalForm.confidence) {
+    ElMessage.warning('请选择信心度')
+    return
+  }
+
+  journalPosting.value = true
+  journalPostError.value = ''
+  try {
+    await decisionsApi.postJournal({
+      date: new Date().toISOString().slice(0, 10),
+      stock_code: journalForm.stock_code.trim(),
+      recommended_action: journalForm.recommended_action,
+      confidence: journalForm.confidence,
+      entry_price: journalForm.entry_price,
+      target_price: journalForm.target_price,
+      stop_loss: journalForm.stop_loss,
+      position_size_pct: journalForm.position_size_pct,
+      executed: journalForm.executed,
+      executed_price: journalForm.executed ? journalForm.executed_price : undefined,
+      executed_quantity: journalForm.executed ? journalForm.executed_quantity : undefined,
+      notes: journalForm.notes || undefined
+    })
+    ElMessage.success('决策记录已保存')
+    // Reset form
+    journalForm.stock_code = ''
+    journalForm.recommended_action = ''
+    journalForm.confidence = ''
+    journalForm.entry_price = undefined
+    journalForm.target_price = undefined
+    journalForm.stop_loss = undefined
+    journalForm.position_size_pct = undefined
+    journalForm.executed = false
+    journalForm.executed_price = undefined
+    journalForm.executed_quantity = undefined
+    journalForm.notes = ''
+    journalTab.value = 'list'
+    journalPage.value = 1
+    fetchJournal()
+  } catch (e: any) {
+    journalPostError.value = e?.response?.data?.message || '提交失败'
+  } finally {
+    journalPosting.value = false
+  }
+}
+
+// ---- Rebalance API ----
+async function handleRebalance() {
+  const codesRaw = rebalanceStocks.value.trim()
+  if (!codesRaw) {
+    ElMessage.warning('请输入持仓股票代码')
+    return
+  }
+  const portfolioStocks = codesRaw
+    .split(/[,\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  if (!portfolioStocks.length) {
+    ElMessage.warning('请至少输入一个有效的股票代码')
+    return
+  }
+
+  rebalanceLoading.value = true
+  rebalanceError.value = ''
+  rebalanceRan.value = false
+  try {
+    const res = await decisionsApi.postRebalancePreview({
+      portfolio_stocks: portfolioStocks,
+      cash: rebalanceCash.value
+    })
+    rebalanceItems.value = res.data?.recommendations || []
+    rebalanceRan.value = true
+  } catch (e: any) {
+    rebalanceError.value = e?.response?.data?.message || '获取再平衡预览失败'
+  } finally {
+    rebalanceLoading.value = false
+  }
+}
+
+// ---- Utility ----
+function formatMoney(val: number | null | undefined): string {
+  if (val == null || !Number.isFinite(val)) return '--'
+  return '¥' + val.toFixed(2)
+}
+
+function formatPct2(val: number | null | undefined): string {
+  if (val == null || !Number.isFinite(val)) return '--'
+  return (val * 100).toFixed(2) + '%'
+}
+
+function pnlClass(val: number | null | undefined): string {
+  if (val == null || !Number.isFinite(val)) return ''
+  return val > 0 ? 'positive' : val < 0 ? 'negative' : ''
+}
+
+function actionLabel(val: string): string {
+  const m: Record<string, string> = { BUY: '买入', SELL: '卖出', HOLD: '持有', WATCH: '关注' }
+  return m[val] || val || '--'
+}
+
+function execLabel(val: string | null): string {
+  const m: Record<string, string> = { followed: '已执行', deviated: '偏离', missed: '错过' }
+  return m[val || ''] || val || '--'
+}
+
+function rebalanceActionLabel(val: string): string {
+  const m: Record<string, string> = { BUY_MORE: '加仓', SELL: '卖出', REDUCE: '减仓', HOLD: '持有' }
+  return m[val] || val || '--'
+}
+
+function actionClass(val: string): string {
+  if (val === 'BUY_MORE') return 'buy'
+  if (val === 'SELL' || val === 'REDUCE') return 'sell'
+  return 'hold'
+}
+
 onMounted(() => {
   fetchAll()
   fetchDashboard()
+  fetchJournal()
 })
 watch(horizon, fetchAll)
 </script>
@@ -472,4 +1181,106 @@ watch(horizon, fetchAll)
 
 .good { color: #10b981; font-weight: 510; }
 .bad { color: #ef4444; font-weight: 510; }
+
+// ---- Journal tab bar ----
+.tab-bar {
+  display: flex; gap: 4px; margin-bottom: 20px;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 8px; padding: 3px; width: fit-content;
+  .tab-btn {
+    font-size: 12px; font-weight: 590; padding: 6px 16px; border: none; border-radius: 6px;
+    background: transparent; color: #62666d; cursor: pointer;
+    &.active { background: #5e6ad2; color: #f7f8f8; }
+    &:hover:not(.active) { color: #d0d6e0; }
+  }
+}
+
+// ---- Journal filters ----
+.journal-filters {
+  display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;
+}
+
+// ---- Pagination ----
+.journal-pagination {
+  display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px;
+  .page-btn {
+    font-size: 12px; font-weight: 510; padding: 6px 14px; border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px; background: rgba(255,255,255,0.02); color: #d0d6e0; cursor: pointer;
+    &:hover:not(:disabled) { color: #f7f8f8; background: rgba(255,255,255,0.05); }
+    &:disabled { opacity: 0.3; cursor: not-allowed; }
+  }
+  .page-info { font-size: 12px; color: #8a8f98; }
+}
+
+// ---- Summary cards ----
+.summary-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px;
+}
+.summary-card {
+  background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 4px;
+  .s-label { font-size: 12px; color: #62666d; }
+  .s-value { font-size: 24px; font-weight: 590; color: #f7f8f8; }
+}
+
+// ---- Attribution section ----
+.attribution-section {
+  h3 { font-size: 14px; font-weight: 590; color: #d0d6e0; margin: 16px 0 8px; }
+}
+
+// ---- Forms ----
+.form-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px; overflow: hidden;
+  .card-header { padding: 20px 24px 0; }
+  .card-title { font-size: 16px; font-weight: 590; color: #f7f8f8; }
+  .form-body { padding: 16px 24px 24px; }
+}
+
+.form-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0 16px;
+}
+
+.form-actions {
+  display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
+}
+
+.primary-btn {
+  font-size: 13px; font-weight: 510; padding: 8px 20px; border: none; border-radius: 6px;
+  background: #5e6ad2; color: #f7f8f8; cursor: pointer;
+  &:hover { background: #7170ff; }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+}
+
+// ---- Table-wrap utility ----
+.table-wrap { overflow-x: auto; }
+
+// ---- Tag styles ----
+.action-tag {
+  font-size: 10px; font-weight: 590; padding: 2px 8px; border-radius: 4px;
+  &.buy { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+  &.sell { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+  &.hold { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+  &.watch { background: rgba(113, 112, 255, 0.1); color: #7170ff; }
+}
+
+.exec-tag {
+  font-size: 10px; font-weight: 510; padding: 2px 8px; border-radius: 4px;
+  &.followed { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+  &.deviated { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+  &.missed { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+}
+
+.rebalance-action-tag {
+  font-size: 10px; font-weight: 590; padding: 2px 8px; border-radius: 4px;
+  &.buy { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+  &.sell { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+  &.hold { background: rgba(113, 112, 255, 0.1); color: #7170ff; }
+}
+
+.positive { color: #10b981; font-weight: 510; }
+.negative { color: #ef4444; font-weight: 510; }
+
+.reason-text { font-size: 12px; color: #8a8f98; }
 </style>

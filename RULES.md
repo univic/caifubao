@@ -186,7 +186,7 @@ before making the first edit. If in doubt, create a new branch from develop.
 Every non-trivial change MUST close with this checklist in the final summary:
 
 ```text
-[ ] spec-guardian:  triggered / not triggered
+[ ] spec-guardian:   triggered / not triggered
 [ ] contract-reviewer: triggered / not triggered
 [ ] qa-reviewer:      triggered / not triggered
 [ ] branch-conflict:  clean / conflicts resolved

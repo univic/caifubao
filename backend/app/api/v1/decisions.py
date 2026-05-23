@@ -1075,3 +1075,31 @@ def get_watchlist(wl_id: str):
             },
         }
     )
+
+
+@decisions_bp.route("/watchlists/<wl_id>", methods=["DELETE"])
+def delete_watchlist(wl_id: str):
+    """Delete a watchlist by ID."""
+    try:
+        wl = Watchlist.objects(id=wl_id).first()
+    except Exception:
+        wl = None
+
+    if wl is None:
+        return (
+            jsonify({"success": False, "message": "Watchlist not found", "data": None}),
+            404,
+        )
+
+    try:
+        wl.delete()
+    except Exception as exc:
+        logger.exception("Failed to delete watchlist")
+        return jsonify(
+            {"success": False, "message": f"Failed to delete: {exc}", "data": None}
+        ), 500
+
+    return (
+        jsonify({"success": True, "data": {"deleted": str(wl_id)}}),
+        200,
+    )
