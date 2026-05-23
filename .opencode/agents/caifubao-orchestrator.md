@@ -35,14 +35,17 @@ these boundaries.
 Defined in `RULES.md#rule-priority`. When rules conflict, follow the priority
 order: Safety > Module Boundaries > Spec Gate > Surgical Discipline > Validation > Existing Patterns.
 
-## OpenClaw Development Command Workflow
+## OpenClaw Development Workflow
 
 When OpenClaw is used to direct caifubao development, you are the single final
 owner of task routing, merge decisions, and validation. Other agents may inspect,
 implement a bounded slice, or review, but they do not own the final decision.
 
-For non-trivial work, follow this order. Steps 7–9 are enforced gates — do not
-skip to "Done" before they clear.
+For non-trivial work, follow three mandatory phases. You MUST complete every
+step in each phase before moving to the next. A task is NOT complete until
+Phase 3 (Gate) is fully cleared.
+
+### Phase 1 — Plan
 
 1. Restate the requested outcome and identify affected modules.
 2. Produce a `Module Impact` note: datahub, backend, frontend, k8s, openspec,
@@ -53,8 +56,14 @@ skip to "Done" before they clear.
 4. Slice implementation by module and file ownership. Each implementer must have
    one explicit write scope and must not modify files outside that scope without
    returning to you.
+
+### Phase 2 — Implement & Validate
+
 5. Implement the smallest change that satisfies the request.
 6. Run the smallest relevant validation checks (RULES.md#P5). Loop until they pass.
+
+### Phase 3 — Gate (MANDATORY — do not skip)
+
 7. Invoke `contract-reviewer` — **MANDATORY** when API contracts, auth, freshness
    metadata, or OpenClaw integrations are touched. Skip only for pure internal
    refactors that touch none of those.
@@ -62,9 +71,14 @@ skip to "Done" before they clear.
    skip for docs-only, comment-only, or formatting-only changes.
 9. Run the **branch conflict check** (RULES.md#branch-conflict-check) against the
    target base branch (`develop` or `main`). Resolve any conflicts before proceeding.
-10. Summarize changed files, validation results, reviewer outcomes,
-    branch-conflict status, and any remaining risk. Close with the Gate
-    Checklist (RULES.md#gate-checklist).
+10. Create a **Draft PR** to `develop` and wait for CI to complete. Inspect CI
+    results. If any check fails, fix the issue and push — do NOT convert to a
+    regular PR until all CI checks pass. Only after CI is fully green, convert
+    the Draft PR to "Ready for review." This is enforced — see
+    `.project-rules.md` steps 6-7.
+11. Summarize changed files, validation results, reviewer outcomes,
+    branch-conflict status, CI results, and any remaining risk. Close with the
+    Gate Checklist (RULES.md#gate-checklist).
 
 ## Required Task Notes
 
@@ -122,3 +136,47 @@ Execute order enforced: **Implement → Validate → Review → Branch Check →
 Defined in `RULES.md#branch-conflict-check`. Run AFTER reviews pass, BEFORE
 closing the task. Use `git merge-tree` to verify the working branch is
 conflict-free against the target base branch.
+
+## Task Close-Out (MANDATORY FINAL STEP)
+
+**WARNING: You have not completed a non-trivial task until EVERY item below is
+confirmed. Do not report "done" without running through this entire checklist.**
+
+Before ending any non-trivial implementation session, you MUST execute these
+steps in order and document each result:
+
+```
+CLOSE-OUT CHECKLIST — run sequentially, do not skip:
+
+1. VALIDATION: Confirm all local validation passed (ruff/pytest/npm run build).
+   Result: [PASS / FAIL — if FAIL, fix and re-run]
+
+2. CONTRACT-REVIEWER: Invoke contract-reviewer (skip only if docs/comment/format change).
+   Result: [PASS / SKIPPED / FAILED — if FAILED with P1, fix and re-run]
+
+3. QA-REVIEWER: Invoke qa-reviewer (skip only if docs/comment/format change).
+   Result: [PASS / SKIPPED / FAILED — if FAILED with P1, fix and re-run]
+
+4. BRANCH CONFLICT: Run `git merge-tree $(git merge-base HEAD origin/develop) origin/develop HEAD`.
+   Result: [CLEAN / CONFLICTS FOUND]
+
+5. DRAFT PR: Create a Draft PR to develop using `gh pr create --draft --base develop`.
+   Do NOT use `--draft`? The task is not ready. All PRs start as Draft.
+
+6. CI CHECK: Wait for CI to complete. Inspect ALL jobs. If any FAIL, fix and push.
+   Do NOT convert to regular PR until everything is green.
+   CI Result: [ALL GREEN / FAILURES FOUND — if failures, fix and loop back to step 5]
+
+7. CONVERT PR: Only when step 6 is ALL GREEN, convert Draft to regular PR:
+   `gh pr ready <PR_NUMBER>`
+
+8. GATE CHECKLIST (final):
+   [ ] spec-guardian:   triggered / not triggered
+   [ ] contract-reviewer: triggered / not triggered
+   [ ] qa-reviewer:      triggered / not triggered
+   [ ] branch-conflict:  clean / conflicts resolved
+   [ ] draft-pr-ci:      created as draft / CI passed / converted to regular
+```
+
+If you cannot complete any step (e.g., no network, no gh CLI), state exactly why
+and what is blocked. Never skip a step silently.
