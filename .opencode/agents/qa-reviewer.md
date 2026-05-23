@@ -63,3 +63,20 @@ Summary
 
 If there are no issues, say so clearly and still mention residual validation
 gaps.
+
+## Running Validation Commands
+
+You have `bash: allow` permission. Proactively run the smallest relevant check
+to verify your findings. Do not just read code — execute these where applicable:
+
+| Change area | Command |
+|-------------|---------|
+| Python (backend/datahub) | `ruff check <paths>` and `ruff format --check <paths>` |
+| Backend API | `cd backend && python -m pytest app/test/ -x -q` |
+| Datahub | `ruff check datahub/` + datahub tests if available |
+| Frontend | `cd frontend && npm run lint` (skip `npm run build` for review — too slow) |
+| k8s | `kubectl kustomize k8s/overlays/example-development` |
+| OpenSpec | `openspec validate mvp-quant-demo --strict` |
+
+If a check cannot be run (e.g., missing dependencies), state exactly why. Always
+report the command output — never guess whether validation would pass.
