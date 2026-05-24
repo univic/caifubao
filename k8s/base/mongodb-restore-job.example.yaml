@@ -51,6 +51,9 @@ spec:
               name: mongodb-secret
               key: MONGODB_ROOT_PASSWORD
         volumeMounts:
+        - name: aws-config
+          mountPath: /root/.aws
+          readOnly: true
         - name: scripts
           mountPath: /scripts
           readOnly: true
@@ -64,6 +67,12 @@ spec:
             memory: "1Gi"
             cpu: "500m"
       volumes:
+      - name: aws-config
+        configMap:
+          name: mongodb-backup-scripts
+          items:
+          - key: aws-config
+            path: config
       - name: scripts
         configMap:
           name: mongodb-backup-scripts

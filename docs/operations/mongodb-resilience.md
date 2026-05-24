@@ -31,6 +31,8 @@ It creates:
 - `mongodb-backup-secret` with placeholder S3-compatible credentials.
 - `mongodb-backup-scripts` with `backup.sh`, `restore.sh`, and
   `sanity-check.sh`.
+- AWS CLI config mounted at `/root/.aws/config` with
+  `s3.addressing_style = virtual`.
 - `mongodb-s3-backup`, a suspended CronJob.
 
 The backup container image is intentionally generic:
@@ -62,6 +64,25 @@ The backup job prints a sanitized JSON status line with:
 - `error_summary`
 
 Do not log MongoDB passwords, object-storage secrets, or signed URLs.
+
+## Tencent Cloud COS Notes
+
+Tencent Cloud COS is compatible with S3-style clients when a custom endpoint is
+configured. Private overlays should use values like:
+
+```yaml
+AWS_ENDPOINT_URL: "https://cos.ap-guangzhou.myqcloud.com"
+AWS_DEFAULT_REGION: "ap-guangzhou"
+S3_BUCKET: "caifubao-backups-1250000000"
+S3_PREFIX: "mongodb"
+```
+
+`AWS_ACCESS_KEY_ID` maps to Tencent Cloud `SecretId`, and
+`AWS_SECRET_ACCESS_KEY` maps to `SecretKey`.
+
+COS buckets include the APPID suffix, such as `examplebucket-1250000000`.
+The backup and restore jobs force AWS CLI virtual-hosted addressing because new
+COS buckets require virtual-hosted-style access.
 
 ## Restore Template
 
