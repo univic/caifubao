@@ -116,3 +116,36 @@ baseline dataset or explicit empty-database bootstrap path.
 - **THEN** implementation SHALL be limited to docs, profiles, adapters, and
   synthetic metric extraction tests
 - **AND** no experiment result SHALL be promoted as production evidence.
+
+### Requirement: Tailnet-Only Deployment Access
+
+Caifubao SHALL support GitHub Actions deployment to a cluster whose Kubernetes
+API server is reachable only inside the Tailscale tailnet.
+
+#### Scenario: Private deploy workflow connects through Tailscale
+
+- **GIVEN** the public repository has published an image and dispatched a
+  private deployment workflow
+- **WHEN** the private workflow starts
+- **THEN** it SHALL join the tailnet as a tagged CI node
+- **AND** configure kubectl through the Tailscale Kubernetes Operator API server
+  proxy
+- **AND** apply private deployment overlays without exposing kube-apiserver to
+  the public internet.
+
+#### Scenario: API server proxy uses Kubernetes RBAC
+
+- **GIVEN** the API server proxy runs in auth mode
+- **WHEN** a tagged GitHub Actions runner connects through the proxy
+- **THEN** Kubernetes SHALL authorize it through RBAC bound to the impersonated
+  tailnet tag group
+- **AND** public examples SHALL avoid real tailnet names, OAuth credentials,
+  private namespaces, or production ACL files.
+
+#### Scenario: In-cluster proxy is unavailable
+
+- **GIVEN** the cluster cannot schedule the Tailscale proxy pods
+- **WHEN** normal API server proxy deployment fails
+- **THEN** operators SHALL use an explicitly documented break-glass path such as
+  Tailscale SSH to a control-plane node or a temporary tailnet-IP kubeconfig
+- **AND** that break-glass path SHALL remain outside public deployment examples.

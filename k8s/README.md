@@ -24,5 +24,15 @@ MongoDB backup examples are intentionally public-safe:
 - Real bucket names, endpoints, credentials, retention policy, and restore
   runbooks belong in `caifubao-private`.
 
+Tailscale Kubernetes API server proxy examples are also public-safe:
+
+- `tailscale/api-server-proxy.proxygroup.example.yaml` defines the recommended
+  high-availability `ProxyGroup` shape for exposing kube-apiserver inside a
+  tailnet.
+- `tailscale/api-server-proxy-rbac.example.yaml` shows namespace-scoped RBAC for
+  GitHub Actions runners tagged as `tag:ci-deploy`.
+- Real tailnet names, OAuth credentials, ACL policy, and private namespaces
+  belong in `caifubao-private`.
+
 Before publishing this repository, add sanitized example overlays and update CI
 to render those examples instead of private environments.

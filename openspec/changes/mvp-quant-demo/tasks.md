@@ -328,3 +328,20 @@ autoresearch experiments against regenerated data.
   validation or empty-database bootstrap validation passes; before that, limit
   autoresearch work to docs, adapters, profile scaffolding, and synthetic metric
   extraction tests
+
+## 24. Tailscale API Server Proxy Deployment Path
+
+The deployment path for tailnet-only clusters should use the Tailscale
+Kubernetes Operator API server proxy rather than exposing kube-apiserver to the
+public internet.
+
+- [x] 24.1 Add a public ProxyGroup example for a high-availability
+  `kube-apiserver` API server proxy
+- [x] 24.2 Add a public Kubernetes RBAC example for GitHub Actions runners
+  authenticated as `tag:ci-deploy`
+- [x] 24.3 Document the private deploy workflow: `tailscale/github-action@v3`,
+  `tailscale configure kubeconfig`, private overlay apply, and rollout checks
+- [x] 24.4 Document tailnet policy shape for `tag:k8s-operator`, `tag:k8s`, and
+  `tag:ci-deploy` without committing real ACL policy
+- [x] 24.5 Document break-glass access when the in-cluster API server proxy is
+  unavailable
