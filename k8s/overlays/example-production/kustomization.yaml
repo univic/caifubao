@@ -53,6 +53,9 @@ images:
 - name: caifubao-datahub
   newName: registry.example.com/your-org/caifubao-datahub
   newTag: prod
+- name: caifubao-mongodb-tools
+  newName: registry.example.com/your-org/caifubao-mongodb-tools
+  newTag: prod
 
 patches:
 - path: backend-secret-env-patch.yaml

@@ -54,3 +54,6 @@ images:
 - name: caifubao-datahub
   newName: registry.example.com/your-org/caifubao-datahub
   newTag: develop
+- name: caifubao-mongodb-tools
+  newName: registry.example.com/your-org/caifubao-mongodb-tools
+  newTag: develop

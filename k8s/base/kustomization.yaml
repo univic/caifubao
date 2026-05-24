@@ -7,3 +7,4 @@ resources:
 - frontend.yaml
 - datahub.yaml
 - compute-worker.yaml
+- mongodb-backup.yaml
