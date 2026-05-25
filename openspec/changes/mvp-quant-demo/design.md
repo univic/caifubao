@@ -25,6 +25,16 @@ OpenClaw ---------------> backend API
    +-- 下游消费行情 / 因子 / 信号 / 评分 / 数据质量，用于投资分析
 ```
 
+Object storage now has two distinct operational roles:
+
+- MongoDB logical archives are disaster-recovery artifacts.
+- Partitioned Parquet exports are research data-lake artifacts for backtests,
+  factor experiments, and future autoresearch inputs.
+
+The application serving path remains MongoDB -> backend API -> frontend.
+Parquet is an offline research input and must not become an implicit dependency
+for online API reads.
+
 ### Boundary Rules
 
 - datahub 只负责生产数据，不负责页面展示。
@@ -155,6 +165,18 @@ OpenClaw 集成已完成，caifubao 作为可靠数据提供方的全部要素�
 
 该阶段先解决“数据能恢复或能重建”的问题，再启动 autoresearch 实验循环。否则
 研究指标会建立在不稳定的数据基线上，实验结果不可比较。
+
+## Research Data Lake Bootstrap
+
+趁集群重初始化前固定最小数据湖边界：
+
+1. 使用与 MongoDB 备份相同的 S3-compatible/COS 能力，但独立 prefix。
+2. datahub 从 MongoDB 导出 `stock_daily_quote`、`stock_factor_daily`、
+   `stock_signal_daily` 为按 `trade_date` 分区的 Parquet。
+3. K8S 中提供默认 suspended 的导出 CronJob，初始化后先手动验证，再决定是否定时。
+4. autoresearch 后续优先读取 Parquet snapshot，而不是直接查询在线 MongoDB。
+
+第一版只做数据集落地，不实现完整实验编排、schema registry 或 artifact lifecycle。
 
 ### 阶段 D：纸上交易验证（2–3 个月）
 

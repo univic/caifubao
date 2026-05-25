@@ -6,6 +6,11 @@ jobs and placeholder values. Real bucket names, endpoints, access keys,
 retention rules, private domains, and operator runbooks belong in
 `caifubao-private`.
 
+Object storage also hosts the research data lake. MongoDB archives under the
+backup prefix are for restore; Parquet files under the data-lake prefix are for
+research, backtests, and future autoresearch inputs. See
+`docs/operations/data-lake.md`.
+
 ## Scope
 
 The resilience path has three layers:
@@ -13,6 +18,10 @@ The resilience path has three layers:
 1. Scheduled logical backups with `mongodump`.
 2. One-shot restore from an approved object-storage artifact.
 3. Empty-database bootstrap validation when no backup can be restored.
+
+The data-lake path is deliberately separate: it can help regenerate and compare
+research datasets, but it is not a substitute for `mongorestore` when
+non-regenerable MongoDB data must be recovered.
 
 This is not a replacement for a durable storage backend. Long-lived clusters
 should still use explicit MongoDB storage planning: StatefulSet or equivalent

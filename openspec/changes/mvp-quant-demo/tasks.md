@@ -345,3 +345,13 @@ public internet.
   `tag:ci-deploy` without committing real ACL policy
 - [x] 24.5 Document break-glass access when the in-cluster API server proxy is
   unavailable
+
+## 25. Research Data Lake Bootstrap
+
+- [x] 25.1 Document MongoDB backup vs Parquet data-lake responsibilities
+- [x] 25.2 Add datahub Parquet export CLI for quotes, factors, and signals
+- [x] 25.3 Add suspended K8S CronJob template for data-lake export
+- [x] 25.4 Keep Tencent COS/S3-compatible virtual addressing in the export client
+- [ ] 25.5 Validate a one-shot export against private COS after cluster init
+- [ ] 25.6 Read back one Parquet partition with DuckDB/pandas/pyarrow
+- [ ] 25.7 Wire autoresearch profile to consume Parquet snapshots
