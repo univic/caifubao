@@ -25,6 +25,16 @@ OpenClaw ---------------> backend API
    +-- 下游消费行情 / 因子 / 信号 / 评分 / 数据质量，用于投资分析
 ```
 
+Object storage now has two distinct operational roles:
+
+- MongoDB logical archives are disaster-recovery artifacts.
+- Partitioned Parquet exports are research data-lake artifacts for backtests,
+  factor experiments, and future autoresearch inputs.
+
+The application serving path remains MongoDB -> backend API -> frontend.
+Parquet is an offline research input and must not become an implicit dependency
+for online API reads.
+
 ### Boundary Rules
 
 - datahub 只负责生产数据，不负责页面展示。
@@ -127,6 +137,46 @@ OpenClaw 集成已完成，caifubao 作为可靠数据提供方的全部要素�
 | 数据质量自动监控 + 告警 | 2.1–2.3, 10.3–10.4 | ✅ 评分质量监控 `/api/decisions/quality` 已实现（命中率、偏移、漂移）。❌ `data_as_of` 未填充(10.3)。❌ 无持久化审计日志。 |
 | 决策日志 + 复盘工具 | 18.6–18.12 | ❌ DecisionJournal 模型未建。✅ 评分预警(18.3)和质量监控(18.4-18.5)已实现。❌ 日志追踪/归因/再平衡预览(18.6-18.12)未实现。 |
 | 监控 / 告警 / 灾备 | — | ❌ Prometheus + Grafana + MongoDB 备份；评分任务失败、数据延迟的自动通知 |
+
+## Cluster Reinitialization and Disaster Recovery
+
+本轮 K3S 重置暴露出一个关键风险：公开示例里的 MongoDB 使用单副本
+`local-path` PVC。该形态适合快速 demo，不适合作为长期数据持久化边界。
+如果 PV/PVC 被删除、节点重装或 local-path 目录被清理，Kubernetes 对象层不会
+保留可恢复状态。
+
+重初始化前应优先完成一条最小但可验证的灾备路径：
+
+1. **对象存储备份**：增加 S3-compatible `mongodump` 备份 CronJob，产出压缩
+   逻辑备份并上传到对象存储。公共仓库只提交 manifest 模板、变量名和验证方式；
+   真实 bucket、endpoint、access key、secret key 和私有 runbook 保留在
+   `caifubao-private`。
+2. **恢复 Job**：增加从对象存储下载备份并执行 `mongorestore` 的一次性 Job
+   模板，恢复后检查关键集合、文档数量和 freshness 标记。
+3. **空库 bootstrap**：当没有可恢复备份时，定义从空 MongoDB 重建 demo-ready
+   数据的顺序：股票主数据、行情、复权/MA/技术因子、信号、评分、freshness 和
+   data quality 状态。
+4. **数据分类**：把可再生市场数据和不可再生业务数据分开处理。行情、因子、
+   信号和评分多为可再生；用户、组合、watchlist、decision journal、service token
+   和审计数据需要备份或明确记录为丢失。
+5. **存储硬化**：长期环境不应只依赖未限定节点的 `local-path`。最低要求是
+   明确节点放置、reclaim policy、备份依赖和恢复流程；更稳妥的路径是引入
+   snapshot-capable 或 replicated storage。
+
+该阶段先解决“数据能恢复或能重建”的问题，再启动 autoresearch 实验循环。否则
+研究指标会建立在不稳定的数据基线上，实验结果不可比较。
+
+## Research Data Lake Bootstrap
+
+趁集群重初始化前固定最小数据湖边界：
+
+1. 使用与 MongoDB 备份相同的 S3-compatible/COS 能力，但独立 prefix。
+2. datahub 从 MongoDB 导出 `stock_daily_quote`、`stock_factor_daily`、
+   `stock_signal_daily` 为按 `trade_date` 分区的 Parquet。
+3. K8S 中提供默认 suspended 的导出 CronJob，初始化后先手动验证，再决定是否定时。
+4. autoresearch 后续优先读取 Parquet snapshot，而不是直接查询在线 MongoDB。
+
+第一版只做数据集落地，不实现完整实验编排、schema registry 或 artifact lifecycle。
 
 ### 阶段 D：纸上交易验证（2–3 个月）
 

@@ -27,6 +27,14 @@ configMapGenerator:
 - name: frontend-config
   literals:
   - VITE_API_BASE_URL=/api
+- name: data-lake-export-config
+  behavior: replace
+  literals:
+  - DATA_LAKE_ENDPOINT_URL=https://s3.example.com
+  - DATA_LAKE_REGION=auto
+  - DATA_LAKE_BUCKET=caifubao-data-lake-example
+  - DATA_LAKE_PREFIX=data-lake
+  - DATA_LAKE_LOOKBACK_DAYS=7
 
 secretGenerator:
 - name: backend-secret
@@ -43,6 +51,11 @@ secretGenerator:
 - name: mongodb-secret
   literals:
   - MONGODB_ROOT_PASSWORD=change-me-example
+- name: data-lake-export-secret
+  behavior: replace
+  literals:
+  - AWS_ACCESS_KEY_ID=change-me-example
+  - AWS_SECRET_ACCESS_KEY=change-me-example
 
 images:
 - name: caifubao-backend
@@ -53,4 +66,7 @@ images:
   newTag: develop
 - name: caifubao-datahub
   newName: registry.example.com/your-org/caifubao-datahub
+  newTag: develop
+- name: caifubao-mongodb-tools
+  newName: registry.example.com/your-org/caifubao-mongodb-tools
   newTag: develop

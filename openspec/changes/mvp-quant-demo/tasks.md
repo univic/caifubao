@@ -1,12 +1,12 @@
 # MVP Quant Demo Tasks
 
-> **Status (2026-05-23)**: Development complete. Phases 13–19 (strategy discovery,
+> **Status (2026-05-25)**: Development complete. Phases 13–19 (strategy discovery,
 > grid search, factor eval, walk-forward, decision dashboard, OpenClaw) all built
 > with backend, frontend, and 34 tests. Sections 12a-d partially done.
 > 
 > **Remaining**: Documentation (§1-6, 10.8, 11.6), operational validation
-> (§12d.5-6, 12e.5, 13.10, 20.1-5 — needs running environment), and
-> Autoresearch design (§22).
+> (§12d.5-6, 12e.5, 13.10, 20.1-5 — needs running environment),
+> Autoresearch design (§22), and cluster reinitialization resilience (§23).
 
 ## 1. Spec Alignment
 
@@ -296,3 +296,62 @@ investment advice or guaranteed profit.
 - [ ] 22.8 Document that autoresearch output is research evidence only; any
   production promotion still requires OpenSpec review, model version bump,
   calibration comparison, and normal validation gates
+
+## 23. Cluster Reinitialization and Operational Resilience
+
+The current K3S reset makes operational resilience the next implementation
+gate. Finish these before treating the new cluster as durable or starting real
+autoresearch experiments against regenerated data.
+
+- [x] 23.1 Add public S3-compatible backup manifest templates for MongoDB
+  logical dumps; keep real bucket, endpoint, access key, secret key, and
+  retention values in private deployment configuration
+- [x] 23.2 Add backup job status output that records start time, finish time,
+  object key, database name, namespace, status, and sanitized error summary
+- [x] 23.3 Add a one-shot restore job template that downloads an approved backup
+  artifact and runs `mongorestore` into a fresh MongoDB instance
+- [x] 23.4 Add post-restore sanity checks for required collections, document
+  counts, freshness metadata, backend health, data quality summary, and
+  OpenClaw read endpoints
+- [x] 23.5 Document empty-database bootstrap order: stock master, historical
+  quotes, FQ/MA/technical factors, signals, scores, data quality, and freshness
+  status
+- [x] 23.6 Document data survivability classes: regenerable market data vs
+  non-regenerable users, portfolios, watchlists, decision journal, service
+  tokens, audit logs, and task history
+- [x] 23.7 Harden MongoDB storage planning for long-lived clusters: StatefulSet
+  or equivalent identity, explicit PVC/reclaim policy, node placement notes,
+  and backup dependency
+- [x] 23.8 Add an operator validation command path through `./scripts/caifubao`
+  or documented kubectl commands for backup, restore, and bootstrap readiness
+- [x] 23.9 Prepare autoresearch implementation only after either restore
+  validation or empty-database bootstrap validation passes; before that, limit
+  autoresearch work to docs, adapters, profile scaffolding, and synthetic metric
+  extraction tests
+
+## 24. Tailscale API Server Proxy Deployment Path
+
+The deployment path for tailnet-only clusters should use the Tailscale
+Kubernetes Operator API server proxy rather than exposing kube-apiserver to the
+public internet.
+
+- [x] 24.1 Add a public ProxyGroup example for a high-availability
+  `kube-apiserver` API server proxy
+- [x] 24.2 Add a public Kubernetes RBAC example for GitHub Actions runners
+  authenticated as `tag:ci-deploy`
+- [x] 24.3 Document the private deploy workflow: `tailscale/github-action@v3`,
+  `tailscale configure kubeconfig`, private overlay apply, and rollout checks
+- [x] 24.4 Document tailnet policy shape for `tag:k8s-operator`, `tag:k8s`, and
+  `tag:ci-deploy` without committing real ACL policy
+- [x] 24.5 Document break-glass access when the in-cluster API server proxy is
+  unavailable
+
+## 25. Research Data Lake Bootstrap
+
+- [x] 25.1 Document MongoDB backup vs Parquet data-lake responsibilities
+- [x] 25.2 Add datahub Parquet export CLI for quotes, factors, and signals
+- [x] 25.3 Add suspended K8S CronJob template for data-lake export
+- [x] 25.4 Keep Tencent COS/S3-compatible virtual addressing in the export client
+- [ ] 25.5 Validate a one-shot export against private COS after cluster init
+- [ ] 25.6 Read back one Parquet partition with DuckDB/pandas/pyarrow
+- [ ] 25.7 Wire autoresearch profile to consume Parquet snapshots

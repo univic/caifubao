@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongodb-s3-restore
+  labels:
+    app: mongodb
+    job.caifubao.io/type: mongodb-restore
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 7200
+  template:
+    metadata:
+      labels:
+        app: mongodb
+        job.caifubao.io/type: mongodb-restore
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: mongodb-restore
+        image: caifubao-mongodb-tools:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c"]
+        args:
+        - /scripts/restore.sh && /scripts/sanity-check.sh
+        envFrom:
+        - configMapRef:
+            name: mongodb-backup-config
+        - secretRef:
+            name: mongodb-backup-secret
+        env:
+        - name: MONGODB_RESTORE_OBJECT_KEY
+          value: "mongodb/caifubao/YYYYMMDDTHHMMSSZ.archive.gz"
+        - name: MONGODB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_HOST
+        - name: MONGODB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_PORT
+        - name: MONGODB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_USER
+        - name: MONGODB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secret
+              key: MONGODB_ROOT_PASSWORD
+        volumeMounts:
+        - name: aws-config
+          mountPath: /root/.aws
+          readOnly: true
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: work
+          mountPath: /work
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: aws-config
+        configMap:
+          name: mongodb-backup-scripts
+          items:
+          - key: aws-config
+            path: config
+      - name: scripts
+        configMap:
+          name: mongodb-backup-scripts
+          defaultMode: 0755
+      - name: work
+        emptyDir: {}

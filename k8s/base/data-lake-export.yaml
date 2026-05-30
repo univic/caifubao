@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data-lake-export-config
+data:
+  DATA_LAKE_ENDPOINT_URL: "https://s3.example.com"
+  DATA_LAKE_REGION: "auto"
+  DATA_LAKE_BUCKET: "caifubao-data-lake-example"
+  DATA_LAKE_PREFIX: "data-lake"
+  DATA_LAKE_LOOKBACK_DAYS: "7"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: data-lake-export-secret
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: "change-me-example"
+  AWS_SECRET_ACCESS_KEY: "change-me-example"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: caifubao-datahub-parquet-export
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: parquet-export
+spec:
+  schedule: "45 18 * * *"
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  suspend: true
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 7200
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: caifubao-datahub
+            job.caifubao.io/type: parquet-export
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: parquet-export
+            image: caifubao-datahub:latest
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/sh
+            - -ec
+            - >
+              python -m app.jobs.parquet_export_runner export
+              --dataset all
+              --lookback-days "${DATA_LAKE_LOOKBACK_DAYS:-7}"
+            envFrom:
+            - configMapRef:
+                name: data-lake-export-config
+            - secretRef:
+                name: data-lake-export-secret
+            env:
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_HOST
+            - name: MONGODB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_PORT
+            - name: MONGODB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_NAME
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_USER
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: MONGODB_PASSWORD
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "200m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+          imagePullSecrets:
+          - name: ccr-secret

@@ -20,6 +20,10 @@ platform via the unified CLI and Makefile.
 ./scripts/caifubao data sync 2026-05-18
 ./scripts/caifubao score score-all 2026-05-18
 ./scripts/caifubao data refresh-status
+
+# Check backup and bootstrap readiness
+./scripts/caifubao system backup status
+./scripts/caifubao system bootstrap-check
 ```
 
 ## Environment
@@ -146,6 +150,43 @@ Manage dev CronJobs.
 ./scripts/caifubao system cron suspend caifubao-datahub-quote-stock
 ```
 
+#### `system backup [status|trigger|logs] [name]`
+Manage the public-safe MongoDB object-storage backup CronJob.
+
+```
+./scripts/caifubao system backup status
+./scripts/caifubao system backup trigger
+./scripts/caifubao system backup logs
+```
+
+The public manifest is suspended by default and uses placeholder object-storage
+settings. Private overlays must provide real S3-compatible endpoint, bucket,
+credentials, and retention policy before enabling the CronJob.
+
+#### `system restore [status|logs|template] [object-key]`
+Inspect restore jobs or render the public restore template with an object key.
+The rendered template still needs private overlay review before it is applied.
+
+```
+./scripts/caifubao system restore status
+./scripts/caifubao system restore logs
+./scripts/caifubao system restore template mongodb/caifubao/20260525T010000Z.archive.gz
+```
+
+The restore template runs `mongorestore --drop`; never apply it to a live
+database without an approved restore window.
+
+#### `system bootstrap-check`
+Check whether a regenerated MongoDB dataset has the minimum collections needed
+for a demo-ready environment.
+
+```
+./scripts/caifubao system bootstrap-check
+```
+
+This command verifies required MongoDB collections from inside the datahub pod.
+It exits non-zero when required collections are missing.
+
 ## Common Workflows
 
 ### Workflow 1: Score a stock after syncing latest data
@@ -199,6 +240,26 @@ curl -s http://api.dev.cfb.concorde102.cn/api/market/comprehensive?date=$(date +
 ./scripts/caifubao score score-all 2026-05-18
 ```
 
+### Workflow 4: Post-reset bootstrap readiness
+
+```bash
+# 1. Confirm core services and MongoDB are reachable
+./scripts/caifubao system health
+
+# 2. Regenerate or sync the required market data
+./scripts/caifubao data sync 2026-01-01
+./scripts/caifubao data refresh-status
+./scripts/caifubao score score-all 2026-05-18
+
+# 3. Confirm the regenerated database is demo-ready
+./scripts/caifubao system bootstrap-check
+
+# 4. Confirm object-storage backup wiring before adding non-regenerable data
+./scripts/caifubao system backup status
+./scripts/caifubao system backup trigger
+./scripts/caifubao system backup logs
+```
+
 ## Architecture Notes
 
 ### Module boundaries
@@ -206,6 +267,8 @@ curl -s http://api.dev.cfb.concorde102.cn/api/market/comprehensive?date=$(date +
 - `backend/` — exposes Flask APIs, auth, light aggregation
 - `frontend/` — consumes backend APIs, renders UX
 - Dev CronJobs — suspended by default; use CLI for manual operations
+- MongoDB backup CronJob — public template is suspended by default; private
+  overlays must provide real object-storage config before enabling it
 
 ### Data pipeline dependency chain
 ```

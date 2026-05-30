@@ -21,6 +21,9 @@
 #   system
 #     health                Check all MongoDB connections
 #     cron SUBCOMMAND       Manage dev CronJobs (status/list/trigger)
+#     backup SUBCOMMAND     Manage MongoDB object-storage backups
+#     restore SUBCOMMAND    Inspect MongoDB restore jobs/templates
+#     bootstrap-check       Check whether regenerated MongoDB data is demo-ready
 #     pod                   Print current datahub pod name
 #
 #   dev (local only)
@@ -294,6 +297,113 @@ cmd_system_cron() {
   esac
 }
 
+cmd_system_backup() {
+  local sub="${1:-status}"
+  case "$sub" in
+    status|list)
+      _kubectl -n "$CFB_NAMESPACE" get cronjob mongodb-s3-backup -o wide
+      _kubectl -n "$CFB_NAMESPACE" get jobs -l job.caifubao.io/type=mongodb-backup -o wide
+      ;;
+    trigger)
+      local job_name="${2:-mongodb-s3-backup-manual-$(date +%s)}"
+      info "Triggering MongoDB backup CronJob → $job_name..."
+      _kubectl -n "$CFB_NAMESPACE" create job --from=cronjob/mongodb-s3-backup "$job_name"
+      ;;
+    logs)
+      local job="${2:-}"
+      if [[ -z "$job" ]]; then
+        job="$(_kubectl -n "$CFB_NAMESPACE" get jobs -l job.caifubao.io/type=mongodb-backup \
+          --sort-by=.metadata.creationTimestamp \
+          -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | tail -n 1 || true)"
+      fi
+      [[ -z "$job" ]] && die "No MongoDB backup job found in namespace $CFB_NAMESPACE"
+      _kubectl -n "$CFB_NAMESPACE" logs "job/$job"
+      ;;
+    *)
+      die "Unknown backup subcommand: $sub (use: status|trigger|logs)"
+      ;;
+  esac
+}
+
+cmd_system_restore() {
+  local sub="${1:-status}"
+  case "$sub" in
+    status|list)
+      _kubectl -n "$CFB_NAMESPACE" get jobs -l job.caifubao.io/type=mongodb-restore -o wide
+      ;;
+    logs)
+      local job="${2:-}"
+      if [[ -z "$job" ]]; then
+        job="$(_kubectl -n "$CFB_NAMESPACE" get jobs -l job.caifubao.io/type=mongodb-restore \
+          --sort-by=.metadata.creationTimestamp \
+          -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | tail -n 1 || true)"
+      fi
+      [[ -z "$job" ]] && die "No MongoDB restore job found in namespace $CFB_NAMESPACE"
+      _kubectl -n "$CFB_NAMESPACE" logs "job/$job"
+      ;;
+    template)
+      local object_key="${2:-}"
+      [[ -z "$object_key" ]] && die "Usage: caifubao system restore template <S3_OBJECT_KEY>"
+      sed "s|mongodb/caifubao/YYYYMMDDTHHMMSSZ.archive.gz|$object_key|g" \
+        "$ROOT_DIR/k8s/base/mongodb-restore-job.example.yaml"
+      ;;
+    *)
+      die "Unknown restore subcommand: $sub (use: status|logs|template)"
+      ;;
+  esac
+}
+
+cmd_system_bootstrap_check() {
+  info "Checking regenerated MongoDB dataset readiness..."
+  _pod_exec python3 -c "
+from pymongo import MongoClient
+import os, json, sys
+
+required = {
+    'basic_stock': 1,
+    'stock_daily_quote': 1,
+    'stock_factor_daily': 1,
+    'data_asset_status': 1,
+}
+optional = [
+    'stock_signal_daily',
+    'stock_score_predictions',
+    'datahub_job_runs',
+]
+
+c = MongoClient(host=os.environ['MONGODB_HOST'], port=int(os.environ['MONGODB_PORT']),
+    username=os.environ['MONGODB_USER'], password=os.environ['MONGODB_PASS'],
+    authSource='admin', serverSelectionTimeoutMS=5000)
+c.admin.command('ping')
+db = c[os.environ['MONGODB_NAME']]
+collections = set(db.list_collection_names())
+result = {'database': os.environ['MONGODB_NAME'], 'collections': {}, 'missing_required': []}
+
+for name, minimum in required.items():
+    count = db[name].estimated_document_count() if name in collections else 0
+    result['collections'][name] = {'required': True, 'count': count, 'minimum': minimum}
+    if count < minimum:
+        result['missing_required'].append(name)
+
+for name in optional:
+    count = db[name].estimated_document_count() if name in collections else 0
+    result['collections'][name] = {'required': False, 'count': count}
+
+freshness = None
+if 'data_asset_status' in collections:
+    doc = db.data_asset_status.find_one(sort=[('updated_at', -1)])
+    if doc:
+        freshness = {
+            'object_code': doc.get('object_code'),
+            'quote_status': doc.get('quote_status'),
+            'updated_at': str(doc.get('updated_at')),
+        }
+result['freshness_sample'] = freshness
+print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+sys.exit(1 if result['missing_required'] else 0)
+"
+}
+
 cmd_system_pod() {
   _pod_name
 }
@@ -339,6 +449,11 @@ System:
   system health                       Full environment health check
   system cron [status|trigger|suspend|resume] <name>
                                       Manage dev CronJobs
+  system backup [status|trigger|logs] [name]
+                                      Manage MongoDB S3-compatible backups
+  system restore [status|logs|template] [object-key]
+                                      Inspect or render MongoDB restore jobs
+  system bootstrap-check              Check regenerated MongoDB data readiness
   system pod                          Print current datahub pod name
 
 Dev (local):
@@ -384,8 +499,11 @@ main() {
       case "$cmd" in
         health)         cmd_system_health ;;
         cron)           cmd_system_cron "$@" ;;
+        backup)         cmd_system_backup "$@" ;;
+        restore)        cmd_system_restore "$@" ;;
+        bootstrap-check) cmd_system_bootstrap_check ;;
         pod)            cmd_system_pod ;;
-        *)              die "Unknown system command: $cmd (use: health|cron|pod)" ;;
+        *)              die "Unknown system command: $cmd (use: health|cron|backup|restore|bootstrap-check|pod)" ;;
       esac
       ;;
     dev)

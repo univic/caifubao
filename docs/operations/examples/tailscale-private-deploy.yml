@@ -1,0 +1,46 @@
+name: Deploy Through Tailscale API Server Proxy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target private overlay environment
+        required: true
+        default: development
+        type: choice
+        options:
+          - development
+          - production
+      image_tag:
+        description: Immutable image tag to deploy
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Connect to tailnet
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_CI_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_CI_OAUTH_SECRET }}
+          tags: tag:ci-deploy
+
+      - name: Configure kubeconfig through API server proxy
+        run: tailscale configure kubeconfig "${{ secrets.TS_KUBEAPI_PROXY_URL }}"
+
+      - name: Render private overlay
+        run: kubectl kustomize "k8s/overlays/${{ inputs.environment }}" >/tmp/caifubao-rendered.yaml
+
+      - name: Deploy private overlay
+        run: |
+          kubectl apply -f /tmp/caifubao-rendered.yaml
+          kubectl -n "${{ secrets.CFB_NAMESPACE }}" rollout status deploy/caifubao-backend
+          kubectl -n "${{ secrets.CFB_NAMESPACE }}" rollout status deploy/caifubao-datahub
+          kubectl -n "${{ secrets.CFB_NAMESPACE }}" rollout status deploy/caifubao-frontend
