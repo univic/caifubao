@@ -62,7 +62,9 @@ def _parse_date(value: str | None) -> dt.datetime | None:
     return parsed.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def _date_from_lookback(days: int | None, today: dt.date | None = None) -> dt.datetime | None:
+def _date_from_lookback(
+    days: int | None, today: dt.date | None = None
+) -> dt.datetime | None:
     if days is None:
         return None
     base = today or dt.datetime.now(dt.timezone.utc).date()
@@ -118,9 +120,7 @@ def _normalize_doc(doc: dict[str, Any], config: DatasetConfig) -> dict[str, Any]
 
 def _object_key(prefix: str, dataset_path: str, trade_date: str) -> str:
     safe_prefix = prefix.strip("/")
-    return (
-        f"{safe_prefix}/{dataset_path}/trade_date={trade_date}/part-{trade_date}.parquet"
-    )
+    return f"{safe_prefix}/{dataset_path}/trade_date={trade_date}/part-{trade_date}.parquet"
 
 
 def _write_parquet(rows: list[dict[str, Any]], destination: Path) -> None:
@@ -229,11 +229,13 @@ def run_export(args: argparse.Namespace) -> dict[str, Any]:
         from_date = _date_from_lookback(args.lookback_days)
     to_date = _parse_date(args.to_date)
     prefix = args.prefix or os.getenv("DATA_LAKE_PREFIX", "data-lake")
-    endpoint_url = args.endpoint_url or os.getenv("DATA_LAKE_ENDPOINT_URL") or os.getenv(
-        "AWS_ENDPOINT_URL"
+    endpoint_url = (
+        args.endpoint_url
+        or os.getenv("DATA_LAKE_ENDPOINT_URL")
+        or os.getenv("AWS_ENDPOINT_URL")
     )
-    region_name = args.region or os.getenv("DATA_LAKE_REGION") or os.getenv(
-        "AWS_DEFAULT_REGION"
+    region_name = (
+        args.region or os.getenv("DATA_LAKE_REGION") or os.getenv("AWS_DEFAULT_REGION")
     )
 
     results = [

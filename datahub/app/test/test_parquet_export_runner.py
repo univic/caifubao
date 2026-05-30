@@ -38,6 +38,7 @@ def test_normalize_doc_adds_trade_date_and_drops_private_fields():
 
 
 def test_object_key_uses_partitioned_layout():
-    assert runner._object_key(
-        "data-lake", "china-a/daily_quotes", "2026-05-25"
-    ) == "data-lake/china-a/daily_quotes/trade_date=2026-05-25/part-2026-05-25.parquet"
+    assert (
+        runner._object_key("data-lake", "china-a/daily_quotes", "2026-05-25")
+        == "data-lake/china-a/daily_quotes/trade_date=2026-05-25/part-2026-05-25.parquet"
+    )
