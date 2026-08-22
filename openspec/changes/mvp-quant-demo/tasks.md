@@ -328,6 +328,11 @@ autoresearch experiments against regenerated data.
   validation or empty-database bootstrap validation passes; before that, limit
   autoresearch work to docs, adapters, profile scaffolding, and synthetic metric
   extraction tests
+- [ ] 23.10 Implement the approved MongoDB storage plan: convert the public
+  workload to StatefulSet, bind private development and production to separate
+  static local PVs with `Retain` policy and explicit node/path affinity, verify
+  pod recreation and rendered node placement, and document the remaining COS
+  backup dependency
 
 ## 24. Tailscale API Server Proxy Deployment Path
 

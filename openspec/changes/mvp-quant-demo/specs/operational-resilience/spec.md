@@ -95,6 +95,18 @@ durability mechanism for MongoDB in long-lived environments.
 - **AND** scheduled object-storage backups SHALL be enabled before meaningful
   non-regenerable data is created.
 
+#### Scenario: static local storage is used for a long-lived single-node workload
+
+- **GIVEN** replicated or snapshot-capable storage is not available
+- **WHEN** MongoDB uses a static local persistent volume
+- **THEN** the PV SHALL use the `Retain` reclaim policy and identify an explicit
+  host path and node affinity
+- **AND** the MongoDB workload SHALL be constrained to the node that owns that
+  path
+- **AND** development and production SHALL use separate volumes and paths
+- **AND** operators SHALL treat COS logical backups, rather than the local PV,
+  as the node-loss recovery boundary.
+
 ### Requirement: Autoresearch Implementation Readiness
 
 Autoresearch scaffolding SHALL start only after the repository has a documented

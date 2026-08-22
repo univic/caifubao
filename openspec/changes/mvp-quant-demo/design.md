@@ -163,6 +163,14 @@ OpenClaw 集成已完成，caifubao 作为可靠数据提供方的全部要素�
    明确节点放置、reclaim policy、备份依赖和恢复流程；更稳妥的路径是引入
    snapshot-capable 或 replicated storage。
 
+当前集群没有独立数据盘，部分节点可用空间不足以安全运行 replicated storage。
+本轮先把公共 MongoDB 工作负载改为单副本 StatefulSet；私有环境使用显式 static
+local PV、`Retain` reclaim policy、固定节点亲和和固定宿主机目录。development 与
+production 使用独立 PV 和目录。该方案只防止工作负载漂移和 PVC 生命周期误删，
+不提供节点级高可用；节点或目录损坏仍必须通过 COS `mongodump` 逻辑备份恢复。
+未来具备独立磁盘或稳定低延迟存储网络后，再迁移到 snapshot-capable 或
+replicated storage。
+
 该阶段先解决“数据能恢复或能重建”的问题，再启动 autoresearch 实验循环。否则
 研究指标会建立在不稳定的数据基线上，实验结果不可比较。
 
