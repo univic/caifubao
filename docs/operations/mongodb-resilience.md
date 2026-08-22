@@ -23,10 +23,27 @@ The data-lake path is deliberately separate: it can help regenerate and compare
 research datasets, but it is not a substitute for `mongorestore` when
 non-regenerable MongoDB data must be recovered.
 
-This is not a replacement for a durable storage backend. Long-lived clusters
-should still use explicit MongoDB storage planning: StatefulSet or equivalent
-identity, PVC/reclaim policy, node placement assumptions, and a backup
-dependency.
+The public MongoDB workload uses a single-replica StatefulSet with an external
+PVC. The StatefulSet provides stable Pod identity and controller semantics.
+Private node selectors and PV node affinity prevent storage-node drift; private
+overlays must still choose the storage class, reclaim policy, placement, and
+backup dependency. None of these make a single local volume highly available.
+
+When replicated or snapshot-capable storage is unavailable, a static local PV
+is an acceptable interim boundary only when it uses `Retain`, an explicit host
+path and node affinity, separate development and production volumes, and an
+enabled COS logical backup. Before applying such an overlay, create the host
+directories on the selected node and restrict access to the MongoDB container
+runtime. Deleting a StatefulSet or retaining a PV is not a backup: node or disk
+loss still requires restore from object storage.
+
+Changing `Deployment/mongodb` to `StatefulSet/mongodb` is not an in-place
+Kubernetes conversion. Existing clusters must first create a verified backup,
+scale the old Deployment to zero, wait for its Pod to exit, and inspect the
+PVC/PV before deleting the old controller. A PVC storage class is immutable;
+move existing data through an approved backup/restore flow instead of patching
+the old PVC. Never allow the old Deployment and new StatefulSet to run against
+the same MongoDB volume.
 
 ## Backup Template
 
