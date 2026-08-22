@@ -11,6 +11,7 @@ on:
 env:
   NODE_VERSION: '20'
   PYTHON_VERSION: '3.12'
+  RUFF_VERSION: '0.15.15'
 
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -70,7 +71,7 @@ jobs:
           set_output backend '^(backend/|Makefile$|scripts/seed_score_demo\.py$|\.github/workflows/ci\.yml$)'
           set_output frontend '^(frontend/|\.env\.example$|Makefile$|\.github/workflows/ci\.yml$)'
           set_output datahub '^(datahub/|backend/app/model/|backend/app/utilities/|\.github/workflows/ci\.yml$)'
-          set_output docker '^(backend/Dockerfile|datahub/Dockerfile|frontend/Dockerfile|\.github/workflows/ci\.yml$)'
+          set_output docker '^(backend/Dockerfile|datahub/Dockerfile|frontend/Dockerfile|tools/mongodb-tools/Dockerfile|\.github/workflows/ci\.yml$)'
           set_output k8s '^(k8s/|\.github/workflows/ci\.yml$)'
           set_output openspec '^(openspec/|\.github/workflows/ci\.yml$)'
           set_output ci '^\.github/workflows/.*\.yml$'
@@ -142,7 +143,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Ruff
-        run: pip install ruff
+        run: pip install "ruff==${RUFF_VERSION}"
 
       - name: Run Ruff
         run: |
@@ -201,7 +202,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Ruff
-        run: pip install ruff
+        run: pip install "ruff==${RUFF_VERSION}"
 
       - name: Run Ruff
         run: |
@@ -238,6 +239,12 @@ jobs:
           echo "Checking frontend/Dockerfile..."
           docker buildx build --check -f ./frontend/Dockerfile ./frontend
           echo "Frontend Dockerfile is valid"
+
+      - name: Check MongoDB Tools Dockerfile
+        run: |
+          echo "Checking tools/mongodb-tools/Dockerfile..."
+          docker buildx build --check -f ./tools/mongodb-tools/Dockerfile ./tools/mongodb-tools
+          echo "MongoDB tools Dockerfile is valid"
 
       - name: Summary
         run: echo "All Dockerfiles are valid!"
