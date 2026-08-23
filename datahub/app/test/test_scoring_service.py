@@ -325,7 +325,8 @@ def test_verification_transitions_to_verified(scoring_service):
     assert prediction.status == "VERIFIED"
     assert prediction.verification["verified_quote_count"] == 5
     assert prediction.verification["max_return"] > 0
-    assert prediction.verification["hit_target"] is True
+    assert prediction.verification["hit_target_close"] is True
+    assert prediction.verification["hit_target_intra"] is True
 
 
 def test_replay_backfills_trading_dates(scoring_service):
@@ -362,7 +363,8 @@ def test_calibration_report_summarizes_verified_predictions():
                 "max_return": 0.08,
                 "min_return": -0.01,
                 "max_drawdown": -0.01,
-                "hit_target": True,
+                "hit_target_close": True,
+                "hit_target_intra": True,
                 "hit_stop_loss": False,
             },
             explanation={
@@ -385,7 +387,8 @@ def test_calibration_report_summarizes_verified_predictions():
                 "max_return": 0.09,
                 "min_return": -0.03,
                 "max_drawdown": -0.03,
-                "hit_target": True,
+                "hit_target_close": False,
+                "hit_target_intra": True,
                 "hit_stop_loss": False,
             },
             explanation={"components": []},
@@ -402,3 +405,108 @@ def test_calibration_report_summarizes_verified_predictions():
     assert report["top_n"]["top_10"]["count"] == 2
     assert report["component_summary"]["signal_strength"]["count"] == 1
     assert report["false_negatives"][0]["stock_code"] == "sh600001"
+
+
+# ---------------------------------------------------------------------------
+# Hybrid _recommendation() tests (Task 12d.6)
+# ---------------------------------------------------------------------------
+
+
+class TestHybridRecommendation:
+    """Unit tests for the hybrid percentile+absolute recommendation logic."""
+
+    @staticmethod
+    def _cfg(**overrides):
+        """Build a minimal config dict for _recommendation()."""
+        return {
+            "buy_threshold": 70.0,
+            "watch_threshold": 50.0,
+            "avoid_threshold": 20.0,
+            "buy_percentile": 0.95,
+            "watch_percentile": 0.80,
+            "avoid_percentile": 0.20,
+            **overrides,
+        }
+
+    # --- Hybrid path (percentile provided) ---
+
+    def test_hybrid_buy(self, scoring_service):
+        """score>=70 AND pct>=0.95 → BUY"""
+        cfg = self._cfg()
+        assert scoring_service._recommendation(80.0, cfg, 0.97) == "BUY"
+        assert scoring_service._recommendation(70.0, cfg, 0.95) == "BUY"
+
+    def test_hybrid_strong_score_weak_pct(self, scoring_service):
+        """score>=70 but pct<0.95 → WATCH (strong absolute, weak relative)"""
+        cfg = self._cfg()
+        assert scoring_service._recommendation(75.0, cfg, 0.80) == "WATCH"
+        assert scoring_service._recommendation(85.0, cfg, 0.50) == "WATCH"
+
+    def test_hybrid_weak_score_strong_pct(self, scoring_service):
+        """score between watch and buy, pct>=0.80 → WATCH"""
+        cfg = self._cfg()
+        assert scoring_service._recommendation(55.0, cfg, 0.90) == "WATCH"
+        assert scoring_service._recommendation(60.0, cfg, 0.96) == "WATCH"
+
+    def test_hybrid_avoid_by_percentile(self, scoring_service):
+        """score>20 but pct<=0.20 → AVOID (bottom 20%)"""
+        cfg = self._cfg()
+        assert scoring_service._recommendation(25.0, cfg, 0.10) == "AVOID"
+        assert scoring_service._recommendation(30.0, cfg, 0.05) == "AVOID"
+
+    def test_hybrid_avoid_by_absolute(self, scoring_service):
+        """score<=20 → AVOID regardless of percentile"""
+        cfg = self._cfg()
+        assert scoring_service._recommendation(20.0, cfg, 0.99) == "AVOID"
+        assert scoring_service._recommendation(10.0, cfg, 0.50) == "AVOID"
+
+    def test_hybrid_none(self, scoring_service):
+        """score between avoid and watch, pct between avoid and watch → NONE"""
+        cfg = self._cfg()
+        assert scoring_service._recommendation(25.0, cfg, 0.50) == "NONE"
+        assert scoring_service._recommendation(40.0, cfg, 0.60) == "NONE"
+
+    def test_hybrid_boundaries(self, scoring_service):
+        """Exact boundary values: score=70.0/50.0/20.0, pct=0.95/0.80/0.20"""
+        cfg = self._cfg()
+        # At BUY boundary
+        assert scoring_service._recommendation(70.0, cfg, 0.95) == "BUY"
+        assert scoring_service._recommendation(70.0, cfg, 0.94) == "WATCH"
+        # At WATCH boundary
+        assert scoring_service._recommendation(50.0, cfg, 0.80) == "WATCH"
+        assert scoring_service._recommendation(50.0, cfg, 0.79) == "NONE"
+        # At AVOID boundary
+        assert scoring_service._recommendation(20.0, cfg, 0.99) == "AVOID"
+        assert scoring_service._recommendation(20.1, cfg, 0.21) == "NONE"
+
+    # --- Fallback path (percentile=None or 0.0) ---
+
+    def test_fallback_high_score_returns_watch(self, scoring_service):
+        """score>=70 with no percentile → WATCH (safe placeholder)"""
+        cfg = self._cfg()
+        assert scoring_service._recommendation(80.0, cfg, None) == "WATCH"
+        assert scoring_service._recommendation(70.0, cfg, 0.0) == "WATCH"
+
+    def test_fallback_mid_score(self, scoring_service):
+        """50<=score<70 with no percentile → WATCH"""
+        cfg = self._cfg()
+        assert scoring_service._recommendation(60.0, cfg, None) == "WATCH"
+
+    def test_fallback_avoid(self, scoring_service):
+        """score<=20 with no percentile → AVOID"""
+        cfg = self._cfg()
+        assert scoring_service._recommendation(15.0, cfg, None) == "AVOID"
+        assert scoring_service._recommendation(0.0, cfg, 0.0) == "AVOID"
+
+    def test_fallback_none(self, scoring_service):
+        """20<score<50 with no percentile → NONE"""
+        cfg = self._cfg()
+        assert scoring_service._recommendation(30.0, cfg, None) == "NONE"
+
+    # --- Old config compatibility (no percentile keys) ---
+
+    def test_old_config_fallback(self, scoring_service):
+        """Config without percentile keys uses defaults (0.95/0.80/0.20)"""
+        cfg = {"buy_threshold": 70.0, "watch_threshold": 50.0, "avoid_threshold": 20.0}
+        assert scoring_service._recommendation(80.0, cfg, 0.97) == "BUY"
+        assert scoring_service._recommendation(25.0, cfg, 0.10) == "AVOID"

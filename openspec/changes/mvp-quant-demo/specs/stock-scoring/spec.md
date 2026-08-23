@@ -126,6 +126,27 @@ Datahub SHALL be able to replay a stored score experiment using its saved factor
 - **AND** backfill predictions under the experiment model version
 - **AND** verify predictions and write reports back to the experiment when not in dry-run mode.
 
+### Requirement: Automated Grid Experiment Generation
+
+Datahub SHALL support automated batch creation of score experiments from
+parameter grids to enable systematic exploration of factor weight and
+threshold configurations.
+
+#### Scenario: Operator generates experiments from weight and threshold grids
+
+- **GIVEN** a weight grid (e.g., `"momentum": [20, 25]`) and a threshold grid
+  (e.g., `"buy_threshold": [60, 70]`)
+- **WHEN** the grid-search CLI command is invoked with a date range and
+  configuration prefix
+- **THEN** datahub SHALL create one `ScoreExperiment` per Cartesian product
+  combination of weight values × threshold values per horizon
+- **AND** each experiment SHALL receive a unique `model_version` derived from
+  the naming prefix and a combination suffix
+- **AND** the operator SHALL be able to preview generated experiments via
+  `--dry-run` without writing to the database
+- **AND** experiments SHALL be replayable through the existing
+  `scoring_runner experiment --id <id>` command.
+
 ### Requirement: Score Read APIs
 
 The backend SHALL expose score predictions through stable read APIs.
@@ -162,3 +183,134 @@ The market comprehensive API SHALL include multi-horizon score summaries.
 - **WHEN** `/api/market/comprehensive` is requested with a selected horizon
 - **THEN** the response SHALL use the selected horizon for display ranking
 - **AND** include score summaries for all three horizons when available.
+
+### Requirement: Score Distribution Calibration
+
+The scoring system SHALL support distribution calibration to prevent
+overly conservative or aggressive score ranges that produce too few
+actionable signals. Calibration SHALL use full-market statistics, not
+single-stock observations.
+
+#### Scenario: Full-market distribution is used for calibration
+
+- **GIVEN** score predictions exist for all active A-share stocks over
+  a date range for a given horizon and model version
+- **WHEN** a calibration analysis is requested
+- **THEN** the system SHALL compute the full-market score distribution
+  (min, P5, P25, median, P75, P95, max) and recommendation distribution
+  (BUY/WATCH/NONE/AVOID counts) per evaluation date
+- **AND** generate a recommendation: if BUY rate is consistently < 3%
+  across the market, suggest lowering the buy threshold; if AVOID rate
+  is consistently > 50%, suggest adjusting component weights
+- **AND** calibration recommendations SHALL reference the full-market
+  data, not a single stock's outcome.
+
+#### Scenario: Thresholds support hybrid percentile + absolute scoring
+
+- **GIVEN** calibration analysis indicates the raw score distribution
+  is skewed
+- **WHEN** recommendation thresholds are configured
+- **THEN** the system SHALL support a hybrid mode where a stock is
+  recommended BUY only when both conditions are met: (a) raw score >=
+  a configurable absolute threshold, AND (b) the stock's percentile
+  rank within its date/horizon cohort >= a configurable percentile
+  threshold (e.g., >= 85th percentile)
+- **AND** the hybrid thresholds SHALL be configurable per horizon and
+  per model version.
+
+#### Scenario: Threshold change requires new model version and full-market replay
+
+- **GIVEN** a proposed change to buy_threshold or watch_threshold
+- **WHEN** the change is implemented
+- **THEN** the DEFAULT_MODEL_VERSION SHALL be incremented
+- **AND** the new model SHALL be validated by backfilling scores for
+  the full market (not a single stock) over a representative date range
+- **AND** the calibration report for the new model version SHALL be
+  compared against the previous model version's calibration report
+- **AND** the threshold change SHALL NOT be accepted solely on the basis
+  of single-stock backtest results.
+
+#### Scenario: Score distribution metrics are reported
+
+- **GIVEN** a calibration report is generated for a date range
+- **WHEN** the report is assembled
+- **THEN** it SHALL include score distribution statistics (min, P25, median,
+  P75, max, recommendation counts) per horizon
+- **AND** flag when BUY rate < 3% or AVOID rate > 50% as potentially
+  miscalibrated
+- **AND** report the suggested hybrid threshold values based on the
+  observed distribution.
+
+### Requirement: Signal Persistence Decay
+
+The scoring system SHALL prevent abrupt score drops when a bullish
+signal temporarily disappears by applying a persistence decay model.
+
+#### Scenario: Bullish signal disappears for one day
+
+- **GIVEN** a stock had `MA20_ABOVE_MA60` signal yesterday but not today
+- **WHEN** the signal_strength component is calculated
+- **THEN** the contribution SHALL decay gradually (e.g., exponential decay
+  factor 0.7 per day since last signal) instead of instantly dropping to 0
+- **AND** decay SHALL be bounded by a configurable `signal_decay_max_days`
+  (default 5) beyond which the contribution reaches zero
+- **AND** the decay behavior SHALL be configurable per horizon.
+
+#### Scenario: Signal reappears before decay completes
+
+- **GIVEN** signal persistence is active and a signal reappears within
+  the decay window
+- **WHEN** the signal_strength component is recalculated
+- **THEN** the contribution SHALL reset to the full weighted value based
+  on the current signal
+- **AND** SHALL NOT double-count decay and live signal contributions.
+
+### Requirement: Component Contribution and Factor Effectiveness
+
+The scoring system SHALL support attribution of trading outcomes to specific
+score components so that researchers can identify which factors drive
+profitability and which are noise.
+
+#### Scenario: Component contribution is computed for a backtest trade
+
+- **GIVEN** a backtest trade was entered on a score-driven signal
+- **WHEN** component contribution analysis is requested
+- **THEN** the system SHALL retrieve the explanation at entry and exit
+- **AND** compute the score contribution delta for each component between
+  entry and exit
+- **AND** rank components by absolute contribution change to identify
+  which factor drove the exit signal.
+
+#### Scenario: Component win rate is aggregated across trades
+
+- **GIVEN** a set of trades all entered when a specific component
+  (e.g., momentum) had the highest contribution among all components
+- **WHEN** win rate by component is computed
+- **THEN** the system SHALL compute separate win rate, average P&L, and
+  average hold duration for trades dominated by each component
+- **AND** flag components with win rate significantly below the average
+  across all components as candidates for weight reduction or removal.
+
+#### Scenario: Factor predictive power is quantified
+
+- **GIVEN** a scoring component or external factor has been computed
+  historically for all stocks
+- **WHEN** factor evaluation is requested
+- **THEN** the system SHALL compute the rank IC between factor values
+  and forward horizon returns on each evaluation date
+- **AND** return mean IC, ICIR, and the percentage of dates with positive IC
+- **AND** SHALL NOT use future data when computing forward returns
+  (look-ahead bias prevention).
+
+#### Scenario: New factor can be evaluated before integration
+
+- **GIVEN** a candidate factor (e.g., volume_ratio, RSI) has been
+  computed and stored
+- **WHEN** a researcher requests a factor evaluation before adding it
+  to the scoring model
+- **THEN** the system SHALL compute the factor's standalone IC, ICIR,
+  and correlation with existing scoring components
+- **AND** flag if the new factor is highly correlated (>0.7) with an
+  existing component
+- **AND** support a side-by-side comparison of the scoring model with
+  and without the candidate factor.

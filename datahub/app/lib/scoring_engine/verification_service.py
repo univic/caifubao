@@ -77,7 +77,10 @@ class ScoreVerificationService:
         metrics = self._build_metrics(prediction, future_quotes)
         expected = prediction.horizon
         target_reached = len(future_quotes) >= expected
-        target_date_passed = prediction.target_date and prediction.target_date <= today
+        target_date_passed = (
+            prediction.target_date
+            and prediction.target_date <= today.replace(tzinfo=None)
+        )
         if target_reached:
             status = "VERIFIED"
         elif target_date_passed:
@@ -134,7 +137,8 @@ class ScoreVerificationService:
             "min_return": round(min_return, 6),
             "max_drawdown": round(min_return, 6),
             "days_to_max_return": days_to_max_return,
-            "hit_target": max_return >= config["effective_threshold"],
+            "hit_target_close": return_at_target >= config["effective_threshold"],
+            "hit_target_intra": max_return >= config["effective_threshold"],
             "hit_stop_loss": min_return <= config["stop_loss_threshold"],
             "effective_threshold": config["effective_threshold"],
             "stop_loss_threshold": config["stop_loss_threshold"],

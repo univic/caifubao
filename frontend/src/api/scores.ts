@@ -54,6 +54,29 @@ export interface ScoreExplanationResponse extends ScorePrediction {
   input_snapshot: Record<string, unknown>
 }
 
+export interface ScoreGenerateRequest {
+  date?: string
+  horizon?: number
+  stock_code?: string
+  model_version?: string
+  replace?: boolean
+}
+
+export interface ScoreGenerateResponse {
+  success: boolean
+  message: string
+  date: string
+  horizon: string | number
+  scored_count: number
+  model_version: string
+  results?: Array<{
+    stock_code: string
+    horizon: number
+    score: number | null
+    recommendation: string | null
+  }>
+}
+
 export const scoreApi = {
   /** List scores for a given horizon and date (ranking board) */
   listScores(params: {
@@ -95,5 +118,13 @@ export const scoreApi = {
       `/scores/${encodeURIComponent(stockCode)}/${encodeURIComponent(date)}/explanation`,
       { params }
     ) as unknown as Promise<ScoreExplanationResponse>
+  },
+
+  /** Generate score predictions on demand */
+  generateScores(body: ScoreGenerateRequest) {
+    return api.post<ScoreGenerateResponse>(
+      '/scores/generate',
+      body
+    ) as unknown as Promise<ScoreGenerateResponse>
   }
 }

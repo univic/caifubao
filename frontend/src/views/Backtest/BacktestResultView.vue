@@ -104,6 +104,83 @@
         </div>
       </div>
 
+      <!-- Friction & Benchmark row -->
+      <div v-if="bt.total_commission || bt.benchmark_return_pct !== undefined" class="metrics-grid" style="margin-top: 16px;">
+        <template v-if="bt.total_commission">
+          <div class="metric-card">
+            <span class="metric-label">总佣金</span>
+            <span class="metric-value mono">¥{{ formatNumber(bt.total_commission) }}</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">总印花税</span>
+            <span class="metric-value mono">¥{{ formatNumber(bt.total_stamp_duty) }}</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">总滑点</span>
+            <span class="metric-value mono">¥{{ formatNumber(bt.total_slippage) }}</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">毛收益（费前）</span>
+            <span class="metric-value mono" :class="pnlClass(bt.gross_return_pct)">
+              {{ formatPercent(bt.gross_return_pct) }}
+            </span>
+            <span class="metric-sub" :class="pnlClass(bt.gross_return)">
+              {{ formatMoney(bt.gross_return) }}
+            </span>
+          </div>
+        </template>
+        <template v-if="bt.benchmark_return_pct !== undefined">
+          <div class="metric-card">
+            <span class="metric-label">基准收益</span>
+            <span class="metric-value mono" :class="pnlClass(bt.benchmark_return_pct)">
+              {{ formatPercent(bt.benchmark_return_pct) }}
+            </span>
+            <span class="metric-sub muted">{{ bt.benchmark_code || '沪深300' }}</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">超额收益</span>
+            <span class="metric-value mono" :class="pnlClass(bt.excess_return_pct)">
+              {{ formatPercent(bt.excess_return_pct) }}
+            </span>
+            <span class="metric-sub" :class="pnlClass(bt.excess_return)">
+              {{ formatMoney(bt.excess_return) }}
+            </span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">信息比率</span>
+            <span class="metric-value mono">{{ formatNumber(bt.information_ratio) }}</span>
+          </div>
+        </template>
+      </div>
+
+      <!-- Score Config (when available) -->
+      <div v-if="bt.score_config" class="meta-card" style="margin-top: 16px;">
+        <div class="meta-item">
+          <span class="meta-label">评分周期</span>
+          <span class="meta-value mono-text">Score{{ bt.score_config.horizon || bt.horizon || '--' }}</span>
+        </div>
+        <div v-if="bt.score_config.entry_threshold" class="meta-item">
+          <span class="meta-label">买入阈值</span>
+          <span class="meta-value mono-text">{{ bt.score_config.entry_threshold }}</span>
+        </div>
+        <div v-if="bt.score_config.exit_threshold" class="meta-item">
+          <span class="meta-label">退出阈值</span>
+          <span class="meta-value mono-text">{{ bt.score_config.exit_threshold }}</span>
+        </div>
+        <div v-if="bt.score_config.stop_loss_pct" class="meta-item">
+          <span class="meta-label">止损比例</span>
+          <span class="meta-value mono-text">{{ bt.score_config.stop_loss_pct }}%</span>
+        </div>
+        <div v-if="bt.score_config.score_delta" class="meta-item">
+          <span class="meta-label">评分变动阈值</span>
+          <span class="meta-value mono-text">{{ bt.score_config.score_delta }}</span>
+        </div>
+        <div v-if="bt.score_config.model_version" class="meta-item">
+          <span class="meta-label">模型版本</span>
+          <span class="meta-value mono-text small">v{{ bt.score_config.model_version }}</span>
+        </div>
+      </div>
+
       <!-- Trades Section -->
       <div v-if="bt.status === 'COMPLETED'" class="content-card">
         <div class="card-header">
@@ -208,6 +285,40 @@
         </div>
       </div>
 
+      <!-- Per-stock contributions (multi-stock only) -->
+      <div v-if="bt.per_stock_contributions?.length" class="content-card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">个股贡献</h3>
+            <p class="card-desc">共 {{ bt.per_stock_contributions.length }} 只标的</p>
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <el-table
+            :data="bt.per_stock_contributions"
+            stripe
+            size="small"
+            class="linear-table"
+          >
+            <el-table-column prop="stock_code" label="代码" width="120">
+              <template #default="{ row }">
+                <span class="mono-text">{{ row.stock_code }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="stock_name" label="名称" width="140" />
+            <el-table-column label="已实现盈亏" width="140" align="right">
+              <template #default="{ row }">
+                <span class="mono-text" :class="pnlClass(row.realized_pnl)">
+                  ¥{{ formatMoney(row.realized_pnl) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="trades" label="交易次数" width="100" align="right" />
+          </el-table>
+        </div>
+      </div>
+
       <!-- Meta Info -->
       <div class="meta-card">
         <div class="meta-item">
@@ -280,6 +391,9 @@ function strategyLabel(value: string) {
   const map: Record<string, string> = {
     MA_CROSS: '均线交叉策略',
     BUY_HOLD: '买入持有策略',
+    SCORE_THRESHOLD: '评分阈值策略',
+    SCORE_MOMENTUM: '评分动量策略',
+    TOP_N_ROTATION: 'Top-N 轮动策略',
     GOLDEN_DEATH_CROSS: '金叉死叉策略'
   }
   return map[value] || value

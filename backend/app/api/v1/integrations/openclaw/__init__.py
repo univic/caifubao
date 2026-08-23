@@ -38,6 +38,7 @@ def register_routes():
         quality,
         quotes,
         recommendations,
+        scores,
         signals,
         stocks,
     )
@@ -48,6 +49,7 @@ def register_routes():
         quality,
         quotes,
         recommendations,
+        scores,
         signals,
         stocks,
     )

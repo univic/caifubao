@@ -1,6 +1,7 @@
 akshare==1.18.22
 baostock==0.8.9
 beautifulsoup4==4.14.3
+boto3==1.40.69
 certifi==2026.1.4
 cffi==2.0.0
 charset-normalizer==3.4.4
@@ -24,6 +25,7 @@ pandas==2.3.3
 pandas-ta==0.4.71b0
 pycparser==3.0
 pymongo==4.16.0
+pyarrow==22.0.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 requests==2.32.5

@@ -65,38 +65,88 @@ def build_penalty(
     }
 
 
-def signal_strength_component(signals: list, weight: float) -> dict:
+def signal_strength_component(
+    signals: list,
+    weight: float,
+    days_since_signal: int | None = None,
+    last_signal_strengths: list | None = None,
+    last_signal_names: list | None = None,
+    decay_factor: float = 0.7,
+) -> dict:
+    """Compute bullish signal strength with persistence decay.
+
+    When today has bullish signals, contribution is computed from live
+    signals.  When today has NO bullish signals but a recent signal
+    exists within the decay window, the contribution decays exponentially:
+    contribution = full_value * decay_factor ^ days_since_signal.
+    """
     bullish_signals = [
         signal
         for signal in signals
         if getattr(signal, "direction", None) == "BULLISH"
         and getattr(signal, "signal_name", None)
     ]
-    if not bullish_signals:
-        normalized = 0.0
-    else:
+
+    if bullish_signals:
+        # Live signals — normal computation
         strengths = [
             float(getattr(signal, "strength", 1.0) or 1.0) for signal in bullish_signals
         ]
         normalized = clamp(sum(strengths) / max(len(strengths), 1))
+        evidence = {
+            "signals": [
+                {
+                    "name": getattr(s, "signal_name", None),
+                    "strength": getattr(s, "strength", None),
+                    "reason": getattr(s, "reason", None),
+                }
+                for s in bullish_signals
+            ]
+        }
+        return build_component(
+            "signal_strength",
+            "signal",
+            "Bullish signal strength",
+            [getattr(s, "signal_name", None) for s in bullish_signals],
+            normalized,
+            weight,
+            evidence,
+        )
 
+    # No live signals — apply persistence decay if recent signal exists
+    if days_since_signal is not None and last_signal_strengths:
+        strengths = last_signal_strengths
+        full_normalized = clamp(sum(strengths) / max(len(strengths), 1))
+        decay = decay_factor**days_since_signal
+        normalized = round(full_normalized * decay, 4)
+        evidence = {
+            "signals": [
+                {"name": name, "strength": strength}
+                for name, strength in zip(
+                    last_signal_names or [], last_signal_strengths
+                )
+            ],
+            "decay": f"decayed_{days_since_signal}d_factor_{decay}",
+        }
+        return build_component(
+            "signal_strength",
+            "signal",
+            "Bullish signal strength (decayed)",
+            last_signal_names or [],
+            normalized,
+            weight,
+            evidence,
+        )
+
+    # No signals at all
     return build_component(
         "signal_strength",
         "signal",
         "Bullish signal strength",
-        [getattr(signal, "signal_name", None) for signal in bullish_signals],
-        normalized,
+        [],
+        0.0,
         weight,
-        {
-            "signals": [
-                {
-                    "name": getattr(signal, "signal_name", None),
-                    "strength": getattr(signal, "strength", None),
-                    "reason": getattr(signal, "reason", None),
-                }
-                for signal in bullish_signals
-            ]
-        },
+        {"signals": []},
     )
 
 
@@ -480,3 +530,121 @@ def aggregate_industry_metrics(
             results.append(doc)
 
     return results
+
+
+def real_relative_strength_component(
+    stock_code: str,
+    quote,
+    history_quotes: list,
+    weight: float,
+    lookback: int = 20,
+) -> dict:
+    """Real relative strength: alpha vs CSI 300 index.
+
+    Computes excess return over the lookback period against the CSI 300
+    benchmark. When index data is unavailable, falls back to a self-proxy
+    calculation (own price change, matching the relative_strength_component
+    behaviour).
+    """
+    close = quote_price(quote)
+    if close is None or not history_quotes:
+        return build_component(
+            "real_relative_strength",
+            "relative_strength",
+            "Real relative strength (vs CSI 300)",
+            None,
+            0.0,
+            weight,
+        )
+
+    # Combine today's quote with history for the stock quote list
+    stock_quotes = sorted(
+        history_quotes + [quote], key=lambda q: q.date if hasattr(q, "date") else ""
+    )
+
+    # Try loading CSI 300 index quotes for the same date range
+    try:
+        from app.model.stock import StockDailyQuote
+
+        dates = [q.date for q in stock_quotes if hasattr(q, "date")]
+        if not dates:
+            raise ValueError("No valid dates in stock quotes")
+
+        start_date = min(dates)
+        end_date = max(dates)
+        index_quotes = list(
+            StockDailyQuote.objects(code="sh000300")
+            .filter(date__gte=start_date, date__lte=end_date)
+            .order_by("date")
+        )
+
+        if index_quotes:
+            from app.lib.scoring_engine.technical_factors import (
+                real_relative_strength,
+            )
+
+            alpha_map = real_relative_strength(
+                stock_quotes=stock_quotes,
+                index_quotes=index_quotes,
+                lookback=lookback,
+            )
+
+            date_key = quote.date.isoformat() if hasattr(quote, "date") else ""
+            if date_key in alpha_map:
+                alpha = alpha_map[date_key]
+                normalized = clamp((alpha + 0.05) / 0.15)
+                return build_component(
+                    "real_relative_strength",
+                    "relative_strength",
+                    "Real relative strength (alpha vs CSI 300)",
+                    round(alpha, 6),
+                    normalized,
+                    weight,
+                    evidence={
+                        "lookback": lookback,
+                        "alpha": round(alpha, 6),
+                        "benchmark": "CSI 300 (sh000300)",
+                    },
+                )
+    except Exception:
+        pass  # fall through to self-proxy fallback
+
+    # Fallback: self-proxy (same logic as relative_strength_component)
+    old_close = quote_price(history_quotes[-1])
+    if not old_close:
+        normalized = 0.0
+        change = None
+    else:
+        change = (close - old_close) / old_close
+        normalized = clamp((change + 0.05) / 0.15)
+
+    return build_component(
+        "real_relative_strength",
+        "relative_strength",
+        "Real relative strength (self-proxy fallback)",
+        round(change, 6) if change is not None else None,
+        normalized,
+        weight,
+        evidence={
+            "note": "Index data unavailable; using self-proxy (own price change).",
+            "lookback": lookback,
+        },
+    )
+
+
+#: Registry mapping component ids to their builder functions.
+ALL_COMPONENTS = {}  # populated below as functions are defined
+
+
+def _register_component(component_id: str, fn) -> None:
+    ALL_COMPONENTS[component_id] = fn
+
+
+_register_component("signal_strength", signal_strength_component)
+_register_component("trend_alignment", trend_alignment_component)
+_register_component("momentum", momentum_component)
+_register_component("breakout_or_position", breakout_or_position_component)
+_register_component("relative_strength", relative_strength_component)
+_register_component("industry_momentum", industry_momentum_component)
+_register_component("real_relative_strength", real_relative_strength_component)
+_register_component("risk_penalty", risk_penalty)

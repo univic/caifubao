@@ -3,9 +3,9 @@
     <!-- Hero Section -->
     <header class="market-hero">
       <div class="hero-left">
-        <p class="eyebrow">Market Board</p>
-        <h1 class="page-title">标的看板</h1>
-        <p class="subtitle">全量标的行情与量化评分总览，支持多维筛选与预测闭环验证。</p>
+        <p class="eyebrow">Opportunity Board</p>
+        <h1 class="page-title">机会筛选</h1>
+        <p class="subtitle">从全量标的中优先筛出有评分、有验证依据的候选，减少来回跳转。</p>
       </div>
       
       <div class="hero-right">
@@ -29,6 +29,35 @@
               class="linear-picker"
               @change="resetAndFetch"
             />
+          </div>
+          <div class="filter-item compact">
+            <el-select v-model="recommendationFilter" placeholder="建议" clearable class="linear-select">
+              <el-option label="买入观察" value="BUY" />
+              <el-option label="关注" value="WATCH" />
+              <el-option label="回避" value="AVOID" />
+            </el-select>
+          </div>
+          <div class="filter-item compact">
+            <el-select v-model="statusFilter" placeholder="验证状态" clearable class="linear-select">
+              <el-option label="已验证" value="VERIFIED" />
+              <el-option label="跟踪中" value="TRACKING" />
+              <el-option label="待验证" value="PENDING" />
+            </el-select>
+          </div>
+          <el-switch
+            v-model="watchlistOnly"
+            active-text="只看自选"
+            class="watch-switch"
+          />
+          <div class="filter-item action">
+            <el-button
+              class="btn-generate"
+              :loading="generatingScores"
+              @click="triggerScoreGeneration"
+            >
+              <el-icon><Cpu /></el-icon>
+              {{ generatingScores ? '生成中...' : '生成评分' }}
+            </el-button>
           </div>
         </div>
       </div>
@@ -62,7 +91,7 @@
         <el-tab-pane label="股票 (Stocks)" name="stock">
           <!-- Desktop Table View -->
           <div class="desktop-view" v-loading="loading">
-            <el-table :data="tableData" class="linear-table" style="width: 100%">
+            <el-table v-if="displayData.length" :data="displayData" class="linear-table" style="width: 100%">
               <el-table-column label="排名" width="70" align="center">
                 <template #default="{ row }">
                   <span class="rank-text" :class="{ 'top-rank': row.evaluation.display_rank <= 3 }">
@@ -133,14 +162,6 @@
                 </template>
               </el-table-column>
 
-              <el-table-column label="排名" width="80" align="center">
-                <template #default="{ row }">
-                  <span class="rank-text" :class="{ 'top-rank': row.evaluation.display_rank <= 3 }">
-                    #{{ row.evaluation.rank || row.evaluation.display_rank }}
-                  </span>
-                </template>
-              </el-table-column>
-
               <el-table-column label="T+5 验证" min-width="150">
                 <template #default="{ row }">
                   <div v-if="row.evaluation.status === 'VERIFIED'" class="verify-cell">
@@ -156,11 +177,37 @@
                 </template>
               </el-table-column>
             </el-table>
+
+            <!-- Empty state when no scores exist -->
+            <div v-if="!displayData.length && !loading" class="empty-scores">
+              <div class="empty-icon">
+                <el-icon :size="48"><TrendCharts /></el-icon>
+              </div>
+              <h3>暂无评分数据</h3>
+              <p>
+                当前日期
+                <strong>{{ targetDate || '最新交易日' }}</strong>
+                还没有评分预测。评分管线由 quote → factor → signal → score 四个环节组成。
+              </p>
+              <p class="empty-hint">点击下方按钮一键计算评分（约需 5-30 秒）：</p>
+              <el-button
+                class="btn-generate"
+                type="primary"
+                :loading="generatingScores"
+                @click="triggerScoreGeneration"
+              >
+                <el-icon><Cpu /></el-icon>
+                {{ generatingScores ? '正在生成评分...' : '生成评分' }}
+              </el-button>
+              <p v-if="scoreGenMessage" class="gen-msg" :class="scoreGenMessage.includes('失败') ? 'error' : 'success'">
+                {{ scoreGenMessage }}
+              </p>
+            </div>
           </div>
 
           <!-- Mobile Card View -->
           <div class="mobile-view" v-loading="loading">
-            <div v-for="item in tableData" :key="item.code" class="asset-card">
+            <div v-for="item in displayData" :key="item.code" class="asset-card">
               <div class="card-header">
                 <div class="header-main">
                   <span class="c-rank">#{{ item.evaluation.display_rank }}</span>
@@ -206,7 +253,7 @@
         <el-tab-pane label="指数 (Indices)" name="index">
            <!-- Index Table (similar to stock but simplified) -->
            <div class="desktop-view" v-loading="loading">
-              <el-table :data="tableData" class="linear-table" style="width: 100%">
+              <el-table :data="displayData" class="linear-table" style="width: 100%">
                  <el-table-column label="标的" min-width="180">
                    <template #default="{ row }">
                      <div class="asset-cell asset-clickable" @click="navigateToDetail(row.code)">
@@ -255,7 +302,7 @@
            </div>
            
            <div class="mobile-view" v-loading="loading">
-              <div v-for="item in tableData" :key="item.code" class="asset-card">
+              <div v-for="item in displayData" :key="item.code" class="asset-card">
                  <div class="card-header">
                     <span class="c-name">{{ item.name }}</span>
                     <span class="c-change" :class="getPriceClass(item.ohlcv.change_rate)">{{ formatPercent(item.ohlcv.change_rate) }}</span>
@@ -267,7 +314,7 @@
       <div class="pagination-row">
         <el-pagination
           layout="prev, pager, next, sizes, total"
-          :total="total"
+          :total="displayTotal"
           :current-page="page"
           :page-size="pageSize"
           :page-sizes="[50, 100, 200]"
@@ -280,12 +327,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { marketApi, type MarketComprehensiveItem } from '@/api/market'
-import { Search, CircleCheck } from '@element-plus/icons-vue'
+import { scoreApi } from '@/api/scores'
+import { Search, CircleCheck, Cpu, TrendCharts } from '@element-plus/icons-vue'
+import { useWatchlistStore } from '@/stores/watchlist'
 
 const router = useRouter()
+const watchlistStore = useWatchlistStore()
 
 const HORIZONS = [5, 20, 60] as const
 
@@ -294,11 +344,28 @@ const activeTab = ref<'stock' | 'index'>('stock')
 const selectedHorizon = ref<number>(5)
 const targetDate = ref('')
 const searchKeyword = ref('')
+const recommendationFilter = ref('')
+const statusFilter = ref('')
+const watchlistOnly = ref(false)
 const tableData = ref<MarketComprehensiveItem[]>([])
 const page = ref(1)
 const pageSize = ref(50)
 const total = ref(0)
 let searchTimer: number | undefined
+
+const displayData = computed(() => {
+  return tableData.value.filter(item => {
+    if (recommendationFilter.value && item.evaluation.recommendation !== recommendationFilter.value) return false
+    if (statusFilter.value && item.evaluation.status !== statusFilter.value) return false
+    if (watchlistOnly.value && !watchlistStore.isWatched(item.code)) return false
+    return true
+  })
+})
+
+const displayTotal = computed(() => {
+  if (recommendationFilter.value || statusFilter.value || watchlistOnly.value) return displayData.value.length
+  return total.value
+})
 
 async function fetchData() {
   loading.value = true
@@ -330,6 +397,30 @@ function resetAndFetch() {
 
 function onHorizonChange() {
   resetAndFetch()
+}
+
+// Score generation
+const generatingScores = ref(false)
+const scoreGenMessage = ref('')
+
+async function triggerScoreGeneration() {
+  generatingScores.value = true
+  scoreGenMessage.value = ''
+  try {
+    const res = await scoreApi.generateScores({})
+    if (res.success) {
+      scoreGenMessage.value = `${res.message}`
+      await fetchData()
+    } else {
+      scoreGenMessage.value = res.message || '生成失败'
+    }
+  } catch (err: any) {
+    const msg = err?.response?.data?.message || err?.message || '生成失败，请检查后台日志'
+    scoreGenMessage.value = msg
+    console.error('Score generation failed:', err)
+  } finally {
+    generatingScores.value = false
+  }
 }
 
 function handlePageChange(nextPage: number) {
@@ -442,6 +533,8 @@ watch(searchKeyword, () => {
 
 .filter-controls {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
   background: var(--color-panel);
   padding: 16px;
@@ -462,6 +555,11 @@ watch(searchKeyword, () => {
 
 .search { width: 220px; }
 .date { width: 160px; }
+.compact { width: 128px; }
+.watch-switch {
+  min-width: 92px;
+  --el-switch-on-color: var(--color-brand);
+}
 
 /* Horizon controls */
 .horizon-controls {
@@ -479,7 +577,7 @@ watch(searchKeyword, () => {
 
 .horizon-label {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 590;
   margin-right: 6px;
 }
 
@@ -529,12 +627,12 @@ watch(searchKeyword, () => {
   .chip-horizon {
     font-size: 9px;
     color: var(--color-text-dim);
-    font-weight: 500;
+    font-weight: 510;
     text-transform: uppercase;
   }
   .chip-score {
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 590;
     color: var(--color-text-primary);
   }
 }
@@ -543,8 +641,8 @@ watch(searchKeyword, () => {
 .rank-text {
   font-size: 13px;
   color: var(--color-text-dim);
-  font-weight: 500;
-  &.top-rank { color: #f59e0b; font-weight: 700; }
+  font-weight: 510;
+  &.top-rank { color: #f59e0b; font-weight: 590; }
 }
 
 .asset-cell {
@@ -617,14 +715,14 @@ watch(searchKeyword, () => {
         display: flex;
         align-items: baseline;
         gap: 8px;
-        .c-rank { font-size: 12px; color: #f59e0b; font-weight: 700; }
-        .c-name { font-weight: 600; font-size: 15px; }
+        .c-rank { font-size: 12px; color: #f59e0b; font-weight: 590; }
+        .c-name { font-weight: 590; font-size: 15px; }
         .c-code { font-size: 11px; color: var(--color-text-dim); }
       }
       
       .header-score {
         font-size: 14px;
-        font-weight: 700;
+        font-weight: 590;
         &.high { color: var(--color-up); }
         &.medium { color: #f59e0b; }
       }
@@ -638,7 +736,7 @@ watch(searchKeyword, () => {
       .price-row {
         display: flex;
         gap: 12px;
-        .c-price { font-weight: 600; }
+        .c-price { font-weight: 590; }
         .c-change { font-size: 13px; }
       }
     }
@@ -715,6 +813,58 @@ watch(searchKeyword, () => {
   display: flex;
   justify-content: flex-end;
   margin-top: 18px;
+}
+
+/* Generate button */
+.btn-generate {
+  background: rgba(94, 106, 210, 0.12) !important;
+  border: 1px solid rgba(113, 112, 255, 0.3) !important;
+  color: #828fff !important;
+  font-weight: 510;
+  &:hover {
+    background: rgba(94, 106, 210, 0.2) !important;
+    border-color: rgba(113, 112, 255, 0.5) !important;
+  }
+}
+
+/* Empty state */
+.empty-scores {
+  text-align: center;
+  padding: 80px 20px;
+  .empty-icon {
+    color: var(--color-text-dim);
+    opacity: 0.3;
+    margin-bottom: 16px;
+  }
+  h3 {
+    font-size: 20px;
+    font-weight: 590;
+    color: var(--color-text-primary);
+    margin: 0 0 8px 0;
+  }
+  p {
+    font-size: 14px;
+    color: var(--color-text-dim);
+    max-width: 480px;
+    margin: 0 auto 12px auto;
+    line-height: 1.5;
+    strong { color: var(--color-text-secondary); }
+  }
+  .empty-hint {
+    font-size: 13px;
+    color: var(--color-text-quaternary);
+  }
+  .gen-msg {
+    margin-top: 12px;
+    font-size: 13px;
+    &.success { color: #4ade80; }
+    &.error { color: #fb7185; }
+  }
+}
+
+.filter-item.action {
+  display: flex;
+  align-items: flex-end;
 }
 
 @media (max-width: 1024px) {

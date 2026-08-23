@@ -30,6 +30,39 @@
     <el-skeleton v-if="loading && !detail" :rows="8" animated />
 
     <template v-else>
+      <el-card class="decision-summary-card" shadow="hover">
+        <div class="decision-main">
+          <div>
+            <p class="decision-kicker">Decision Summary</p>
+            <h2>{{ decisionSummary.title }}</h2>
+            <p class="decision-copy">{{ decisionSummary.copy }}</p>
+          </div>
+          <div class="decision-score">
+            <span>主周期</span>
+            <strong>Score{{ decisionSummary.horizon }}</strong>
+            <em :class="scoreColorClass(decisionSummary.score)">{{ formatScore(decisionSummary.score) }}</em>
+          </div>
+        </div>
+        <div class="decision-grid">
+          <div class="decision-item">
+            <span>行动建议</span>
+            <strong>{{ decisionSummary.action }}</strong>
+          </div>
+          <div class="decision-item">
+            <span>历史状态</span>
+            <strong>{{ decisionSummary.status }}</strong>
+          </div>
+          <div class="decision-item">
+            <span>百分位</span>
+            <strong>{{ decisionSummary.percentile }}</strong>
+          </div>
+          <div class="decision-item">
+            <span>下一步</span>
+            <strong>{{ decisionSummary.nextStep }}</strong>
+          </div>
+        </div>
+      </el-card>
+
       <!-- Summary Card -->
       <el-card class="summary-card" shadow="hover">
         <div class="summary-grid">
@@ -329,6 +362,49 @@ const latestHistoryItem = computed(() => {
 })
 
 const selectedScoreDetail = computed(() => latestScores.value[scoreHorizon.value])
+const bestScore = computed(() => {
+  const scores = scoreHorizons
+    .map(horizon => latestScores.value[horizon])
+    .filter((item): item is ScorePrediction => Boolean(item))
+  return scores.sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0] ?? null
+})
+
+const decisionSummary = computed(() => {
+  const score = bestScore.value
+  if (!score) {
+    return {
+      title: '等待评分确认',
+      copy: '当前标的还没有可用评分，先查看 K 线和数据状态，或等待评分引擎同步。',
+      horizon: scoreHorizon.value,
+      score: null,
+      action: '暂不决策',
+      status: detail.value?.freshness?.status || '未知',
+      percentile: '--',
+      nextStep: '检查数据'
+    }
+  }
+
+  const action = recommendationText(score.recommendation)
+  const percentile = score.percentile === null || score.percentile === undefined
+    ? '--'
+    : `P${(score.percentile * 100).toFixed(0)}`
+  const copy = [
+    `Score${score.horizon} 为 ${formatScore(score.score)}`,
+    percentile !== '--' ? `位于 ${percentile}` : '',
+    score.status ? `状态 ${score.status}` : ''
+  ].filter(Boolean).join('，')
+
+  return {
+    title: action,
+    copy: `${copy}。建议先结合 K 线、验证指标和组合权重确认是否行动。`,
+    horizon: score.horizon,
+    score: score.score,
+    action,
+    status: score.status || '未知',
+    percentile,
+    nextStep: score.recommendation === 'BUY' ? '加入关注或记录交易理由' : '继续观察'
+  }
+})
 
 // Lifecycle
 onMounted(() => {
@@ -786,6 +862,13 @@ function recTagType(rec: string) {
   return 'info'
 }
 
+function recommendationText(rec: string) {
+  if (rec === 'BUY') return '买入观察'
+  if (rec === 'WATCH') return '关注观察'
+  if (rec === 'AVOID') return '暂时回避'
+  return '暂无明确建议'
+}
+
 function statusTagType(status: string | null | undefined) {
   if (!status) return 'info'
   if (status === 'VERIFIED') return 'success'
@@ -841,6 +924,7 @@ function goBack() {
   }
 }
 
+.decision-summary-card,
 .search-card,
 .summary-card,
 .info-card,
@@ -850,6 +934,100 @@ function goBack() {
 .score-chart-card,
 .score-table-card {
   border-radius: 18px;
+}
+
+.decision-summary-card {
+  border: 1px solid rgba(113, 112, 255, 0.18);
+  background:
+    linear-gradient(135deg, rgba(113, 112, 255, 0.1), rgba(255, 255, 255, 0.03)),
+    #0f1011;
+}
+
+.decision-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.decision-kicker {
+  margin: 0 0 8px;
+  color: #828fff;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.decision-main h2 {
+  margin: 0 0 8px;
+  color: var(--color-text-primary);
+  font-size: 28px;
+  font-weight: 590;
+}
+
+.decision-copy {
+  max-width: 720px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.7;
+}
+
+.decision-score {
+  min-width: 132px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  text-align: right;
+
+  span,
+  strong,
+  em {
+    display: block;
+  }
+
+  span {
+    color: var(--color-text-secondary);
+    font-size: 12px;
+  }
+
+  strong {
+    color: var(--color-text-primary);
+    font-size: 14px;
+    font-weight: 510;
+  }
+
+  em {
+    font-style: normal;
+    font-size: 30px;
+    font-weight: 650;
+  }
+}
+
+.decision-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.decision-item {
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+
+  span {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+  }
+
+  strong {
+    color: var(--color-text-primary);
+    font-size: 14px;
+    font-weight: 590;
+  }
 }
 
 .inline-form {
@@ -901,7 +1079,7 @@ function goBack() {
 
   .value {
     font-size: 22px;
-    font-weight: 700;
+    font-weight: 590;
   }
 
   .hint {
@@ -964,7 +1142,7 @@ function goBack() {
   }
 
   .value {
-    font-weight: 600;
+    font-weight: 590;
   }
 }
 
@@ -1023,7 +1201,7 @@ function goBack() {
 
     .horizon-badge {
       font-size: 14px;
-      font-weight: 700;
+      font-weight: 590;
       color: #fff;
     }
 
@@ -1036,7 +1214,7 @@ function goBack() {
   .horizon-card-body {
     .big-score {
       font-size: 36px;
-      font-weight: 700;
+      font-weight: 590;
       margin-bottom: 8px;
 
       &.score-high { color: #10b981; }
@@ -1099,7 +1277,7 @@ function goBack() {
   }
 
   .v-value {
-    font-weight: 600;
+    font-weight: 590;
     font-size: 14px;
 
     &.down { color: #ef4444; }

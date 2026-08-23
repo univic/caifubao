@@ -125,6 +125,24 @@ def _make_row(idx: int) -> SimpleNamespace:
         ],
         created_at=datetime.datetime(2024, 7, 1, 12, 0, 0),
         completed_at=datetime.datetime(2024, 7, 1, 12, 0, 1),
+        total_commission=0.0,
+        total_stamp_duty=0.0,
+        total_slippage=0.0,
+        gross_return=5234.5,
+        gross_return_pct=5.23,
+        benchmark_code="sh000300",
+        benchmark_return=None,
+        benchmark_return_pct=None,
+        benchmark_annualized_return=None,
+        excess_return=None,
+        excess_return_pct=None,
+        information_ratio=None,
+        score_config=None,
+        horizon=None,
+        top_n=None,
+        rebalance_interval=None,
+        allocation=None,
+        per_stock_contributions=None,
     )
 
 
@@ -576,3 +594,946 @@ class TestBacktestResponseEnvelope:
         assert "request_id" in body
         assert "generated_at" in body
         assert body["data"] is None
+
+
+# ============================================================================
+# Optimize endpoint tests
+# ============================================================================
+class TestBacktestOptimizeAPI:
+    """POST /api/backtest/optimize"""
+
+    @staticmethod
+    def _make_run_backtest(*, sharpe=1.0, return_pct=10.0, trades=10):
+        """Factory for mock run_backtest results."""
+        return {
+            "sharpe_ratio": sharpe,
+            "total_return_pct": return_pct,
+            "max_drawdown": -15.0,
+            "total_trades": trades,
+            "excess_return_pct": 5.0,
+        }
+
+    def test_optimize_runs_and_returns_best(self, client, monkeypatch):
+        """Happy path: optimize with param_grid, returns ranked results."""
+
+        # Mock run_backtest to return deterministic results based on entry_threshold
+        def _mock_run(**kw):
+            entry = kw.get("entry_threshold", 70)
+            sharpe = 2.0 if entry == 60 else 1.0 if entry == 70 else 0.5
+            return self._make_run_backtest(sharpe=sharpe)
+
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", _mock_run)
+
+        resp = client.post(
+            "/api/backtest/optimize",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2025-12-31",
+                "horizon": 5,
+                "use_split": False,
+                "param_grid": {
+                    "entry_threshold": [50, 60, 70],
+                },
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+        data = body["data"]
+        assert data["strategy"] == "SCORE_THRESHOLD"
+        assert data["horizon"] == 5
+        assert data["total_combinations"] == 3
+        assert data["completed"] == 3
+        # Best should be entry=60 (Sharpe 2.0)
+        assert data["best"]["params"]["entry_threshold"] == 60
+        assert data["best"]["val_sharpe_ratio"] == 2.0
+        assert len(data["results"]) == 3
+        # Results sorted by val Sharpe descending
+        assert (
+            data["results"][0]["val_sharpe_ratio"]
+            >= data["results"][-1]["val_sharpe_ratio"]
+        )
+
+    def test_optimize_requires_strategy(self, client):
+        """Rejects unknown strategies."""
+        resp = client.post(
+            "/api/backtest/optimize",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "MA_CROSS",
+                "start_date": "2025-01-01",
+                "end_date": "2025-12-31",
+                "horizon": 5,
+                "param_grid": {"entry_threshold": [50]},
+            },
+        )
+        assert resp.status_code != 200
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_optimize_rejects_unknown_param_key(self, client):
+        """Rejects param keys not in the per-strategy whitelist."""
+        resp = client.post(
+            "/api/backtest/optimize",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2025-12-31",
+                "horizon": 5,
+                "param_grid": {
+                    "entry_threshold": [50],
+                    "invalid_param": [10, 20],
+                },
+            },
+        )
+        body = resp.get_json()
+        assert body["success"] is False
+        assert (
+            "invalid_param" in body["message"].lower() or "Unknown" in body["message"]
+        )
+
+    def test_optimize_rejects_non_list_param_value(self, client):
+        """Rejects param_grid values that are not lists."""
+        resp = client.post(
+            "/api/backtest/optimize",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2025-12-31",
+                "horizon": 5,
+                "param_grid": {"entry_threshold": 50},
+            },
+        )
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "non-empty list" in body["message"]
+
+    def test_optimize_empty_param_grid(self, client):
+        """Rejects empty param_grid."""
+        resp = client.post(
+            "/api/backtest/optimize",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2025-12-31",
+                "horizon": 5,
+                "param_grid": {},
+            },
+        )
+        body = resp.get_json()
+        assert body["success"] is False
+
+
+# ============================================================================
+# Consensus threshold validation tests
+# ============================================================================
+class TestConsensusThresholdValidation:
+    """POST /api/backtest/run with MULTI_HORIZON_CONSENSUS thresholds."""
+
+    def test_rejects_non_integer_threshold_keys(self, client, monkeypatch):
+        """Consensus threshold dict keys must be integers 5/20/60."""
+        # Mock run_backtest to avoid actual DB
+        monkeypatch.setattr(
+            "app.api.v1.backtest.run_backtest",
+            lambda **kw: {"error": None, "id": "test", "total_return": 0},
+        )
+
+        resp = client.post(
+            "/api/backtest/run",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "MULTI_HORIZON_CONSENSUS",
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+                "consensus_entry_thresholds": {"wrong_key": 50},
+            },
+        )
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "key" in body["message"].lower()
+
+    def test_accepts_string_keys_that_are_valid(self, client, monkeypatch):
+        """String keys '5', '20', '60' are normalized to int."""
+        captured = {}
+
+        def _capture(**kw):
+            captured.update(kw)
+            return {
+                "id": "test",
+                "total_return": 10000.0,
+                "total_return_pct": 10.0,
+                "total_trades": 0,
+                "total_commission": 0.0,
+                "total_stamp_duty": 0.0,
+                "total_slippage": 0.0,
+                "sharpe_ratio": 1.0,
+                "max_drawdown": 0.0,
+                "win_rate": 100.0,
+                "profit_trades": 0,
+                "loss_trades": 0,
+                "best_trade": 0.0,
+                "worst_trade": 0.0,
+                "gross_return": 10000.0,
+                "gross_return_pct": 10.0,
+                "annualized_return": 10.0,
+                "max_drawdown_duration": 0,
+                "trades": [],
+                "daily_values": [],
+            }
+
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", _capture)
+
+        resp = client.post(
+            "/api/backtest/run",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "MULTI_HORIZON_CONSENSUS",
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+                "consensus_entry_thresholds": {"5": 45},
+                "consensus_exit_thresholds": {"5": 20},
+            },
+        )
+        assert resp.status_code == 200, resp.get_json()
+        # Keys should be normalized to int
+        assert captured.get("consensus_entry_thresholds") == {5: 45.0}
+        assert captured.get("consensus_exit_thresholds") == {5: 20.0}
+
+
+# ============================================================================
+# Component contribution tests
+# ============================================================================
+class TestComponentContributionAPI:
+    """GET /api/backtest/<id>/component-contribution"""
+
+    def test_component_contribution_not_found(self, client, monkeypatch):
+        """Returns 404 for missing backtest."""
+        from app.model import backtest as bt_mod
+
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([]))
+        resp = client.get("/api/backtest/nonexistent/component-contribution")
+        assert resp.status_code == 404
+
+    def test_component_contribution_rejects_non_score_strategy(
+        self, client, monkeypatch
+    ):
+        """Returns 400 for non-score-driven strategies."""
+        from app.model import backtest as bt_mod
+
+        row = SimpleNamespace(
+            id="bt_comp_2",
+            stock_code="sz000977",
+            strategy="MA_CROSS",
+            horizon=None,
+            trades=[{"date": "2025-06-15T00:00:00", "side": "BUY", "pnl": None}],
+        )
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([row]))
+        resp = client.get("/api/backtest/bt_comp_2/component-contribution")
+        assert resp.status_code == 400, resp.get_json()
+
+
+# ============================================================================
+# Factor evaluation tests
+# ============================================================================
+class TestFactorEvaluateAPI:
+    """POST /api/backtest/evaluate-factor"""
+
+    def test_evaluate_factor_requires_component_id(self, client):
+        """Rejects request without component_id."""
+        resp = client.post(
+            "/api/backtest/evaluate-factor",
+            json={
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+            },
+        )
+        assert resp.status_code != 200
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_evaluate_factor_rejects_invalid_horizons(self, client):
+        """Rejects non-list horizons."""
+        resp = client.post(
+            "/api/backtest/evaluate-factor",
+            json={
+                "component_id": "momentum",
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+                "horizons": "not_a_list",
+            },
+        )
+        assert resp.status_code != 200
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_evaluate_factor_missing_dates(self, client):
+        """Rejects missing dates."""
+        resp = client.post(
+            "/api/backtest/evaluate-factor",
+            json={"component_id": "momentum"},
+        )
+        assert resp.status_code != 200
+        body = resp.get_json()
+        assert body["success"] is False
+
+
+# ============================================================================
+# Significance test endpoint
+# ============================================================================
+class TestSignificanceAPI:
+    """GET /api/backtest/<id>/significance"""
+
+    def test_significance_returns_permutation_and_bootstrap(self, client, monkeypatch):
+        """Returns both permutation and bootstrap results."""
+        from app.model import backtest as bt_mod
+
+        daily_ret = [0.01] * 100 + [0.0] * 100
+        equity = 100000.0
+        dv = []
+        for r in daily_ret:
+            equity *= 1 + r
+            dv.append({"equity": equity, "close": 10.0})
+        row = SimpleNamespace(
+            id="sig_test_1",
+            stock_code="sz000977",
+            strategy="MA_CROSS",
+            daily_values=dv,
+            initial_cash=100000.0,
+        )
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([row]))
+
+        resp = client.get("/api/backtest/sig_test_1/significance")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        data = body["data"]
+        assert "permutation" in data
+        assert "bootstrap" in data
+
+    def test_significance_not_found(self, client, monkeypatch):
+        """404 for missing backtest."""
+        from app.model import backtest as bt_mod
+
+        monkeypatch.setattr(bt_mod.BacktestResult, "objects", FakeQuery([]))
+        resp = client.get("/api/backtest/nonexistent/significance")
+        assert resp.status_code == 404
+
+
+class TestDecayAnalysisAPI:
+    """POST /api/backtest/decay-analysis"""
+
+    @staticmethod
+    def _make_quote(date_str: str, code: str = "sz000977"):
+        fake_date = datetime.datetime.fromisoformat(f"{date_str}T00:00:00")
+        return SimpleNamespace(
+            code=code,
+            date=fake_date,
+            close=100.0,
+            close_hfq=100.0,
+        )
+
+    def test_decay_analysis_success(self, client, monkeypatch):
+        """Happy path: returns windows with train/test Sharpe decay."""
+        # Build 350 fake trading days (enough for 2+ windows with 120 window + 60 step)
+        days = []
+        base = datetime.datetime(2025, 1, 2, 0, 0, 0)
+        for i in range(350):
+            d = base + datetime.timedelta(days=i)
+            if d.weekday() >= 5:
+                continue
+            days.append(d)
+
+        quotes = [
+            SimpleNamespace(code="sz000977", date=d, close=100.0, close_hfq=100.0)
+            for d in days
+        ]
+
+        monkeypatch.setattr(
+            "app.api.v1.backtest._load_quotes_helper",
+            lambda *a, **kw: quotes,
+        )
+
+        call_count = {"n": 0}
+
+        def _mock_run(**kw):
+            call_count["n"] += 1
+            if call_count["n"] % 2 == 1:
+                sharpe = 1.2
+            else:
+                sharpe = 0.7
+            return {
+                "sharpe_ratio": sharpe,
+                "total_return_pct": 10.0,
+                "max_drawdown": -15.0,
+                "total_trades": 8,
+                "excess_return_pct": 5.0,
+            }
+
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", _mock_run)
+
+        resp = client.post(
+            "/api/backtest/decay-analysis",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_MOMENTUM",
+                "start_date": "2025-01-02",
+                "end_date": "2026-05-18",
+                "window_days": 120,
+                "step_days": 60,
+                "horizon": 20,
+                "initial_cash": 100000,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+        data = body["data"]
+
+        assert data["stock_code"] == "sz000977"
+        assert data["strategy"] == "SCORE_MOMENTUM"
+        assert data["horizon"] == 20
+        assert data["total_windows"] >= 1
+        assert isinstance(data["mean_decay_pct"], (int, float))
+        assert isinstance(data["overfit"], bool)
+        assert isinstance(data["warnings"], list)
+
+        for w in data["windows"]:
+            assert "train_start" in w
+            assert "train_end" in w
+            assert "test_start" in w
+            assert "test_end" in w
+            assert "train_sharpe" in w
+            assert "test_sharpe" in w
+            assert "decay_pct" in w
+
+    def test_decay_analysis_requires_stock_code(self, client):
+        """Rejects request without stock_code."""
+        resp = client.post(
+            "/api/backtest/decay-analysis",
+            json={
+                "strategy": "MA_CROSS",
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+                "window_days": 120,
+                "step_days": 60,
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "stock_code" in body["message"]
+
+    def test_decay_analysis_requires_strategy(self, client):
+        """Rejects request without strategy."""
+        resp = client.post(
+            "/api/backtest/decay-analysis",
+            json={
+                "stock_code": "sz000977",
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+                "window_days": 120,
+                "step_days": 60,
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "strategy" in body["message"]
+
+    def test_decay_analysis_insufficient_data(self, client, monkeypatch):
+        """Returns error when too few trading days."""
+        monkeypatch.setattr(
+            "app.api.v1.backtest._load_quotes_helper",
+            lambda *a, **kw: [],
+        )
+
+        resp = client.post(
+            "/api/backtest/decay-analysis",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "MA_CROSS",
+                "start_date": "2025-01-01",
+                "end_date": "2025-01-10",
+                "window_days": 120,
+                "step_days": 60,
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "No quote data" in body["message"]
+
+    def test_decay_analysis_too_few_days(self, client, monkeypatch):
+        """Returns error when fewer than window+step trading days."""
+        quotes = [
+            SimpleNamespace(
+                code="sz000977",
+                date=datetime.datetime(2025, 1, 2, 0, 0, 0),
+                close=100.0,
+                close_hfq=100.0,
+            ),
+            SimpleNamespace(
+                code="sz000977",
+                date=datetime.datetime(2025, 1, 3, 0, 0, 0),
+                close=101.0,
+                close_hfq=101.0,
+            ),
+        ]
+        monkeypatch.setattr(
+            "app.api.v1.backtest._load_quotes_helper",
+            lambda *a, **kw: quotes,
+        )
+
+        resp = client.post(
+            "/api/backtest/decay-analysis",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "MA_CROSS",
+                "start_date": "2025-01-01",
+                "end_date": "2025-06-30",
+                "window_days": 120,
+                "step_days": 60,
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "Need at least" in body["message"]
+
+
+# ============================================================================
+# Landscape endpoint tests (Task 17.6)
+# ============================================================================
+
+
+class TestLandscapeAPI:
+    """POST /api/backtest/landscape"""
+
+    def test_landscape_success(self, client, monkeypatch):
+        """Happy path: 2D grid with sharpe/return/trades/drawdown per cell."""
+
+        def _mock_run(**kw):
+            x = kw.get("entry_threshold", 70)
+            y = kw.get("stop_loss_pct", -5.0)
+            trades = max(2, int(20 - x / 5))
+            sharpe = 1.5 - abs(x - 50) / 100.0 + y
+            return {
+                "sharpe_ratio": sharpe,
+                "total_return_pct": 12.0 + (x - 60) * 0.1,
+                "max_drawdown": -15.0 + abs(y) * 100,
+                "total_trades": trades,
+                "excess_return_pct": 5.0,
+            }
+
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", _mock_run)
+
+        resp = client.post(
+            "/api/backtest/landscape",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-18",
+                "param_x": "entry_threshold",
+                "x_values": [50, 60, 70, 80],
+                "param_y": "stop_loss_pct",
+                "y_values": [-0.10, -0.05, 0.0],
+                "horizon": 20,
+                "initial_cash": 100000,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+        data = body["data"]
+
+        assert data["stock_code"] == "sz000977"
+        assert data["strategy"] == "SCORE_THRESHOLD"
+        assert data["horizon"] == 20
+        assert data["param_x"] == "entry_threshold"
+        assert data["param_y"] == "stop_loss_pct"
+        assert data["x_values"] == [50, 60, 70, 80]
+        assert data["y_values"] == [-0.10, -0.05, 0.0]
+        assert data["metrics"] == ["sharpe", "return_pct", "trades", "drawdown"]
+
+        assert len(data["grid"]) == 12
+
+        for cell in data["grid"]:
+            assert "x" in cell
+            assert "y" in cell
+            assert "sharpe" in cell
+            assert "return_pct" in cell
+            assert "trades" in cell
+            assert "drawdown" in cell
+            assert "error" not in cell
+
+        assert data["best"] is not None
+        assert "x" in data["best"]
+        assert "y" in data["best"]
+        assert "sharpe" in data["best"]
+
+    def test_landscape_rejects_unsupported_strategy(self, client):
+        """Rejects non-score-driven strategies (e.g., MA_CROSS)."""
+        resp = client.post(
+            "/api/backtest/landscape",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "MA_CROSS",
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-18",
+                "param_x": "entry_threshold",
+                "x_values": [50, 60],
+                "param_y": "stop_loss_pct",
+                "y_values": [-0.10],
+                "horizon": 20,
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_landscape_rejects_unknown_param(self, client):
+        """Rejects param names not in strategy whitelist."""
+        resp = client.post(
+            "/api/backtest/landscape",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-18",
+                "param_x": "unknown_param",
+                "x_values": [1, 2],
+                "param_y": "stop_loss_pct",
+                "y_values": [-0.10],
+                "horizon": 20,
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "Unknown param" in body["message"]
+
+    def test_landscape_rejects_same_params(self, client):
+        """Rejects when param_x equals param_y."""
+        resp = client.post(
+            "/api/backtest/landscape",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-18",
+                "param_x": "entry_threshold",
+                "x_values": [50, 60],
+                "param_y": "entry_threshold",
+                "y_values": [50, 60],
+                "horizon": 20,
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "different" in body["message"]
+
+    def test_landscape_requires_horizon(self, client):
+        """Rejects when horizon is missing."""
+        resp = client.post(
+            "/api/backtest/landscape",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-18",
+                "param_x": "entry_threshold",
+                "x_values": [50, 60],
+                "param_y": "stop_loss_pct",
+                "y_values": [-0.10],
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_landscape_handles_error_cells(self, client, monkeypatch):
+        """Grid continues even when individual cells error."""
+        call_count = {"n": 0}
+
+        def _mock_run(**kw):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return {"error": "No data"}
+            return {
+                "sharpe_ratio": 1.0,
+                "total_return_pct": 10.0,
+                "max_drawdown": -10.0,
+                "total_trades": 5,
+                "excess_return_pct": 5.0,
+            }
+
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", _mock_run)
+
+        resp = client.post(
+            "/api/backtest/landscape",
+            json={
+                "stock_code": "sz000977",
+                "strategy": "SCORE_THRESHOLD",
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-18",
+                "param_x": "entry_threshold",
+                "x_values": [50],
+                "param_y": "stop_loss_pct",
+                "y_values": [-0.10, -0.05],
+                "horizon": 20,
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+        data = body["data"]
+        assert len(data["grid"]) == 2
+        errors = [c for c in data["grid"] if "error" in c]
+        successes = [c for c in data["grid"] if "error" not in c]
+        assert len(errors) == 1
+        assert len(successes) == 1
+        assert errors[0]["error"] == "No data"
+
+
+# ============================================================================
+# Recommendation endpoint tests (Task 17.7)
+# ============================================================================
+
+
+class TestRecommendationAPI:
+    """POST /api/backtest/recommendation"""
+
+    @staticmethod
+    def _make_backtest_result(sharpe=1.0, return_pct=10.0, trades=8):
+        return {
+            "sharpe_ratio": sharpe,
+            "total_return_pct": return_pct,
+            "max_drawdown": -15.0,
+            "total_trades": trades,
+            "win_rate": 60.0,
+            "excess_return_pct": 5.0,
+            "information_ratio": 0.5,
+            "daily_values": [{"date": "2025-01-15T00:00:00", "equity": 100000.0}],
+            "trades": [{"date": "2025-02-20T00:00:00", "side": "SELL", "pnl": 2000.0}],
+        }
+
+    def test_recommendation_success(self, client, monkeypatch):
+        """Happy path: per-horizon rankings with composite scores."""
+
+        def _mock_run(**kw):
+            strategy = kw.get("strategy", "")
+            horizon = kw.get("horizon", 5)
+
+            if strategy == "BUY_HOLD":
+                sharpe = 0.78
+                return_pct = 44.9
+                trades = 1
+            elif strategy == "MA_CROSS":
+                sharpe = 0.62
+                return_pct = 27.4
+                trades = 9
+            elif strategy == "SCORE_MOMENTUM":
+                sharpe = 0.45 if horizon == 5 else 0.55 if horizon == 20 else 0.38
+                return_pct = 12.0
+                trades = 6
+            else:
+                sharpe = 0.5
+                return_pct = 8.0
+                trades = 4
+
+            return self._make_backtest_result(
+                sharpe=sharpe, return_pct=return_pct, trades=trades
+            )
+
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", _mock_run)
+
+        # Mock _load_quotes_helper for walk-forward
+        quotes = []
+        base = datetime.datetime(2025, 1, 2, 0, 0, 0)
+        for i in range(300):
+            d = base + datetime.timedelta(days=i)
+            if d.weekday() < 5:
+                quotes.append(
+                    SimpleNamespace(
+                        code="sz000977", date=d, close=100.0, close_hfq=100.0
+                    )
+                )
+        monkeypatch.setattr(
+            "app.api.v1.backtest._load_quotes_helper",
+            lambda *a, **kw: quotes,
+        )
+
+        resp = client.post(
+            "/api/backtest/recommendation",
+            json={
+                "stock_code": "sz000977",
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-18",
+                "horizons": [5, 20, 60],
+                "strategies": ["SCORE_MOMENTUM", "MA_CROSS", "BUY_HOLD"],
+                "initial_cash": 100000,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+        data = body["data"]
+
+        assert data["stock_code"] == "sz000977"
+        assert "per_horizon" in data
+        assert "5" in data["per_horizon"]
+        assert "20" in data["per_horizon"]
+        assert "60" in data["per_horizon"]
+
+        h5 = data["per_horizon"]["5"]
+        assert "rankings" in h5
+        assert "benchmark" in h5
+        assert "warnings" in h5
+        assert isinstance(h5["rankings"], list)
+
+        if h5["benchmark"]:
+            assert h5["benchmark"]["strategy"] == "BUY_HOLD"
+
+        if len(h5["rankings"]) >= 2:
+            first = h5["rankings"][0].get("composite_score", -999)
+            last = h5["rankings"][-1].get("composite_score", -999)
+            assert first >= last, f"Expected {first} >= {last}"
+
+        for entry in h5["rankings"]:
+            assert "strategy" in entry
+            assert "sharpe" in entry
+            assert "return_pct" in entry
+            assert "drawdown" in entry
+            assert "trades" in entry
+            assert "win_rate" in entry
+            assert "composite_score" in entry
+            assert "stability_score" in entry
+            assert "performance_decay" in entry
+
+    def test_recommendation_requires_stock_code(self, client):
+        """Rejects request without stock_code."""
+        resp = client.post(
+            "/api/backtest/recommendation",
+            json={
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-18",
+                "horizons": [5, 20],
+                "strategies": ["MA_CROSS"],
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "stock_code" in body["message"]
+
+    def test_recommendation_requires_dates(self, client):
+        """Rejects request without start_date/end_date."""
+        resp = client.post(
+            "/api/backtest/recommendation",
+            json={
+                "stock_code": "sz000977",
+                "horizons": [5],
+                "strategies": ["MA_CROSS"],
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_recommendation_invalid_horizons(self, client):
+        """Rejects invalid horizon values."""
+        resp = client.post(
+            "/api/backtest/recommendation",
+            json={
+                "stock_code": "sz000977",
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-18",
+                "horizons": [99],
+                "strategies": ["MA_CROSS"],
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_recommendation_invalid_strategies(self, client):
+        """Rejects when all strategies are invalid."""
+        resp = client.post(
+            "/api/backtest/recommendation",
+            json={
+                "stock_code": "sz000977",
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-18",
+                "horizons": [5, 20],
+                "strategies": ["INVALID_STRATEGY"],
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["success"] is False
+
+    def test_recommendation_handles_failed_backtests(self, client, monkeypatch):
+        """Skips failed backtests and continues with remaining pairs."""
+
+        def _mock_run(**kw):
+            strategy = kw.get("strategy", "")
+            if strategy == "MA_CROSS":
+                return {"error": "No signal data available"}
+            return {
+                "sharpe_ratio": 0.8,
+                "total_return_pct": 10.0,
+                "max_drawdown": -12.0,
+                "total_trades": 5,
+                "win_rate": 60.0,
+                "excess_return_pct": 4.0,
+                "information_ratio": 0.4,
+                "daily_values": [],
+                "trades": [],
+            }
+
+        monkeypatch.setattr("app.api.v1.backtest.run_backtest", _mock_run)
+
+        quotes = []
+        base = datetime.datetime(2025, 1, 2, 0, 0, 0)
+        for i in range(300):
+            d = base + datetime.timedelta(days=i)
+            if d.weekday() < 5:
+                quotes.append(
+                    SimpleNamespace(
+                        code="sz000977", date=d, close=100.0, close_hfq=100.0
+                    )
+                )
+        monkeypatch.setattr(
+            "app.api.v1.backtest._load_quotes_helper",
+            lambda *a, **kw: quotes,
+        )
+
+        resp = client.post(
+            "/api/backtest/recommendation",
+            json={
+                "stock_code": "sz000977",
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-18",
+                "horizons": [20],
+                "strategies": ["MA_CROSS", "BUY_HOLD"],
+                "initial_cash": 100000,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+        h20 = body["data"]["per_horizon"]["20"]
+        assert len(h20["warnings"]) >= 1
+        strategy_names = [r["strategy"] for r in h20["rankings"]]
+        assert "MA_CROSS" not in strategy_names

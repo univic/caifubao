@@ -61,6 +61,36 @@ class BacktestResult(Document):
     error_message = StringField()
     trades = ListField(DictField())  # list of trade records
     daily_values = ListField(DictField())  # list of daily equity curve
+
+    # Friction costs
+    total_commission = FloatField(default=0.0)
+    total_stamp_duty = FloatField(default=0.0)
+    total_slippage = FloatField(default=0.0)
+    gross_return = FloatField()  # return before friction
+    gross_return_pct = FloatField()  # return pct before friction
+
+    # Benchmark comparison
+    benchmark_code = StringField(default="sh000300")  # CSI 300
+    benchmark_return = FloatField()  # benchmark absolute return
+    benchmark_return_pct = FloatField()  # benchmark return pct
+    benchmark_annualized_return = FloatField()
+    excess_return = FloatField()  # strategy - benchmark
+    excess_return_pct = FloatField()
+    information_ratio = FloatField()
+
+    # Strategy config (for score-driven strategies)
+    score_config = DictField()  # scoring config snapshot
+    horizon = IntField()  # scoring horizon used
+    data_coverage = DictField()  # HFQ gaps, factor/score alignment warnings
+
+    # Multi-stock / portfolio fields
+    per_stock_contributions = ListField(
+        DictField()
+    )  # per-stock realized PnL, trade count, max DD
+    top_n = IntField()  # TOP_N_ROTATION param
+    rebalance_interval = IntField()  # rebalance frequency
+    allocation = StringField()  # position sizing method
+
     created_at = DateTimeField(default=datetime.datetime.utcnow)
     completed_at = DateTimeField()
 

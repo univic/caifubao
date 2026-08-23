@@ -3,6 +3,10 @@
 This workflow is for using OpenClaw to direct caifubao development. It is not
 the runtime OpenClaw integration contract.
 
+**Rule authority:** All safety, boundary, discipline, validation, spec-gate, and
+OpenClaw-specific rules are defined once in `RULES.md`. This file describes the
+agent workflow; `RULES.md` defines the rules agents must follow.
+
 ## Operating Model
 
 OpenClaw should behave like a lightweight technical lead:
@@ -11,19 +15,23 @@ OpenClaw should behave like a lightweight technical lead:
 2. Identify affected modules.
 3. Decide whether OpenSpec must change first.
 4. Assign exactly scoped implementation work.
-5. Review contracts and behavioral risk.
-6. Run the smallest useful validation.
-7. Report changed files, checks, and remaining risk.
+5. Implement the smallest change.
+6. Run validation checks — loop until they pass.
+7. Run reviewers (contract-reviewer + qa-reviewer) — enforced gates.
+8. Run branch conflict check against the target base branch.
+9. Report changed files, checks, review outcomes, and remaining risk.
+10. Close with the Gate Checklist.
 
 The orchestrator is the single final owner. Other agents may implement bounded
 slices or review, but they do not own merge decisions.
 
 ## Core Agents
 
+Defined in `AGENTS.md`. Use these roles:
+
 - `caifubao-orchestrator`: primary owner for routing, planning, integration,
   validation, and final summary.
-- `spec-guardian`: read-only spec gate for behavior, contract, auth, freshness,
-  scoring, and boundary changes.
+- `spec-guardian`: read-only spec gate decision.
 - `backend-implementer`: bounded Flask/API/auth/model/test changes.
 - `datahub-implementer`: bounded data production, scoring, freshness, runner,
   model, and test changes.
@@ -39,29 +47,22 @@ agent by default.
 
 ## Task Notes
 
-For non-trivial work, the orchestrator should keep this compact checklist:
-
 ```text
 Outcome:
 Module Impact:
 Spec Gate: required / not required
+Assumptions:
 Write Scope:
 Validation Plan:
 Reviewer Requests:
 ```
+When closing the task, complete the Gate Checklist (see below).
 
 ## Spec Gate
 
-Run the spec gate before code changes when a task affects:
-
-- API endpoints, response fields, pagination, filtering, or errors
-- Auth, service tokens, scopes, token lifecycle, or audit fields
-- Freshness semantics, data dates, generated timestamps, or status states
-- Scoring, factors, signals, replay, calibration, or look-ahead-bias rules
-- Data ownership between datahub, backend, frontend, k8s, and OpenClaw
-- Public docs used by downstream consumers
-
-Internal refactors and behavior-preserving fixes do not need a spec update.
+Defined in `RULES.md#spec-gate`. Run the spec gate before code changes when
+a task affects endpoints, auth, freshness, scoring, data ownership, or public
+docs. Internal refactors and behavior-preserving fixes do not need a spec update.
 
 ## Write-Scope Rule
 
@@ -83,25 +84,37 @@ datahub produces record -> backend exposes API -> frontend renders API response
 
 Avoid assigning multiple agents to the same files.
 
-## Review Gates
+## Review Gates (MANDATORY)
 
-Use `contract-reviewer` when touching API, OpenClaw, auth, freshness, scoring
-contract, or frontend API consumption.
+Defined in `RULES.md#review-gates`. Reviewers are NOT optional. Every
+non-trivial change set MUST go through the appropriate reviewer(s) before
+being considered complete.
 
-Use `qa-reviewer` before finishing non-trivial changes or public repository
-changes.
+### Execution Rules
+1. The orchestrator MUST include reviewer invocation in the task plan
+   BEFORE starting implementation.
+2. Reviewers run AFTER implementation completes and validation passes, but
+   BEFORE marking the task as done.
+3. If a reviewer reports P1 issues, they MUST be resolved and the reviewer
+   re-run (or the fixes verified by the orchestrator with explicit sign-off).
+4. P2 warnings MUST be explicitly addressed or acknowledged in the commit
+   message or PR description.
+5. **qa-reviewer is mandatory for every non-trivial code change.** Only skip
+   for docs-only, comment-only, or formatting-only changes.
+6. **Branch conflict check is mandatory before completion** — verify the
+   working branch is clean against the base branch (see RULES.md#branch-conflict-check).
 
-Reviewers should report findings. They should not take over the implementation
-plan unless the orchestrator asks for a revised plan.
+### Gate Checklist (include in final summary)
+```text
+[ ] spec-guardian:  triggered / not triggered
+[ ] contract-reviewer: triggered / not triggered
+[ ] qa-reviewer:      triggered / not triggered
+[ ] branch-conflict:  clean / conflicts resolved
+```
 
 ## Validation Defaults
 
-- Python changes: relevant `ruff check`, `ruff format --check`, and the smallest
-  useful pytest target.
-- Backend API changes: focused pytest under `backend/app/test/`.
-- Datahub changes: focused datahub tests or runner dry-runs where available.
-- Frontend changes: `npm run lint` and `npm run build` when relevant.
-- Deployment examples: `kubectl kustomize` or equivalent render check.
+Defined in `RULES.md#validation`.
 
 ## Hard Boundaries
 

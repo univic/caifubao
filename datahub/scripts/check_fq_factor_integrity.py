@@ -24,12 +24,14 @@ def build_client():
     from pymongo import MongoClient
 
     app_config = get_app_config()
-    uri = (
-        f"mongodb://{app_config.MONGODB_USERNAME}:{app_config.MONGODB_PASSWORD}"
-        f"@{app_config.MONGODB_HOST}:{app_config.MONGODB_PORT}/{app_config.MONGODB_DB}"
-        "?authSource=admin"
+    return MongoClient(
+        host=app_config.MONGODB_HOST,
+        port=app_config.MONGODB_PORT,
+        username=app_config.MONGODB_USERNAME,
+        password=app_config.MONGODB_PASSWORD,
+        authSource="admin",
+        serverSelectionTimeoutMS=5000,
     )
-    return MongoClient(uri, serverSelectionTimeoutMS=5000)
 
 
 def get_sample_latest_quote(db, code: str) -> dict[str, Any] | None:

@@ -34,7 +34,7 @@ from pymongo.database import Database
 logger = logging.getLogger(__name__)
 
 DEFAULT_COLLECTIONS = [
-    "stock_daily_quotes",
+    "stock_daily_quote",
     "stock_factor_daily",
     "stock_signal_daily",
     "stock_score_predictions",
@@ -42,7 +42,7 @@ DEFAULT_COLLECTIONS = [
 
 # Map collections to their date field names for filtering
 COLLECTION_DATE_FIELDS: dict[str, list[str]] = {
-    "stock_daily_quotes": ["date"],
+    "stock_daily_quote": ["date"],
     "stock_factor_daily": ["date", "trade_date"],
     "stock_signal_daily": ["date", "signal_date"],
     "stock_score_predictions": ["prediction_date", "evaluation_date"],

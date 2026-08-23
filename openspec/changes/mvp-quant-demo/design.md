@@ -12,6 +12,8 @@ OpenSpec 需要和这套实际结构保持一致，尤其要避免继续把 Djan
 
 ## Architecture
 
+Module boundaries are defined in `RULES.md#module-boundaries`. Summary:
+
 ```
 datahub  ->  MongoDB  ->  backend API  ->  frontend
    |            |             |
@@ -22,6 +24,16 @@ datahub  ->  MongoDB  ->  backend API  ->  frontend
 OpenClaw ---------------> backend API
    +-- 下游消费行情 / 因子 / 信号 / 评分 / 数据质量，用于投资分析
 ```
+
+Object storage now has two distinct operational roles:
+
+- MongoDB logical archives are disaster-recovery artifacts.
+- Partitioned Parquet exports are research data-lake artifacts for backtests,
+  factor experiments, and future autoresearch inputs.
+
+The application serving path remains MongoDB -> backend API -> frontend.
+Parquet is an offline research input and must not become an implicit dependency
+for online API reads.
 
 ### Boundary Rules
 
@@ -44,45 +56,20 @@ MVP 只保留最小闭环：
 5. 简单信号
 6. 简单回测
 
-## Next Phase: Multi-horizon Scoring
+## Multi-horizon Scoring (Implemented ✅)
 
-评分机制当前尚未真正进入生产演示闭环，因此下一阶段可以直接重塑数据模型和接口契约，而不是围绕已有 T+5 字段做保守扩展。
+评分引擎已经实现 `StockScorePrediction` 模型，覆盖 Score5/20/60 三个周期。实施原则全部满足：
 
-目标是将评分从一个单字段展示能力升级为可追溯的预测系统：
+- 规则化评分（7 组件 × 3 周期），无 ML 训练流水线。
+- 项目内轻量回放/校准实现（`ScoreReplayService`, `ScoreCalibrationReport`）。
+- 每条预测包含解释和输入快照。
+- 每个周期独立配置权重、阈值和有效性标准（`config.py`）。
+- 回放防止 look-ahead bias（`date__lt` 严格查询）。
+- 校准回答"高分是否更有效"（top-N 聚合、假阳性/假阴性筛查）。
+- 验证任务每天更新 `PENDING`/`TRACKING` 记录。
+- 评分 API 是稳定契约（`/api/v1/integrations/openclaw/scores`）。
 
-- `Score5` 表示未来 5 个交易日的短线机会强度。
-- `Score20` 表示未来 20 个交易日的波段机会强度。
-- `Score60` 表示未来 60 个交易日的中期机会强度。
-
-推荐数据建模方式是一条记录表示一次预测：
-
-```
-StockScorePrediction
-  stock_code
-  date
-  horizon: 5 | 20 | 60
-  score
-  rank
-  recommendation
-  explanation
-  input_snapshot
-  verification
-  model_version
-```
-
-这比在旧 `StockDailyScore` 上继续堆 `score_5`、`score_20`、`score_60` 字段更激进，但更适合后续做模型版本、分周期胜率、失败样本分析和下游消费。
-
-实施原则：
-
-- 先规则化，不先引入机器学习训练流水线。
-- 评分回放与校准先使用项目内轻量实现，不引入外部交易回测框架。
-- 先保存解释和输入快照，再追求复杂因子。
-- 每个周期独立配置权重、阈值和有效性标准。
-- 历史回放必须防止 look-ahead bias：评分只能读取评估日及之前的数据。
-- 评分校准先回答“高分是否更有效”，不要过早扩展成完整交易撮合引擎。
-- 验证任务每天更新 `PENDING` / `TRACKING` 记录，不只在到期日一次性回填。
-- 高分失败样本必须可复盘，不能只展示成功推荐。
-- 评分 API 是稳定契约，Mongo 结构不是外部契约。
+未完成：全市场回填 + 新旧模型版本校准对比 (12d.5)。
 
 ### Replay vs Backtest
 
@@ -93,17 +80,129 @@ StockScorePrediction
 
 只有当系统进入多股票组合、调仓、手续费、滑点、仓位约束和撮合规则阶段时，才重新评估外部回测框架。
 
-## Next Phase: OpenClaw Data Access
+## OpenClaw Data Access (Implemented ✅)
 
-MVP 闭环稳定后，下一步任务是保障 OpenClaw 可以调取本项目的数据进行投资分析。该阶段的重点不是扩展 caifubao 的分析能力，而是把 caifubao 打造成可靠的数据提供方：
+OpenClaw 集成已完成，caifubao 作为可靠数据提供方的全部要素已就位：
 
-- 提供稳定的股票主数据、日线行情、复权价格、因子、信号、评分和数据质量 API。
-- 每个依赖行情的数据响应都要暴露数据日期、生成时间或 freshness 状态。
-- 明确 `missing`、`stale`、`not applicable`、`blocked by quote` 等状态，避免下游靠空值猜测。
-- 下游只读访问，避免 OpenClaw 触发采集、回填或因子计算任务。
-- OpenClaw 使用独立 service token 鉴权，不复用普通用户 JWT，不直连 Mongo。
-- service token 只授予只读 scope，backend 记录 request id、token id、endpoint、状态码和 data-as-of，方便追溯投资分析输入。
-- 保持 backend API 为集成契约，避免 OpenClaw 依赖 Mongo 集合细节。
+- 提供稳定的股票主数据、日线行情、复权价格、因子、信号、评分和数据质量 API（9 端点）。
+- 评分端点包含解释、输入快照新鲜度、验证指标。
+- 独立 service token 鉴权（SHA-256 哈希，双 scope），不复用用户 JWT。
+- 所有 compute/mutation 端点对 service token 返回 403。
+- 标准化响应格式（request_id、generated_at）。
+
+未完成：
+- `data_as_of` 字段从未在响应中填充（10.3）。
+- 无速率限制保护（10.8）。
+- 无持久化审计日志表，仅覆盖写 last_used_at/last_used_ip。
+
+## Production Readiness Gap
+
+当前项目已实现研究闭环的核心骨架（多周期评分、带摩擦回测、OpenClaw 集成、前端展示），
+但距离真正在市场上盈利还差四个阶段的跨越。以下按工作量递增排列，每阶段映射到现有
+`tasks.md` 中对应的任务编号。
+
+### 阶段 A：研究可靠性（4–6 周）
+
+验证当前评分和策略是否真的有预测力，而不是回测过拟合。
+
+| 能力 | 对应任务 | 现状 |
+|:-----|:---------|:-----|
+| 因子评估管线 | 15.1–15.12 | ✅ FactorEvaluationService 已实现（IC/ICIR/五分组/相关性/衰减），✅ tech_factor_runner CLI 可用。❌ 市场状态分类器(15.12)未实现。❌ 前端仪表板(15.11)未建。 |
+| 市场状态分类 | 15.12 | ❌ 未实现。牛/熊/震荡市分类是所有分状态报告的前置依赖。 |
+| 滚动窗口验证 + Bootstrap | 17.1–17.7 | ✅ 滚动验证(17.1)、衰减检测(17.2)、permutation test + bootstrap CI(17.5) 已实现。❌ 市场状态分拆(17.3)、稳定性检验(17.4)、景观可视化(17.6)、最终推荐(17.7)未实现。 |
+| 反过拟合护栏 | 13.6–13.8 | ✅ composite ranking(13.6)、集中度检测、流动性过滤已实现。❌ Bonferroni 校正(13.7)未实现。✅ 交易可执行性约束(13.8)已实现。 |
+| 全市场校准 | 12d.1, 20.2 | ✅ 混合分位数+绝对阈值已实施(12d.1)。❌ 全市场回填 + 新旧模型对比(12d.5)未执行。❌ 20.2 全市场成功标准未验证。 |
+
+### 阶段 B：执行基础设施（6–8 周）
+
+从 "信号研究实验室" 跨越到 "交易执行手术台"。
+
+| 能力 | 说明 |
+|:-----|:-----|
+| 券商 API 对接 | A 股市场可选 QMT（迅投）、CTP/XTP、PTrade；需要委托下单、撤单、成交回报、持仓查询 |
+| 实时行情接入 | 当前评分引擎是日线级别，实盘需要盘中数据流（至少分钟线）支持日内执行决策 |
+| 订单管理 + 成交回报 | 从下单到成交到持仓更新的完整生命周期，含委托状态机、部分成交、废单处理 |
+| 持仓追踪 + P&L 归因 | 实盘持仓 ≠ 回测持仓；需要每日 mark-to-market、已实现/未实现盈亏、分股票归因 |
+| 组合级风险管理 | 从单票 stop-loss 升级为 VaR 约束、相关性约束、行业集中度限制、回撤熔断、黑名单 |
+
+> 阶段 B 在 `tasks.md` 中无对应条目，属于当前 scope 之外的全新能力。
+
+### 阶段 C：生产化部署（4 周）
+
+从单机脚本到可运维的生产系统。
+
+| 能力 | 对应任务 | 说明 |
+|:-----|:---------|:-----|
+| Compute Worker 生产部署 | 11.1–11.6 | ✅ 评分/回填/校准/验证 worker 已实现 8 种 handler + K3s Deployment manifest。❌ 11.6 node-role 文档未写。 |
+| 数据质量自动监控 + 告警 | 2.1–2.3, 10.3–10.4 | ✅ 评分质量监控 `/api/decisions/quality` 已实现（命中率、偏移、漂移）。❌ `data_as_of` 未填充(10.3)。❌ 无持久化审计日志。 |
+| 决策日志 + 复盘工具 | 18.6–18.12 | ❌ DecisionJournal 模型未建。✅ 评分预警(18.3)和质量监控(18.4-18.5)已实现。❌ 日志追踪/归因/再平衡预览(18.6-18.12)未实现。 |
+| 监控 / 告警 / 灾备 | — | ❌ Prometheus + Grafana + MongoDB 备份；评分任务失败、数据延迟的自动通知 |
+
+## Cluster Reinitialization and Disaster Recovery
+
+本轮 K3S 重置暴露出一个关键风险：公开示例里的 MongoDB 使用单副本
+`local-path` PVC。该形态适合快速 demo，不适合作为长期数据持久化边界。
+如果 PV/PVC 被删除、节点重装或 local-path 目录被清理，Kubernetes 对象层不会
+保留可恢复状态。
+
+重初始化前应优先完成一条最小但可验证的灾备路径：
+
+1. **对象存储备份**：增加 S3-compatible `mongodump` 备份 CronJob，产出压缩
+   逻辑备份并上传到对象存储。公共仓库只提交 manifest 模板、变量名和验证方式；
+   真实 bucket、endpoint、access key、secret key 和私有 runbook 保留在
+   `caifubao-private`。
+2. **恢复 Job**：增加从对象存储下载备份并执行 `mongorestore` 的一次性 Job
+   模板，恢复后检查关键集合、文档数量和 freshness 标记。
+3. **空库 bootstrap**：当没有可恢复备份时，定义从空 MongoDB 重建 demo-ready
+   数据的顺序：股票主数据、行情、复权/MA/技术因子、信号、评分、freshness 和
+   data quality 状态。
+4. **数据分类**：把可再生市场数据和不可再生业务数据分开处理。行情、因子、
+   信号和评分多为可再生；用户、组合、watchlist、decision journal、service token
+   和审计数据需要备份或明确记录为丢失。
+5. **存储硬化**：长期环境不应只依赖未限定节点的 `local-path`。最低要求是
+   明确节点放置、reclaim policy、备份依赖和恢复流程；更稳妥的路径是引入
+   snapshot-capable 或 replicated storage。
+
+当前集群没有独立数据盘，部分节点可用空间不足以安全运行 replicated storage。
+本轮先把公共 MongoDB 工作负载改为单副本 StatefulSet；私有环境使用显式 static
+local PV、`Retain` reclaim policy、固定节点亲和和固定宿主机目录。development 与
+production 使用独立 PV 和目录。该方案只防止工作负载漂移和 PVC 生命周期误删，
+不提供节点级高可用；节点或目录损坏仍必须通过 COS `mongodump` 逻辑备份恢复。
+未来具备独立磁盘或稳定低延迟存储网络后，再迁移到 snapshot-capable 或
+replicated storage。
+
+该阶段先解决“数据能恢复或能重建”的问题，再启动 autoresearch 实验循环。否则
+研究指标会建立在不稳定的数据基线上，实验结果不可比较。
+
+## Research Data Lake Bootstrap
+
+趁集群重初始化前固定最小数据湖边界：
+
+1. 使用与 MongoDB 备份相同的 S3-compatible/COS 能力，但独立 prefix。
+2. datahub 从 MongoDB 导出 `stock_daily_quote`、`stock_factor_daily`、
+   `stock_signal_daily` 为按 `trade_date` 分区的 Parquet。
+3. K8S 中提供默认 suspended 的导出 CronJob，初始化后先手动验证，再决定是否定时。
+4. autoresearch 后续优先读取 Parquet snapshot，而不是直接查询在线 MongoDB。
+
+第一版只做数据集落地，不实现完整实验编排、schema registry 或 artifact lifecycle。
+
+### 阶段 D：纸上交易验证（2–3 个月）
+
+模拟盘验证是实盘前的最后防线。核心检验：
+
+- 模拟盘至少跑 2–3 个月，覆盖至少一轮完整的市场涨跌周期
+- 对比每日系统推荐 vs 实际执行偏离（是否因仓位、资金、滑点等因素无法执行推荐）
+- 分别计算 "模型质量"（推荐本身对不对）和 "执行纪律"（推荐是否被正确执行）作为独立指标
+- 在实盘前完成最后一次参数修正，并锁定模型版本
+
+### Non-goals（明确排除）
+
+以下能力不在当前规划中，待上述四个阶段完成后再评估：
+
+- 高频 / 日内交易：当前以日线为基础，扩展到分钟/ tick 级别需要全新数据管道
+- 多资产类别：只做 A 股；商品期货/期权/可转债需要独立的风控和定价模型
+- 机器学习模型替代规则评分：先积累足够多 `VERIFIED` 样本（至少数千条）再评估
+- 自动交易（无人值守）：实盘初期必须人工复核每笔交易，逐步建立信任
 
 ## Next Phase: Autoresearch-Guided Profitability Research
 
