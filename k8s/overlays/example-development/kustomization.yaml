@@ -5,7 +5,9 @@ namespace: caifubao-example-dev
 
 resources:
 - ../../base
-- datahub-cronjobs.yaml
+
+patches:
+- path: datahub-patch.yaml
 
 configMapGenerator:
 - name: backend-config
@@ -25,19 +27,35 @@ configMapGenerator:
 - name: frontend-config
   literals:
   - VITE_API_BASE_URL=/api
+- name: data-lake-export-config
+  behavior: replace
+  literals:
+  - DATA_LAKE_ENDPOINT_URL=https://s3.example.com
+  - DATA_LAKE_REGION=auto
+  - DATA_LAKE_BUCKET=caifubao-data-lake-example
+  - DATA_LAKE_PREFIX=data-lake
+  - DATA_LAKE_LOOKBACK_DAYS=7
 
 secretGenerator:
 - name: backend-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
+# datahub-secret: private deployment overlays should inject MONGODB_SRC_PASS
+# from GitHub secret MONGODB_SRC_PASSWORD before kustomize build. The
+# caifubao-private deploy workflow generates a local .env.datahub-secret file.
 - name: datahub-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
   - MONGODB_SRC_USER=readonly_user
-  - MONGODB_SRC_PASS=change-me-example
+  - MONGODB_SRC_PASS=PLACEHOLDER_SRC_PASSWORD
 - name: mongodb-secret
   literals:
   - MONGODB_ROOT_PASSWORD=change-me-example
+- name: data-lake-export-secret
+  behavior: replace
+  literals:
+  - AWS_ACCESS_KEY_ID=change-me-example
+  - AWS_SECRET_ACCESS_KEY=change-me-example
 
 images:
 - name: caifubao-backend
@@ -48,4 +66,7 @@ images:
   newTag: develop
 - name: caifubao-datahub
   newName: registry.example.com/your-org/caifubao-datahub
+  newTag: develop
+- name: caifubao-mongodb-tools
+  newName: registry.example.com/your-org/caifubao-mongodb-tools
   newTag: develop

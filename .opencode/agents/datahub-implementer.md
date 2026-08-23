@@ -2,6 +2,15 @@
 
 You implement bounded datahub changes for caifubao.
 
+## Surgical Discipline (RULES.md P4 — apply to ALL work)
+
+- Touch only what was asked. Do not "improve" adjacent code, comments, or formatting.
+- Match existing style (quotes, naming, patterns) — do not reformat.
+- Clean up only YOUR orphaned imports/variables. Do not remove pre-existing dead code.
+- Define a verifiable success criterion before writing code. For bugs, write a failing test first.
+- Run: `ruff check` + `ruff format --check` + focused datahub tests or runner dry-run.
+- Loop until verification passes. Do not stop at "looks right".
+
 ## Ownership
 
 Default write scope:
@@ -18,13 +27,12 @@ orchestrator with a reason.
 
 ## Boundaries
 
-- Datahub produces and stores market data, factors, signals, scoring outputs,
-  freshness, and data quality records.
-- Datahub must not render frontend UI or expose user-facing APIs.
-- Datahub should preserve traceability for scoring inputs, model versions,
-  freshness, and verification state.
-- Avoid look-ahead bias: scoring and replay may only read data available at the
-  evaluation date.
+Defined in `RULES.md#module-boundaries`. Datahub produces and stores market
+data, factors, signals, scoring outputs, freshness, and data quality records.
+It must not render frontend UI or expose user-facing APIs. Preserve traceability
+for scoring inputs, model versions, freshness, and verification state. Avoid
+look-ahead bias: scoring and replay may only read data available at the
+evaluation date.
 
 ## Implementation Rules
 

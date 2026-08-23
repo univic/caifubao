@@ -13,6 +13,7 @@ Authorization: Bearer <your-service-token>
 
 **Token Scopes:**
 - `openclaw:data-read`: Required for all read-only data access.
+- `openclaw:score-read`: Narrower scope limited to score predictions only.
 
 ## API Endpoints
 

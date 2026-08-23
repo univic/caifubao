@@ -2,9 +2,11 @@
 # Author : Gemini CLI
 # Date: 2026-04-16
 
+import uuid
+from datetime import datetime, timezone
 from functools import wraps
 from flask import request, jsonify, g
-import datetime
+
 from app.utilities.auth_util import verify_service_token
 
 
@@ -12,13 +14,14 @@ def service_token_required(scope=None):
     """
     Decorator to protect OpenClaw integration endpoints with service tokens.
     Usage: @service_token_required(scope="openclaw:data-read")
+           @service_token_required(scope=["openclaw:score-read", "openclaw:data-read"])
     """
 
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             auth_header = request.headers.get("Authorization")
-            if not auth_header or not auth_header.startswith("Bearer "):
+            if not auth_header or not auth_header.lower().startswith("bearer "):
                 return jsonify(
                     {
                         "success": False,
@@ -28,7 +31,7 @@ def service_token_required(scope=None):
                 ), 401
 
             token = auth_header.split(" ")[1]
-            token_doc, error = verify_service_token(token, required_scope=scope)
+            token_doc, error = verify_service_token(token, required_scopes=scope)
 
             if error:
                 status_code = 403 if "scope" in error.lower() else 401
@@ -38,7 +41,7 @@ def service_token_required(scope=None):
 
             # Update tracking info
             token_doc.update(
-                set__last_used_at=datetime.datetime.now(datetime.UTC),
+                set__last_used_at=datetime.now(timezone.utc),
                 set__last_used_ip=request.remote_addr,
             )
 
@@ -50,3 +53,36 @@ def service_token_required(scope=None):
         return decorated_function
 
     return decorator
+
+
+# ---------------------------------------------------------------------------
+# Shared before_request handler — block service tokens from compute endpoints
+# ---------------------------------------------------------------------------
+
+
+def block_service_tokens():
+    """Drop service-token (st_...) requests with 403 on non-OpenClaw endpoints.
+
+    Use as: @blueprint.before_request(block_service_tokens)
+
+    OpenClaw service tokens are only valid on /api/v1/integrations/openclaw/*
+    routes. Compute/mutation/admin endpoints must reject them explicitly.
+    """
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer st_"):
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "message": (
+                        "Service tokens are not allowed on this endpoint. "
+                        "Use /api/v1/integrations/openclaw/* for data access."
+                    ),
+                    "error_code": "SERVICE_TOKEN_BLOCKED",
+                    "request_id": str(uuid.uuid4()),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "data": None,
+                }
+            ),
+            403,
+        )

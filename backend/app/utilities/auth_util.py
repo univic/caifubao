@@ -42,9 +42,10 @@ def generate_service_token(name: str, scopes: list = None, expires_in_days: int 
     return plain_token, doc
 
 
-def verify_service_token(plain_token: str, required_scope: str = None):
+def verify_service_token(plain_token: str, required_scopes=None):
     """
     Verify a plain text token against the database.
+    Accepts a single scope string or a list of allowed scopes.
     Returns (ServiceToken, error_message)
     """
     if not plain_token:
@@ -56,7 +57,7 @@ def verify_service_token(plain_token: str, required_scope: str = None):
     if not token_doc:
         return None, "Invalid or inactive token"
 
-    is_valid, error = token_doc.is_valid(required_scope)
+    is_valid, error = token_doc.is_valid(required_scopes)
     if not is_valid:
         return None, error
 

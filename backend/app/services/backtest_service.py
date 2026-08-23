@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.model.backtest import BacktestResult
 from app.model.factor import StockFactorDaily
+from app.model.scoring import StockScorePrediction
 from app.model.stock import IndividualStock, StockDailyQuote
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,495 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 TRADING_DAYS_PER_YEAR = 252
 RISK_FREE_RATE = 0.03  # annual
+
+VALID_STRATEGIES = (
+    "MA_CROSS",
+    "BUY_HOLD",
+    "SCORE_THRESHOLD",
+    "SCORE_MOMENTUM",
+    "TOP_N_ROTATION",
+    "MULTI_HORIZON_CONSENSUS",
+)
+
+# Friction model
+COMMISSION_RATE = 0.00025  # 0.025%
+MIN_COMMISSION = 5.0  # minimum 5 CNY
+STAMP_DUTY_RATE = 0.001  # 0.1% sell side only
+SLIPPAGE = 0.001  # 0.1% default
+
+# Composite scoring weights
+COMPOSITE_EXCESS_WEIGHT = 1.0
+COMPOSITE_DRAWDOWN_PENALTY = 0.5
+COMPOSITE_IR_WEIGHT = 2.0
+COMPOSITE_TURNOVER_PENALTY = 0.1
+COMPOSITE_CONCENTRATION_PENALTY = 1.0
+MIN_TRADES_FOR_RANKING = 5
+MIN_TRADING_DAYS = 120
+CONCENTRATION_THRESHOLD = 0.40  # 40% of return from single episode = flag
+
+# Permutation test parameters
+PERMUTATION_ITERATIONS = 1000
+PERMUTATION_SIGNIFICANCE = 0.05
+BOOTSTRAP_ITERATIONS = 5000
+BOOTSTRAP_CONFIDENCE = 0.95
+
+# Bonferroni correction
+BONFERRONI_ALPHA = 0.05
+
+
+def composite_score(
+    excess_return_pct: float,
+    max_drawdown: float,
+    information_ratio: float,
+    total_trades: int,
+    daily_values: list | None = None,
+    trades: list | None = None,
+) -> dict:
+    """Compute composite strategy ranking score (higher = better).
+
+    Penalizes overfitting-prone configurations: <5 trades excluded,
+    >40% concentration flagged, extreme drawdowns penalized.
+    """
+    trades = trades or []
+    if total_trades < MIN_TRADES_FOR_RANKING:
+        return {"score": -999.0, "flags": ["low_sample"], "rankable": False}
+
+    # Base: excess return + information ratio contribution
+    base = (excess_return_pct or 0) * COMPOSITE_EXCESS_WEIGHT
+    ir_contrib = (information_ratio or 0) * COMPOSITE_IR_WEIGHT
+
+    # Drawdown penalty (non-linear above 20%)
+    dd = abs(max_drawdown or 0)
+    dd_penalty = (
+        dd * COMPOSITE_DRAWDOWN_PENALTY
+        if dd <= 20
+        else (
+            20 * COMPOSITE_DRAWDOWN_PENALTY + (dd - 20) * COMPOSITE_DRAWDOWN_PENALTY * 2
+        )
+    )
+
+    # Turnover penalty
+    trade_rate = total_trades / max(len(daily_values or []), 1)
+    turnover_penalty = trade_rate * COMPOSITE_TURNOVER_PENALTY
+
+    # Concentration penalty
+    concentration_penalty = 0.0
+    single_best_contrib = 0.0
+    flags = []
+    if trades:
+        total_pnl = sum((t.get("pnl") or 0) for t in trades if t.get("side") == "SELL")
+        if total_pnl > 0:
+            best_pnl = max(
+                (t.get("pnl") or 0) for t in trades if t.get("side") == "SELL"
+            )
+            single_best_contrib = best_pnl / total_pnl
+            if single_best_contrib > CONCENTRATION_THRESHOLD:
+                concentration_penalty = (
+                    single_best_contrib * COMPOSITE_CONCENTRATION_PENALTY
+                )
+                flags.append(f"concentrated_returns:{single_best_contrib:.0%}")
+
+    if dd > 30:
+        flags.append("high_drawdown")
+    if len(daily_values or []) < MIN_TRADING_DAYS:
+        flags.append("insufficient_period")
+
+    score = base + ir_contrib - dd_penalty - turnover_penalty - concentration_penalty
+
+    return {
+        "score": round(score, 4),
+        "rankable": True,
+        "flags": flags,
+        "breakdown": {
+            "excess_contrib": round(base, 4),
+            "ir_contrib": round(ir_contrib, 4),
+            "dd_penalty": round(dd_penalty, 4),
+            "turnover_penalty": round(turnover_penalty, 4),
+            "concentration_penalty": round(concentration_penalty, 4),
+            "single_best_pnl_pct": round(single_best_contrib, 4),
+        },
+    }
+
+
+def anti_overfitting_flags(
+    total_trades: int,
+    daily_values: list | None = None,
+    trades: list | None = None,
+    num_comparisons: int | None = None,
+    p_value: float | None = None,
+) -> dict:
+    """Return anti-overfitting flags for a backtest result."""
+    flags = []
+    daily_values = daily_values or []
+    trades = trades or []
+
+    if total_trades < MIN_TRADES_FOR_RANKING:
+        flags.append("low_sample")
+    if len(daily_values) < MIN_TRADING_DAYS:
+        flags.append("insufficient_period")
+
+    # Concentration detection
+    total_pnl = sum((t.get("pnl") or 0) for t in trades if t.get("side") == "SELL")
+    if total_pnl > 0 and trades:
+        best_pnl = max((t.get("pnl") or 0) for t in trades if t.get("side") == "SELL")
+        if best_pnl / total_pnl > CONCENTRATION_THRESHOLD:
+            flags.append(f"concentrated_returns:{best_pnl / total_pnl:.0%}")
+
+    # Bonferroni multiple-comparison
+    if num_comparisons is not None and num_comparisons > 1:
+        flags.append(f"bonferroni_applied:n={num_comparisons:.0f}")
+        if p_value is not None:
+            bonf_flag = multiple_comparison_flag(p_value, num_comparisons)
+            if bonf_flag:
+                flags.append(bonf_flag)
+
+    return {"flags": flags, "trades": total_trades, "days": len(daily_values)}
+
+
+def bonferroni_correction(num_comparisons: int, alpha: float | None = None) -> dict:
+    """Bonferroni correction for multiple comparisons.
+
+    Returns corrected alpha and a flagging helper.
+    When num_comparisons <= 1, no correction is needed.
+    """
+    if alpha is None:
+        alpha = BONFERRONI_ALPHA
+    if num_comparisons <= 1:
+        return {
+            "corrected_alpha": alpha,
+            "applied": False,
+            "num_comparisons": num_comparisons,
+            "note": "No correction needed (single comparison)",
+        }
+    corrected_alpha = alpha / num_comparisons
+    return {
+        "corrected_alpha": round(corrected_alpha, 6),
+        "applied": True,
+        "num_comparisons": num_comparisons,
+        "note": f"Bonferroni: alpha={alpha} / n={num_comparisons} = {corrected_alpha:.6f}",
+    }
+
+
+def multiple_comparison_flag(
+    p_value: float | None,
+    num_comparisons: int,
+    alpha: float | None = None,
+) -> str | None:
+    """Return a flag string if p_value fails Bonferroni-corrected threshold.
+
+    Returns None if p_value is None, num_comparisons <= 1, or p_value passes.
+    """
+    if alpha is None:
+        alpha = BONFERRONI_ALPHA
+    if p_value is None or num_comparisons <= 1:
+        return None
+    corrected = alpha / num_comparisons
+    if p_value > corrected:
+        return f"not_significant_after_bonferroni:p={p_value:.4f}>alpha_corrected={corrected:.6f}"
+    return None
+
+
+# Multi-stock / portfolio constants
+LOT_SIZE = 100  # A-share minimum trading unit (整手)
+
+
+# ---------------------------------------------------------------------------
+# Friction, limit, and benchmark helpers
+# ---------------------------------------------------------------------------
+
+
+def _apply_friction(price: float, quantity: int, side: str) -> tuple:
+    """Return (execution_price, commission, stamp_duty, slippage_cost).
+
+    - BUY: execution price is slightly higher (slippage works against buyer).
+    - SELL: execution price is slightly lower (slippage works against seller).
+    - Commission applies to both sides; stamp duty only on SELL.
+    """
+    if side == "BUY":
+        exec_price = price * (1 + SLIPPAGE)
+    else:
+        exec_price = price * (1 - SLIPPAGE)
+
+    trade_value = exec_price * quantity
+    commission = max(trade_value * COMMISSION_RATE, MIN_COMMISSION)
+    stamp_duty = trade_value * STAMP_DUTY_RATE if side == "SELL" else 0.0
+    slippage_cost = abs(exec_price - price) * quantity
+
+    return (
+        round(exec_price, 4),
+        round(commission, 4),
+        round(stamp_duty, 4),
+        round(slippage_cost, 4),
+    )
+
+
+def _can_trade(quote, side: str) -> bool:
+    """Check if a trade can execute based on trade_status and price limits.
+
+    A-shares have ±10 % daily price limits (main board).  We block:
+    - BUY  when the stock is limit-up   (``change_rate >= 9.9``) or suspended.
+    - SELL when the stock is limit-down (``change_rate <= -9.9``) or suspended.
+    """
+    trade_status = getattr(quote, "trade_status", 1)  # 1 = normal, 0 = suspended
+    change_rate = getattr(quote, "change_rate", 0) or 0
+
+    if trade_status == 0:
+        return False
+    if side == "BUY" and change_rate >= 9.9:
+        return False
+    if side == "SELL" and change_rate <= -9.9:
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight executability constraints (Task 13.8)
+# ---------------------------------------------------------------------------
+
+MIN_LIQUIDITY_CNY = 5_000_000  # 5M CNY daily average turnover
+MAX_POSITION_PCT_OF_VOLUME = 0.01  # 1% of daily volume
+
+
+def check_liquidity(stock_code: str, lookback_days: int = 20) -> dict:
+    """Check if a stock meets minimum liquidity requirements.
+
+    Returns:
+        dict with: pass (bool), avg_turnover_cny (float), reason (str or None)
+    """
+    try:
+        from datetime import datetime, timedelta
+
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=lookback_days * 2)  # generous window
+
+        quotes = list(
+            StockDailyQuote.objects(code=stock_code)
+            .filter(date__gte=start_date, date__lte=end_date)
+            .order_by("-date")
+            .limit(lookback_days)
+        )
+
+        if len(quotes) < max(lookback_days // 2, 5):
+            return {
+                "pass": False,
+                "avg_turnover_cny": 0.0,
+                "reason": f"Insufficient quote data: {len(quotes)} days",
+            }
+
+        turnovers = []
+        for q in quotes:
+            price = q.close_hfq or q.close or 0
+            volume = q.volume or 0
+            if price > 0 and volume > 0:
+                turnovers.append(price * volume)
+
+        if not turnovers:
+            return {
+                "pass": False,
+                "avg_turnover_cny": 0.0,
+                "reason": "No valid turnover data",
+            }
+
+        avg_turnover = sum(turnovers) / len(turnovers)
+        return {
+            "pass": avg_turnover >= MIN_LIQUIDITY_CNY,
+            "avg_turnover_cny": round(avg_turnover, 2),
+            "reason": None
+            if avg_turnover >= MIN_LIQUIDITY_CNY
+            else f"Avg turnover {avg_turnover:,.0f} CNY < {MIN_LIQUIDITY_CNY:,.0f} CNY minimum",
+        }
+    except Exception as e:
+        return {"pass": False, "avg_turnover_cny": 0.0, "reason": f"Error: {e}"}
+
+
+def check_trading_status(stock_code: str) -> dict:
+    """Check if a stock is currently suspended or ST.
+
+    Returns:
+        dict with: pass (bool), is_suspended (bool), is_st (bool), reasons (list)
+    """
+    try:
+        stock = IndividualStock.objects(code=stock_code).first()
+        if stock is None:
+            return {
+                "pass": False,
+                "is_suspended": True,
+                "is_st": False,
+                "reasons": ["Stock not found"],
+            }
+
+        active_status = getattr(stock, "active_status", 0)
+        stock_name = getattr(stock, "name", "") or ""
+
+        reasons = []
+        is_st = "ST" in stock_name.upper() or "*ST" in stock_name.upper()
+        is_suspended = active_status != 0
+
+        if is_st:
+            reasons.append("ST/*ST stock — restricted trading")
+        if is_suspended:
+            reasons.append("Stock is suspended or delisted")
+
+        return {
+            "pass": not is_st and not is_suspended,
+            "is_suspended": is_suspended,
+            "is_st": is_st,
+            "reasons": reasons,
+        }
+    except Exception as e:
+        return {
+            "pass": False,
+            "is_suspended": True,
+            "is_st": False,
+            "reasons": [f"Error: {e}"],
+        }
+
+
+def preflight_check(stock_code: str, check_liquidity_flag: bool = True) -> dict:
+    """Run all pre-flight executability checks.
+
+    Returns:
+        dict with: pass (bool), checks (list of individual check results), summary (str)
+    """
+    checks = []
+    status = check_trading_status(stock_code)
+    checks.append({"type": "trading_status", **status})
+
+    if check_liquidity_flag and status.get("pass", False):
+        liq = check_liquidity(stock_code)
+        checks.append({"type": "liquidity", **liq})
+
+    all_pass = all(c.get("pass", False) for c in checks)
+    failing = [c.get("type", "") for c in checks if not c.get("pass", False)]
+
+    return {
+        "pass": all_pass,
+        "stock_code": stock_code,
+        "checks": checks,
+        "summary": "All checks passed"
+        if all_pass
+        else f"Failed checks: {', '.join(failing)}",
+    }
+
+
+def _round_to_lot(quantity: float) -> int:
+    """Round down to 100-share lots (整手)."""
+    return int(quantity // LOT_SIZE) * LOT_SIZE
+
+
+def _max_buy_shares(price: float, available_cash: float) -> int:
+    """Maximum shares buyable at price after slippage + commission."""
+    if price <= 0 or available_cash <= MIN_COMMISSION:
+        return 0
+    exec_price = price * (1 + SLIPPAGE)
+    # Try rate-based commission first (applies for larger trades)
+    raw = int(available_cash / (exec_price * (1 + COMMISSION_RATE)))
+    if raw > 0 and raw * exec_price * COMMISSION_RATE < MIN_COMMISSION:
+        # Adjust for min-commission floor on small trades
+        if exec_price + MIN_COMMISSION > available_cash:
+            return 0
+        return int((available_cash - MIN_COMMISSION) / exec_price)
+    return max(raw, 0)
+
+
+def _allocate_positions(
+    available_stocks: List[str],
+    scores: Dict[str, float],
+    total_cash: float,
+    current_prices: Dict[str, float],
+    allocation: str = "equal_weight",
+    max_position_pct: float = 0.20,
+) -> Dict[str, int]:
+    """Allocate cash to stocks based on strategy.
+
+    Returns dict of stock_code -> shares (already rounded to lots).
+    """
+    if not available_stocks:
+        return {}
+
+    if allocation == "equal_weight":
+        weight = 1.0 / len(available_stocks)
+        weights = {s: weight for s in available_stocks}
+    elif allocation == "score_weighted":
+        total_score = sum(max(scores.get(s, 0), 0) for s in available_stocks)
+        if total_score <= 0:
+            weights = {s: 1.0 / len(available_stocks) for s in available_stocks}
+        else:
+            weights = {
+                s: max(scores.get(s, 0), 0) / total_score for s in available_stocks
+            }
+    else:
+        return {}
+
+    allocations: Dict[str, int] = {}
+    for stock in available_stocks:
+        price = current_prices.get(stock, 0)
+        if price <= 0:
+            continue
+        weight = min(weights.get(stock, 0), max_position_pct)
+        cash_for_stock = total_cash * weight
+        raw_shares = cash_for_stock / price
+        shares = _round_to_lot(raw_shares)
+        if shares >= LOT_SIZE:
+            allocations[stock] = shares
+
+    return allocations
+
+
+def _compute_benchmark(
+    benchmark_code: str,
+    start_date,
+    end_date,
+    initial_cash: float,
+) -> dict:
+    """Simulate buy-and-hold on *benchmark_code* and return metrics.
+
+    Returns an empty dict when the benchmark data is unavailable.
+    """
+    try:
+        quotes = list(
+            StockDailyQuote.objects(code=benchmark_code)
+            .filter(date__gte=start_date, date__lte=end_date)
+            .order_by("date")
+        )
+        if len(quotes) < 2:
+            return {}
+
+        start_price = _closing_price(quotes[0])
+        end_price = _closing_price(quotes[-1])
+        if start_price <= 0:
+            return {}
+
+        final_value = initial_cash * (end_price / start_price)
+        total_return = final_value - initial_cash
+        total_return_pct = (total_return / initial_cash) * 100
+        num_days = len(quotes)
+        years = num_days / TRADING_DAYS_PER_YEAR if num_days >= 2 else 0
+        cagr = ((final_value / initial_cash) ** (1.0 / years) - 1) if years > 0 else 0.0
+
+        # Daily benchmark returns for information-ratio (aligned to trading day index)
+        benchmark_daily_returns: List[float] = []
+        prev = start_price
+        for q in quotes[1:]:
+            cp = _closing_price(q)
+            if prev > 0:
+                benchmark_daily_returns.append((cp - prev) / prev)
+            else:
+                benchmark_daily_returns.append(0.0)
+            prev = cp
+
+        return {
+            "benchmark_code": benchmark_code,
+            "benchmark_return": round(total_return, 4),
+            "benchmark_return_pct": round(total_return_pct, 4),
+            "benchmark_annualized_return": round(cagr * 100, 4),
+            "benchmark_daily_returns": benchmark_daily_returns,
+        }
+    except Exception:
+        logger.warning(
+            "Benchmark computation failed for %s", benchmark_code, exc_info=True
+        )
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +525,15 @@ def run_backtest(
     end_date: datetime,
     initial_cash: float = 100_000.0,
     save_result: bool = True,
+    benchmark_code: str = "sh000300",
+    horizon: int | None = None,
+    entry_threshold: float = 70.0,
+    exit_threshold: float = 50.0,
+    stop_loss_pct: float = -5.0,
+    score_delta: float = 10.0,
+    model_version: str | None = None,
+    consensus_entry_thresholds: Dict[int, float] | None = None,
+    consensus_exit_thresholds: Dict[int, float] | None = None,
 ) -> Dict[str, Any]:
     """Run a single-stock daily backtest and return the result dict.
 
@@ -43,7 +542,9 @@ def run_backtest(
     stock_code : str
         The stock symbol (e.g. ``"sh600519"``).
     strategy : str
-        ``"MA_CROSS"`` or ``"BUY_HOLD"`` (case-insensitive).
+        ``"MA_CROSS"``, ``"BUY_HOLD"``, ``"SCORE_THRESHOLD"``,
+        ``"SCORE_MOMENTUM"``, or ``"MULTI_HORIZON_CONSENSUS"``
+        (case-insensitive).
     start_date : datetime
         Start of the backtest window (inclusive).  Must be a date (time part
         is ignored).
@@ -54,6 +555,26 @@ def run_backtest(
     save_result : bool
         When *True* (the default) persist the result as a ``BacktestResult``
         document.
+    benchmark_code : str
+        Benchmark index code (default ``"sh000300"`` for CSI 300).
+    horizon : int | None
+        Scoring horizon (5, 20, or 60). Required for score-driven strategies.
+    entry_threshold : float
+        Minimum score to enter a position (SCORE_THRESHOLD only, default 70).
+    exit_threshold : float
+        Maximum score before exiting a position (SCORE_THRESHOLD only, default 50).
+    stop_loss_pct : float
+        Stop-loss percentage as a negative number (default -5.0 = -5%).
+    score_delta : float
+        Score change required to trigger a trade (SCORE_MOMENTUM only, default 10).
+    model_version : str | None
+        Scoring model version filter. When None, all versions are used.
+    consensus_entry_thresholds : dict | None
+        Per-horizon entry thresholds for MULTI_HORIZON_CONSENSUS.
+        Default: {5: 60, 20: 55, 60: 50}.
+    consensus_exit_thresholds : dict | None
+        Per-horizon exit thresholds for MULTI_HORIZON_CONSENSUS.
+        Default: {5: 30, 20: 35, 60: 40}.
 
     Returns
     -------
@@ -62,7 +583,7 @@ def run_backtest(
         equity curve, and the result document id when persisted.
     """
     strategy_norm = (strategy or "").strip().upper()
-    if strategy_norm not in ("MA_CROSS", "BUY_HOLD"):
+    if strategy_norm not in VALID_STRATEGIES:
         return _error("Unsupported strategy", f"strategy={strategy_norm}")
 
     # Normalize dates to day-resolution
@@ -89,6 +610,49 @@ def run_backtest(
             f"No StockDailyQuote for {stock_code} in [{start_date.date()}, {end_date.date()}]",
         )
 
+    # Truncate to last day with valid HFQ — raw-close fallback corrupts returns
+    last_hfq_idx = None
+    for i, q in enumerate(quotes):
+        if q.close_hfq:
+            last_hfq_idx = i
+    if last_hfq_idx is not None and last_hfq_idx < len(quotes) - 1:
+        dropped = len(quotes) - last_hfq_idx - 1
+        dropped_dates = [
+            quotes[j].date.strftime("%Y-%m-%d")
+            for j in range(last_hfq_idx + 1, len(quotes))
+        ]
+        logger.warning(
+            "HFQ missing for %d day(s) at end of range (%s). "
+            "Truncating backtest to %s to avoid raw-close corruption.",
+            dropped,
+            ", ".join(dropped_dates),
+            quotes[last_hfq_idx].date.strftime("%Y-%m-%d"),
+        )
+        quotes = quotes[: last_hfq_idx + 1]
+        end_date = quotes[-1].date.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Filter to only days with valid adjusted close — interior HFQ gaps
+    # (before the last HFQ-positive day) would otherwise corrupt returns
+    # via the raw-close fallback in _closing_price().
+    hfq_quotes = [q for q in quotes if q.close_hfq]
+    if len(hfq_quotes) < len(quotes):
+        interior_gaps = len(quotes) - len(hfq_quotes)
+        logger.warning(
+            "Interior HFQ gaps: %d quote day(s) lack adjusted close. "
+            "(Trailing truncation already handled; these are gaps before "
+            "the last HFQ-valid day.) Filtering to %d usable days.",
+            interior_gaps,
+            len(hfq_quotes),
+        )
+        quotes = hfq_quotes
+        if not quotes:
+            return _error(
+                "No valid HFQ data",
+                f"No usable quote days for {stock_code} — "
+                f"check factor data for adjusted close.",
+            )
+        end_date = quotes[-1].date.replace(hour=0, minute=0, second=0, microsecond=0)
+
     # Build quote lookup keyed by date
     quote_map: Dict[datetime, StockDailyQuote] = {
         q.date.replace(hour=0, minute=0, second=0, microsecond=0): q for q in quotes
@@ -112,24 +676,122 @@ def run_backtest(
             d = f.date.replace(hour=0, minute=0, second=0, microsecond=0)
             factor_map[d] = f
 
+    # Load score predictions for score-driven strategies
+    score_map: Dict[datetime, Any] = {}
+    score_maps: Dict[int, Dict[datetime, Any]] = {}  # for consensus: horizon->map
+    if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
+        if not horizon:
+            return _error("horizon is required for score-driven strategies")
+        score_q = StockScorePrediction.objects(
+            stock_code=stock_code,
+            horizon=horizon,
+            date__gte=start_date,
+            date__lte=end_date,
+        )
+        if model_version:
+            score_q = score_q.filter(model_version=model_version)
+        scores = list(score_q.order_by("date"))
+        for s in scores:
+            d = s.date.replace(hour=0, minute=0, second=0, microsecond=0)
+            score_map[d] = s
+        if not score_map:
+            return _error(
+                "No score data",
+                f"No StockScorePrediction for {stock_code} horizon={horizon} in range",
+            )
+    elif strategy_norm == "MULTI_HORIZON_CONSENSUS":
+        for h in (5, 20, 60):
+            score_q = StockScorePrediction.objects(
+                stock_code=stock_code,
+                horizon=h,
+                date__gte=start_date,
+                date__lte=end_date,
+            )
+            if model_version:
+                score_q = score_q.filter(model_version=model_version)
+            h_map: Dict[datetime, Any] = {}
+            for s in score_q.order_by("date"):
+                d = s.date.replace(hour=0, minute=0, second=0, microsecond=0)
+                h_map[d] = s
+            if h_map:
+                score_maps[h] = h_map
+
+    # Set default consensus thresholds
+    if consensus_entry_thresholds is None:
+        consensus_entry_thresholds = {5: 60.0, 20: 55.0, 60: 50.0}
+    if consensus_exit_thresholds is None:
+        consensus_exit_thresholds = {5: 30.0, 20: 35.0, 60: 40.0}
+
+    # Data coverage check before simulation
+    coverage = _data_coverage_report(
+        quotes=quotes,
+        factors=list(factor_map.values()) if factor_map else None,
+        score_maps=score_maps
+        if score_maps
+        else ({horizon: score_map} if score_map and horizon else None),
+    )
+
     # Run the strategy simulation
-    result = _simulate(
+    sim_result = _simulate(
         strategy=strategy_norm,
         trading_days=trading_days,
         quote_map=quote_map,
         factor_map=factor_map,
         initial_cash=initial_cash,
+        score_map=score_map,
+        score_maps=score_maps,
+        horizon=horizon,
+        entry_threshold=entry_threshold,
+        exit_threshold=exit_threshold,
+        stop_loss_pct=stop_loss_pct,
+        score_delta=score_delta,
+        consensus_entry_thresholds=consensus_entry_thresholds,
+        consensus_exit_thresholds=consensus_exit_thresholds,
     )
 
-    # Compute final metrics
+    # Compute final metrics (with friction totals)
+    total_commission = sim_result.pop("total_commission", 0.0)
+    total_stamp_duty = sim_result.pop("total_stamp_duty", 0.0)
+    total_slippage = sim_result.pop("total_slippage", 0.0)
+
     metrics = _compute_metrics(
         initial_cash=initial_cash,
-        final_value=result["final_value"],
-        trades=result["trades"],
-        daily_values=result["daily_values"],
+        final_value=sim_result["final_value"],
+        trades=sim_result["trades"],
+        daily_values=sim_result["daily_values"],
+        total_commission=total_commission,
+        total_stamp_duty=total_stamp_duty,
+        total_slippage=total_slippage,
     )
-    result.update(metrics)
+    sim_result.update(metrics)
 
+    # Benchmark comparison
+    bench = _compute_benchmark(benchmark_code, start_date, end_date, initial_cash)
+    if bench:
+        excess_return = round(sim_result["total_return"] - bench["benchmark_return"], 4)
+        excess_return_pct = round(
+            sim_result["total_return_pct"] - bench["benchmark_return_pct"], 4
+        )
+        sim_result.update(bench)
+        sim_result["excess_return"] = excess_return
+        sim_result["excess_return_pct"] = excess_return_pct
+
+        # Information ratio from daily excess returns
+        bench_returns = bench.get("benchmark_daily_returns", [])
+        info_ratio = _compute_information_ratio(
+            sim_result["daily_values"], bench_returns, initial_cash
+        )
+        sim_result["information_ratio"] = info_ratio
+    else:
+        sim_result["benchmark_code"] = benchmark_code
+        sim_result["benchmark_return"] = 0.0
+        sim_result["benchmark_return_pct"] = 0.0
+        sim_result["benchmark_annualized_return"] = 0.0
+        sim_result["excess_return"] = 0.0
+        sim_result["excess_return_pct"] = 0.0
+        sim_result["information_ratio"] = 0.0
+
+    sim_result["data_coverage"] = coverage
     # Persist
     if save_result:
         ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -144,32 +806,382 @@ def run_backtest(
             start_date=start_date,
             end_date=end_date,
             initial_cash=initial_cash,
-            final_value=result["final_value"],
-            total_return=result["total_return"],
-            total_return_pct=result["total_return_pct"],
-            annualized_return=result["annualized_return"],
-            max_drawdown=result["max_drawdown"],
-            max_drawdown_duration=result["max_drawdown_duration"],
-            sharpe_ratio=result["sharpe_ratio"],
-            win_rate=result["win_rate"],
-            total_trades=result["total_trades"],
-            profit_trades=result["profit_trades"],
-            loss_trades=result["loss_trades"],
-            best_trade=result["best_trade"],
-            worst_trade=result["worst_trade"],
+            final_value=sim_result["final_value"],
+            total_return=sim_result["total_return"],
+            total_return_pct=sim_result["total_return_pct"],
+            annualized_return=sim_result["annualized_return"],
+            max_drawdown=sim_result["max_drawdown"],
+            max_drawdown_duration=sim_result["max_drawdown_duration"],
+            sharpe_ratio=sim_result["sharpe_ratio"],
+            win_rate=sim_result["win_rate"],
+            total_trades=sim_result["total_trades"],
+            profit_trades=sim_result["profit_trades"],
+            loss_trades=sim_result["loss_trades"],
+            best_trade=sim_result["best_trade"],
+            worst_trade=sim_result["worst_trade"],
             status="COMPLETED",
-            trades=result["trades"],
-            daily_values=result["daily_values"],
+            trades=sim_result["trades"],
+            daily_values=sim_result["daily_values"],
+            # Friction costs
+            total_commission=total_commission,
+            total_stamp_duty=total_stamp_duty,
+            total_slippage=total_slippage,
+            gross_return=sim_result.get("gross_return", 0.0),
+            gross_return_pct=sim_result.get("gross_return_pct", 0.0),
+            # Benchmark
+            benchmark_code=sim_result.get("benchmark_code", benchmark_code),
+            benchmark_return=sim_result.get("benchmark_return", 0.0),
+            benchmark_return_pct=sim_result.get("benchmark_return_pct", 0.0),
+            benchmark_annualized_return=sim_result.get(
+                "benchmark_annualized_return", 0.0
+            ),
+            excess_return=sim_result.get("excess_return", 0.0),
+            excess_return_pct=sim_result.get("excess_return_pct", 0.0),
+            information_ratio=sim_result.get("information_ratio", 0.0),
+            score_config={
+                "horizon": horizon,
+                "entry_threshold": entry_threshold,
+                "exit_threshold": exit_threshold,
+                "stop_loss_pct": stop_loss_pct,
+                "score_delta": score_delta,
+                "model_version": model_version,
+            }
+            if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM")
+            else {
+                "strategy": strategy_norm,
+                "consensus_entry_thresholds": consensus_entry_thresholds,
+                "consensus_exit_thresholds": consensus_exit_thresholds,
+                "stop_loss_pct": stop_loss_pct,
+            }
+            if strategy_norm == "MULTI_HORIZON_CONSENSUS"
+            else None,
+            horizon=horizon
+            if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM")
+            else None,
+            data_coverage=coverage,
             completed_at=datetime.now(timezone.utc),
         )
         doc.save()
-        result["id"] = str(doc.id)
-        result["name"] = name
+        sim_result["id"] = str(doc.id)
+        sim_result["name"] = name
     else:
-        result["id"] = None
-        result["name"] = None
+        sim_result["id"] = None
+        sim_result["name"] = None
 
-    return result
+    return sim_result
+
+
+# ---------------------------------------------------------------------------
+# Public entry point – multi-stock
+# ---------------------------------------------------------------------------
+def run_multi_stock_backtest(
+    stock_codes: List[str],
+    strategy: str,
+    start_date: datetime,
+    end_date: datetime,
+    initial_cash: float = 100_000.0,
+    save_result: bool = True,
+    benchmark_code: str = "sh000300",
+    horizon: int | None = None,
+    entry_threshold: float = 70.0,
+    exit_threshold: float = 50.0,
+    stop_loss_pct: float = -5.0,
+    score_delta: float = 10.0,
+    model_version: str | None = None,
+    top_n: int = 10,
+    rebalance_interval: int = 5,
+    allocation: str = "equal_weight",
+    max_position_pct: float = 0.20,
+) -> Dict[str, Any]:
+    """Run a multi-stock portfolio backtest and return the result dict.
+
+    Parameters
+    ----------
+    stock_codes : list[str]
+        List of stock symbols (e.g. ``["sh600519", "sz000858"]``).
+    strategy : str
+        Currently ``"TOP_N_ROTATION"`` (case-insensitive).
+    start_date : datetime
+        Start of the backtest window (inclusive).
+    end_date : datetime
+        End of the backtest window (inclusive).
+    initial_cash : float
+        Starting cash (default 100000 CNY).
+    save_result : bool
+        When *True* (default) persist as a ``BacktestResult`` document.
+    benchmark_code : str
+        Benchmark index code (default ``"sh000300"`` for CSI 300).
+    horizon : int
+        Scoring horizon (5, 20, or 60). Required for score-driven strategies.
+    entry_threshold : float
+        Minimum score for entry (SCORE_THRESHOLD only, default 70).
+    exit_threshold : float
+        Maximum score before exit (SCORE_THRESHOLD only, default 50).
+    stop_loss_pct : float
+        Stop-loss percentage as a negative number (default -5.0).
+    score_delta : float
+        Score change required (SCORE_MOMENTUM only, default 10).
+    model_version : str | None
+        Scoring model version filter.
+    top_n : int
+        Number of stocks to hold in the portfolio (TOP_N_ROTATION only).
+    rebalance_interval : int
+        Rebalance every K trading days (default 5).
+    allocation : str
+        Position sizing method: ``"equal_weight"`` or ``"score_weighted"``.
+    max_position_pct : float
+        Maximum allocation per stock as a decimal (default 0.20 = 20%).
+
+    Returns
+    -------
+    dict
+        Includes metrics, trade list, daily equity curve, per-stock contributions,
+        and the saved document id.
+    """
+    strategy_norm = (strategy or "").strip().upper()
+    if strategy_norm not in VALID_STRATEGIES:
+        return _error("Unsupported strategy", f"strategy={strategy_norm}")
+    if not isinstance(stock_codes, list) or len(stock_codes) < 2:
+        return _error("Invalid stock_codes", "Must be a list with at least 2 codes")
+    if len(stock_codes) > 100:
+        return _error("Too many stocks", f"Maximum 100, got {len(stock_codes)}")
+
+    # Normalize dates
+    start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    if start_date > end_date:
+        return _error("Invalid date range", "start_date must be <= end_date")
+    if initial_cash <= 0:
+        return _error("Invalid initial_cash", "Must be > 0")
+
+    # Validate strategy-specific params
+    if strategy_norm == "TOP_N_ROTATION":
+        if horizon is None or horizon not in (5, 20, 60):
+            return _error("horizon (5, 20, or 60) is required for TOP_N_ROTATION")
+        if allocation not in ("equal_weight", "score_weighted"):
+            return _error("allocation must be 'equal_weight' or 'score_weighted'")
+
+    # Load stock names
+    stock_names: Dict[str, str] = {}
+    for sc in stock_codes:
+        stock_names[sc] = _resolve_stock_name(sc)
+
+    # Load quotes for ALL stocks in a single query
+    quotes = list(
+        StockDailyQuote.objects(code__in=stock_codes)
+        .filter(date__gte=start_date, date__lte=end_date)
+        .order_by("date")
+    )
+    if not quotes:
+        return _error(
+            "No quote data",
+            "No quotes for any stock in range",
+        )
+
+    # Build per-stock quote maps and a common trading-day index
+    quote_maps: Dict[str, Dict[datetime, Any]] = {sc: {} for sc in stock_codes}
+    all_trading_days: set = set()
+    for q in quotes:
+        d = q.date.replace(hour=0, minute=0, second=0, microsecond=0)
+        quote_maps[q.code][d] = q
+        all_trading_days.add(d)
+    trading_days = sorted(all_trading_days)
+    if len(trading_days) < 2:
+        return _error(
+            "Insufficient data",
+            f"Need >=2 trading days, got {len(trading_days)}",
+        )
+
+    # Load factor data if needed (for MA_CROSS which is single-stock only)
+    factor_maps: Dict[str, Dict[datetime, Any]] = {}
+    if strategy_norm == "MA_CROSS":
+        factors = list(
+            StockFactorDaily.objects(stock_code__in=stock_codes)
+            .filter(date__gte=start_date, date__lte=end_date)
+            .order_by("date")
+        )
+        for f in factors:
+            d = f.date.replace(hour=0, minute=0, second=0, microsecond=0)
+            factor_maps.setdefault(f.stock_code, {})[d] = f
+
+    # Load score predictions for score-driven strategies
+    score_maps: Dict[str, Dict[datetime, Any]] = {}
+    if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM", "TOP_N_ROTATION"):
+        if not horizon:
+            return _error("horizon is required for score-driven strategies")
+        score_q = StockScorePrediction.objects(
+            stock_code__in=stock_codes,
+            horizon=horizon,
+            date__gte=start_date,
+            date__lte=end_date,
+        )
+        if model_version:
+            score_q = score_q.filter(model_version=model_version)
+        scores = list(score_q.order_by("date"))
+        for s in scores:
+            d = s.date.replace(hour=0, minute=0, second=0, microsecond=0)
+            score_maps.setdefault(s.stock_code, {})[d] = s
+        if not score_maps:
+            return _error(
+                "No score data",
+                f"No StockScorePrediction for horizon={horizon} in range",
+            )
+
+    # Run the multi-stock simulation (or fall back to single-stock)
+    if strategy_norm == "TOP_N_ROTATION":
+        sim_result = _simulate_multi(
+            strategy=strategy_norm,
+            trading_days=trading_days,
+            quote_maps=quote_maps,
+            factor_maps=factor_maps,
+            score_maps=score_maps,
+            stock_names=stock_names,
+            initial_cash=initial_cash,
+            top_n=top_n,
+            rebalance_interval=rebalance_interval,
+            allocation=allocation,
+            max_position_pct=max_position_pct,
+            horizon=horizon,
+            entry_threshold=entry_threshold,
+            exit_threshold=exit_threshold,
+            stop_loss_pct=stop_loss_pct,
+            score_delta=score_delta,
+        )
+    else:
+        return _error(
+            "Multi-stock strategy not implemented",
+            f"strategy={strategy_norm}",
+        )
+
+    if "error" in sim_result:
+        return sim_result
+
+    # Compute final metrics
+    total_commission = sim_result.pop("total_commission", 0.0)
+    total_stamp_duty = sim_result.pop("total_stamp_duty", 0.0)
+    total_slippage = sim_result.pop("total_slippage", 0.0)
+    per_stock_contributions = sim_result.pop("per_stock_contributions", [])
+
+    metrics = _compute_metrics(
+        initial_cash=initial_cash,
+        final_value=sim_result["final_value"],
+        trades=sim_result["trades"],
+        daily_values=sim_result["daily_values"],
+        total_commission=total_commission,
+        total_stamp_duty=total_stamp_duty,
+        total_slippage=total_slippage,
+    )
+    sim_result.update(metrics)
+    sim_result["per_stock_contributions"] = per_stock_contributions
+
+    # Benchmark comparison
+    bench = _compute_benchmark(benchmark_code, start_date, end_date, initial_cash)
+    if bench:
+        excess_return = round(sim_result["total_return"] - bench["benchmark_return"], 4)
+        excess_return_pct = round(
+            sim_result["total_return_pct"] - bench["benchmark_return_pct"], 4
+        )
+        sim_result.update(bench)
+        sim_result["excess_return"] = excess_return
+        sim_result["excess_return_pct"] = excess_return_pct
+
+        bench_returns = bench.get("benchmark_daily_returns", [])
+        info_ratio = _compute_information_ratio(
+            sim_result["daily_values"], bench_returns, initial_cash
+        )
+        sim_result["information_ratio"] = info_ratio
+    else:
+        sim_result["benchmark_code"] = benchmark_code
+        sim_result["benchmark_return"] = 0.0
+        sim_result["benchmark_return_pct"] = 0.0
+        sim_result["benchmark_annualized_return"] = 0.0
+        sim_result["excess_return"] = 0.0
+        sim_result["excess_return_pct"] = 0.0
+        sim_result["information_ratio"] = 0.0
+
+    # Persist
+    stocks_str = ",".join(stock_codes)
+    stocks_name = ", ".join(stock_names.get(sc, sc) for sc in stock_codes)
+    if save_result:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        name = (
+            f"{stocks_str}-{strategy_norm}-{start_date.date()}-{end_date.date()}-{ts}"
+        )
+        # Truncate name if too long (Mongo unique index may have length limits)
+        if len(name) > 200:
+            first_stock = stock_codes[0]
+            name = (
+                f"{first_stock}-and-{len(stock_codes) - 1}-stocks"
+                f"-{strategy_norm}-{start_date.date()}-{end_date.date()}-{ts}"
+            )
+        doc = BacktestResult(
+            name=name,
+            stock_code=stocks_str,
+            stock_name=stocks_name,
+            strategy=strategy_norm,
+            start_date=start_date,
+            end_date=end_date,
+            initial_cash=initial_cash,
+            final_value=sim_result["final_value"],
+            total_return=sim_result["total_return"],
+            total_return_pct=sim_result["total_return_pct"],
+            annualized_return=sim_result["annualized_return"],
+            max_drawdown=sim_result["max_drawdown"],
+            max_drawdown_duration=sim_result["max_drawdown_duration"],
+            sharpe_ratio=sim_result["sharpe_ratio"],
+            win_rate=sim_result["win_rate"],
+            total_trades=sim_result["total_trades"],
+            profit_trades=sim_result["profit_trades"],
+            loss_trades=sim_result["loss_trades"],
+            best_trade=sim_result["best_trade"],
+            worst_trade=sim_result["worst_trade"],
+            status="COMPLETED",
+            trades=sim_result["trades"],
+            daily_values=sim_result["daily_values"],
+            # Friction costs
+            total_commission=total_commission,
+            total_stamp_duty=total_stamp_duty,
+            total_slippage=total_slippage,
+            gross_return=sim_result.get("gross_return", 0.0),
+            gross_return_pct=sim_result.get("gross_return_pct", 0.0),
+            # Benchmark
+            benchmark_code=sim_result.get("benchmark_code", benchmark_code),
+            benchmark_return=sim_result.get("benchmark_return", 0.0),
+            benchmark_return_pct=sim_result.get("benchmark_return_pct", 0.0),
+            benchmark_annualized_return=sim_result.get(
+                "benchmark_annualized_return", 0.0
+            ),
+            excess_return=sim_result.get("excess_return", 0.0),
+            excess_return_pct=sim_result.get("excess_return_pct", 0.0),
+            information_ratio=sim_result.get("information_ratio", 0.0),
+            score_config={
+                "horizon": horizon,
+                "entry_threshold": entry_threshold,
+                "exit_threshold": exit_threshold,
+                "stop_loss_pct": stop_loss_pct,
+                "score_delta": score_delta,
+                "model_version": model_version,
+                "top_n": top_n,
+                "rebalance_interval": rebalance_interval,
+                "allocation": allocation,
+                "max_position_pct": max_position_pct,
+            },
+            horizon=horizon,
+            # Multi-stock fields
+            per_stock_contributions=per_stock_contributions,
+            top_n=top_n,
+            rebalance_interval=rebalance_interval,
+            allocation=allocation,
+            completed_at=datetime.now(timezone.utc),
+        )
+        doc.save()
+        sim_result["id"] = str(doc.id)
+        sim_result["name"] = name
+    else:
+        sim_result["id"] = None
+        sim_result["name"] = None
+
+    return sim_result
 
 
 # ---------------------------------------------------------------------------
@@ -181,12 +1193,35 @@ def _simulate(
     quote_map: Dict[datetime, StockDailyQuote],
     factor_map: Dict[datetime, StockFactorDaily],
     initial_cash: float,
+    score_map: Dict[datetime, Any] | None = None,
+    score_maps: Dict[int, Dict[datetime, Any]] | None = None,
+    horizon: int | None = None,
+    entry_threshold: float = 70.0,
+    exit_threshold: float = 50.0,
+    stop_loss_pct: float = -5.0,
+    score_delta: float = 10.0,
+    consensus_entry_thresholds: Dict[int, float] | None = None,
+    consensus_exit_thresholds: Dict[int, float] | None = None,
 ) -> Dict[str, Any]:
-    """Walk through trading days and apply the selected strategy."""
+    """Walk through trading days and apply the selected strategy.
+
+    Now includes:
+    - Friction model (commission, stamp duty, slippage)
+    - Limit-up / limit-down constraints with retry on consecutive limit days
+    - Skipped-trade tracking
+    - Score-driven strategies (SCORE_THRESHOLD, SCORE_MOMENTUM)
+    - Multi-horizon consensus (MULTI_HORIZON_CONSENSUS)
+    """
     cash = initial_cash
     shares = 0.0
     trades: List[Dict[str, Any]] = []
+    skipped_trades: List[Dict[str, Any]] = []
+    skipped_consensus: List[Dict[str, Any]] = []
     daily_values: List[Dict[str, Any]] = []
+
+    total_commission = 0.0
+    total_stamp_duty = 0.0
+    total_slippage = 0.0
 
     num_days = len(trading_days)
 
@@ -197,42 +1232,105 @@ def _simulate(
             price = _closing_price(quote)
 
             if i == 0:
-                # Initial buy
-                shares = math.floor(cash / price) if price > 0 else 0
-                cost = shares * price
-                cash -= cost
-                if shares > 0:
-                    trades.append(
+                # Initial buy (with friction and limit check)
+                if _can_trade(quote, "BUY"):
+                    shares = _max_buy_shares(price, cash)
+                    if shares > 0:
+                        exec_price, comm, duty, slip = _apply_friction(
+                            price, shares, "BUY"
+                        )
+                        cost = shares * exec_price
+                        cash -= cost + comm
+                        total_commission += comm
+                        total_stamp_duty += duty  # always 0 for BUY
+                        total_slippage += slip
+                    else:
+                        exec_price = price
+                        cost = 0.0
+                        comm = 0.0
+                        slip = 0.0
+                    if shares > 0:
+                        trades.append(
+                            {
+                                "date": day.isoformat(),
+                                "side": "BUY",
+                                "price": round(price, 4),
+                                "exec_price": round(exec_price, 4),
+                                "quantity": shares,
+                                "amount": round(cost, 4),
+                                "commission": round(comm, 4),
+                                "stamp_duty": 0.0,
+                                "slippage": round(slip, 4),
+                                "reason": "Initial buy (BUY_HOLD)",
+                            }
+                        )
+                else:
+                    reason = _blocked_reason(quote, "BUY")
+                    skipped_trades.append(
                         {
                             "date": day.isoformat(),
-                            "side": "BUY",
+                            "side": "SKIPPED_BUY",
+                            "reason": reason,
                             "price": round(price, 4),
-                            "quantity": shares,
-                            "amount": round(cost, 4),
-                            "reason": "Initial buy (BUY_HOLD)",
                         }
                     )
+
             elif i == num_days - 1:
-                # Final sell
+                # Final sell (with friction and limit check)
                 if shares > 0:
-                    proceeds = shares * price
-                    cash += proceeds
-                    pnl = proceeds - (
-                        sum(t["amount"] for t in trades if t["side"] == "BUY")
-                        - sum(t["amount"] for t in trades if t["side"] == "SELL")
-                    )
-                    trades.append(
-                        {
-                            "date": day.isoformat(),
-                            "side": "SELL",
-                            "price": round(price, 4),
-                            "quantity": shares,
-                            "amount": round(proceeds, 4),
-                            "pnl": round(pnl, 4),
-                            "reason": "Final sell (BUY_HOLD)",
-                        }
-                    )
-                    shares = 0.0
+                    if _can_trade(quote, "SELL"):
+                        exec_price, comm, duty, slip = _apply_friction(
+                            price, shares, "SELL"
+                        )
+                        proceeds = shares * exec_price
+                        cash += proceeds - comm - duty
+                        total_commission += comm
+                        total_stamp_duty += duty
+                        total_slippage += slip
+
+                        buy_amounts = sum(
+                            t["amount"] for t in trades if t["side"] == "BUY"
+                        )
+                        sell_amounts = sum(
+                            t["amount"] for t in trades if t["side"] == "SELL"
+                        )
+                        buy_comm = sum(
+                            t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                        )
+                        sell_comm = sum(
+                            t.get("commission", 0)
+                            for t in trades
+                            if t["side"] == "SELL"
+                        )
+                        pnl = (proceeds - comm - duty) - (
+                            buy_amounts - sell_amounts + buy_comm - sell_comm
+                        )
+                        trades.append(
+                            {
+                                "date": day.isoformat(),
+                                "side": "SELL",
+                                "price": round(price, 4),
+                                "exec_price": round(exec_price, 4),
+                                "quantity": shares,
+                                "amount": round(proceeds, 4),
+                                "commission": round(comm, 4),
+                                "stamp_duty": round(duty, 4),
+                                "slippage": round(slip, 4),
+                                "pnl": round(pnl, 4),
+                                "reason": "Final sell (BUY_HOLD)",
+                            }
+                        )
+                        shares = 0.0
+                    else:
+                        reason = _blocked_reason(quote, "SELL")
+                        skipped_trades.append(
+                            {
+                                "date": day.isoformat(),
+                                "side": "SKIPPED_SELL",
+                                "reason": reason,
+                                "price": round(price, 4),
+                            }
+                        )
 
             equity = cash + shares * price
             daily_values.append(
@@ -248,6 +1346,7 @@ def _simulate(
     elif strategy == "MA_CROSS":
         prev_ma10: Optional[float] = None
         prev_ma20: Optional[float] = None
+        pending_signal: Optional[str] = None  # "BUY" or "SELL" blocked by limits
 
         for i, day in enumerate(trading_days):
             quote = quote_map[day]
@@ -257,6 +1356,7 @@ def _simulate(
             curr_ma10 = factor.ma_10 if factor is not None else None
             curr_ma20 = factor.ma_20 if factor is not None else None
 
+            # Detect cross signals
             signal: Optional[str] = None
             if (
                 i > 0
@@ -272,61 +1372,176 @@ def _simulate(
                 elif prev_ma10 >= prev_ma20 and curr_ma10 < curr_ma20:
                     signal = "SELL"
 
-            # Execute signals
-            if signal == "BUY" and shares == 0 and price > 0:
-                shares = math.floor(cash / price)
-                cost = shares * price
-                cash -= cost
-                trades.append(
-                    {
-                        "date": day.isoformat(),
-                        "side": "BUY",
-                        "price": round(price, 4),
-                        "quantity": shares,
-                        "amount": round(cost, 4),
-                        "reason": f"Golden cross (MA10 {round(curr_ma10, 4)} > MA20 {round(curr_ma20, 4)})",
-                    }
-                )
-            elif signal == "SELL" and shares > 0:
-                proceeds = shares * price
-                cash += proceeds
-                # Calculate PnL for this sell
-                buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
-                sell_amounts = sum(t["amount"] for t in trades if t["side"] == "SELL")
-                pnl = proceeds - (buy_amounts - sell_amounts)
-                trades.append(
-                    {
-                        "date": day.isoformat(),
-                        "side": "SELL",
-                        "price": round(price, 4),
-                        "quantity": shares,
-                        "amount": round(proceeds, 4),
-                        "pnl": round(pnl, 4),
-                        "reason": f"Dead cross (MA10 {round(curr_ma10, 4)} < MA20 {round(curr_ma20, 4)})",
-                    }
-                )
-                shares = 0.0
+            # If a new signal fires, it overrides any pending signal
+            if signal is not None:
+                pending_signal = signal
 
-            # If we never got a buy signal for MA_CROSS, we stay in cash
-            # If we have a position at the end, liquidate at last day's close
+            # Try to execute pending signal
+            action_taken = False
+            if pending_signal == "BUY" and shares == 0 and price > 0:
+                if _can_trade(quote, "BUY"):
+                    shares = _max_buy_shares(price, cash)
+                    if shares > 0:
+                        exec_price, comm, duty, slip = _apply_friction(
+                            price, shares, "BUY"
+                        )
+                        cost = shares * exec_price
+                        cash -= cost + comm
+                        total_commission += comm
+                        total_stamp_duty += duty  # 0 for BUY
+                        total_slippage += slip
+                    else:
+                        exec_price = price
+                        cost = 0.0
+                        comm = 0.0
+                        slip = 0.0
+                    reason = (
+                        f"Golden cross (MA10 {round(curr_ma10, 4)}"
+                        f" > MA20 {round(curr_ma20, 4)})"
+                        if curr_ma10 is not None
+                        and curr_ma20 is not None
+                        and curr_ma10 > curr_ma20
+                        else "Pending buy executed"
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "BUY",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(cost, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": 0.0,
+                            "slippage": round(slip, 4),
+                            "reason": reason,
+                        }
+                    )
+                    pending_signal = None
+                    action_taken = True
+                else:
+                    reason = _blocked_reason(quote, "BUY")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_BUY",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+                    action_taken = True
+
+            if not action_taken and pending_signal == "SELL" and shares > 0:
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = shares * exec_price
+                    cash += proceeds - comm - duty
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    reason = (
+                        f"Dead cross (MA10 {round(curr_ma10, 4)}"
+                        f" < MA20 {round(curr_ma20, 4)})"
+                        if curr_ma10 is not None
+                        and curr_ma20 is not None
+                        and curr_ma10 < curr_ma20
+                        else "Pending sell executed"
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": reason,
+                        }
+                    )
+                    shares = 0.0
+                    pending_signal = None
+                else:
+                    reason = _blocked_reason(quote, "SELL")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_SELL",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+
+            # Liquidation at end if still holding (with limit check)
             if i == num_days - 1 and shares > 0:
-                proceeds = shares * price
-                cash += proceeds
-                buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
-                sell_amounts = sum(t["amount"] for t in trades if t["side"] == "SELL")
-                pnl = proceeds - (buy_amounts - sell_amounts)
-                trades.append(
-                    {
-                        "date": day.isoformat(),
-                        "side": "SELL",
-                        "price": round(price, 4),
-                        "quantity": shares,
-                        "amount": round(proceeds, 4),
-                        "pnl": round(pnl, 4),
-                        "reason": "Liquidation at end of backtest",
-                    }
-                )
-                shares = 0.0
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = shares * exec_price
+                    cash += proceeds - comm - duty
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": "Liquidation at end of backtest",
+                        }
+                    )
+                    shares = 0.0
+                else:
+                    reason = _blocked_reason(quote, "SELL")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_SELL",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
 
             equity = cash + shares * price
             daily_values.append(
@@ -342,12 +1557,1036 @@ def _simulate(
             prev_ma10 = curr_ma10
             prev_ma20 = curr_ma20
 
+    elif strategy == "SCORE_THRESHOLD":
+        stop_loss_price: Optional[float] = None
+        pending_signal: Optional[str] = None  # "BUY" or "SELL" blocked by limits
+
+        for i, day in enumerate(trading_days):
+            quote = quote_map[day]
+            price = _closing_price(quote)
+            score_doc = score_map.get(day) if score_map else None
+
+            # Get today's score (only use data from this day or earlier — look-ahead guard)
+            curr_score = score_doc.score if score_doc else None
+
+            # Check stop-loss for existing position
+            if shares > 0 and stop_loss_price is not None and price <= stop_loss_price:
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = exec_price * shares - comm - duty
+                    cash += proceeds
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": f"Stop loss triggered at {round(price, 4)}",
+                        }
+                    )
+                    shares = 0.0
+                    stop_loss_price = None
+                    pending_signal = None
+
+            # If a score-based signal fires, it overrides any pending signal
+            if curr_score is not None:
+                if shares == 0 and curr_score >= entry_threshold:
+                    pending_signal = "BUY"
+                elif shares > 0 and curr_score < exit_threshold:
+                    pending_signal = "SELL"
+
+            # Try to execute pending signal
+            action_taken = False
+            if pending_signal == "BUY" and shares == 0 and price > 0:
+                if _can_trade(quote, "BUY"):
+                    shares = _max_buy_shares(price, cash)
+                    if shares > 0:
+                        exec_price, comm, duty, slip = _apply_friction(
+                            price, shares, "BUY"
+                        )
+                        cost = shares * exec_price
+                        cash -= cost + comm
+                        total_commission += comm
+                        total_stamp_duty += duty  # 0 for BUY
+                        total_slippage += slip
+                    else:
+                        exec_price = price
+                        cost = 0.0
+                        comm = 0.0
+                        slip = 0.0
+                    reason = (
+                        f"SCORE_THRESHOLD entry: Score{horizon}={round(curr_score, 1)}"
+                        f" >= {round(entry_threshold, 1)}"
+                        if curr_score is not None
+                        else "SCORE_THRESHOLD entry"
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "BUY",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(cost, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": 0.0,
+                            "slippage": round(slip, 4),
+                            "reason": reason,
+                        }
+                    )
+                    stop_loss_price = price * (1 + stop_loss_pct / 100)
+                    pending_signal = None
+                    action_taken = True
+                else:
+                    reason = _blocked_reason(quote, "BUY")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_BUY",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+                    action_taken = True
+
+            if not action_taken and pending_signal == "SELL" and shares > 0:
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = exec_price * shares - comm - duty
+                    cash += proceeds
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    reason = (
+                        f"SCORE_THRESHOLD exit: Score{horizon}={round(curr_score, 1)}"
+                        f" < {round(exit_threshold, 1)}"
+                        if curr_score is not None
+                        else "SCORE_THRESHOLD exit"
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": reason,
+                        }
+                    )
+                    shares = 0.0
+                    stop_loss_price = None
+                    pending_signal = None
+                else:
+                    reason = _blocked_reason(quote, "SELL")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_SELL",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+
+            # Liquidation at end if still holding (with limit check)
+            if i == num_days - 1 and shares > 0:
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = exec_price * shares - comm - duty
+                    cash += proceeds
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": "Liquidation at end of backtest",
+                        }
+                    )
+                    shares = 0.0
+                else:
+                    reason = _blocked_reason(quote, "SELL")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_SELL",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+
+            equity = cash + shares * price
+            daily_values.append(
+                {
+                    "date": day.isoformat(),
+                    "close": round(price, 4),
+                    "cash": round(cash, 4),
+                    "shares": shares,
+                    "equity": round(equity, 4),
+                }
+            )
+
+    elif strategy == "SCORE_MOMENTUM":
+        prev_score: Optional[float] = None
+        stop_loss_price: Optional[float] = None
+        pending_signal: Optional[str] = None  # "BUY" or "SELL" blocked by limits
+
+        for i, day in enumerate(trading_days):
+            quote = quote_map[day]
+            price = _closing_price(quote)
+            score_doc = score_map.get(day) if score_map else None
+
+            # Get today's score (only use data from this day or earlier — look-ahead guard)
+            curr_score = score_doc.score if score_doc else None
+
+            # Check stop-loss for existing position
+            if shares > 0 and stop_loss_price is not None and price <= stop_loss_price:
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = exec_price * shares - comm - duty
+                    cash += proceeds
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": f"Stop loss triggered at {round(price, 4)}",
+                        }
+                    )
+                    shares = 0.0
+                    stop_loss_price = None
+                    pending_signal = None
+
+            # Detect score momentum signals
+            if i > 0 and prev_score is not None and curr_score is not None:
+                score_change = curr_score - prev_score
+                if shares == 0 and score_change >= score_delta:
+                    pending_signal = "BUY"
+                elif shares > 0 and score_change <= -score_delta:
+                    pending_signal = "SELL"
+
+            # Try to execute pending signal
+            action_taken = False
+            if pending_signal == "BUY" and shares == 0 and price > 0:
+                if _can_trade(quote, "BUY"):
+                    shares = _max_buy_shares(price, cash)
+                    if shares > 0:
+                        exec_price, comm, duty, slip = _apply_friction(
+                            price, shares, "BUY"
+                        )
+                        cost = shares * exec_price
+                        cash -= cost + comm
+                        total_commission += comm
+                        total_stamp_duty += duty  # 0 for BUY
+                        total_slippage += slip
+                    else:
+                        exec_price = price
+                        cost = 0.0
+                        comm = 0.0
+                        slip = 0.0
+                    reason = (
+                        f"SCORE_MOMENTUM entry: Score{horizon} Δ={round(score_change, 1)}"
+                        f" >= {round(score_delta, 1)}"
+                        if curr_score is not None and prev_score is not None
+                        else "SCORE_MOMENTUM entry"
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "BUY",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(cost, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": 0.0,
+                            "slippage": round(slip, 4),
+                            "reason": reason,
+                        }
+                    )
+                    stop_loss_price = price * (1 + stop_loss_pct / 100)
+                    pending_signal = None
+                    action_taken = True
+                else:
+                    reason = _blocked_reason(quote, "BUY")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_BUY",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+                    action_taken = True
+
+            if not action_taken and pending_signal == "SELL" and shares > 0:
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = exec_price * shares - comm - duty
+                    cash += proceeds
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    reason = (
+                        f"SCORE_MOMENTUM exit: Score{horizon} Δ={round(score_change, 1)}"
+                        f" <= {-round(score_delta, 1)}"
+                        if curr_score is not None and prev_score is not None
+                        else "SCORE_MOMENTUM exit"
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": reason,
+                        }
+                    )
+                    shares = 0.0
+                    stop_loss_price = None
+                    pending_signal = None
+                else:
+                    reason = _blocked_reason(quote, "SELL")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_SELL",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+
+            # Liquidation at end if still holding (with limit check)
+            if i == num_days - 1 and shares > 0:
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = exec_price * shares - comm - duty
+                    cash += proceeds
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": "Liquidation at end of backtest",
+                        }
+                    )
+                    shares = 0.0
+                else:
+                    reason = _blocked_reason(quote, "SELL")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_SELL",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+
+            equity = cash + shares * price
+            daily_values.append(
+                {
+                    "date": day.isoformat(),
+                    "close": round(price, 4),
+                    "cash": round(cash, 4),
+                    "shares": shares,
+                    "equity": round(equity, 4),
+                }
+            )
+
+            prev_score = curr_score
+
+    elif strategy == "MULTI_HORIZON_CONSENSUS":
+        sc_maps = score_maps or {}
+        stop_loss_price: Optional[float] = None
+        pending_signal: Optional[str] = None
+
+        # Merge user-supplied thresholds with documented defaults
+        entry_defaults = {5: 60.0, 20: 55.0, 60: 50.0}
+        exit_defaults = {5: 30.0, 20: 35.0, 60: 40.0}
+        _entry_t = {**entry_defaults, **(consensus_entry_thresholds or {})}
+        _exit_t = {**exit_defaults, **(consensus_exit_thresholds or {})}
+
+        for i, day in enumerate(trading_days):
+            quote = quote_map[day]
+            price = _closing_price(quote)
+
+            # Gather scores across available horizons
+            horizon_scores: Dict[int, Optional[float]] = {}
+            for h in (5, 20, 60):
+                h_map = sc_maps.get(h, {})
+                sd = h_map.get(day)
+                horizon_scores[h] = sd.score if sd else None
+
+            available_horizons = [h for h, s in horizon_scores.items() if s is not None]
+
+            # Must have at least 2 horizons with data
+            if len(available_horizons) >= 2:
+                # Check if all available horizons meet entry thresholds
+                entry_ok = all(
+                    (horizon_scores[h] or 0) >= _entry_t[h] for h in available_horizons
+                )
+                # Check if ANY horizon drops below exit threshold
+                exit_triggered = any(
+                    (horizon_scores[h] or 0) < _exit_t[h] for h in available_horizons
+                )
+
+                if shares == 0 and entry_ok:
+                    pending_signal = "BUY"
+                elif shares > 0 and exit_triggered:
+                    pending_signal = "SELL"
+            else:
+                # Fewer than 2 horizons — record but still check stop-loss
+                skipped_consensus.append(
+                    {
+                        "date": day.isoformat(),
+                        "reason": f"insufficient horizons ({len(available_horizons)})",
+                        "available_horizons": available_horizons,
+                    }
+                )
+
+            # Check stop-loss unconditionally (regardless of score availability)
+            if shares > 0 and stop_loss_price is not None and price <= stop_loss_price:
+                pending_signal = "SELL"
+
+            # Execute pending signal (reuse pattern from SCORE_THRESHOLD)
+            action_taken = False
+            if pending_signal == "BUY" and shares == 0 and price > 0:
+                if _can_trade(quote, "BUY"):
+                    shares = _max_buy_shares(price, cash)
+                    if shares > 0:
+                        exec_price, comm, duty, slip = _apply_friction(
+                            price, shares, "BUY"
+                        )
+                        cost = shares * exec_price
+                        cash -= cost + comm
+                        total_commission += comm
+                        total_stamp_duty += duty
+                        total_slippage += slip
+                    else:
+                        exec_price = price
+                        cost = 0.0
+                        comm = 0.0
+                        slip = 0.0
+                    # Set stop-loss
+                    stop_loss_price = price * (1 + stop_loss_pct / 100)
+                    score_strs = ", ".join(
+                        f"Score{h}={horizon_scores.get(h, '?')}"
+                        for h in available_horizons
+                    )
+                    reason = f"CONSENSUS entry: {score_strs}"
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "BUY",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(cost, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": 0.0,
+                            "slippage": round(slip, 4),
+                            "reason": reason,
+                        }
+                    )
+                    pending_signal = None
+                    action_taken = True
+                else:
+                    reason = _blocked_reason(quote, "BUY")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_BUY",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+                    action_taken = True
+
+            if not action_taken and pending_signal == "SELL" and shares > 0:
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = exec_price * shares - comm - duty
+                    cash += proceeds
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    score_strs = ", ".join(
+                        f"Score{h}={horizon_scores.get(h, '?')}"
+                        for h in available_horizons
+                    )
+                    reason = (
+                        f"CONSENSUS exit: {score_strs}"
+                        if price > (stop_loss_price or price * 2)
+                        else f"Stop loss triggered at {round(price, 4)}"
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": reason,
+                        }
+                    )
+                    shares = 0.0
+                    stop_loss_price = None
+                    pending_signal = None
+                else:
+                    reason = _blocked_reason(quote, "SELL")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_SELL",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+
+            # Liquidation at end if still holding
+            if i == num_days - 1 and shares > 0:
+                if _can_trade(quote, "SELL"):
+                    exec_price, comm, duty, slip = _apply_friction(
+                        price, shares, "SELL"
+                    )
+                    proceeds = shares * exec_price
+                    cash += proceeds - comm - duty
+                    total_commission += comm
+                    total_stamp_duty += duty
+                    total_slippage += slip
+
+                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
+                    sell_amounts = sum(
+                        t["amount"] for t in trades if t["side"] == "SELL"
+                    )
+                    buy_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
+                    )
+                    sell_comm = sum(
+                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
+                    )
+                    pnl = (proceeds - comm - duty) - (
+                        buy_amounts - sell_amounts + buy_comm - sell_comm
+                    )
+                    trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SELL",
+                            "price": round(price, 4),
+                            "exec_price": round(exec_price, 4),
+                            "quantity": shares,
+                            "amount": round(proceeds, 4),
+                            "commission": round(comm, 4),
+                            "stamp_duty": round(duty, 4),
+                            "slippage": round(slip, 4),
+                            "pnl": round(pnl, 4),
+                            "reason": "Liquidation at end of backtest",
+                        }
+                    )
+                    shares = 0.0
+                else:
+                    reason = _blocked_reason(quote, "SELL")
+                    skipped_trades.append(
+                        {
+                            "date": day.isoformat(),
+                            "side": "SKIPPED_SELL",
+                            "reason": reason,
+                            "price": round(price, 4),
+                        }
+                    )
+
+            equity = cash + shares * price
+            daily_values.append(
+                {
+                    "date": day.isoformat(),
+                    "close": round(price, 4),
+                    "cash": round(cash, 4),
+                    "shares": shares,
+                    "equity": round(equity, 4),
+                }
+            )
+
     return {
         "final_value": round(
             cash + shares * _closing_price(quote_map[trading_days[-1]]), 4
         ),
         "trades": trades,
         "daily_values": daily_values,
+        "total_commission": round(total_commission, 4),
+        "total_stamp_duty": round(total_stamp_duty, 4),
+        "total_slippage": round(total_slippage, 4),
+        "skipped_trades": skipped_trades,
+        "skipped_consensus": skipped_consensus,  # MULTI_HORIZON_CONSENSUS only
+    }
+
+
+# ---------------------------------------------------------------------------
+# Multi-stock simulator
+# ---------------------------------------------------------------------------
+def _simulate_multi(
+    strategy: str,
+    trading_days: List[datetime],
+    quote_maps: Dict[str, Dict[datetime, Any]],
+    factor_maps: Dict[str, Dict[datetime, Any]],
+    score_maps: Dict[str, Dict[datetime, Any]],
+    stock_names: Dict[str, str],
+    initial_cash: float,
+    top_n: int = 10,
+    rebalance_interval: int = 5,
+    allocation: str = "equal_weight",
+    max_position_pct: float = 0.20,
+    horizon: int | None = None,
+    entry_threshold: float = 70.0,
+    exit_threshold: float = 50.0,
+    stop_loss_pct: float = -5.0,
+    score_delta: float = 10.0,
+) -> Dict[str, Any]:
+    """Walk through trading days applying a multi-stock strategy.
+
+    Currently supports ``TOP_N_ROTATION``.
+    """
+
+    # -- helpers ---------------------------------------------------------------
+    def _liquidate_position(
+        stock_code: str,
+        pos: Dict[str, Any],
+        day: datetime,
+    ) -> Dict[str, Any] | None:
+        """Sell a held position on *day* and return a trade record (or None
+        when blocked).  Updates *cash*, the friction accumulators, and
+        *per_stock_contributions* in-place."""
+        nonlocal cash, total_commission, total_stamp_duty, total_slippage
+        quote = quote_maps.get(stock_code, {}).get(day)
+        if not quote or not _can_trade(quote, "SELL"):
+            return None
+        price = _closing_price(quote)
+        exec_price, comm, stamp, slip = _apply_friction(price, pos["shares"], "SELL")
+        proceeds = exec_price * pos["shares"] - comm - stamp
+        cash += proceeds
+        total_commission += comm
+        total_stamp_duty += stamp
+        total_slippage += slip
+        realized_pnl = proceeds - (pos["avg_cost"] * pos["shares"])
+        if stock_code not in per_stock_contributions:
+            per_stock_contributions[stock_code] = {"realized_pnl": 0.0, "trades": 0}
+        per_stock_contributions[stock_code]["realized_pnl"] += realized_pnl
+        per_stock_contributions[stock_code]["trades"] += 1
+        return {
+            "date": day.isoformat(),
+            "side": "SELL",
+            "stock_code": stock_code,
+            "price": round(price, 4),
+            "exec_price": round(exec_price, 4),
+            "quantity": pos["shares"],
+            "amount": round(exec_price * pos["shares"], 4),
+            "commission": round(comm, 4),
+            "stamp_duty": round(stamp, 4),
+            "slippage": round(slip, 4),
+            "pnl": round(realized_pnl, 4),
+            "reason": "TOP_N_ROTATION rebalance – removed from top N",
+        }
+
+    def _buy_stock(
+        stock_code: str,
+        shares: int,
+        day: datetime,
+        price: float,
+        reason_hint: str,
+    ) -> None:
+        """Buy *shares* of *stock_code* on *day* and append a trade record.
+        Updates *cash*, friction accumulators, and *positions* in-place."""
+        nonlocal cash, total_commission, total_stamp_duty, total_slippage
+        quote = quote_maps.get(stock_code, {}).get(day)
+        if not quote or not _can_trade(quote, "BUY") or shares <= 0:
+            return
+        exec_price, comm, stamp, slip = _apply_friction(price, shares, "BUY")
+        cost = exec_price * shares + comm + stamp
+        if cost > cash:
+            # Try to buy fewer shares
+            affordable_raw = (cash - comm - stamp) / exec_price if exec_price > 0 else 0
+            affordable = _round_to_lot(affordable_raw)
+            if affordable < LOT_SIZE:
+                return
+            shares = affordable
+            exec_price, comm, stamp, slip = _apply_friction(price, shares, "BUY")
+            cost = exec_price * shares + comm + stamp
+        cash -= cost
+        total_commission += comm
+        total_stamp_duty += stamp
+        total_slippage += slip
+        positions[stock_code] = {
+            "shares": shares,
+            "avg_cost": exec_price,
+            "stop_loss_price": exec_price * (1 + stop_loss_pct / 100),
+        }
+        trades.append(
+            {
+                "date": day.isoformat(),
+                "side": "BUY",
+                "stock_code": stock_code,
+                "price": round(price, 4),
+                "exec_price": round(exec_price, 4),
+                "quantity": shares,
+                "amount": round(exec_price * shares, 4),
+                "commission": round(comm, 4),
+                "stamp_duty": round(stamp, 4),
+                "slippage": round(slip, 4),
+                "reason": reason_hint,
+            }
+        )
+
+    # -- state -----------------------------------------------------------------
+    cash = initial_cash
+    positions: Dict[str, Dict[str, Any]] = {}
+    trades: List[Dict[str, Any]] = []
+    daily_values: List[Dict[str, Any]] = []
+    per_stock_contributions: Dict[str, Dict[str, Any]] = {}
+    total_commission = 0.0
+    total_stamp_duty = 0.0
+    total_slippage = 0.0
+
+    # --------------------------------------------------------------------
+    # TOP_N_ROTATION
+    # --------------------------------------------------------------------
+    if strategy == "TOP_N_ROTATION":
+        for i, day in enumerate(trading_days):
+            # -- Check stop-loss for all held positions ------------------------
+            for stock_code in list(positions.keys()):
+                pos = positions[stock_code]
+                quote = quote_maps.get(stock_code, {}).get(day)
+                if quote:
+                    price = _closing_price(quote)
+                    if price <= pos["stop_loss_price"]:
+                        # Stop-loss triggered – override trade reason
+                        exec_price, comm, stamp, slip = _apply_friction(
+                            price, pos["shares"], "SELL"
+                        )
+                        if _can_trade(quote, "SELL"):
+                            proceeds = exec_price * pos["shares"] - comm - stamp
+                            cash += proceeds
+                            total_commission += comm
+                            total_stamp_duty += stamp
+                            total_slippage += slip
+                            realized_pnl = proceeds - (pos["avg_cost"] * pos["shares"])
+                            if stock_code not in per_stock_contributions:
+                                per_stock_contributions[stock_code] = {
+                                    "realized_pnl": 0.0,
+                                    "trades": 0,
+                                }
+                            per_stock_contributions[stock_code]["realized_pnl"] += (
+                                realized_pnl
+                            )
+                            per_stock_contributions[stock_code]["trades"] += 1
+                            trades.append(
+                                {
+                                    "date": day.isoformat(),
+                                    "side": "SELL",
+                                    "stock_code": stock_code,
+                                    "price": round(price, 4),
+                                    "exec_price": round(exec_price, 4),
+                                    "quantity": pos["shares"],
+                                    "amount": round(exec_price * pos["shares"], 4),
+                                    "commission": round(comm, 4),
+                                    "stamp_duty": round(stamp, 4),
+                                    "slippage": round(slip, 4),
+                                    "pnl": round(realized_pnl, 4),
+                                    "reason": f"Stop loss triggered at {round(price, 4)}",
+                                }
+                            )
+                            del positions[stock_code]
+
+            # -- Rebalance ------------------------------------------------------
+            if i % rebalance_interval == 0 or i == 0:
+                # Collect today's scores for all stocks with data
+                today_scores: Dict[str, float] = {}
+                for stock_code in quote_maps:
+                    score_doc = score_maps.get(stock_code, {}).get(day)
+                    if score_doc and score_doc.score is not None:
+                        today_scores[stock_code] = score_doc.score
+
+                # Rank and select top N
+                ranked = sorted(today_scores.items(), key=lambda x: x[1], reverse=True)
+                top_n_stocks = [s for s, _ in ranked[:top_n]]
+
+                # Sell positions NOT in top N
+                for stock_code in list(positions.keys()):
+                    if stock_code not in top_n_stocks:
+                        pos = positions.pop(stock_code)
+                        trade = _liquidate_position(stock_code, pos, day)
+                        if trade is not None:
+                            trades.append(trade)
+
+                # Buy new stocks in top N (that we don't already hold)
+                new_stocks = [s for s in top_n_stocks if s not in positions]
+                if new_stocks and cash > 0:
+                    prices: Dict[str, float] = {}
+                    for s in new_stocks:
+                        q = quote_maps.get(s, {}).get(day)
+                        if q:
+                            prices[s] = _closing_price(q)
+
+                    alloc_shares = _allocate_positions(
+                        new_stocks,
+                        today_scores,
+                        cash,
+                        prices,
+                        allocation,
+                        max_position_pct,
+                    )
+                    for stock_code, shares in alloc_shares.items():
+                        if shares < LOT_SIZE:
+                            continue
+                        price = prices.get(stock_code, 0)
+                        if price <= 0:
+                            continue
+                        _buy_stock(
+                            stock_code,
+                            shares,
+                            day,
+                            price,
+                            f"TOP_N_ROTATION entry – Score={round(today_scores.get(stock_code, 0), 1)}",
+                        )
+
+            # -- Compute daily equity -------------------------------------------
+            positions_value = 0.0
+            positions_detail: List[Dict[str, Any]] = []
+            for stock_code, pos in positions.items():
+                quote = quote_maps.get(stock_code, {}).get(day)
+                if quote:
+                    price = _closing_price(quote)
+                    value = pos["shares"] * price
+                    positions_value += value
+                    positions_detail.append(
+                        {
+                            "stock_code": stock_code,
+                            "stock_name": stock_names.get(stock_code, stock_code),
+                            "shares": pos["shares"],
+                            "price": round(price, 4),
+                            "value": round(value, 4),
+                        }
+                    )
+
+            equity = cash + positions_value
+            daily_values.append(
+                {
+                    "date": day.isoformat(),
+                    "cash": round(cash, 4),
+                    "positions_value": round(positions_value, 4),
+                    "equity": round(equity, 4),
+                    "position_count": len(positions),
+                    "positions": positions_detail,
+                }
+            )
+
+        # -- Liquidate all remaining positions on the last day ------------------
+        final_day = trading_days[-1]
+        for stock_code in list(positions.keys()):
+            pos = positions.pop(stock_code)
+            trade = _liquidate_position(stock_code, pos, final_day)
+            if trade is not None:
+                trade["reason"] = "Liquidation at end of backtest"
+                trades.append(trade)
+
+        # Refresh the last daily value entry with final cash
+        if daily_values:
+            daily_values[-1]["cash"] = round(cash, 4)
+            daily_values[-1]["equity"] = round(cash, 4)
+            daily_values[-1]["positions_value"] = 0.0
+            daily_values[-1]["positions"] = []
+
+        final_value = cash
+
+    else:
+        return {
+            "error": f"Multi-stock strategy '{strategy}' is not implemented",
+            "trades": [],
+            "daily_values": [],
+            "per_stock_contributions": [],
+            "total_commission": 0.0,
+            "total_stamp_duty": 0.0,
+            "total_slippage": 0.0,
+        }
+
+    return {
+        "final_value": round(final_value, 4),
+        "trades": trades,
+        "daily_values": daily_values,
+        "per_stock_contributions": [
+            {
+                "stock_code": sc,
+                "stock_name": stock_names.get(sc, sc),
+                **contrib,
+            }
+            for sc, contrib in per_stock_contributions.items()
+        ],
+        "total_commission": round(total_commission, 4),
+        "total_stamp_duty": round(total_stamp_duty, 4),
+        "total_slippage": round(total_slippage, 4),
     }
 
 
@@ -359,11 +2598,25 @@ def _compute_metrics(
     final_value: float,
     trades: List[Dict[str, Any]],
     daily_values: List[Dict[str, Any]],
+    total_commission: float = 0.0,
+    total_stamp_duty: float = 0.0,
+    total_slippage: float = 0.0,
 ) -> Dict[str, Any]:
-    """Derive performance metrics from the simulation output."""
+    """Derive performance metrics from the simulation output.
+
+    ``total_return`` / ``total_return_pct`` are **net** returns (after
+    friction).  ``gross_return`` / ``gross_return_pct`` add back the
+    cumulative friction costs.
+    """
 
     total_return = round(final_value - initial_cash, 4)
     total_return_pct = round(total_return / initial_cash * 100, 4)
+
+    # Gross return = net return + all friction costs
+    gross_return = round(
+        total_return + total_commission + total_stamp_duty + total_slippage, 4
+    )
+    gross_return_pct = round(gross_return / initial_cash * 100, 4)
 
     # Annualized return
     num_days = len(daily_values)
@@ -405,6 +2658,11 @@ def _compute_metrics(
         "loss_trades": loss_trades,
         "best_trade": best_trade,
         "worst_trade": worst_trade,
+        "gross_return": gross_return,
+        "gross_return_pct": gross_return_pct,
+        "total_commission": round(total_commission, 4),
+        "total_stamp_duty": round(total_stamp_duty, 4),
+        "total_slippage": round(total_slippage, 4),
     }
 
 
@@ -468,12 +2726,155 @@ def _compute_sharpe(
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers – information ratio
+# ---------------------------------------------------------------------------
+def _compute_information_ratio(
+    daily_values: List[Dict[str, Any]],
+    benchmark_daily_returns: List[float],
+    initial_cash: float,
+) -> float:
+    """Compute annualized information ratio from daily excess returns."""
+    if not daily_values or not benchmark_daily_returns:
+        return 0.0
+    if len(daily_values) < 2 or initial_cash <= 0:
+        return 0.0
+
+    # Strategy daily returns (aligned to benchmark by index, skipping day 0)
+    strategy_returns: List[float] = []
+    prev_eq = initial_cash
+    for row in daily_values:
+        eq = row["equity"]
+        ret = (eq - prev_eq) / prev_eq if prev_eq > 0 else 0.0
+        strategy_returns.append(ret)
+        prev_eq = eq
+
+    # Benchmark daily returns are already aligned (len = len(daily_values) - 1
+    # typically, since first day has no return).  Pad or truncate to match.
+    n = min(len(strategy_returns), len(benchmark_daily_returns))
+    if n < 2:
+        return 0.0
+
+    excess_returns = [
+        strategy_returns[i] - benchmark_daily_returns[i] for i in range(n)
+    ]
+    mean_excess = sum(excess_returns) / n
+    if n < 2:
+        return 0.0
+    variance = sum((r - mean_excess) ** 2 for r in excess_returns) / (n - 1)
+    std_excess = math.sqrt(variance)
+    if std_excess == 0:
+        return 0.0
+
+    return round(mean_excess / std_excess * math.sqrt(TRADING_DAYS_PER_YEAR), 4)
+
+
+def _blocked_reason(quote, side: str) -> str:
+    """Return a human-readable reason why a trade is blocked."""
+    trade_status = getattr(quote, "trade_status", 1)
+    change_rate = getattr(quote, "change_rate", 0) or 0
+    if trade_status == 0:
+        return "suspended"
+    if side == "BUY" and change_rate >= 9.9:
+        return "limit_up_blocked"
+    if side == "SELL" and change_rate <= -9.9:
+        return "limit_down_blocked"
+    return "unknown"
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers – data access
 # ---------------------------------------------------------------------------
 def _closing_price(quote: StockDailyQuote) -> float:
-    """Return the HFQ-adjusted close, falling back to raw close."""
-    price = quote.close_hfq or quote.close or 0.0
-    return float(price)
+    """Return the HFQ-adjusted close, falling back to raw close.
+
+    Logs a warning when raw close is used as fallback and differs
+    significantly from the last known adjusted close — this indicates
+    missing factor/signal data that silently corrupts backtest results.
+    """
+    hfq = quote.close_hfq
+    raw = quote.close or 0.0
+    if hfq:
+        return float(hfq)
+    # Fallback to raw close — may indicate stale factor data
+    logger.warning(
+        "No HFQ close for %s on %s — falling back to raw close %.2f. "
+        "Backtest results on/after this date may be unreliable.",
+        getattr(quote, "code", "?"),
+        getattr(quote, "date", "?"),
+        raw,
+    )
+    return float(raw)
+
+
+def _data_coverage_report(
+    quotes: List[StockDailyQuote],
+    factors: List | None = None,
+    score_maps: Dict | None = None,
+) -> Dict[str, Any]:
+    """Check data consistency — flag missing HFQ, stale factors, score gaps.
+
+    Returns warnings dict that should be included in backtest results.
+    """
+    warnings = []
+
+    # Check for HFQ gaps (missing adjusted prices)
+    hfq_gaps = []
+    for q in quotes:
+        if not q.close_hfq and q.close:
+            hfq_gaps.append(getattr(q, "date", datetime(2000, 1, 1)).isoformat()[:10])
+    if hfq_gaps:
+        warnings.append(
+            f"HFQ missing for {len(hfq_gaps)} days (using raw close): "
+            f"{hfq_gaps[:5]}{'...' if len(hfq_gaps) > 5 else ''}"
+        )
+
+    # Check factor coverage vs quote coverage
+    if factors is not None:
+        quote_dates = {
+            q.date.replace(hour=0, minute=0, second=0, microsecond=0) for q in quotes
+        }
+        factor_dates = {
+            f.date.replace(hour=0, minute=0, second=0, microsecond=0) for f in factors
+        }
+        missing_factor = quote_dates - factor_dates
+        if missing_factor:
+            earliest = min(missing_factor)
+            warnings.append(
+                f"Factor data missing for {len(missing_factor)} trading days "
+                f"(first: {earliest.isoformat()[:10]}). Strategies using MA "
+                f"values will be unreliable on/after this date."
+            )
+
+    # Check score data coverage
+    if score_maps is not None:
+        quote_dates = {
+            q.date.replace(hour=0, minute=0, second=0, microsecond=0) for q in quotes
+        }
+        for horizon, h_map in score_maps.items():
+            if not h_map:
+                warnings.append(
+                    f"Score{horizon} data: 0 records (no score predictions)"
+                )
+                continue
+            score_dates = {
+                s.date.replace(hour=0, minute=0, second=0, microsecond=0)
+                for s in h_map.values()
+            }
+            missing_score = quote_dates - score_dates
+            if missing_score:
+                warnings.append(
+                    f"Score{horizon} missing on {len(missing_score)} trading days "
+                    f"(first: {min(missing_score).isoformat()[:10]}). "
+                    f"Score-driven strategies may miss signals on these dates."
+                )
+        if not score_maps:
+            warnings.append("No score data for any horizon")
+
+    return {
+        "warnings": warnings,
+        "has_hfq_gaps": len(hfq_gaps) > 0,
+        "hfq_gap_count": len(hfq_gaps),
+    }
 
 
 def _resolve_stock_name(stock_code: str) -> str:
@@ -491,3 +2892,173 @@ def _resolve_stock_name(stock_code: str) -> str:
 def _error(message: str, detail: str = "") -> Dict[str, Any]:
     logger.warning("Backtest error: %s – %s", message, detail)
     return {"error": message, "detail": detail}
+
+
+# ---------------------------------------------------------------------------
+# Statistical significance & robustness
+# ---------------------------------------------------------------------------
+def permutation_test(
+    daily_values: List[Dict[str, Any]],
+    initial_cash: float = 100000.0,
+    iterations: int = PERMUTATION_ITERATIONS,
+    significance: float = PERMUTATION_SIGNIFICANCE,
+) -> Dict[str, Any]:
+    """Permutation test of H0: strategy has no directional edge (mean=0).
+
+    Centers returns (subtracts observed mean), shuffles centered returns,
+    recomputes Sharpe.  This builds the null distribution of Sharpe ratios
+    under the hypothesis that the true mean return is zero.  The p-value
+    is the fraction of null Sharpes >= observed Sharpe.
+    """
+    import random
+
+    if not daily_values or len(daily_values) < 20:
+        return {
+            "significant": False,
+            "p_value": None,
+            "observed_sharpe": 0,
+            "null_mean": 0,
+            "null_std": 0,
+            "iterations": 0,
+            "reason": "insufficient data (<20 daily values)",
+        }
+
+    equity_values = [dv.get("equity", 0) or 0 for dv in daily_values]
+    if not any(equity_values):
+        return {
+            "significant": False,
+            "p_value": None,
+            "iterations": 0,
+            "reason": "invalid equity data (all zero)",
+        }
+
+    # Build daily returns
+    daily_ret = []
+    for i in range(1, len(equity_values)):
+        if equity_values[i - 1] != 0:
+            daily_ret.append(
+                (equity_values[i] - equity_values[i - 1]) / equity_values[i - 1]
+            )
+
+    if len(daily_ret) < 10:
+        return {
+            "significant": False,
+            "p_value": None,
+            "iterations": 0,
+            "reason": "insufficient returns (<10)",
+        }
+
+    # Observed Sharpe
+    obs_avg = sum(daily_ret) / len(daily_ret)
+    obs_std = (sum((r - obs_avg) ** 2 for r in daily_ret) / len(daily_ret)) ** 0.5
+    obs_sharpe = obs_avg / max(obs_std, 1e-8) * (252**0.5) if obs_std > 0 else 0.0
+
+    # Center returns (remove mean) so H0: μ=0 is true after centering
+    centered = [r - obs_avg for r in daily_ret]
+
+    # Null distribution: shuffle CENTERED returns, random sign-flip
+    null_sharpes = []
+    for _ in range(iterations):
+        random.shuffle(centered)
+        flipped = [c if random.random() < 0.5 else -c for c in centered]
+        avg_r = sum(flipped) / len(flipped)
+        std_r = (sum((x - avg_r) ** 2 for x in flipped) / len(flipped)) ** 0.5
+        sr = avg_r / max(std_r, 1e-8) * (252**0.5)
+        null_sharpes.append(sr)
+
+    null_mean = sum(null_sharpes) / len(null_sharpes)
+    null_std = (
+        sum((s - null_mean) ** 2 for s in null_sharpes) / len(null_sharpes)
+    ) ** 0.5
+
+    p_value = sum(1 for s in null_sharpes if s >= obs_sharpe) / iterations
+    significant = p_value < significance and obs_sharpe > 0
+
+    return {
+        "significant": significant,
+        "p_value": round(p_value, 4),
+        "significance_level": significance,
+        "observed_sharpe": round(obs_sharpe, 4),
+        "null_mean": round(null_mean, 4),
+        "null_std": round(null_std, 4),
+        "iterations": iterations,
+    }
+
+
+def bootstrap_ci(
+    daily_values: List[Dict[str, Any]],
+    iterations: int = BOOTSTRAP_ITERATIONS,
+    confidence: float = BOOTSTRAP_CONFIDENCE,
+    initial_cash: float = 100000.0,
+) -> Dict[str, Any]:
+    """Bootstrap confidence intervals for total return and Sharpe ratio.
+
+    Resamples daily returns with replacement (IID bootstrap) to estimate
+    the sampling distribution.  NOTE: IID bootstrap assumes independent
+    returns; financial time series exhibit volatility clustering and
+    autocorrelation, so CI width may be underestimated.  For production
+    use, consider a stationary block bootstrap.
+    """
+    import random
+
+    if not daily_values or len(daily_values) < 20:
+        return {
+            "return_ci": None,
+            "sharpe_ci": None,
+            "iterations": 0,
+            "reason": "insufficient data",
+        }
+
+    equity_values = [dv.get("equity", 0) or 0 for dv in daily_values]
+    # Include initial_cash as first equity point (matches backtest metrics)
+    equity_values.insert(0, initial_cash)
+    daily_ret = []
+    for i in range(1, len(equity_values)):
+        if equity_values[i - 1] != 0:
+            daily_ret.append(
+                (equity_values[i] - equity_values[i - 1]) / equity_values[i - 1]
+            )
+
+    if len(daily_ret) < 10:
+        return {"iterations": 0, "reason": "insufficient returns"}
+
+    n = len(daily_ret)
+    tail = (1 - confidence) / 2
+
+    return_samples = []
+    sharpe_samples = []
+
+    for _ in range(iterations):
+        sample = [random.choice(daily_ret) for _ in range(n)]
+        # Compound return
+        compound = 1.0
+        for r in sample:
+            compound *= 1 + r
+        return_samples.append(compound - 1)
+
+        # Sharpe (matching _compute_sharpe: 0 when std is zero)
+        avg = sum(sample) / n
+        std = (sum((x - avg) ** 2 for x in sample) / n) ** 0.5
+        sr = avg / std * (252**0.5) if std > 1e-12 else 0.0
+        sharpe_samples.append(sr)
+
+    return_samples.sort()
+    sharpe_samples.sort()
+
+    lo_idx = int(tail * iterations)
+    hi_idx = int((1 - tail) * iterations)
+
+    return {
+        "return_ci": (
+            round(return_samples[lo_idx], 4),
+            round(return_samples[hi_idx], 4),
+        ),
+        "sharpe_ci": (
+            round(sharpe_samples[lo_idx], 4),
+            round(sharpe_samples[hi_idx], 4),
+        ),
+        "mean_return": round(sum(return_samples) / iterations, 4),
+        "mean_sharpe": round(sum(sharpe_samples) / iterations, 4),
+        "confidence": confidence,
+        "iterations": iterations,
+    }

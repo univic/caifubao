@@ -54,13 +54,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/History/HistoryView.vue')
       },
       {
-        path: 'history/:symbol',
-        redirect: (to) => ({
-          path: '/history',
-          query: { symbol: Array.isArray(to.params.symbol) ? to.params.symbol[0] : String(to.params.symbol || '') }
-        })
-      },
-      {
         path: 'quote/:symbol',
         name: 'QuoteDetail',
         component: () => import('@/views/History/QuoteDetailView.vue')
@@ -76,9 +69,19 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Backtest/BacktestCreateView.vue')
       },
       {
+        path: 'backtest/result',
+        name: 'BacktestResultView',
+        component: () => import('@/views/Backtest/BacktestResultView.vue')
+      },
+      {
         path: 'backtest/:id',
         name: 'BacktestResult',
         component: () => import('@/views/Backtest/BacktestResultView.vue')
+      },
+      {
+        path: 'discovery',
+        name: 'Discovery',
+        component: () => import('@/views/Discovery/DiscoveryView.vue')
       },
       {
         path: 'signals',
@@ -91,9 +94,24 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/ScoreExperiments/ScoreExperimentsView.vue')
       },
       {
+        path: 'factor-eval',
+        name: 'FactorEval',
+        component: () => import('@/views/FactorEval/FactorEvalView.vue')
+      },
+      {
+        path: 'decisions',
+        name: 'Decisions',
+        component: () => import('@/views/Decisions/DecisionsView.vue')
+      },
+      {
         path: 'portfolio',
         name: 'Portfolio',
         component: () => import('@/views/Portfolio/PortfolioView.vue')
+      },
+      {
+        path: 'watchlists',
+        name: 'Watchlists',
+        component: () => import('@/views/Watchlists/WatchlistsView.vue')
       },
       {
         path: 'indices',

@@ -32,9 +32,15 @@ OpenClaw SHALL authenticate with a dedicated service token and read-only scope.
 #### Scenario: Score-read scope is enforced
 
 - **GIVEN** a request targets score-prediction endpoints
-- **WHEN** the token only has `openclaw:data-read` but not `openclaw:score-read`
+- **WHEN** the token has `openclaw:score-read` scope
+- **THEN** the backend SHALL allow access to score and recommendation endpoints
+- **AND** the token SHALL NOT be required to also have `openclaw:data-read`.
+
+#### Scenario: Narrow scope is blocked on broad data endpoints
+
+- **GIVEN** a request targets non-score endpoints (e.g. /stocks, /quotes/daily, /factors/daily)
+- **WHEN** the token only has `openclaw:score-read` but not `openclaw:data-read`
 - **THEN** the backend SHALL reject the request with 403
-- **AND** response SHALL indicate the missing scope.
 
 ### Requirement: Data Freshness Metadata
 

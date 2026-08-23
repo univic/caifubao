@@ -5,8 +5,10 @@ from datetime import datetime
 from typing import Any
 
 from flask import Blueprint, jsonify, request
+from flask_jwt_extended import jwt_required
 
 from app.model.scoring import StockScorePrediction
+from app.model.stock import StockDailyQuote
 
 scores_bp = Blueprint("scores", __name__, url_prefix="/api/scores")
 
@@ -226,3 +228,160 @@ def get_score_explanation(stock_code, date):
         return jsonify({"success": False, "message": "Score not found"}), 404
 
     return jsonify(_serialize_prediction(row, include_details=True)), 200
+
+
+# ---------------------------------------------------------------------------
+# Score generation endpoint — one-click scoring from the frontend.
+# ---------------------------------------------------------------------------
+
+
+@scores_bp.route("/generate", methods=["POST"])
+@jwt_required()
+def generate_scores():
+    """Generate score predictions on demand.
+
+    Accepts optional filters: date, horizon, stock_code, model_version.
+    Checks that quote data exists for the target date before scoring.
+
+    The datahub scoring engine is imported inside the function body using
+    the same sys.path pattern already established in score_experiments.py.
+    This guards against import-time failures in CI environments where only
+    the backend package is installed.
+    """
+    import os  # noqa: E402
+    import sys  # noqa: E402
+
+    sys.path.insert(
+        0,
+        os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "..", "datahub", "app"
+        ),
+    )
+
+    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION  # noqa: E402
+
+    body = request.get_json(silent=True) or {}
+
+    requested_date = _parse_datetime(body.get("date"))
+    horizon = _parse_horizon(body.get("horizon"), default=None)
+    stock_code = (body.get("stock_code") or "").strip() or None
+    model_version = (body.get("model_version") or "").strip() or DEFAULT_MODEL_VERSION
+    replace = bool(body.get("replace", False))
+
+    # --- Dependency check: quote data must exist for the target date ---
+    from app.lib.scoring_engine.scoring_service import StockScoringService  # noqa: E402
+
+    service = StockScoringService(model_version=model_version)
+    eval_date = requested_date
+    if eval_date is None:
+        from app.lib.utilities import trading_day_helper  # noqa: E402
+
+        eval_date = trading_day_helper.determine_closest_trading_date(service.calendar)
+    eval_date = eval_date.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if stock_code:
+        quote_count = StockDailyQuote.objects(
+            stock_code=stock_code, date=eval_date
+        ).count()
+    else:
+        quote_count = StockDailyQuote.objects(date=eval_date).count()
+
+    if quote_count == 0:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "message": (
+                        f"评估日期 {eval_date.strftime('%Y-%m-%d')} 没有行情数据。"
+                        "请先同步行情数据（quote → factor → signal）。"
+                    ),
+                    "date": eval_date.strftime("%Y-%m-%d"),
+                    "missing": "quote",
+                    "suggestion": (
+                        "在 datahub 容器中执行: "
+                        "python -m app.jobs.quote_runner --target stock "
+                        "--include-factors "
+                        "--job-name datahub_quote_stock_daily "
+                        "--trigger manual --source api"
+                    ),
+                }
+            ),
+            400,
+        )
+
+    # --- Generate scores ---
+    try:
+        if stock_code:
+            from app.model.stock import IndividualStock  # noqa: E402
+
+            stock = IndividualStock.objects(code=stock_code, active_status=0).first()
+            if stock is None:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "message": (
+                                f"No quote data for stock_code={stock_code}. "
+                                "Ensure the stock is active "
+                                "and quotes have been synced."
+                            ),
+                            "date": eval_date.strftime("%Y-%m-%d"),
+                            "missing": "stock",
+                        }
+                    ),
+                    404,
+                )
+            horizons = [horizon] if horizon else list({5, 20, 60})
+            results = []
+            for h in horizons:
+                pred = service.score_single_stock(
+                    stock, eval_date, h, dry_run=False, replace=replace
+                )
+                sc = pred.stock_code if hasattr(pred, "stock_code") else stock_code
+                ps = pred.score if hasattr(pred, "score") else None
+                pr = pred.recommendation if hasattr(pred, "recommendation") else None
+                results.append(
+                    {
+                        "stock_code": sc,
+                        "horizon": h,
+                        "score": ps,
+                        "recommendation": pr,
+                    }
+                )
+            scored_count = len(results)
+        else:
+            result = service.score_all_stocks(
+                date=eval_date, horizon=horizon, dry_run=False, replace=replace
+            )
+            scored_count = result.get("scored_count", 0)
+            results = []
+
+        results_payload = results if results else None
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "message": f"评分生成完成: {scored_count} 条预测",
+                    "date": eval_date.strftime("%Y-%m-%d"),
+                    "horizon": horizon or "5,20,60",
+                    "scored_count": scored_count,
+                    "model_version": model_version,
+                    "results": results_payload,
+                }
+            ),
+            200,
+        )
+
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).exception("Score generation failed")
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "message": f"评分生成失败: {str(exc)}",
+                }
+            ),
+            500,
+        )

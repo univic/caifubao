@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 import datetime
 from unittest.mock import patch, MagicMock
+
+import flask
+import pytest
+
+from app.lib.auth_decorators import block_service_tokens
 from app.utilities.auth_util import hash_token, verify_service_token
 
 
@@ -76,3 +81,70 @@ class TestAuthUtil:
         token_doc, error = verify_service_token("wrong_token")
         assert token_doc is None
         assert "Invalid" in error
+
+
+# ---------------------------------------------------------------------------
+# block_service_tokens — 403 guard tests
+# ---------------------------------------------------------------------------
+
+
+class TestBlockServiceTokens:
+    """Verify block_service_tokens returns 403 for service-token requests."""
+
+    @pytest.fixture
+    def app(self):
+        """Minimal Flask app with a guarded test blueprint."""
+        app = flask.Flask(__name__)
+        test_bp = flask.Blueprint("test_guard", __name__)
+        test_bp.before_request(block_service_tokens)
+
+        @test_bp.route("/test-guard", methods=["GET"])
+        def test_route():
+            return flask.jsonify({"success": True, "data": "ok"})
+
+        app.register_blueprint(test_bp)
+        return app
+
+    def test_blocks_bearer_st_prefix(self, app):
+        """Bearer st_... returns 403 with correct shape."""
+        client = app.test_client()
+        resp = client.get(
+            "/test-guard",
+            headers={"Authorization": "Bearer st_abc123"},
+        )
+        assert resp.status_code == 403
+        body = resp.get_json()
+        assert body["success"] is False
+        assert "Service tokens are not allowed" in body["message"]
+        assert body["error_code"] == "SERVICE_TOKEN_BLOCKED"
+        assert "request_id" in body
+
+    def test_blocks_lowercase_bearer(self, app):
+        """Case-insensitive: bearer st_... also returns 403."""
+        client = app.test_client()
+        resp = client.get(
+            "/test-guard",
+            headers={"Authorization": "bearer st_abc123"},
+        )
+        assert resp.status_code == 403
+        body = resp.get_json()
+        assert body["error_code"] == "SERVICE_TOKEN_BLOCKED"
+
+    def test_allows_no_auth_header(self, app):
+        """Requests without Authorization header pass through."""
+        client = app.test_client()
+        resp = client.get("/test-guard")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+
+    def test_allows_jwt_tokens(self, app):
+        """Bearer tokens not starting with st_ pass through."""
+        client = app.test_client()
+        resp = client.get(
+            "/test-guard",
+            headers={"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9..."},
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True

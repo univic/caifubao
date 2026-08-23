@@ -3,7 +3,7 @@
 from copy import deepcopy
 
 SUPPORTED_HORIZONS = (5, 20, 60)
-DEFAULT_MODEL_VERSION = "score_v2_202605"
+DEFAULT_MODEL_VERSION = "score_v2_202605b"
 
 SCORING_CONFIG = {
     5: {
@@ -11,10 +11,16 @@ SCORING_CONFIG = {
         "stop_loss_threshold": -0.05,
         "buy_threshold": 70.0,
         "watch_threshold": 50.0,
+        "avoid_threshold": 20.0,
+        "buy_percentile": 0.95,
+        "watch_percentile": 0.80,
+        "avoid_percentile": 0.20,
         "minimum_quote_count": 20,
         "momentum_lookback": 3,
         "breakout_lookback": 20,
         "risk_lookback": 10,
+        "signal_decay_factor": 0.7,
+        "signal_decay_max_days": 5,
         "weights": {
             "signal_strength": 25.0,
             "momentum": 25.0,
@@ -22,6 +28,7 @@ SCORING_CONFIG = {
             "breakout_or_position": 10.0,
             "industry_momentum": 5.0,
             "relative_strength": 0.0,
+            "real_relative_strength": 10.0,
             "risk_penalty": 10.0,
         },
     },
@@ -30,10 +37,16 @@ SCORING_CONFIG = {
         "stop_loss_threshold": -0.08,
         "buy_threshold": 70.0,
         "watch_threshold": 50.0,
+        "avoid_threshold": 20.0,
+        "buy_percentile": 0.95,
+        "watch_percentile": 0.80,
+        "avoid_percentile": 0.20,
         "minimum_quote_count": 60,
         "momentum_lookback": 10,
         "breakout_lookback": 60,
         "risk_lookback": 20,
+        "signal_decay_factor": 0.7,
+        "signal_decay_max_days": 10,
         "weights": {
             "signal_strength": 15.0,
             "momentum": 15.0,
@@ -41,6 +54,7 @@ SCORING_CONFIG = {
             "breakout_or_position": 5.0,
             "industry_momentum": 5.0,
             "relative_strength": 15.0,
+            "real_relative_strength": 10.0,
             "risk_penalty": 15.0,
         },
     },
@@ -49,10 +63,16 @@ SCORING_CONFIG = {
         "stop_loss_threshold": -0.12,
         "buy_threshold": 70.0,
         "watch_threshold": 50.0,
+        "avoid_threshold": 20.0,
+        "buy_percentile": 0.95,
+        "watch_percentile": 0.80,
+        "avoid_percentile": 0.20,
         "minimum_quote_count": 120,
         "momentum_lookback": 20,
         "breakout_lookback": 120,
         "risk_lookback": 60,
+        "signal_decay_factor": 0.5,
+        "signal_decay_max_days": 20,
         "weights": {
             "signal_strength": 5.0,
             "momentum": 10.0,
@@ -60,6 +80,7 @@ SCORING_CONFIG = {
             "breakout_or_position": 5.0,
             "industry_momentum": 5.0,
             "relative_strength": 25.0,
+            "real_relative_strength": 8.0,
             "risk_penalty": 15.0,
         },
     },

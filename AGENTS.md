@@ -3,6 +3,10 @@
 This file is the canonical operating guide for AI-assisted Caifubao development.
 It is loaded by OpenClaw when the caifubao-dev agent works in this repository.
 
+**Rule authority:** All safety, boundary, discipline, validation, spec-gate, and
+OpenClaw-specific rules are defined once in `RULES.md`. This file describes
+workflow and process; `RULES.md` defines the rules agents must follow.
+
 For Git workflow rules (branching, draft PR, CI gating), see
 [`.project-rules.md`](./.project-rules.md).
 
@@ -23,103 +27,117 @@ Do not move private deployment material into this public repository.
 
 ## Module Boundaries
 
-- datahub/ collects, derives, validates, and stores market data, factors,
-  signals, scoring outputs, freshness, and data quality records.
-- backend/ exposes Flask APIs, authentication, service-token checks, and
-  lightweight aggregation. It must not run data collection jobs.
-- frontend/ consumes backend APIs and renders the MVP user experience. It must
-  not depend on Mongo collection shapes or bypass backend APIs.
-- k8s/ contains public example deployment assets only.
-- openspec/ contains behavior, contract, and workflow specifications.
-- OpenClaw is a downstream read-only consumer through backend APIs. It must not
-  receive Mongo credentials, mutation endpoints, scheduler triggers, backfill
-  controls, or admin access.
+Defined in `RULES.md#module-boundaries`. Every agent must respect these
+boundaries exactly.
 
 ## OpenClaw Development Workflow
 
-Use caifubao-dev as the primary OpenClaw development agent for this repo. It
-should act as a lightweight technical lead, not as a waterfall team.
+The orchestrator is the single final owner. Other agents may implement bounded
+slices or review, but they do not own merge decisions.
 
-For non-trivial work, keep these notes in working context:
+For non-trivial work, follow this sequence:
+
+1. Understand the requested outcome and affected modules.
+2. State assumptions explicitly. If something is ambiguous, ask before coding.
+3. Decide whether the Spec Gate is required before editing.
+4. Assign exactly scoped implementation work — keep write scopes disjoint.
+5. Implement the smallest change that satisfies the request.
+6. Run the smallest useful validation and loop until it passes.
+7. Run mandatory reviewers (contract-reviewer when contracts touched, qa-reviewer for ALL non-trivial code changes).
+8. Run branch conflict check against the target base branch.
+9. Report changed files, checks run, review outcomes, and remaining risk. Close with the Gate Checklist.
+
+Keep these notes in working context:
 
 ```text
 Outcome:
 Module Impact:
 Spec Gate: required / not required
+Assumptions:
 Write Scope:
 Validation Plan:
 Reviewer Requests:
+Branch Conflict Check:
+Gate Checklist (close-out):
+  [ ] spec-guardian:
+  [ ] contract-reviewer:
+  [ ] qa-reviewer:
+  [ ] branch-conflict:
 ```
 
-Default sequence:
+### Agent Roles
 
-1. Understand the requested outcome and affected modules.
-2. Decide whether the Spec Gate is required before editing.
-3. Assign or perform only explicitly scoped implementation work.
-4. Keep write scopes disjoint when using subagents.
-5. Review contract and behavioral risk before finishing non-trivial changes.
-6. Run the smallest useful validation.
-7. Report changed files, checks run, and remaining risk.
+Use these roles over the older generic Architect/Developer/QA/Scribe model:
 
-Use subagents sparingly. Prefer these roles over the older generic
-Architect/Developer/QA/Scribe model:
-
-- spec-guardian: read-only decision on whether OpenSpec must change.
-- backend-implementer: bounded backend/API/auth/model/test changes.
-- datahub-implementer: bounded data production, scoring, freshness, runner,
-  model, and test changes.
-- frontend-implementer: bounded Vue/API client/store/view/component changes.
-- k8s-implementer: bounded public deployment example and workflow changes.
-- contract-reviewer: read-only API, freshness, auth, OpenClaw compatibility,
-  and module-boundary review.
-- qa-reviewer: read-only safety, regression, test, and repository hygiene
-  review.
+| Role | Type | Scope |
+|:---|:---|:---|
+| `spec-guardian` | read-only | OpenSpec gate decision |
+| `backend-implementer` | write | Flask API, auth, models, utilities, tests |
+| `datahub-implementer` | write | data production, scoring, freshness, runners, tests |
+| `frontend-implementer` | write | Vue views, components, API client, Pinia stores |
+| `k8s-implementer` | write | public deployment examples, workflow changes |
+| `contract-reviewer` | read-only | API contracts, freshness, auth, OpenClaw compatibility |
+| `qa-reviewer` | read-only | safety, regression, test, repository hygiene |
 
 Do not activate every role by default. Use implementers only when their write
 scope is clear. Reviewers report findings; they do not own merge decisions.
 
+### Review Gates (Mandatory)
+
+Every non-trivial change must go through the appropriate reviewer(s) before
+being considered complete. Reviewers run AFTER implementation and validation
+pass. If a reviewer reports P1 issues, they must be resolved and re-reviewed.
+
+```text
+[ ] spec-guardian:   triggered / not triggered
+[ ] contract-reviewer: triggered / not triggered
+[ ] qa-reviewer:      triggered / not triggered
+[ ] branch-conflict:  clean / conflicts resolved
+```
+
 ## Spec Gate
 
-Run the Spec Gate before code changes when work affects:
+Spec gate triggers are defined in `RULES.md#spec-gate`. Run the Spec Gate
+before code changes when work affects endpoints, auth, freshness, scoring,
+data ownership, or public docs.
 
-- API endpoints, response fields, pagination, filtering, or error shapes.
-- Authentication, authorization, service-token scope, token lifecycle, or audit.
-- Freshness semantics, data_as_of, generated timestamps, or status states.
-- Scoring, factors, signals, replay, calibration, or look-ahead-bias rules.
-- Data ownership between datahub, backend, frontend, k8s, and OpenClaw.
-- Public docs used by downstream consumers.
+## Karpathy Code Discipline
 
-Internal refactors, tests, formatting, or behavior-preserving fixes do not need
-an OpenSpec update.
+Four principles that apply to ALL agents. These address common LLM coding
+pitfalls identified by Andrej Karpathy. Rules are defined in
+`RULES.md#surgical-discipline` with full details in
+[`.opencode/skills/karpathy-discipline/SKILL.md`](.opencode/skills/karpathy-discipline/SKILL.md).
 
-Relevant context usually starts with:
+In summary:
 
-- DESIGN.md
-- openspec/config.yaml
-- openspec/changes/mvp-quant-demo/design.md
-- openspec/changes/mvp-quant-demo/tasks.md
-- Matching specs under openspec/changes/mvp-quant-demo/specs/
-- docs/integrations/openclaw.md for OpenClaw-related work
+- **Think Before Coding**: State assumptions. If something is ambiguous, ask.
+  If a simpler approach exists, say so.
+- **Simplicity First**: No features beyond what was asked. No abstractions for
+  single-use code. If 200 lines could be 50, rewrite it.
+- **Surgical Changes**: Do not "improve" adjacent code, do not refactor
+  unbroken things, match existing style, clean up only your own orphans.
+- **Goal-Driven Execution**: Define a verifiable success criterion. Transform
+  "fix the bug" into "write a failing test, then make it pass." Loop until
+  verification passes.
 
 ## Validation Expectations
 
-- Python changes: run the relevant ruff check, ruff format --check, and the
-  smallest useful pytest target.
-- Backend API changes: run focused tests under backend/app/test/ when present.
-- Datahub changes: run focused datahub tests or runner dry-runs where available.
-- Frontend changes: run relevant lint/build checks.
-- Deployment example changes: render with kubectl kustomize or an equivalent
-  local check.
+Defined in `RULES.md#validation`.
 
-If a check cannot be run, say exactly why.
+**Goal-driven loop:** Do not stop at "looks right." Run the verification. If it
+fails, fix the issue and run it again. For bugs, write a test that reproduces
+the bug first, confirm it fails, then implement the fix and confirm the test
+passes.
 
 ## Public Repository Safety
 
-- Do not commit real credentials, tokens, kubeconfigs, database dumps, local
-  environment files, private domains, private registry settings, or private
-  runbooks.
-- Use .env.example files for placeholders.
-- Keep real deployment overlays and operator scripts in the private repository.
-- Prefer small changes that improve the demo loop: data update, API response,
-  frontend display, and local validation.
-- Do not invent new architecture when existing local patterns are sufficient.
+Defined in `RULES.md#safety`. Follow them strictly. Do not commit credentials,
+tokens, kubeconfigs, database dumps, or local env files. Prefer small changes
+that improve the demo loop. Do not invent new architecture when existing local
+patterns are sufficient.
+
+## Operations
+
+For dev environment operations (data sync, scoring, health checks), use the
+unified CLI: `./scripts/caifubao`. See `docs/operations/agent-cli.md` for
+the full command reference.

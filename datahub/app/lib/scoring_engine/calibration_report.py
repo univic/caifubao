@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
 from app.lib.scoring_engine.scoring_service import normalize_date
@@ -14,6 +14,9 @@ SCORE_BUCKETS = (
     (60, 80),
     (80, 100),
 )
+
+MISCALIBRATION_BUY_RATE_MIN = 0.03  # flag when BUY percentage < 3%
+MISCALIBRATION_AVOID_RATE_MAX = 0.50  # flag when AVOID percentage > 50%
 
 
 class ScoreCalibrationReport:
@@ -43,11 +46,90 @@ class ScoreCalibrationReport:
             "from": normalize_date(start_date).isoformat(),
             "to": normalize_date(end_date).isoformat(),
             "prediction_count": len(predictions),
+            "distribution": self._distribution_stats(predictions),
             "score_buckets": self._bucket_summary(predictions),
             "top_n": self._top_n_summary(predictions),
             "component_summary": self._component_summary(predictions),
             "false_positives": self._false_positives(predictions),
             "false_negatives": self._false_negatives(predictions),
+        }
+
+    def _distribution_stats(self, predictions):
+        """Compute score distribution, recommendation counts, and miscalibration
+        flags.
+        """
+        scores = sorted([item.score for item in predictions if (item.score or 0) >= 0])
+        if not scores:
+            return {
+                "count": 0,
+                "min": None,
+                "max": None,
+                "mean": None,
+                "std": None,
+                "percentiles": {},
+                "recommendations": {},
+                "miscalibration_flags": ["no_data"],
+            }
+
+        n = len(scores)
+        mean_val = round(sum(scores) / n, 2)
+        std_val = round((sum((x - mean_val) ** 2 for x in scores) / n) ** 0.5, 2)
+
+        def pct(p: int) -> float:
+            idx = max(0, min(n - 1, int(round(n * p / 100.0))))
+            return round(scores[idx], 2)
+
+        percentiles = {
+            "p5": pct(5),
+            "p10": pct(10),
+            "p25": pct(25),
+            "p50": pct(50),
+            "p75": pct(75),
+            "p90": pct(90),
+            "p95": pct(95),
+        }
+
+        # Recommendation counts
+        rec_counter = Counter()
+        for item in predictions:
+            rec_counter[item.recommendation or "NONE"] += 1
+        total = sum(rec_counter.values())
+
+        def _rec_entry(key: str) -> dict:
+            cnt = rec_counter.get(key, 0)
+            pct_val = round(cnt / total * 100, 2) if total else 0
+            return {"count": cnt, "pct": pct_val}
+
+        recommendations = {
+            "BUY": _rec_entry("BUY"),
+            "WATCH": _rec_entry("WATCH"),
+            "NONE": _rec_entry("NONE"),
+            "AVOID": _rec_entry("AVOID"),
+        }
+
+        # Miscalibration flags
+        flags = []
+        buy_pct = recommendations["BUY"]["pct"]
+        avoid_pct = recommendations["AVOID"]["pct"]
+        if buy_pct < MISCALIBRATION_BUY_RATE_MIN * 100:
+            threshold_pct = MISCALIBRATION_BUY_RATE_MIN * 100
+            flags.append(f"BUY_rate_too_low:{buy_pct:.1f}% < {threshold_pct:.1f}%")
+        if avoid_pct > MISCALIBRATION_AVOID_RATE_MAX * 100:
+            threshold_pct = MISCALIBRATION_AVOID_RATE_MAX * 100
+            flags.append(f"AVOID_rate_too_high:{avoid_pct:.1f}% > {threshold_pct:.1f}%")
+        if median_val := percentiles.get("p50", 0):
+            if median_val <= 25:
+                flags.append(f"median_score_low:{median_val}")
+
+        return {
+            "count": n,
+            "min": round(scores[0], 2),
+            "max": round(scores[-1], 2),
+            "mean": mean_val,
+            "std": std_val,
+            "percentiles": percentiles,
+            "recommendations": recommendations,
+            "miscalibration_flags": flags,
         }
 
     def _bucket_summary(self, predictions):
@@ -105,6 +187,9 @@ class ScoreCalibrationReport:
         return self._sample(items)
 
     def _false_negatives(self, predictions):
+        # Use max_return (aggressive/intra metric) intentionally:
+        # a false negative is a stock we scored low that had ANY opportunity
+        # (even if only intraday), so we use the aggressive threshold.
         items = [
             item
             for item in predictions
@@ -123,6 +208,7 @@ class ScoreCalibrationReport:
                 "avg_min_return": None,
                 "avg_max_drawdown": None,
                 "hit_rate": None,
+                "hit_rate_intra": None,
                 "stop_loss_hit_rate": None,
             }
 
@@ -133,7 +219,8 @@ class ScoreCalibrationReport:
             "avg_max_return": self._avg_metric(predictions, "max_return"),
             "avg_min_return": self._avg_metric(predictions, "min_return"),
             "avg_max_drawdown": self._avg_metric(predictions, "max_drawdown"),
-            "hit_rate": self._rate(predictions, "hit_target"),
+            "hit_rate": self._rate(predictions, "hit_target_close"),
+            "hit_rate_intra": self._rate(predictions, "hit_target_intra"),
             "stop_loss_hit_rate": self._rate(predictions, "hit_stop_loss"),
         }
 

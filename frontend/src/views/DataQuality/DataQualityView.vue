@@ -517,7 +517,7 @@ function formatDateTime(value: string | null | undefined) {
   :deep(.data-quality-table .el-table__header-wrapper th.el-table__cell) {
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.025));
     color: var(--color-text-secondary);
-    font-weight: 600;
+    font-weight: 590;
     letter-spacing: 0.02em;
   }
 
@@ -565,7 +565,7 @@ function formatDateTime(value: string | null | undefined) {
 
 .stale {
   color: #fbbf24;
-  font-weight: 700;
+  font-weight: 590;
 }
 
 .pagination {

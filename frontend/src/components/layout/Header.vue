@@ -29,12 +29,12 @@
 
           <el-menu-item index="/market">
             <el-icon><PieChart /></el-icon>
-            <span>标的看板</span>
+            <span>机会筛选</span>
           </el-menu-item>
 
           <el-menu-item index="/signals">
             <el-icon><Bell /></el-icon>
-            <span>信号</span>
+            <span>今日信号</span>
           </el-menu-item>
 
           <el-menu-item index="/indices">
@@ -47,19 +47,44 @@
             <span>回测</span>
           </el-menu-item>
 
-          <el-menu-item index="/portfolio">
-            <el-icon><Wallet /></el-icon>
-            <span>组合</span>
+          <el-menu-item index="/discovery">
+            <el-icon><Search /></el-icon>
+            <span>策略发现</span>
           </el-menu-item>
 
-          <el-menu-item index="/data-quality">
-            <el-icon><DataAnalysis /></el-icon>
-            <span>数据质量</span>
+          <el-menu-item index="/decisions">
+            <el-icon><Notebook /></el-icon>
+            <span>决策面板</span>
           </el-menu-item>
+
+          <el-menu-item index="/portfolio">
+            <el-icon><Wallet /></el-icon>
+            <span>自选与组合</span>
+          </el-menu-item>
+
+          <el-menu-item index="/watchlists">
+            <el-icon><Star /></el-icon>
+            <span>自选列表</span>
+          </el-menu-item>
+
+          <el-sub-menu index="market-data">
+            <template #title>
+              <el-icon><DataAnalysis /></el-icon>
+              <span>市场数据</span>
+            </template>
+            <el-menu-item index="/history">历史行情</el-menu-item>
+            <el-menu-item index="/indices">指数全览</el-menu-item>
+            <el-menu-item index="/data-quality">数据质量</el-menu-item>
+          </el-sub-menu>
 
           <el-menu-item index="/score-experiments">
             <el-icon><DataLine /></el-icon>
             <span>评分实验</span>
+          </el-menu-item>
+
+          <el-menu-item index="/factor-eval">
+            <el-icon><Histogram /></el-icon>
+            <span>因子评估</span>
           </el-menu-item>
 
           <el-sub-menu v-if="userStore.isAdmin" index="/admin/users">
@@ -124,12 +149,12 @@
 
         <el-menu-item index="/market">
           <el-icon><PieChart /></el-icon>
-          <span>标的看板</span>
+          <span>机会筛选</span>
         </el-menu-item>
 
         <el-menu-item index="/signals">
           <el-icon><Bell /></el-icon>
-          <span>信号</span>
+          <span>今日信号</span>
         </el-menu-item>
 
         <el-menu-item index="/indices">
@@ -142,19 +167,44 @@
           <span>回测</span>
         </el-menu-item>
 
-        <el-menu-item index="/portfolio">
-          <el-icon><Wallet /></el-icon>
-          <span>组合</span>
+        <el-menu-item index="/discovery">
+          <el-icon><Search /></el-icon>
+          <span>策略发现</span>
         </el-menu-item>
 
-        <el-menu-item index="/data-quality">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>数据质量</span>
+        <el-menu-item index="/decisions">
+          <el-icon><Notebook /></el-icon>
+          <span>决策面板</span>
         </el-menu-item>
+
+        <el-menu-item index="/portfolio">
+          <el-icon><Wallet /></el-icon>
+          <span>自选与组合</span>
+        </el-menu-item>
+
+        <el-menu-item index="/watchlists">
+          <el-icon><Star /></el-icon>
+          <span>自选列表</span>
+        </el-menu-item>
+
+        <el-sub-menu index="market-data">
+          <template #title>
+            <el-icon><DataAnalysis /></el-icon>
+            <span>市场数据</span>
+          </template>
+          <el-menu-item index="/history">历史行情</el-menu-item>
+          <el-menu-item index="/indices">指数全览</el-menu-item>
+          <el-menu-item index="/data-quality">数据质量</el-menu-item>
+        </el-sub-menu>
 
         <el-menu-item index="/score-experiments">
           <el-icon><DataLine /></el-icon>
           <span>评分实验</span>
+        </el-menu-item>
+
+        <el-menu-item index="/factor-eval">
+          <el-icon><Histogram /></el-icon>
+          <span>因子评估</span>
         </el-menu-item>
 
         <el-sub-menu v-if="userStore.isAdmin" index="/admin/users">
@@ -182,8 +232,10 @@ import {
   DataBoard,
   DataLine,
   Grid,
+  Histogram,
   Menu,
   PieChart,
+  Search,
   Setting,
   SwitchButton,
   TrendCharts,
@@ -206,9 +258,12 @@ const activeMenu = computed(() => {
   if (route.path.startsWith('/indices')) return '/indices'
   if (route.path.startsWith('/signals')) return '/signals'
   if (route.path.startsWith('/score-experiments')) return '/score-experiments'
+  if (route.path.startsWith('/factor-eval')) return '/factor-eval'
   if (route.path.startsWith('/decisions')) return '/decisions'
   if (route.path.startsWith('/portfolio')) return '/portfolio'
   if (route.path.startsWith('/backtest')) return '/backtest'
+  if (route.path.startsWith('/discovery')) return '/discovery'
+  if (route.path.startsWith('/watchlists')) return '/watchlists'
   if (route.path.startsWith('/admin')) return '/admin/users'
   if (route.path === '/profile') return 'profile'
   return '/'

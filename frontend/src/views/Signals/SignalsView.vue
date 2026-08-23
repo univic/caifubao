@@ -5,7 +5,7 @@
       <div class="hero-content">
         <p class="eyebrow">Signals</p>
         <h1 class="page-title">今日信号</h1>
-        <p class="subtitle">基于 DataHub 引擎生成的 MA 信号，优先展示最新交易日触发的标的。</p>
+        <p class="subtitle">基于 DataHub 引擎生成的 MA 信号，优先展示最新交易日触发的标的。点击标的可查看 K 线与评分详情。</p>
       </div>
       <div class="hero-stats">
         <div class="stat-group">
@@ -57,7 +57,7 @@
       <div class="card-header">
         <div class="header-left">
           <h3 class="card-title">信号明细</h3>
-          <p class="card-desc">实时量化因子计算结果</p>
+          <p class="card-desc">实时量化因子计算结果，评分列展示对应标的的 Score5/20/60</p>
         </div>
         <div class="header-right">
           <div class="data-tag" v-if="response?.date">
@@ -81,37 +81,59 @@
           :data="response?.items ?? []"
           class="linear-table"
           empty-text="当前筛选条件下暂无信号"
+          @row-click="handleRowClick"
         >
+          <el-table-column label="操作" width="60" align="center">
+            <template #default="{ row }">
+              <WatchlistButton
+                :code="row.stock_code"
+                :name="row.stock_name || row.stock_code"
+                size="small"
+              />
+            </template>
+          </el-table-column>
+
           <el-table-column label="股票" min-width="180">
             <template #default="{ row }">
-              <div class="stock-cell">
+              <div class="stock-cell clickable">
                 <span class="stock-name">{{ row.stock_name || '--' }}</span>
                 <span class="stock-code">{{ row.stock_code }}</span>
               </div>
             </template>
           </el-table-column>
-          
-          <el-table-column label="信号名称" min-width="180">
+
+          <el-table-column label="信号名称" min-width="160">
             <template #default="{ row }">
               <span class="signal-name-text">{{ signalLabel(row.signal_name) }}</span>
             </template>
           </el-table-column>
-          
-          <el-table-column label="方向" width="100">
+
+          <el-table-column label="方向" width="90">
             <template #default="{ row }">
               <span class="direction-tag" :class="row.direction.toLowerCase()">
                 {{ directionLabel(row.direction) }}
               </span>
             </template>
           </el-table-column>
-          
-          <el-table-column label="强度" width="110" align="right">
+
+          <el-table-column label="强度" width="90" align="right">
             <template #default="{ row }">
               <span class="mono-text">{{ formatPercent(row.strength) }}</span>
             </template>
           </el-table-column>
-          
-          <el-table-column label="因子快照" min-width="220">
+
+          <el-table-column label="多周期评分" min-width="190" align="center">
+            <template #default="{ row }">
+              <div v-if="signalScores[row.stock_code]" class="multi-score-inline">
+                <ScoreChip :horizon="5" :score="signalScores[row.stock_code]?.['5']" />
+                <ScoreChip :horizon="20" :score="signalScores[row.stock_code]?.['20']" />
+                <ScoreChip :horizon="60" :score="signalScores[row.stock_code]?.['60']" />
+              </div>
+              <span v-else class="text-loading">加载中...</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="因子快照" min-width="200">
             <template #default="{ row }">
               <div class="factor-grid">
                 <div class="factor-item">
@@ -125,10 +147,10 @@
               </div>
             </template>
           </el-table-column>
-          
-          <el-table-column prop="reason" label="触发原因" min-width="260" />
-          
-          <el-table-column label="生成时间" width="180">
+
+          <el-table-column prop="reason" label="触发原因" min-width="240" />
+
+          <el-table-column label="生成时间" width="170">
             <template #default="{ row }">
               <span class="mono-text small">{{ formatDateTime(row.generated_at) }}</span>
             </template>
@@ -141,11 +163,18 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { signalApi, type SignalListResponse } from '@/api/signals'
+import { marketApi } from '@/api/market'
+import WatchlistButton from '@/components/common/WatchlistButton.vue'
+import ScoreChip from '@/components/common/ScoreChip.vue'
 
+const router = useRouter()
 const loading = ref(false)
 const errorMessage = ref('')
 const response = ref<SignalListResponse | null>(null)
+const signalScores = ref<Record<string, Record<string, number>>>({})
+
 const filters = reactive({
   date: '',
   signal_name: '',
@@ -189,6 +218,35 @@ function directionLabel(value: string) {
   return value
 }
 
+function handleRowClick(row: { stock_code: string }) {
+  router.push({ name: 'QuoteDetail', params: { symbol: row.stock_code } })
+}
+
+async function fetchSignalScores(codes: string[]) {
+  if (!codes.length) return
+  const uniqueCodes = [...new Set(codes)]
+  try {
+    const res = await marketApi.getComprehensiveData({
+      type: 'stock',
+      q: uniqueCodes.slice(0, 50).join(','),
+      per_page: uniqueCodes.length
+    })
+    const scoresMap: Record<string, Record<string, number>> = {}
+    res.items.forEach(item => {
+      if (item.evaluation?.scores) {
+        const s: Record<string, number> = {}
+        Object.entries(item.evaluation.scores).forEach(([h, v]) => {
+          s[h] = (v as { score: number }).score
+        })
+        scoresMap[item.code] = s
+      }
+    })
+    signalScores.value = scoresMap
+  } catch (err) {
+    console.error('Failed to fetch signal scores:', err)
+  }
+}
+
 async function fetchSignals() {
   loading.value = true
   errorMessage.value = ''
@@ -199,6 +257,10 @@ async function fetchSignals() {
       direction: filters.direction || undefined,
       limit: 100
     })
+    // Fetch scores for all signal stocks
+    if (response.value?.items?.length) {
+      fetchSignalScores(response.value.items.map(item => item.stock_code))
+    }
   } catch (error) {
     console.error(error)
     errorMessage.value = '信号数据加载失败，请稍后重试。'
@@ -246,7 +308,7 @@ onMounted(fetchSignals)
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  margin-bottom: 48px;
+  margin-bottom: 40px;
 }
 
 .eyebrow {
@@ -268,7 +330,7 @@ onMounted(fetchSignals)
 }
 
 .subtitle {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 400;
   color: var(--color-text-tertiary);
   max-width: 600px;
@@ -303,7 +365,7 @@ onMounted(fetchSignals)
   font-size: 20px;
   font-weight: 510;
   color: var(--color-text-primary);
-  
+
   small {
     font-size: 14px;
     color: var(--color-text-tertiary);
@@ -333,7 +395,7 @@ onMounted(fetchSignals)
   display: flex;
   flex-direction: column;
   gap: 8px;
-  
+
   label {
     font-size: 12px;
     font-weight: 510;
@@ -360,8 +422,8 @@ onMounted(fetchSignals)
 .btn-primary {
   background: var(--color-brand) !important;
   border: none !important;
-  color: #fff !important;
-  
+  color: #f7f8f8 !important;
+
   &:hover {
     background: var(--color-brand-accent) !important;
   }
@@ -371,7 +433,7 @@ onMounted(fetchSignals)
   background: rgba(255, 255, 255, 0.02) !important;
   border: 1px solid var(--color-border) !important;
   color: var(--color-text-secondary) !important;
-  
+
   &:hover {
     background: rgba(255, 255, 255, 0.05) !important;
     border-color: var(--color-text-tertiary) !important;
@@ -456,7 +518,7 @@ onMounted(fetchSignals)
   --el-table-header-text-color: var(--color-text-tertiary);
 
   &::before { display: none; }
-  
+
   th.el-table__cell {
     font-size: 12px;
     font-weight: 510;
@@ -464,14 +526,17 @@ onMounted(fetchSignals)
     letter-spacing: 0.05em;
     padding: 16px 8px;
   }
-  
+
   td.el-table__cell {
     padding: 12px 8px;
     border-bottom: 1px solid var(--color-border-subtle);
   }
 
-  .el-table__row:hover > td {
-    background-color: rgba(255, 255, 255, 0.02) !important;
+  .el-table__row {
+    cursor: pointer;
+    &:hover > td {
+      background-color: rgba(255, 255, 255, 0.02) !important;
+    }
   }
 }
 
@@ -479,12 +544,17 @@ onMounted(fetchSignals)
   display: flex;
   flex-direction: column;
   gap: 2px;
+
+  &.clickable .stock-name:hover {
+    color: var(--color-brand-accent);
+  }
 }
 
 .stock-name {
   font-size: 14px;
   font-weight: 510;
   color: var(--color-text-primary);
+  transition: color 0.15s;
 }
 
 .stock-code {
@@ -504,12 +574,12 @@ onMounted(fetchSignals)
   padding: 2px 8px;
   border-radius: 4px;
   text-transform: uppercase;
-  
+
   &.bullish {
     color: #10b981;
     background: rgba(16, 185, 129, 0.1);
   }
-  
+
   &.bearish {
     color: #ef4444;
     background: rgba(239, 68, 68, 0.1);
@@ -519,17 +589,28 @@ onMounted(fetchSignals)
 .mono-text {
   font-family: var(--font-mono);
   font-size: 13px;
-  
+
   &.small {
     font-size: 12px;
     color: var(--color-text-quaternary);
   }
 }
 
+.multi-score-inline {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.text-loading {
+  font-size: 11px;
+  color: var(--color-text-quaternary);
+}
+
 .factor-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 14px;
 }
 
 .factor-item {
@@ -559,29 +640,28 @@ onMounted(fetchSignals)
   .signals-page {
     padding: 24px;
   }
-  
+
   .page-title {
     font-size: 32px;
   }
-  
+
   .signals-hero {
     flex-direction: column;
     align-items: flex-start;
     gap: 24px;
   }
-  
+
   .filters-container {
     flex-wrap: wrap;
   }
-  
+
   .filter-actions {
     margin-left: 0;
     width: 100%;
-    
+
     .el-button {
       flex: 1;
     }
   }
 }
 </style>
-

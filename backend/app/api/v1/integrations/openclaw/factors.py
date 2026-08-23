@@ -4,7 +4,7 @@
 
 from flask import request
 
-from app.api.v1.integrations.openclaw.utils import wrap_response
+from app.api.v1.integrations.openclaw.utils import _get_latest_date, wrap_response
 from app.api.v1.quotes import _format_datetime, _normalize_symbol, _parse_datetime
 from app.lib.auth_decorators import service_token_required
 from app.model.factor import StockFactorDaily
@@ -96,6 +96,10 @@ def get_daily_factors():
         f = factor_map.get((q.code, q.date))
         items.append(_serialize_factor_claw(q, f))
 
+    data_as_of = (
+        _get_latest_date(StockDailyQuote, filter_kwargs=query) if query else None
+    )
+
     return wrap_response(
         data={
             "items": items,
@@ -103,4 +107,5 @@ def get_daily_factors():
             "page": page,
             "per_page": per_page,
         },
+        data_as_of=data_as_of,
     )
