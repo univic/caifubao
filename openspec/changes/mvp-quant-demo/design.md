@@ -35,6 +35,12 @@ The application serving path remains MongoDB -> backend API -> frontend.
 Parquet is an offline research input and must not become an implicit dependency
 for online API reads.
 
+Stock history ingestion defaults to the AkShare HTTPS adapter because the
+production cluster cannot reach Baostock's non-standard TCP port 10030.
+Baostock remains available as an explicit runtime choice. Both adapters
+normalize into the same MongoDB quote model, and a refresh that attempts stock
+updates but writes zero quote rows must fail before factors or scores run.
+
 ### Boundary Rules
 
 - datahub 只负责生产数据，不负责页面展示。

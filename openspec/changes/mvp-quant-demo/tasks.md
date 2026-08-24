@@ -333,6 +333,9 @@ autoresearch experiments against regenerated data.
   static local PVs with `Retain` policy and explicit node/path affinity, verify
   pod recreation and rendered node placement, and document the remaining COS
   backup dependency
+- [x] 23.11 Support an HTTPS-capable stock-history source for cluster rebuilds,
+  normalize it into the existing quote schema, and fail quote jobs that attempt
+  updates but write zero rows
 
 ## 24. Tailscale API Server Proxy Deployment Path
 
