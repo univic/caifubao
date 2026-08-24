@@ -77,26 +77,28 @@ class TestBaostockInterfaceManager(TestCase):
             "app.lib.datahub.data_source.interface.baostock_interface.bs"
         ) as mock_bs:
             mock_result = MagicMock()
-            mock_result.get_data.return_value = pd.DataFrame(
-                {
-                    "date": ["2024-01-08", "2024-01-09"],
-                    "code": ["sh.600000", "sh.600000"],
-                    "open": [10.0, 10.1],
-                    "close": [10.2, 10.3],
-                }
-            )
+            mock_result.error_code = "0"
+            mock_result.fields = ["date", "code", "open", "close"]
+            mock_result.next.side_effect = [True, False]
+            mock_result.get_row_data.return_value = [
+                "2024-01-08",
+                "sh.600000",
+                "10.0",
+                "10.2",
+            ]
             mock_bs.query_history_k_data_plus.return_value = mock_result
 
             from app.lib.datahub.data_source.interface.baostock_interface import (
                 BaostockInterfaceManager,
             )
 
-            BaostockInterfaceManager.get_zh_a_stock_hist_k_data("sh600000")
+            result = BaostockInterfaceManager.get_zh_a_stock_hist_k_data("sh600000")
 
             mock_bs.query_history_k_data_plus.assert_called_once()
             call_args = mock_bs.query_history_k_data_plus.call_args
             self.assertEqual(call_args.kwargs["start_date"], "1990-01-01")
             self.assertIn("sh.600000", call_args.args[0])
+            self.assertEqual(result.iloc[0]["date"], "2024-01-08")
 
     def test_get_zh_a_stock_hist_k_data_custom_dates(self):
         """Test get_zh_a_stock_hist_k_data with custom dates."""
@@ -104,14 +106,7 @@ class TestBaostockInterfaceManager(TestCase):
             "app.lib.datahub.data_source.interface.baostock_interface.bs"
         ) as mock_bs:
             mock_result = MagicMock()
-            mock_result.get_data.return_value = pd.DataFrame(
-                {
-                    "date": ["2024-01-08"],
-                    "code": ["sh.600000"],
-                    "open": [10.0],
-                    "close": [10.2],
-                }
-            )
+            mock_result.next.return_value = False
             mock_bs.query_history_k_data_plus.return_value = mock_result
 
             from app.lib.datahub.data_source.interface.baostock_interface import (
@@ -132,7 +127,7 @@ class TestBaostockInterfaceManager(TestCase):
             "app.lib.datahub.data_source.interface.baostock_interface.bs"
         ) as mock_bs:
             mock_result = MagicMock()
-            mock_result.get_data.return_value = pd.DataFrame()
+            mock_result.next.return_value = False
             mock_bs.query_history_k_data_plus.return_value = mock_result
 
             from app.lib.datahub.data_source.interface.baostock_interface import (
@@ -152,7 +147,7 @@ class TestBaostockInterfaceManager(TestCase):
             "app.lib.datahub.data_source.interface.baostock_interface.bs"
         ) as mock_bs:
             mock_result = MagicMock()
-            mock_result.get_data.return_value = pd.DataFrame()
+            mock_result.next.return_value = False
             mock_bs.query_history_k_data_plus.return_value = mock_result
 
             from app.lib.datahub.data_source.interface.baostock_interface import (
@@ -178,7 +173,7 @@ class TestBaostockInterfaceManager(TestCase):
             "app.lib.datahub.data_source.interface.baostock_interface.bs"
         ) as mock_bs:
             mock_result = MagicMock()
-            mock_result.get_data.return_value = pd.DataFrame()
+            mock_result.next.return_value = False
             mock_bs.query_history_k_data_plus.return_value = mock_result
 
             from app.lib.datahub.data_source.interface.baostock_interface import (
@@ -190,32 +185,42 @@ class TestBaostockInterfaceManager(TestCase):
             self.assertIsInstance(result, pd.DataFrame)
             self.assertTrue(result.empty)
 
-    def test_get_zh_a_stock_hist_k_data_falls_back_when_get_data_uses_append(self):
-        """Test manual row conversion fallback for pandas 3 compatibility."""
+    def test_get_zh_a_stock_hist_k_data_preserves_rows_across_pages(self):
+        """Test manual row conversion preserves the first page."""
         with patch(
             "app.lib.datahub.data_source.interface.baostock_interface.bs"
         ) as mock_bs:
-            mock_result = MagicMock()
-            mock_result.get_data.side_effect = AttributeError(
-                "'DataFrame' object has no attribute 'append'"
-            )
-            mock_result.error_code = "0"
-            mock_result.fields = ["date", "code", "open", "close"]
-            rows = [
-                ["2024-01-08", "sh.600000", "10.0", "10.2"],
-                ["2024-01-09", "sh.600000", "10.1", "10.3"],
-            ]
-            state = {"idx": -1}
 
-            def next_side_effect():
-                state["idx"] += 1
-                return state["idx"] < len(rows)
+            class PaginatedResult:
+                error_code = "0"
+                fields = ["date", "code", "open", "close"]
 
-            def row_side_effect():
-                return rows[state["idx"]]
+                def __init__(self):
+                    self.pages = [
+                        [["2024-01-08", "sh.600000", "10.0", "10.2"]],
+                        [["2024-01-09", "sh.600000", "10.1", "10.3"]],
+                    ]
+                    self.page_index = 0
+                    self.row_index = 0
 
-            mock_result.next.side_effect = next_side_effect
-            mock_result.get_row_data.side_effect = row_side_effect
+                def get_data(self):
+                    raise AssertionError("get_data() must not be used")
+
+                def next(self):
+                    if self.row_index < len(self.pages[self.page_index]):
+                        return True
+                    if self.page_index + 1 >= len(self.pages):
+                        return False
+                    self.page_index += 1
+                    self.row_index = 0
+                    return True
+
+                def get_row_data(self):
+                    row = self.pages[self.page_index][self.row_index]
+                    self.row_index += 1
+                    return row
+
+            mock_result = PaginatedResult()
             mock_bs.query_history_k_data_plus.return_value = mock_result
 
             from app.lib.datahub.data_source.interface.baostock_interface import (
@@ -227,3 +232,4 @@ class TestBaostockInterfaceManager(TestCase):
             self.assertEqual(list(result.columns), mock_result.fields)
             self.assertEqual(len(result), 2)
             self.assertEqual(result.iloc[0]["code"], "sh.600000")
+            self.assertEqual(result.iloc[-1]["date"], "2024-01-09")
