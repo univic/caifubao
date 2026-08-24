@@ -336,6 +336,14 @@ autoresearch experiments against regenerated data.
 - [x] 23.11 Support an HTTPS-capable stock-history source for cluster rebuilds,
   normalize it into the existing quote schema, and fail quote jobs that attempt
   updates but write zero rows
+- [x] 23.12 Freeze one `Asia/Shanghai` trading-day `as_of_date` for each quote
+  run and pass it as the inclusive end date to every stock-history source
+- [x] 23.13 Persist stock history idempotently by `(code, date)` so interrupted
+  bootstraps can replay completed and partial stocks safely
+- [x] 23.14 Recompute quote freshness from persisted data against the frozen
+  `as_of_date`, preserving missing, stale, ahead, and OK classifications
+- [x] 23.15 Cover cross-midnight, timezone, source cutoff, idempotent replay,
+  and interrupted-bootstrap recovery with focused tests
 
 ## 24. Tailscale API Server Proxy Deployment Path
 

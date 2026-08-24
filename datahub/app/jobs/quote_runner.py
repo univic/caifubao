@@ -25,12 +25,12 @@ class QuoteJobMetadata:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-def _load_default_runtime() -> Any:
+def _load_default_runtime(as_of_date: datetime.datetime | None = None) -> Any:
     from app.lib.db_watcher.mongoengine_tool import mongo_watcher
     from app.lib.datahub import Datahub
 
     mongo_watcher.get_db_connection()
-    return Datahub()
+    return Datahub(quote_as_of_date=as_of_date)
 
 
 def _normalize_summary(target: str, summary: dict[str, Any], include_factors: bool):
@@ -41,6 +41,8 @@ def _normalize_summary(target: str, summary: dict[str, Any], include_factors: bo
         "failed_phase": summary.get("failed_phase"),
         "pulled_total": summary.get("pulled_total", 0),
         "written_total": summary.get("written_total", 0),
+        "validated_total": summary.get("validated_total", 0),
+        "as_of_date": summary.get("as_of_date"),
         "phase_stats": summary.get("phase_stats", {}),
     }
 
@@ -51,8 +53,11 @@ def run_quote_job(
     include_factors: bool = False,
     datahub_factory: Callable[[], Any] | None = None,
     job_metadata: QuoteJobMetadata | None = None,
+    as_of_date: datetime.datetime | None = None,
 ) -> dict[str, Any]:
-    datahub = datahub_factory() if datahub_factory else _load_default_runtime()
+    datahub = (
+        datahub_factory() if datahub_factory else _load_default_runtime(as_of_date)
+    )
     job_run = None
     if job_metadata:
         from app.lib.utilities.job_run_helper import JobRunContext, create_job_run
@@ -70,6 +75,8 @@ def run_quote_job(
             )
         )
 
+    completed_results = []
+    current_result_target = target
     try:
         if target == TARGET_INDEX:
             summary = datahub.start_index_job()
@@ -85,17 +92,19 @@ def run_quote_job(
                 TARGET_STOCK, summary, include_factors=include_factors
             )
         else:
-            results = [
+            current_result_target = TARGET_INDEX
+            completed_results.append(
                 _normalize_summary(
                     TARGET_INDEX, datahub.start_index_job(), include_factors=False
-                ),
-            ]
+                )
+            )
             stock_runner = (
                 datahub.start_stock_job
                 if include_factors
                 else datahub.start_stock_quote_job
             )
-            results.append(
+            current_result_target = TARGET_STOCK
+            completed_results.append(
                 _normalize_summary(
                     TARGET_STOCK,
                     stock_runner(),
@@ -105,12 +114,18 @@ def run_quote_job(
             result = {
                 "target": TARGET_ALL,
                 "include_factors": include_factors,
-                "results": results,
+                "results": completed_results,
                 "status": "SUCCESS"
-                if all(item["status"] == "SUCCESS" for item in results)
+                if all(item["status"] == "SUCCESS" for item in completed_results)
                 else "FAILED",
-                "pulled_total": sum(item["pulled_total"] for item in results),
-                "written_total": sum(item["written_total"] for item in results),
+                "pulled_total": sum(item["pulled_total"] for item in completed_results),
+                "written_total": sum(
+                    item["written_total"] for item in completed_results
+                ),
+                "validated_total": sum(
+                    item["validated_total"] for item in completed_results
+                ),
+                "as_of_date": completed_results[0]["as_of_date"],
             }
         if job_run:
             job_run_helper.finish_job_run(
@@ -121,10 +136,41 @@ def run_quote_job(
         return result
     except Exception as exc:
         if job_run:
+            partial_summary = getattr(datahub, "last_job_summary", None) or {}
+            partial_result = _normalize_summary(
+                current_result_target,
+                partial_summary,
+                include_factors=include_factors,
+            )
+            failure_results = [*completed_results]
+            if partial_summary:
+                failure_results.append(partial_result)
             job_run_helper.finish_job_run(
                 job_run,
                 status="FAILED",
-                summary={"target": target, "include_factors": include_factors},
+                summary={
+                    "target": target,
+                    "include_factors": include_factors,
+                    "as_of_date": partial_summary.get("as_of_date")
+                    or (
+                        completed_results[0].get("as_of_date")
+                        if completed_results
+                        else None
+                    )
+                    or (as_of_date.isoformat() if as_of_date else None),
+                    "pulled_total": sum(
+                        item["pulled_total"] for item in failure_results
+                    ),
+                    "written_total": sum(
+                        item["written_total"] for item in failure_results
+                    ),
+                    "validated_total": sum(
+                        item["validated_total"] for item in failure_results
+                    ),
+                    "failed_phase": partial_summary.get("failed_phase"),
+                    "phase_stats": partial_summary.get("phase_stats", {}),
+                    "results": failure_results if target == TARGET_ALL else None,
+                },
                 error_message=str(exc),
             )
         raise
@@ -187,6 +233,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Optional explicit scheduled_at timestamp in ISO format.",
     )
+    parser.add_argument(
+        "--as-of-date",
+        default=None,
+        help="Optional frozen quote cutoff date in YYYY-MM-DD format.",
+    )
     return parser.parse_args(argv)
 
 
@@ -212,11 +263,18 @@ def main(argv: list[str] | None = None) -> None:
         trigger=args.trigger,
         source=args.source,
         scheduled_at=scheduled_at,
+        extra={"as_of_date": args.as_of_date} if args.as_of_date else {},
+    )
+    as_of_date = (
+        datetime.datetime.strptime(args.as_of_date, "%Y-%m-%d")
+        if args.as_of_date
+        else None
     )
     result = run_quote_job(
         args.target,
         include_factors=args.include_factors,
         job_metadata=job_metadata,
+        as_of_date=as_of_date,
     )
     print(json.dumps(result, default=str, ensure_ascii=False, indent=2))
 

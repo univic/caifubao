@@ -71,6 +71,18 @@ no restorable backup exists.
   regenerated dataset
 - **AND** document any intentionally missing non-regenerable data.
 
+#### Scenario: Interrupted quote bootstrap resumes safely
+
+- **GIVEN** an empty-database quote bootstrap crosses midnight or its Pod restarts
+- **WHEN** the same logical bootstrap attempt resumes
+- **THEN** it SHALL retain the original frozen target trading date
+- **AND** an operator-initiated retry SHALL pass the original target through the explicit quote-runner cutoff option
+- **AND** scheduled quote Jobs SHALL fail visibly instead of automatically retrying with a newly calculated cutoff
+- **AND** safely replay completed stocks and fill incomplete stocks
+- **AND** recalculate quote freshness and coverage against the frozen target date
+- **AND** factor, signal, scoring, and Parquet phases SHALL remain disabled until quote validation completes
+- **AND** a new independent bootstrap MAY calculate a new target date as a new observable run.
+
 ### Requirement: Persistent Storage Hardening
 
 Caifubao SHALL not rely on an unqualified single-node local-path PVC as the only
