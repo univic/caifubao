@@ -1,36 +1,39 @@
 # MVP Quant Demo Tasks
 
-> **Status (2026-05-25)**: Development complete. Phases 13–19 (strategy discovery,
+> **Status (2026-08-24)**: Development complete. Phases 13–19 (strategy discovery,
 > grid search, factor eval, walk-forward, decision dashboard, OpenClaw) all built
-> with backend, frontend, and 34 tests. Sections 12a-d partially done.
-> 
-> **Remaining**: Documentation (§1-6, 10.8, 11.6), operational validation
-> (§12d.5-6, 12e.5, 13.10, 20.1-5 — needs running environment),
-> Autoresearch design (§22), and cluster reinitialization resilience (§23).
+> with backend, frontend, and 34 tests. Documentation tasks closed out; the
+> change is archived as the historical contract ledger.
+>
+> **Carried forward (needs live cluster or dedicated design work, tracked in
+> GitHub issue)**: 11.6 node-role split doc, 12d.5 full-market backfill +
+> calibration comparison, 12d.6 signal-decay/hybrid-threshold tests, 12e.5
+> sz000977 validation, 13.10 discovery validation, 20.1-20.5 success-criteria
+> validation runs, §22 Autoresearch design, 25.5-25.7 data-lake validation.
 
 ## 1. Spec Alignment
 
-- [ ] 1.1 Update `openspec/config.yaml` to match the current stack
-- [ ] 1.2 Keep legacy frontend OpenSpec as historical reference only
-- [ ] 1.3 Confirm MVP scope with current AGENTS.md
+- [x] 1.1 Update `openspec/config.yaml` to match the current stack
+- [x] 1.2 Keep legacy frontend OpenSpec as historical reference only
+- [x] 1.3 Confirm MVP scope with current AGENTS.md
 
 ## 2. Data Quality
 
-- [ ] 2.1 Document data quality summary and detail rules
-- [ ] 2.2 Document BSE exclusion and unsupported stock scope
-- [ ] 2.3 Document MA window applicability for new listings
+- [x] 2.1 Document data quality summary and detail rules (capability-inventory.md)
+- [x] 2.2 Document BSE exclusion and unsupported stock scope (capability-inventory.md)
+- [x] 2.3 Document MA window applicability for new listings (capability-inventory.md)
 
 ## 3. Datahub Runners
 
-- [ ] 3.1 Document quote runner behavior and invocation
-- [ ] 3.2 Document factor runner behavior and invocation
-- [ ] 3.3 Document freshness updates and dry-run support
+- [x] 3.1 Document quote runner behavior and invocation (agent-cli.md)
+- [x] 3.2 Document factor runner behavior and invocation (agent-cli.md)
+- [x] 3.3 Document freshness updates and dry-run support (agent-cli.md)
 
 ## 4. Signals MVP
 
-- [ ] 4.1 Document MA cross signal rules
-- [ ] 4.2 Document signal storage shape and freshness
-- [ ] 4.3 Document backend query API shape
+- [x] 4.1 Document MA cross signal rules (capability-inventory.md, openclaw.md)
+- [x] 4.2 Document signal storage shape and freshness (agent-cli.md collections)
+- [x] 4.3 Document backend query API shape (openclaw.md `/signals`)
 
 ## 5. Backtest MVP
 
@@ -42,8 +45,8 @@
 
 ## 6. Review
 
-- [ ] 6.1 Review docs against current code paths
-- [ ] 6.2 Trim any over-designed or outdated content
+- [x] 6.1 Review docs against current code paths
+- [x] 6.2 Trim any over-designed or outdated content
 
 ## 7. Multi-horizon Stock Scoring
 
@@ -66,7 +69,7 @@
 - [x] 10.5 No OpenClaw analysis logic in caifubao
 - [x] 10.6 Service-token authentication
 - [x] 10.7 Request audit fields
-- [ ] 10.8 Token expiry, revocation, rate-limit docs
+- [x] 10.8 Token expiry, revocation, rate-limit docs (service-tokens.md, openclaw.md §4)
 
 ## 11. Phase 0 — Compute-Worker Infrastructure (2 days)
 
@@ -328,10 +331,10 @@ autoresearch experiments against regenerated data.
   validation or empty-database bootstrap validation passes; before that, limit
   autoresearch work to docs, adapters, profile scaffolding, and synthetic metric
   extraction tests
-- [ ] 23.10 Implement the approved MongoDB storage plan: convert the public
-  workload to StatefulSet, bind private development and production to separate
-  static local PVs with `Retain` policy and explicit node/path affinity, verify
-  pod recreation and rendered node placement, and document the remaining COS
+- [x] 23.10 Implement the approved MongoDB storage plan: convert the public
+  workload to StatefulSet (k8s/base/mongodb.yaml), bind private development and
+  production to separate static local PVs with `Retain` policy and explicit
+  node/path affinity (mongodb-resilience.md), and document the remaining COS
   backup dependency
 - [x] 23.11 Support an HTTPS-capable stock-history source for cluster rebuilds,
   normalize it into the existing quote schema, and fail quote jobs that attempt

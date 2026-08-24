@@ -42,7 +42,9 @@ Fetch the list of stocks and indices supported by Caifubao.
 Fetch historical or latest daily OHLCV data.
 
 **Parameters:**
-- `symbols`: **Required**. Comma-separated list of symbols (e.g., `sh600519,sz000001`)
+- `symbols`: Comma-separated list of symbols (e.g., `sh600519,sz000001`). Documented
+  as required; the current implementation does not enforce it — omitting it returns
+  the full table (large scan), so always pass `symbols`.
 - `start_date`: `YYYY-MM-DD`
 - `end_date`: `YYYY-MM-DD`
 - `page` / `per_page`: Pagination parameters
@@ -232,5 +234,6 @@ Service tokens are **explicitly blocked** on all compute and mutation endpoints,
 - `/api/portfolios/*` — portfolio creation, position management, transactions
 - `/api/decisions/*` — decision dashboard, alerts, quality monitoring
 - `/api/datahub/*` — datahub status and control
+- `/api/factor-eval/*` — factor evaluation reports and components
 
 Requests to these endpoints with a valid service token receive HTTP **403**.

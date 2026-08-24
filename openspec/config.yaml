@@ -7,10 +7,10 @@ context: |
   Tech stack: Python Flask backend, datahub jobs, Vue 3/Vite/Pinia/Element Plus frontend, MongoDB, k8s, GitHub Actions
   项目: 财经数据量化分析平台 (财富宝 caifubao)
   模块边界: datahub 生产行情/因子/质量数据，backend 提供聚合 API，frontend 消费 API 并展示
-  当前 MVP: 登录、市场总览、历史行情、数据质量、简单信号、简单回测、多周期评分（Score5/20/60）
-  已完成: 评分引擎（StockScorePrediction模型 + scoring_engine服务 + 验证/回放/校准 + 多周期评分API + 前端展示）
-  下一阶段: OpenClaw 集成（service token 鉴权、只读数据 API、请求审计）
-   已归档: openspec/archive/frontend/ (Django/Celery/AkQuant 旧架构，仅历史参考)
+  状态: MVP 与研究阶段均已实现——登录、市场总览、历史行情、数据质量、信号、回测、多周期评分（Score5/20/60）、策略发现、网格搜索、因子评估、walk-forward、决策面板、OpenClaw 只读集成（service token 鉴权、只读数据 API、请求审计）
+  已归档: openspec/archive/mvp-quant-demo/ (MVP 契约账本，含 11 份 spec)、openspec/archive/frontend/ (Django/Celery/AkQuant 旧架构，仅历史参考)、openspec/archive/homepage-20260321/ (首页提案，未实施)
+  运营: 使用 ./scripts/caifubao 统一 CLI；agent 规则见 RULES.md / AGENTS.md；领域 skill 见 skills/
+  注意: 仅在触及 API 契约、鉴权、评分语义、数据所有权或公开文档时才需要新建 OpenSpec change
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
