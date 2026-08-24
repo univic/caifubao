@@ -216,7 +216,9 @@ def _normalize_tushare_stock_history(raw_df, code: str):
 
     # tushare amount 单位千元 -> 元（与 akshare/东财成交额一致）
     normalized["trade_amount"] = (
-        normalized["amount"] * 1000 if "amount" in normalized else 0
+        pandas.to_numeric(normalized["amount"], errors="coerce").fillna(0) * 1000
+        if "amount" in normalized
+        else 0
     )
     normalized["volume"] = normalized["volume"].astype("int64")
     normalized["code"] = code

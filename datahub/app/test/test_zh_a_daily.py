@@ -178,6 +178,19 @@ class TestStockHistorySource(TestCase):
                 },
                 {
                     "ts_code": "600519.SH",
+                    "trade_date": "20260825",
+                    "open": 1.0,
+                    "high": 1.0,
+                    "low": 1.0,
+                    "close": 1.0,
+                    "pre_close": 1.0,
+                    "change": 0.0,
+                    "pct_chg": 0.0,
+                    "vol": 100,
+                    "amount": 1000.0,
+                },
+                {
+                    "ts_code": "600519.SH",
                     "trade_date": "20260821",
                     "open": 1291.5,
                     "high": 1291.5,
@@ -207,7 +220,8 @@ class TestStockHistorySource(TestCase):
             start_date="20260820",
             end_date="20260824",
         )
-        # tushare 返回降序 -> 归一化后升序；end_date 含 2026-08-24，两行都保留
+        # tushare 返回降序 -> 归一化后升序；end_date 截断：08-25 行被过滤，
+        # 仅保留 08-21 与 08-24（as_of_date 上限生效）
         self.assertEqual(
             [str(d)[:10] for d in result["date"].tolist()],
             ["2026-08-21", "2026-08-24"],
