@@ -160,6 +160,85 @@ class TestStockHistorySource(TestCase):
         self.assertEqual(result.iloc[0]["code"], "sh600519")
         self.assertEqual(result.iloc[0]["previous_close"], 1291.5)
 
+    def test_tushare_history_is_normalized_to_quote_schema(self):
+        raw = pandas.DataFrame(
+            [
+                {
+                    "ts_code": "600519.SH",
+                    "trade_date": "20260824",
+                    "open": 1271.01,
+                    "high": 1313.8,
+                    "low": 1270.33,
+                    "close": 1304.66,
+                    "pre_close": 1272.83,
+                    "change": 31.83,
+                    "pct_chg": 2.5,
+                    "vol": 4844000,
+                    "amount": 6299794.0,
+                },
+                {
+                    "ts_code": "600519.SH",
+                    "trade_date": "20260821",
+                    "open": 1291.5,
+                    "high": 1291.5,
+                    "low": 1272.01,
+                    "close": 1272.83,
+                    "pre_close": 1291.5,
+                    "change": -18.67,
+                    "pct_chg": -1.45,
+                    "vol": 3347200,
+                    "amount": 4278311.0,
+                },
+            ]
+        )
+
+        with patch.dict(os.environ, {zh_a_daily.STOCK_HISTORY_SOURCE_ENV: "tushare"}):
+            with patch.object(
+                zh_a_daily.interface.tushare_interface,
+                "tushare_daily",
+                return_value=raw,
+            ) as fetch:
+                result = zh_a_daily.get_zh_a_stock_hist_daily_quote(
+                    "sh600519", start_date="2026-08-20", end_date="2026-08-21"
+                )
+
+        fetch.assert_called_once_with(
+            "600519.SH",
+            start_date="20260820",
+            end_date="20260821",
+        )
+        # tushare 返回降序 -> 归一化后升序，且按 end_date 过滤（2026-08-24 被排除）
+        self.assertEqual(
+            [str(d)[:10] for d in result["date"].tolist()],
+            ["2026-08-21"],
+        )
+        self.assertEqual(result.iloc[0]["code"], "sh600519")
+        self.assertEqual(result.iloc[0]["previous_close"], 1291.5)
+        self.assertEqual(result.iloc[0]["change_amount"], -18.67)
+        self.assertEqual(result.iloc[0]["change_rate"], -1.45)
+        self.assertEqual(result.iloc[0]["volume"], 3347200)
+        # amount 千元 -> 元
+        self.assertEqual(result.iloc[0]["trade_amount"], 4278311000.0)
+        self.assertEqual(result.iloc[0]["trade_status"], 1)
+        self.assertTrue(pandas.api.types.is_datetime64_any_dtype(result["date"]))
+
+    def test_tushare_source_is_accepted(self):
+        with patch.dict(os.environ, {zh_a_daily.STOCK_HISTORY_SOURCE_ENV: "tushare"}):
+            self.assertEqual(zh_a_daily.get_stock_history_source(), "tushare")
+        self.assertIn("tushare", zh_a_daily.SUPPORTED_STOCK_HISTORY_SOURCES)
+
+    def test_to_tushare_ts_code_mapping(self):
+        convert = zh_a_daily.interface.tushare_interface.to_tushare_ts_code
+        self.assertEqual(convert("sh600519"), "600519.SH")
+        self.assertEqual(convert("sz000977"), "000977.SZ")
+        self.assertEqual(convert("bj920000"), "920000.BJ")
+
+    def test_tushare_missing_token_fails_clearly(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TUSHARE_TOKEN", None)
+            with self.assertRaisesRegex(RuntimeError, "TUSHARE_TOKEN"):
+                zh_a_daily.interface.tushare_interface.tushare_daily("600519.SH")
+
     def test_explicit_end_date_is_shared_with_baostock(self):
         raw = pandas.DataFrame(
             [
