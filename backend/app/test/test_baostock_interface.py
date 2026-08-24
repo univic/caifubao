@@ -1,8 +1,17 @@
 """Tests for the legacy backend BaoStock interface."""
 
-from app.lib.datahub.data_source.interface.baostock_interface import (
-    BaostockInterfaceManager,
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+
+
+MODULE_PATH = (
+    Path(__file__).parents[1]
+    / "lib/datahub/data_source/interface/baostock_interface.py"
 )
+SPEC = spec_from_file_location("backend_baostock_interface", MODULE_PATH)
+MODULE = module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+BaostockInterfaceManager = MODULE.BaostockInterfaceManager
 
 
 def test_resultset_to_dataframe_preserves_rows_across_pages():
