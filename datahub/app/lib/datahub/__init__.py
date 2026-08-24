@@ -5,6 +5,7 @@
 import logging
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -101,13 +102,16 @@ def scheduled_stock_job():
 
 
 class Datahub(object):
-    def __init__(self):
+    def __init__(self, quote_as_of_date=None):
         self.module_name = "Datahub"
         self.processor_registry = processors.registry
         # super().__init__(module_name, processor_registry)
         self.market_list: list = []
         self.exec_plan_list = []
         self.scheduler = None
+        self.quote_as_of_date = quote_as_of_date
+        self.quote_run_started_at = datetime.now(ZoneInfo("Asia/Shanghai"))
+        self.last_job_summary = None
 
     def start(self):
         logger.info(f"Starting {self.module_name}")
@@ -124,22 +128,32 @@ class Datahub(object):
     def _build_processor(self, market_name="ChinaAStock_daily"):
         processor_dict = self.processor_registry[market_name]
         processor_obj = processor_dict["processor_object"]
-        return processor_obj()
+        return processor_obj(
+            as_of_date=self.quote_as_of_date,
+            run_started_at=self.quote_run_started_at,
+        )
+
+    def _run_processor_job(self, runner_name):
+        self.last_job_summary = None
+        processor = None
+        try:
+            processor = self._build_processor()
+            return getattr(processor, runner_name)()
+        finally:
+            if processor is not None:
+                self.last_job_summary = processor.last_job_summary
 
     def start_index_job(self):
         logger.info("Starting scheduled index-only Datahub job")
-        processor = self._build_processor()
-        return processor.run_index_job()
+        return self._run_processor_job("run_index_job")
 
     def start_stock_job(self):
         logger.info("Starting scheduled stock-only Datahub job")
-        processor = self._build_processor()
-        return processor.run_stock_job()
+        return self._run_processor_job("run_stock_job")
 
     def start_stock_quote_job(self):
         logger.info("Starting stock quote-only Datahub job")
-        processor = self._build_processor()
-        return processor.run_stock_quote_job()
+        return self._run_processor_job("run_stock_quote_job")
 
     def _remove_legacy_jobs(self):
         for job_id in LEGACY_SCHEDULED_JOB_IDS:

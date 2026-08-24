@@ -4,6 +4,7 @@ import datetime
 from typing import Any
 
 from app.model.data_asset_status import (
+    STATUS_AHEAD,
     STATUS_NO_DATA,
     STATUS_NOT_APPLICABLE,
     STATUS_OK,
@@ -110,32 +111,104 @@ def _date_is_before(left, right) -> bool:
     return left_date < right_date
 
 
+def classify_quote_status(
+    data_count,
+    latest_data_date,
+    expected_latest_date=None,
+):
+    if data_count <= 0 or latest_data_date is None:
+        return STATUS_NO_DATA, "no_source_data"
+    if expected_latest_date is None:
+        return STATUS_OK, None
+    if _date_is_before(latest_data_date, expected_latest_date):
+        return STATUS_STALE, "behind_expected_quote_date"
+    if _date_is_before(expected_latest_date, latest_data_date):
+        return STATUS_AHEAD, "ahead_of_expected_quote_date"
+    return STATUS_OK, None
+
+
+def expected_quote_count(
+    data_count,
+    latest_data_date,
+    expected_latest_date=None,
+    trade_calendar=None,
+):
+    if (
+        data_count <= 0
+        or latest_data_date is None
+        or expected_latest_date is None
+        or not trade_calendar
+        or not _date_is_before(latest_data_date, expected_latest_date)
+    ):
+        return data_count or None
+
+    latest_date = (
+        latest_data_date.date()
+        if hasattr(latest_data_date, "date")
+        else latest_data_date
+    )
+    expected_date = (
+        expected_latest_date.date()
+        if hasattr(expected_latest_date, "date")
+        else expected_latest_date
+    )
+    missing_trading_days = sum(
+        latest_date < (item.date() if hasattr(item, "date") else item) <= expected_date
+        for item in trade_calendar
+    )
+    return data_count + missing_trading_days
+
+
 def refresh_quote_status(
     *,
     stock_obj: Any,
     quote_model: Any,
     last_job_name: str | None = None,
-) -> None:
+    expected_latest_date=None,
+    trade_calendar=None,
+) -> dict[str, Any]:
     row = aggregate_stats(
         quote_model._get_collection(),
         match={"code": stock_obj.code},
         code_field="code",
     )
     data_count = int(row.get("data_count", 0)) if row else 0
-    status = STATUS_OK if data_count > 0 else STATUS_NO_DATA
+    latest_data_date = row.get("latest_data_date") if row else None
+    first_data_date = row.get("first_data_date") if row else None
+    expected_count = expected_quote_count(
+        data_count,
+        latest_data_date,
+        expected_latest_date,
+        trade_calendar,
+    )
+    status, status_reason = classify_quote_status(
+        data_count,
+        latest_data_date,
+        expected_latest_date,
+    )
     upsert_asset_status(
         code=stock_obj.code,
         object_type=getattr(stock_obj, "object_type", "individual_stock"),
         asset_type=ASSET_TYPE_QUOTE,
         asset_name=ASSET_DAILY_QUOTE,
-        first_data_date=row.get("first_data_date") if row else None,
-        latest_data_date=row.get("latest_data_date") if row else None,
+        first_data_date=first_data_date,
+        latest_data_date=latest_data_date,
         data_count=data_count,
-        expected_count=data_count or None,
+        expected_count=expected_count,
         status=status,
-        status_reason=None if status == STATUS_OK else "no_source_data",
+        status_reason=status_reason,
         last_job_name=last_job_name,
+        extra={"expected_latest_date": expected_latest_date}
+        if expected_latest_date
+        else None,
     )
+    return {
+        "status": status,
+        "status_reason": status_reason,
+        "data_count": data_count,
+        "expected_count": expected_count,
+        "latest_data_date": latest_data_date,
+    }
 
 
 def refresh_fq_factor_status(

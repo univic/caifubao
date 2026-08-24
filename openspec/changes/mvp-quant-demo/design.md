@@ -162,6 +162,16 @@ OpenClaw 集成已完成，caifubao 作为可靠数据提供方的全部要素�
 3. **空库 bootstrap**：当没有可恢复备份时，定义从空 MongoDB 重建 demo-ready
    数据的顺序：股票主数据、行情、复权/MA/技术因子、信号、评分、freshness 和
    data quality 状态。
+   行情阶段在逻辑运行开始时按 `Asia/Shanghai` 和交易日历冻结唯一
+   `as_of_date`，并将该日期作为所有历史数据源的 inclusive `end_date`。单次运行
+   即使跨过午夜也不改变截面；新的独立运行才重新计算目标日期。行情按
+   `(code, date)` 幂等 upsert，中断后可安全重放，并根据最终持久化结果相对
+   `as_of_date` 重算 freshness。
+   定时行情 Job 不进行隐式 Pod backoff 重试，避免新 Pod 悄然重算截面；需要
+   恢复的长任务必须作为显式续跑再次传入原始 `--as-of-date`。
+   spot 返回空股票全集时初始化直接失败；仍在 spot 全集但收盘价为零的临时停牌
+   股票保持 active，并保留 stale freshness 供诊断，不因缺少目标日成交而拖垮全市场
+   行情任务。真正退市继续由主数据退市标记流程处理。
 4. **数据分类**：把可再生市场数据和不可再生业务数据分开处理。行情、因子、
    信号和评分多为可再生；用户、组合、watchlist、decision journal、service token
    和审计数据需要备份或明确记录为丢失。

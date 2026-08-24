@@ -1,11 +1,11 @@
 import time
 import logging
 import datetime
-import traceback
+from zoneinfo import ZoneInfo
 
 import pandas
 from pymongo import UpdateOne
-from mongoengine import NotUniqueError, BulkWriteError
+from mongoengine import NotUniqueError
 from app.lib.datahub.data_source.handler import zh_a_daily
 from app.model.stock import (
     FinanceMarket,
@@ -15,6 +15,7 @@ from app.model.stock import (
     StockDailyQuote,
     StockDataCapabilities,
 )
+from app.model.data_asset_status import STATUS_OK, STATUS_STALE
 
 # from app.lib.task_controller import task_controller
 from app.lib.datahub.data_source.interface.baostock_interface import (
@@ -47,7 +48,6 @@ def _build_index_quote_upsert_operation(index_obj, row):
 
     return UpdateOne(
         {
-            "_cls": raw_doc["_cls"],
             "code": raw_doc["code"],
             "date": raw_doc["date"],
         },
@@ -56,12 +56,40 @@ def _build_index_quote_upsert_operation(index_obj, row):
     )
 
 
+def _build_stock_quote_upsert_operation(stock_obj, row):
+    daily_quote = StockDailyQuote()
+    daily_quote.code = stock_obj.code
+    daily_quote.stock = stock_obj
+    for column, value in row.items():
+        setattr(daily_quote, column, value)
+    daily_quote.amplitude = round(daily_quote.high - daily_quote.low, 2)
+    daily_quote.change_amount = round(daily_quote.close - daily_quote.previous_close, 2)
+
+    raw_doc = daily_quote.to_mongo().to_dict()
+    raw_doc.pop("_id", None)
+    return UpdateOne(
+        {
+            "code": raw_doc["code"],
+            "date": raw_doc["date"],
+        },
+        {"$set": raw_doc},
+        upsert=True,
+    )
+
+
 class ChinaAStock(object):
-    def __init__(self):
+    def __init__(self, as_of_date=None, run_started_at=None):
         self.market_name = "ChinaAStock"
         self.market_code = "ZH-A"
-        self.today = datetime.date.today()
-        self.most_recent_trading_day = None
+        timezone = ZoneInfo(trading_day_helper.BEIJING_TIMEZONE)
+        self.run_started_at = run_started_at or datetime.datetime.now(timezone)
+        if self.run_started_at.tzinfo is None:
+            self.run_started_at = self.run_started_at.replace(tzinfo=timezone)
+        self.today = self.run_started_at.astimezone(timezone).date()
+        if as_of_date and not isinstance(as_of_date, datetime.datetime):
+            as_of_date = datetime.datetime.combine(as_of_date, datetime.time())
+        self.explicit_as_of_date = as_of_date is not None
+        self.most_recent_trading_day = as_of_date
         self.market = FinanceMarket.objects(name="ChinaAStock").first()
         self.trade_calendar = None
         self.result: dict = {
@@ -69,6 +97,7 @@ class ChinaAStock(object):
             "message": "",
         }
         self.last_job_summary = None
+        self._partial_phase_result = None
 
     def run(self):
         phases = [
@@ -114,12 +143,15 @@ class ChinaAStock(object):
             "failed_phase": None,
             "pulled_total": 0,
             "written_total": 0,
+            "validated_total": 0,
+            "as_of_date": None,
             "phase_stats": {},
         }
         current_phase = None
         try:
             for phase_name, phase_func in phases:
                 current_phase = phase_name
+                self._partial_phase_result = None
                 logger.info(
                     "Datahub phase started: market=%s job=%s phase=%s",
                     self.market_name,
@@ -131,6 +163,9 @@ class ChinaAStock(object):
                 summary["phase_stats"][phase_name] = phase_summary
                 summary["pulled_total"] += phase_summary["pulled_count"]
                 summary["written_total"] += phase_summary["written_count"]
+                summary["validated_total"] += phase_summary["validated_count"]
+                if self.most_recent_trading_day:
+                    summary["as_of_date"] = self.most_recent_trading_day.isoformat()
                 logger.info(
                     "Datahub phase completed: market=%s job=%s phase=%s pulled=%s written=%s",
                     self.market_name,
@@ -143,8 +178,17 @@ class ChinaAStock(object):
         except Exception:
             summary["status"] = "FAILED"
             summary["failed_phase"] = current_phase
+            partial_result = getattr(self, "_partial_phase_result", None)
+            if current_phase and partial_result is not None:
+                phase_summary = self._normalize_phase_result(partial_result)
+                summary["phase_stats"][current_phase] = phase_summary
+                summary["pulled_total"] += phase_summary["pulled_count"]
+                summary["written_total"] += phase_summary["written_count"]
+                summary["validated_total"] += phase_summary["validated_count"]
             raise
         finally:
+            if self.most_recent_trading_day:
+                summary["as_of_date"] = self.most_recent_trading_day.isoformat()
             self.last_job_summary = summary
             logger.info(
                 "Datahub job summary: market=%s job=%s status=%s failed_phase=%s pulled_total=%s written_total=%s phase_stats=%s",
@@ -160,10 +204,11 @@ class ChinaAStock(object):
     @staticmethod
     def _normalize_phase_result(phase_result):
         if phase_result is None:
-            return {"pulled_count": 0, "written_count": 0}
+            return {"pulled_count": 0, "written_count": 0, "validated_count": 0}
         return {
             "pulled_count": phase_result.get("pulled_count", 0),
             "written_count": phase_result.get("written_count", 0),
+            "validated_count": phase_result.get("validated_count", 0),
         }
 
     def check_prerequisite(self, allow_update=False):
@@ -291,6 +336,9 @@ class ChinaAStock(object):
         status_code = "GOOD"
         status_msg = ""
         written_quote_count = 0
+        validated_quote_count = 0
+        required_quote_attempt_count = 0
+        failed_quote_codes = []
         check_counter_dict = {
             "GOOD": 0,
             "UPD": 0,
@@ -313,15 +361,35 @@ class ChinaAStock(object):
         local_data_dict = {stock.code: stock for stock in local_data_list}
         local_data_num = local_data_list.count()
         remote_data_num = len(remote_data_df)
-        remote_data_col_list = remote_data_df.columns.tolist()
+        if allow_update and remote_data_num == 0:
+            self._partial_phase_result = {
+                "pulled_count": 0,
+                "written_count": 0,
+                "validated_count": 0,
+            }
+            raise RuntimeError(f"Remote {obj_type} spot list is empty")
+
+        def update_partial_phase_result():
+            self._partial_phase_result = {
+                "pulled_count": remote_data_num,
+                "written_count": written_quote_count,
+                "validated_count": validated_quote_count,
+            }
+
+        update_partial_phase_result()
+
+        def is_allowed_suspension_gap(is_suspended, result):
+            return (
+                is_suspended
+                and result.get("code", "GOOD") == "GOOD"
+                and result.get("freshness_status", result.get("status")) == STATUS_STALE
+            )
+
         remote_code_set = (
             set(remote_data_df["code"].tolist()) if "code" in remote_data_df else set()
         )
         local_code_set = set(local_data_dict.keys())
         local_only_codes = sorted(local_code_set - remote_code_set)
-        # prepare quote list for bulk insert
-        new_quote_instance_list = []
-        inactive_item_dict = {}
         # prepare the progress bar
         prog_bar = progress_bar()
 
@@ -333,6 +401,25 @@ class ChinaAStock(object):
                 len(local_only_codes),
                 local_only_codes[:10],
             )
+            if allow_update and obj_type == "stock":
+                for code in local_only_codes:
+                    stock_obj = local_data_dict[code]
+                    if (
+                        stock_obj.active_status != 0
+                        or not data_capability_helper.stock_supports(
+                            stock_obj, "daily_quote"
+                        )
+                    ):
+                        continue
+                    freshness = data_asset_status_helper.refresh_quote_status(
+                        stock_obj=stock_obj,
+                        quote_model=StockDailyQuote,
+                        last_job_name="stock_quote_sync",
+                        expected_latest_date=self.most_recent_trading_day,
+                        trade_calendar=self.market.trade_calendar,
+                    )
+                    if freshness["status"] != STATUS_OK:
+                        failed_quote_codes.append(code)
 
         # check the existence of the stock list
         if local_data_num > 0:
@@ -344,34 +431,28 @@ class ChinaAStock(object):
                 stock_obj = local_data_dict.get(code)
                 prog_bar_msg: str = ""
                 if stock_obj:
+                    if allow_update and stock_obj.active_status == 1:
+                        logger.info(
+                            "Restoring %s-%s to active because it is present in the spot list",
+                            code,
+                            stock_obj.name,
+                        )
+                        stock_obj.active_status = 0
+                        stock_obj.save()
                     if allow_update:
                         self.sync_stock_data_capabilities(stock_obj)
                     # check the quote data freshness of each index
                     flag = self.check_data_freshness(stock_obj)
                     if flag != "SKIP":
-                        # if close price is not 0, add the item to the inactive list,
-                        if remote_stock_item["close"] == 0:
-                            inactive_item_dict[code] = stock_obj
-                            logger.info(
-                                f"Adding {code}-{stock_obj.name} to inactive list"
-                            )
+                        is_temporarily_suspended = (
+                            obj_type == "stock" and remote_stock_item["close"] == 0
+                        )
                         check_counter_dict[flag] += 1
                         if allow_update:
                             self.perform_stock_name_check(stock_obj, name)
-                            if flag == "UPD":
-                                prog_bar_msg = f"Updating quote info for {code} - {name} with spot data"
-                                quote_date = self.most_recent_trading_day
-                                save_quote = not bulk_insert
-                                new_quote, saved_count = self.handle_new_quote(
-                                    stock_obj,
-                                    remote_data_col_list,
-                                    remote_stock_item,
-                                    quote_date,
-                                    save_quote=save_quote,
-                                )
-                                new_quote_instance_list.append(new_quote)
-                                written_quote_count += saved_count
-                            elif flag in ["INC", "FULL"]:
+                            if flag in ["UPD", "INC", "FULL"]:
+                                if not is_temporarily_suspended:
+                                    required_quote_attempt_count += 1
                                 prog_bar_msg = (
                                     f"Doing {flag} update for {code} - {name}"
                                 )
@@ -381,26 +462,80 @@ class ChinaAStock(object):
                                 written_quote_count += hist_result.get(
                                     "written_count", 0
                                 )
+                                validated_quote_count += hist_result.get(
+                                    "validated_count",
+                                    hist_result.get("written_count", 0),
+                                )
+                                update_partial_phase_result()
+                                quote_validation_failed = (
+                                    hist_result.get("code") != "GOOD"
+                                    or hist_result.get("freshness_status") != STATUS_OK
+                                )
+                                if (
+                                    quote_validation_failed
+                                    and not is_allowed_suspension_gap(
+                                        is_temporarily_suspended, hist_result
+                                    )
+                                ):
+                                    failed_quote_codes.append(code)
+                                elif quote_validation_failed:
+                                    logger.info(
+                                        "Allowing stale quote for temporarily suspended stock %s",
+                                        code,
+                                    )
+                            elif flag in ["GOOD", "WARN"]:
+                                freshness = data_asset_status_helper.refresh_quote_status(
+                                    stock_obj=stock_obj,
+                                    quote_model=StockDailyQuote,
+                                    last_job_name="stock_quote_sync",
+                                    expected_latest_date=self.most_recent_trading_day,
+                                    trade_calendar=self.market.trade_calendar,
+                                )
+                                if freshness[
+                                    "status"
+                                ] != STATUS_OK and not is_allowed_suspension_gap(
+                                    is_temporarily_suspended, freshness
+                                ):
+                                    failed_quote_codes.append(code)
                     else:
                         logger.debug(
                             f"Stock Market {self.market.name} - Skipped quote data update for {code}-{name}"
                         )
                     upd_counter_dict[flag] += 1
                 else:
+                    is_temporarily_suspended = (
+                        obj_type == "stock" and remote_stock_item["close"] == 0
+                    )
                     prog_bar_msg = f"Get quote info for new stock {code} - {name}"
                     check_counter_dict["NEW"] += 1
                     if allow_update:
+                        if not is_temporarily_suspended:
+                            required_quote_attempt_count += 1
                         # create absent stock index and create data retrieve task.
                         new_stock_result = self.handle_new_stock(
                             obj_type=obj_type, code=code, name=name
                         )
                         written_quote_count += new_stock_result.get("written_count", 0)
+                        validated_quote_count += new_stock_result.get(
+                            "validated_count",
+                            new_stock_result.get("written_count", 0),
+                        )
+                        update_partial_phase_result()
+                        new_quote_validation_failed = new_stock_result.get(
+                            "code"
+                        ) not in ["GOOD", "SKIP"] or (
+                            new_stock_result.get("code") == "GOOD"
+                            and new_stock_result.get("freshness_status") != STATUS_OK
+                        )
+                        if (
+                            new_quote_validation_failed
+                            and not is_allowed_suspension_gap(
+                                is_temporarily_suspended, new_stock_result
+                            )
+                        ):
+                            failed_quote_codes.append(code)
                         upd_counter_dict["NEW"] += 1
                 prog_bar(i, remote_data_num, prog_bar_msg)
-            if bulk_insert:
-                # do bulk insert
-                StockDailyQuote.objects.insert(new_quote_instance_list, load_bulk=False)
-                written_quote_count += len(new_quote_instance_list)
             msg_str = (
                 f"Stock Market {self.market.name} - "
                 f"Checked {local_data_num} local {obj_type} data with {remote_data_num} remote data，"
@@ -437,38 +572,64 @@ class ChinaAStock(object):
             #     msg_str = f'Stock Market {self.market.name} - no update attempt was made for {obj_type} data.'
             #     logger.info(msg_str)
             #     status_msg += msg_str
-            self.update_active_status(inactive_item_dict, local_data_list)
         else:
             if allow_update:
                 for i, remote_stock_item in remote_data_df.iterrows():
                     code = remote_stock_item["code"]
                     name = remote_stock_item["name"]
+                    is_temporarily_suspended = (
+                        obj_type == "stock" and remote_stock_item["close"] == 0
+                    )
+                    if not is_temporarily_suspended:
+                        required_quote_attempt_count += 1
                     new_stock_result = self.handle_new_stock(
                         obj_type=obj_type, code=code, name=name
                     )
                     written_quote_count += new_stock_result.get("written_count", 0)
+                    validated_quote_count += new_stock_result.get(
+                        "validated_count",
+                        new_stock_result.get("written_count", 0),
+                    )
+                    update_partial_phase_result()
+                    new_quote_validation_failed = new_stock_result.get("code") not in [
+                        "GOOD",
+                        "SKIP",
+                    ] or (
+                        new_stock_result.get("code") == "GOOD"
+                        and new_stock_result.get("freshness_status") != STATUS_OK
+                    )
+                    if new_quote_validation_failed and not is_allowed_suspension_gap(
+                        is_temporarily_suspended, new_stock_result
+                    ):
+                        failed_quote_codes.append(code)
                     check_counter_dict["NEW"] += 1
                     upd_counter_dict["NEW"] += 1
                     prog_bar(i, remote_data_num)
 
-        attempted_updates = sum(
-            upd_counter_dict[key] for key in ("UPD", "INC", "FULL", "NEW")
-        )
-        if (
-            allow_update
-            and obj_type == "stock"
-            and attempted_updates > 0
-            and written_quote_count == 0
-        ):
-            raise RuntimeError(
-                "Stock quote refresh attempted updates but wrote zero quote rows"
-            )
         status = {
             "code": status_code,
             "msg": status_msg,
             "pulled_count": remote_data_num,
             "written_count": written_quote_count,
+            "validated_count": validated_quote_count,
         }
+        self._partial_phase_result = status
+        if (
+            allow_update
+            and obj_type == "stock"
+            and local_data_num == 0
+            and required_quote_attempt_count > 0
+            and validated_quote_count == 0
+        ):
+            raise RuntimeError(
+                "Stock quote refresh attempted updates but wrote zero quote rows "
+                "(validated zero source rows)"
+            )
+        if allow_update and failed_quote_codes:
+            raise RuntimeError(
+                "Quote validation failed for "
+                f"{len(failed_quote_codes)} symbols; sample={failed_quote_codes[:10]}"
+            )
         return status
 
     def check_data_freshness(self, stock_obj):
@@ -543,9 +704,15 @@ class ChinaAStock(object):
             if obj_type == "stock" and data_capability_helper.stock_supports(
                 new_stock_obj, "daily_quote"
             ):
-                quote_result = self.get_hist_stock_quote_data(code=code)
+                quote_result = self.get_hist_stock_quote_data(
+                    code=code,
+                    end_date=self.most_recent_trading_day.strftime("%Y-%m-%d"),
+                )
             elif obj_type == "index":
-                quote_result = self.get_hist_index_quote_data(code=code)
+                quote_result = self.get_hist_index_quote_data(
+                    code=code,
+                    end_date=self.most_recent_trading_day.strftime("%Y-%m-%d"),
+                )
             else:
                 quote_result = {
                     "code": "SKIP",
@@ -635,7 +802,12 @@ class ChinaAStock(object):
         if start_date:
             kwarg_dict["start_date"] = start_date.strftime("%Y-%m-%d")
         func = getattr(self, hist_quote_handler)
-        result = func(code=stock_obj.code, start_date=start_date_str)
+        end_date_str = self.most_recent_trading_day.strftime("%Y-%m-%d")
+        result = func(
+            code=stock_obj.code,
+            start_date=start_date_str,
+            end_date=end_date_str,
+        )
         if result["code"] != "GOOD":
             logger.warning(
                 f"Something went wrong when trying to get historic quote data for {stock_obj.code} - {stock_obj.name}\n{result['message']}"
@@ -650,10 +822,14 @@ class ChinaAStock(object):
         #                             kwargs=kwarg_dict)
 
     # @performance_helper.func_performance_timer
-    def get_hist_stock_quote_data(self, code, start_date=None, force_insert=False):
+    def get_hist_stock_quote_data(
+        self, code, start_date=None, end_date=None, force_insert=False
+    ):
         status_code = "GOOD"
         status_msg = None
         written_count = 0
+        validated_count = 0
+        freshness_status = None
         stock_obj = (
             IndividualStock.objects(code=code)
             .only("code", "name", "object_type", "data_capabilities")
@@ -671,6 +847,8 @@ class ChinaAStock(object):
                 "code": status_code,
                 "message": status_msg,
                 "written_count": written_count,
+                "validated_count": validated_count,
+                "freshness_status": freshness_status,
             }
         try:
             if not stock_obj:
@@ -680,58 +858,69 @@ class ChinaAStock(object):
                     .first()
                 )
             quote_df = zh_a_daily.get_zh_a_stock_hist_daily_quote(
-                code, start_date=start_date
+                code, start_date=start_date, end_date=end_date
             )
             if isinstance(quote_df, pandas.DataFrame):
                 if not quote_df.empty:
-                    # get column names of the df
-                    bulk_insert_list = []
-                    col_name_list = quote_df.columns.tolist()
-                    date_of_quote = quote_df["date"].max()
-                    for i, row in quote_df.iterrows():
-                        daily_quote = StockDailyQuote()
-                        daily_quote.code = stock_obj.code
-                        daily_quote.stock = stock_obj
-                        for col in col_name_list:
-                            setattr(daily_quote, col, row[col])
-                        daily_quote.amplitude = round(
-                            daily_quote.high - daily_quote.low, 2
-                        )
-                        daily_quote.change_amount = round(
-                            daily_quote.close - daily_quote.previous_close, 2
-                        )
-
-                        bulk_insert_list.append(daily_quote)
-                    try:
-                        # do bulk insert
-                        StockDailyQuote.objects.insert(
-                            bulk_insert_list, load_bulk=False
-                        )
-                        written_count = len(bulk_insert_list)
-                        data_asset_status_helper.refresh_quote_status(
-                            stock_obj=stock_obj,
-                            quote_model=StockDailyQuote,
-                            last_job_name="stock_quote_sync",
-                        )
-                        stock_obj.save()
-                    except NotUniqueError:
-                        logger.warning(
-                            f"{stock_obj.code}-{stock_obj.name}-{'quote'}-{'daily_quote'}-{date_of_quote} encountered NotUniqueError when trying to upsert freshness meta"
-                        )
-                    except BulkWriteError as e:
-                        logger.warning(
-                            f"{stock_obj.code}-{stock_obj.name}-{'quote'}-{'daily_quote'}-{date_of_quote} encountered BulkWriteError {traceback.format_exception(e)} when trying to upsert freshness meta"
-                        )
+                    operations = [
+                        _build_stock_quote_upsert_operation(stock_obj, row)
+                        for _, row in quote_df.iterrows()
+                    ]
+                    result = StockDailyQuote._get_collection().bulk_write(
+                        operations,
+                        ordered=False,
+                    )
+                    written_count = result.upserted_count + result.modified_count
+                    validated_count = len(operations)
+                    expected_latest_date = (
+                        datetime.datetime.strptime(end_date, "%Y-%m-%d")
+                        if end_date
+                        else None
+                    )
+                    freshness = data_asset_status_helper.refresh_quote_status(
+                        stock_obj=stock_obj,
+                        quote_model=StockDailyQuote,
+                        last_job_name="stock_quote_sync",
+                        expected_latest_date=expected_latest_date,
+                        trade_calendar=self.market.trade_calendar,
+                    )
+                    freshness_status = freshness["status"]
+                    stock_obj.save()
                 else:
                     status_code = "FAIL"
                     status_msg = "No available data for update"
                     logger.warning(
-                        f"Stock Market ChinaAStock - Failed to fetch historical quote data "
-                        f"for {code}-{stock_obj.name}, changing active status to 1(inactive)"
+                        "Stock Market ChinaAStock - Failed to fetch historical quote "
+                        f"data for {code}-{stock_obj.name}"
                     )
-                    stock_obj.active_status = 1
-                    stock_obj.save()
+                    freshness = data_asset_status_helper.refresh_quote_status(
+                        stock_obj=stock_obj,
+                        quote_model=StockDailyQuote,
+                        last_job_name="stock_quote_sync",
+                        expected_latest_date=(
+                            datetime.datetime.strptime(end_date, "%Y-%m-%d")
+                            if end_date
+                            else None
+                        ),
+                        trade_calendar=self.market.trade_calendar,
+                    )
+                    freshness_status = freshness["status"]
                     time.sleep(0.5)  # reduce the query frequency
+            else:
+                status_code = "FAIL"
+                status_msg = "No available data for update"
+                freshness = data_asset_status_helper.refresh_quote_status(
+                    stock_obj=stock_obj,
+                    quote_model=StockDailyQuote,
+                    last_job_name="stock_quote_sync",
+                    expected_latest_date=(
+                        datetime.datetime.strptime(end_date, "%Y-%m-%d")
+                        if end_date
+                        else None
+                    ),
+                    trade_calendar=self.market.trade_calendar,
+                )
+                freshness_status = freshness["status"]
         # except KeyError:
         #     status_code = 'FAIL'
         #     status_msg = 'the interface did not return valid dataframe, possibly due to no quote data'
@@ -744,12 +933,18 @@ class ChinaAStock(object):
             "code": status_code,
             "message": status_msg,
             "written_count": written_count,
+            "validated_count": validated_count,
+            "freshness_status": freshness_status,
         }
         return status
 
-    @staticmethod
     def get_hist_index_quote_data(
-        code, start_date=None, end_date=None, force_insert=False, bulk_insert=True
+        self,
+        code,
+        start_date=None,
+        end_date=None,
+        force_insert=False,
+        bulk_insert=True,
     ):
         """
 
@@ -763,10 +958,12 @@ class ChinaAStock(object):
         status_code = "GOOD"
         status_msg = None
         written_count = 0
+        validated_count = 0
+        freshness_status = None
         try:
             index_obj = StockIndex.objects(code=code).only("code", "name").first()
             quote_df = zh_a_daily.get_zh_a_index_hist_daily_quote(
-                code, start_date=start_date
+                code, start_date=start_date, end_date=end_date
             )
             if index_obj:
                 if not quote_df.empty:
@@ -795,11 +992,19 @@ class ChinaAStock(object):
                         written_count = result.upserted_count
                     else:
                         written_count = len(quote_df)
-                    data_asset_status_helper.refresh_quote_status(
+                    validated_count = len(quote_df)
+                    freshness = data_asset_status_helper.refresh_quote_status(
                         stock_obj=index_obj,
                         quote_model=StockDailyQuote,
                         last_job_name="index_market_sync",
+                        expected_latest_date=(
+                            datetime.datetime.strptime(end_date, "%Y-%m-%d")
+                            if end_date
+                            else None
+                        ),
+                        trade_calendar=self.market.trade_calendar,
                     )
+                    freshness_status = freshness["status"]
                     index_obj.save(force_insert=force_insert)
                 else:
                     status_code = "FAIL"
@@ -818,18 +1023,28 @@ class ChinaAStock(object):
             "code": status_code,
             "message": status_msg,
             "written_count": written_count,
+            "validated_count": validated_count,
+            "freshness_status": freshness_status,
         }
         return status
 
     def perform_date_check(self):
-        # determine the closest trading day
-        today = datetime.date.today()
-        if self.today != today or self.most_recent_trading_day is None:
-            self.today = today
-            self.most_recent_trading_day = (
-                trading_day_helper.determine_closest_trading_date(
-                    self.market.trade_calendar
-                )
+        latest_complete_trading_day = (
+            trading_day_helper.determine_latest_complete_trading_date(
+                self.market.trade_calendar,
+                self.run_started_at,
+            )
+        )
+        if self.most_recent_trading_day is None:
+            self.most_recent_trading_day = latest_complete_trading_day
+        if self.most_recent_trading_day is None or latest_complete_trading_day is None:
+            raise RuntimeError("No complete trading day is available for quote refresh")
+        if self.explicit_as_of_date and (
+            self.most_recent_trading_day not in self.market.trade_calendar
+            or self.most_recent_trading_day > latest_complete_trading_day
+        ):
+            raise ValueError(
+                "Explicit as_of_date must be a completed market trading day"
             )
         logger.info(
             "Stock Market %s - Date check resolved today=%s most_recent_trading_day=%s calendar_tail=%s",

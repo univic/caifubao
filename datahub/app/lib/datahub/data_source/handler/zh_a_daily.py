@@ -250,21 +250,31 @@ def get_zh_a_stock_spot():
     return df
 
 
-def get_zh_a_index_hist_daily_quote(code, start_date=None, incremental=True):
+def get_zh_a_index_hist_daily_quote(
+    code, start_date=None, end_date=None, incremental=True
+):
     raw_df = _call_with_retry(
         lambda: interface.akshare_interface.stock_zh_index_daily(code),
         label=f"stock_zh_index_daily:{code}",
     )
     raw_df.fillna(0, inplace=True)
+    if end_date:
+        end_date = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+        raw_df = raw_df[raw_df.date <= end_date]
     if incremental and start_date:
         start_date = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
-        df = raw_df[raw_df.date > start_date].sort_index(axis=1, ascending=False)
+        df = raw_df[raw_df.date >= start_date].sort_index(axis=1, ascending=False)
     else:
         df = raw_df
     return df
 
 
-def get_zh_a_stock_hist_daily_quote(code, start_date=None):
+def get_zh_a_stock_hist_daily_quote(code, start_date=None, end_date=None):
+    normalized_end_date = (
+        end_date.replace("-", "")
+        if end_date
+        else datetime.date.today().strftime("%Y%m%d")
+    )
     if get_stock_history_source() == "akshare":
         symbol = code[2:] if code.startswith(("sh", "sz", "bj")) else code
         normalized_start_date = start_date.replace("-", "") if start_date else None
@@ -272,11 +282,12 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None):
             lambda: interface.akshare_interface.stock_zh_a_hist(
                 symbol,
                 start_date=normalized_start_date,
-                end_date=datetime.date.today().strftime("%Y%m%d"),
+                end_date=normalized_end_date,
             ),
             label=f"akshare_stock_zh_a_hist:{code}",
         )
-        return _normalize_akshare_stock_history(raw_df, code)
+        normalized = _normalize_akshare_stock_history(raw_df, code)
+        return normalized[normalized["date"] <= pandas.to_datetime(normalized_end_date)]
 
     name_mapping = {
         "preclose": "previous_close",
@@ -302,7 +313,13 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None):
     ]
     int_columns = ["adjustflag", "tradestatus", "isST"]
     raw_df = _call_with_retry(
-        lambda: BaostockInterfaceManager.get_zh_a_stock_hist_k_data(code, start_date),
+        lambda: BaostockInterfaceManager.get_zh_a_stock_hist_k_data(
+            code,
+            start_date,
+            datetime.datetime.strptime(normalized_end_date, "%Y%m%d").strftime(
+                "%Y-%m-%d"
+            ),
+        ),
         label=f"stock_hist_k_data:{code}",
     )
     if len(raw_df) > 0:
@@ -312,6 +329,8 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None):
         raw_df[float_columns] = raw_df[float_columns].astype("float")
         raw_df[int_columns] = raw_df[int_columns].astype("int")
         raw_df.rename(name_mapping, axis=1, inplace=True)  # rename column
+        raw_df["date"] = pandas.to_datetime(raw_df["date"])
+        raw_df = raw_df[raw_df["date"] <= pandas.to_datetime(normalized_end_date)]
         raw_df["code"] = raw_df["code"].apply(
             lambda x: x.replace(".", "")
         )  # replace the dot in the stock code
