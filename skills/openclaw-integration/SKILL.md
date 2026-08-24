@@ -21,8 +21,8 @@ Source of truth: `docs/integrations/openclaw.md`, `docs/operations/service-token
 
 ## 1. Authentication (service tokens)
 
-- Header: `Authorization: Bearer st_...` (plain tokens are `st_` + 32-char urlsafe
-  random; `generate_service_token` in `auth_util.py`).
+- Header: `Authorization: Bearer st_...` (plain tokens are `st_` + 32-byte urlsafe
+  random, base64url-encoded to 43 chars; `generate_service_token` in `auth_util.py`).
 - Managed via `backend/app/scripts/manage_service_tokens.py`:
   - `create --name <n> [--scopes openclaw:data-read] [--expires 365]` — plain token printed once, never again.
   - `list` — name / status / expires / scopes.
@@ -36,8 +36,10 @@ Source of truth: `docs/integrations/openclaw.md`, `docs/operations/service-token
   `--expires 0` for never); `ServiceToken.is_valid()` rejects non-active, expired,
   or scope-missing tokens. Lookup is `token_hash` + `status=active`.
 - Audit: each successful request updates `last_used_at` + `last_used_ip` on the
-  token doc; every response carries a per-request `request_id` for tracing.
-  (No separate audit-log collection found in backend code — 未核实.)
+  token doc; `wrap_response` success bodies carry a per-request `request_id` for
+  tracing. An `EventLog` model exists (`backend/app/model/event_log.py`) but is
+  NOT wired into the service-token auth path (no separate audit collection for
+  OpenClaw requests — 已核实).
 
 ## 2. Endpoint map (all GET, base `/api/v1/integrations/openclaw`)
 
@@ -45,7 +47,7 @@ Source of truth: `docs/integrations/openclaw.md`, `docs/operations/service-token
 |---|---|---|---|
 | `/` | data-read | — | health/info; `version: v1-mvp`, `service_identity` = token name |
 | `/stocks` | data-read | page(1), per_page(100), active_status(0/1/2), exchange, market, keyword | stock metadata + data_capabilities |
-| `/quotes/daily` | data-read | symbols (required, comma-sep), start_date, end_date, page, per_page(100) | OHLCV + trade_amount, turnover_rate, trade_status, is_st |
+| `/quotes/daily` | data-read | symbols (docs say required; code does NOT enforce — absent ⇒ full-table scan), start_date, end_date, page, per_page(100) | OHLCV + trade_amount, turnover_rate, trade_status, is_st |
 | `/factors/daily` | data-read | symbols, start_date, end_date, page, per_page(50) | fq_factor, *_hfq, open/close, ma_10..ma_120 |
 | `/signals` | data-read | date, signal_name, direction, page, per_page(100) | includes factor/price snapshot, generated_at |
 | `/quality` | data-read | symbol, asset_type | freshness/coverage; items hard-capped at 500 |
@@ -60,13 +62,18 @@ Source of truth: `docs/integrations/openclaw.md`, `docs/operations/service-token
 
 ## 3. Response envelope & errors
 
-- Every response: `success`, `message`, `request_id` (uuid4), `generated_at`
-  (ISO-8601 UTC), `data`; optional `data_as_of` (ISO-8601). Built by `wrap_response`
-  in `utils.py` — do not return raw Mongo shapes (P2: API response is the contract).
-- Errors: 401 `AUTH_HEADER_MISSING` (missing/bad header) or invalid/inactive token;
-  403 `AUTH_FAILED` for missing scope; 403 `SERVICE_TOKEN_BLOCKED` on compute
-  endpoints; 400 for invalid horizon on recommendations. 429 is documented as
-  contract-based rate limiting — no rate-limit implementation found in backend (未核实).
+- `wrap_response` (utils.py) success bodies: `success`, `message`, `request_id`
+  (uuid4), `generated_at` (ISO-8601), `data`; optional `data_as_of` (ISO-8601).
+  Do not return raw Mongo shapes (P2: API response is the contract). Note: the
+  `/` health endpoint and 401/403 error bodies are NOT wrapped — they return
+  only `success`/`message` (+`version`/`service_identity`/`timestamp` on `/`,
+  +`error_code` on auth failures), with no `request_id`/`generated_at`/`data`.
+- Errors: missing/bad Authorization header → 401 `AUTH_HEADER_MISSING`;
+  invalid/inactive token → 401 `AUTH_FAILED`; valid token missing scope → 403
+  `AUTH_FAILED`; service token on a compute endpoint → 403 `SERVICE_TOKEN_BLOCKED`;
+  400 for invalid horizon on recommendations. 429 is documented as contract-based
+  rate limiting — no rate-limit implementation exists in the backend (grep for
+  429/rate-limit/flask-limiter: zero matches; may live at gateway/ingress).
 
 ## 4. Freshness semantics
 
