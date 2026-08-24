@@ -656,6 +656,8 @@ class TestChinaAStockHelpers(TestCase):
             }
         )
 
+        reuse_info = {"objects_calls": 0}
+
         class FakeIndividualStock:
             instances = []
 
@@ -673,6 +675,7 @@ class TestChinaAStockHelpers(TestCase):
 
             @classmethod
             def objects(cls, code=None):
+                reuse_info["objects_calls"] += 1
                 return SimpleNamespace(first=lambda: FakeIndividualStock.instances[0])
 
         with patch(
@@ -684,6 +687,9 @@ class TestChinaAStockHelpers(TestCase):
 
         self.assertEqual(first["written_count"], 3)
         self.assertEqual(second["written_count"], 3)
+        # The duplicate-save branch must have reused the existing master
+        # record (objects() is only called from the NotUniqueError path).
+        self.assertGreaterEqual(reuse_info["objects_calls"], 1)
 
     def test_stringified_mongoengine_bulk_write_error_is_detected(self):
         from app.lib.utilities.mongo_error_helper import (
