@@ -242,6 +242,11 @@ curl -s http://api.dev.cfb.concorde102.cn/api/market/comprehensive?date=$(date +
 
 ### Workflow 4: Post-reset bootstrap readiness
 
+For a long quote rebuild, first follow the deterministic bootstrap gate in
+[`mongodb-resilience.md`](./mongodb-resilience.md). Keep scheduled quote jobs
+suspended and use a one-shot quote runner with one explicit `--as-of-date` for
+the entire logical run. Do not resume a Job created from an older image.
+
 ```bash
 # 1. Confirm core services and MongoDB are reachable
 ./scripts/caifubao system health
