@@ -413,8 +413,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install OpenSpec
-        run: npm install -g @fission-ai/openspec
+        run: npm install -g @fission-ai/openspec@1.1.1
 
+      # Validates all active changes under openspec/changes/. The MVP change is
+      # archived (openspec/archive/), so this gate is dormant until the next
+      # spec-gated change is created — that change MUST include a proposal.md
+      # (validate silently skips changes without one).
       - name: Validate OpenSpec changes
         run: openspec validate --all --strict
 

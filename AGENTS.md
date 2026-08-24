@@ -122,9 +122,9 @@ In summary:
 
 ## Skills (load before domain work)
 
-Repository skills live in `skills/<name>/SKILL.md` and are referenced from
-`opencode.json` and `docs/`. Load the matching skill before starting domain
-work:
+Repository skills live in `skills/<name>/SKILL.md` and are loaded via
+`opencode.json` or the table below. Load the matching skill before starting
+domain work:
 
 | Skill | When to load |
 |:---|:---|

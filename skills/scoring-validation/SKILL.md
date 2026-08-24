@@ -135,8 +135,6 @@ assert prediction.verification["verified_quote_count"] == 5
 assert prediction.verification["hit_target_close"] is True
 ```
 
-要点：先造"未来"日期行情再造验证；断言无未来数据泄漏（参考 `test_scoring_does_not_read_future_quotes`）。
-
 ## 6. 自检清单
 
 - [ ] 改动只作用于新的 `model_version`，未污染线上版本
