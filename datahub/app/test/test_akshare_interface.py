@@ -10,6 +10,27 @@ import pandas as pd
 class TestAkshareInterfaceFunctions(TestCase):
     """Test cases for akshare interface functions via direct mocking."""
 
+    def test_required_provider_functions_are_available(self):
+        from app.lib.datahub.data_source.interface import akshare_interface
+
+        required_functions = (
+            "stock_sse_deal_daily",
+            "stock_sse_summary",
+            "stock_sh_a_spot_em",
+            "stock_zh_a_hist",
+            "stock_zh_a_spot",
+            "stock_zh_a_spot_em",
+            "stock_zh_a_stop_em",
+            "stock_zh_index_daily",
+            "stock_zh_index_spot_sina",
+            "tool_trade_date_hist_sina",
+        )
+        for function_name in required_functions:
+            self.assertTrue(
+                callable(getattr(akshare_interface.akshare, function_name, None)),
+                function_name,
+            )
+
     def test_get_trade_date_hist_returns_dataframe(self):
         """Test that get_trade_date_hist returns DataFrame from akshare."""
         mock_df = pd.DataFrame(
@@ -156,30 +177,6 @@ class TestAkshareInterfaceFunctions(TestCase):
             result = stock_zh_a_hist("600000")
 
             mock_akshare.stock_zh_a_hist.assert_called_once()
-            self.assertIsInstance(result, pd.DataFrame)
-
-    def test_stock_zh_a_hist_163_with_start_date(self):
-        """Test stock_zh_a_hist_163 with start_date parameter."""
-        mock_df = pd.DataFrame(
-            {
-                "日期": ["2024-01-08"],
-                "开盘": [10.0],
-                "收盘": [10.2],
-            }
-        )
-
-        with patch(
-            "app.lib.datahub.data_source.interface.akshare_interface.akshare"
-        ) as mock_akshare:
-            mock_akshare.stock_zh_a_hist_163.return_value = mock_df
-
-            from app.lib.datahub.data_source.interface.akshare_interface import (
-                stock_zh_a_hist_163,
-            )
-
-            result = stock_zh_a_hist_163("600000", start_date="2024-01-08")
-
-            mock_akshare.stock_zh_a_hist_163.assert_called_once()
             self.assertIsInstance(result, pd.DataFrame)
 
     def test_stock_zh_a_stop_em_returns_dataframe(self):

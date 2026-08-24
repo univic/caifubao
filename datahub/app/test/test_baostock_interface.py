@@ -10,6 +10,16 @@ import pandas as pd
 class TestBaostockInterfaceManager(TestCase):
     """Test cases for BaostockInterfaceManager class."""
 
+    def test_required_provider_functions_are_available(self):
+        from app.lib.datahub.data_source.interface import baostock_interface
+
+        required_functions = ("login", "logout", "query_history_k_data_plus")
+        for function_name in required_functions:
+            self.assertTrue(
+                callable(getattr(baostock_interface.bs, function_name, None)),
+                function_name,
+            )
+
     def test_establish_baostock_conn_success(self):
         """Test successful baostock connection establishment."""
         with patch(
