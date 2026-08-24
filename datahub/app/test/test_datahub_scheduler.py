@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 
-def _install_apscheduler_stubs():
+def _install_apscheduler_stubs(monkeypatch):
     apscheduler = types.ModuleType("apscheduler")
     schedulers = types.ModuleType("apscheduler.schedulers")
     background = types.ModuleType("apscheduler.schedulers.background")
@@ -23,19 +23,19 @@ def _install_apscheduler_stubs():
     mongodb.MongoDBJobStore = object
     pool.ThreadPoolExecutor = object
 
-    sys.modules.setdefault("apscheduler", apscheduler)
-    sys.modules.setdefault("apscheduler.schedulers", schedulers)
-    sys.modules.setdefault("apscheduler.schedulers.background", background)
-    sys.modules.setdefault("apscheduler.triggers", triggers)
-    sys.modules.setdefault("apscheduler.triggers.cron", cron)
-    sys.modules.setdefault("apscheduler.jobstores", jobstores)
-    sys.modules.setdefault("apscheduler.jobstores.base", base)
-    sys.modules.setdefault("apscheduler.jobstores.mongodb", mongodb)
-    sys.modules.setdefault("apscheduler.executors", executors)
-    sys.modules.setdefault("apscheduler.executors.pool", pool)
+    monkeypatch.setitem(sys.modules, "apscheduler", apscheduler)
+    monkeypatch.setitem(sys.modules, "apscheduler.schedulers", schedulers)
+    monkeypatch.setitem(sys.modules, "apscheduler.schedulers.background", background)
+    monkeypatch.setitem(sys.modules, "apscheduler.triggers", triggers)
+    monkeypatch.setitem(sys.modules, "apscheduler.triggers.cron", cron)
+    monkeypatch.setitem(sys.modules, "apscheduler.jobstores", jobstores)
+    monkeypatch.setitem(sys.modules, "apscheduler.jobstores.base", base)
+    monkeypatch.setitem(sys.modules, "apscheduler.jobstores.mongodb", mongodb)
+    monkeypatch.setitem(sys.modules, "apscheduler.executors", executors)
+    monkeypatch.setitem(sys.modules, "apscheduler.executors.pool", pool)
 
 
-def _install_app_conf_stub():
+def _install_app_conf_stub(monkeypatch):
     conf = types.ModuleType("app.conf")
     conf.app_config = types.SimpleNamespace(
         MONGODB_HOST="localhost",
@@ -44,10 +44,10 @@ def _install_app_conf_stub():
         MONGODB_USERNAME="root",
         MONGODB_PASSWORD="pass",
     )
-    sys.modules.setdefault("app.conf", conf)
+    monkeypatch.setitem(sys.modules, "app.conf", conf)
 
 
-def _install_datahub_dependency_stubs():
+def _install_datahub_dependency_stubs(monkeypatch):
     processors = types.ModuleType("app.lib.datahub.processors")
     processors.registry = {}
 
@@ -61,15 +61,23 @@ def _install_datahub_dependency_stubs():
     trading_helper.is_trading_day = lambda *_args, **_kwargs: True
     trading_helper.get_a_stock_market_trade_calendar = lambda: []
 
-    sys.modules.setdefault("app.lib.datahub.processors", processors)
-    sys.modules.setdefault("app.lib.task_controller", task_controller_module)
-    sys.modules.setdefault("app.lib.db_watcher.mongoengine_tool", mongoengine_tool)
-    sys.modules.setdefault("app.lib.utilities.trading_day_helper", trading_helper)
+    monkeypatch.setitem(sys.modules, "app.lib.datahub.processors", processors)
+    monkeypatch.setitem(sys.modules, "app.lib.task_controller", task_controller_module)
+    monkeypatch.setitem(
+        sys.modules, "app.lib.db_watcher.mongoengine_tool", mongoengine_tool
+    )
+    monkeypatch.setitem(
+        sys.modules, "app.lib.utilities.trading_day_helper", trading_helper
+    )
 
 
-_install_apscheduler_stubs()
-_install_app_conf_stub()
-_install_datahub_dependency_stubs()
+@pytest.fixture(autouse=True)
+def isolated_scheduler_dependencies(monkeypatch):
+    """Keep scheduler dependency stubs scoped to this test module."""
+    _install_apscheduler_stubs(monkeypatch)
+    _install_app_conf_stub(monkeypatch)
+    _install_datahub_dependency_stubs(monkeypatch)
+    monkeypatch.delitem(sys.modules, "app.lib.datahub", raising=False)
 
 
 def test_scheduled_job_reraises_failures(monkeypatch, caplog):

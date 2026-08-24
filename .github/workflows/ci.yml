@@ -209,6 +209,51 @@ jobs:
           ruff check datahub/
           ruff format --check datahub/
 
+  datahub-test:
+    name: Datahub Tests (Python 3.12)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.datahub == 'true'
+
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "echo 'db.runCommand(\"ping\").ok' | mongosh localhost:27017/test --quiet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: datahub/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          cd datahub
+          pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip install pytest pytest-mock
+
+      - name: Run datahub tests
+        run: |
+          cd datahub
+          PYTHONPATH=. python -m pytest app/test/ -v
+        env:
+          APP_ENV: test
+          MONGODB_HOST: localhost
+          MONGODB_PORT: 27017
+          MONGODB_NAME: caifubao-test
+
   dockerfile-check:
     name: Dockerfile Syntax Check
     runs-on: ubuntu-latest
@@ -371,7 +416,7 @@ jobs:
   required-checks:
     name: Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, backend-test, backend-lint, frontend-check, datahub-lint, dockerfile-check, kustomize-check, private-deploy-dry-run, openspec-check]
+    needs: [changes, backend-test, backend-lint, frontend-check, datahub-test, datahub-lint, dockerfile-check, kustomize-check, private-deploy-dry-run, openspec-check]
     if: always()
 
     steps:
@@ -391,6 +436,7 @@ jobs:
           check_result "Backend tests" "${{ needs.backend-test.result }}"
           check_result "Backend lint" "${{ needs.backend-lint.result }}"
           check_result "Frontend checks" "${{ needs.frontend-check.result }}"
+          check_result "Datahub tests" "${{ needs.datahub-test.result }}"
           check_result "Datahub lint" "${{ needs.datahub-lint.result }}"
           check_result "Dockerfile check" "${{ needs.dockerfile-check.result }}"
           check_result "Kustomize check" "${{ needs.kustomize-check.result }}"

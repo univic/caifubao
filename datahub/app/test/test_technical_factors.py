@@ -225,8 +225,8 @@ class TestRSI14:
 
 
 class TestRegistry:
-    def test_all_eight_factors(self):
-        assert len(ALL_TECHNICAL_FACTORS) == 8
+    def test_all_nine_factors(self):
+        assert len(ALL_TECHNICAL_FACTORS) == 9
         expected = {
             "volume_ratio",
             "bb_position",
@@ -236,6 +236,7 @@ class TestRegistry:
             "gap_ratio",
             "yearly_position",
             "rsi_14",
+            "real_relative_strength",
         }
         assert set(ALL_TECHNICAL_FACTORS.keys()) == expected
 

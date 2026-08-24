@@ -220,8 +220,9 @@ class ChinaAStock(object):
         return status
 
     def check_stock_data_integrity(self, allow_update=False):
-        baostock_conn_mgr = BaostockInterfaceManager()
-        baostock_conn_mgr.establish_baostock_conn()
+        if zh_a_daily.stock_history_uses_baostock():
+            baostock_conn_mgr = BaostockInterfaceManager()
+            baostock_conn_mgr.establish_baostock_conn()
         local_stock_list = IndividualStock.objects(market=self.market)
         remote_stock_list = zh_a_daily.get_zh_a_stock_spot()
         status = self.check_data_integrity(
@@ -442,8 +443,26 @@ class ChinaAStock(object):
                 for i, remote_stock_item in remote_data_df.iterrows():
                     code = remote_stock_item["code"]
                     name = remote_stock_item["name"]
-                    self.handle_new_stock(obj_type=obj_type, code=code, name=name)
+                    new_stock_result = self.handle_new_stock(
+                        obj_type=obj_type, code=code, name=name
+                    )
+                    written_quote_count += new_stock_result.get("written_count", 0)
+                    check_counter_dict["NEW"] += 1
+                    upd_counter_dict["NEW"] += 1
                     prog_bar(i, remote_data_num)
+
+        attempted_updates = sum(
+            upd_counter_dict[key] for key in ("UPD", "INC", "FULL", "NEW")
+        )
+        if (
+            allow_update
+            and obj_type == "stock"
+            and attempted_updates > 0
+            and written_quote_count == 0
+        ):
+            raise RuntimeError(
+                "Stock quote refresh attempted updates but wrote zero quote rows"
+            )
         status = {
             "code": status_code,
             "msg": status_msg,

@@ -281,6 +281,11 @@ quote → FQ factor → MA factor → signal → scoring → verification
   └── baostock/akshare → writes stock_daily_quote
 ```
 
+Stock history defaults to AkShare over HTTPS. Set
+`DATAHUB_STOCK_HISTORY_SOURCE=baostock` only where outbound TCP access to
+`www.baostock.com:10030` is known to work. A stock refresh that attempts
+updates but writes zero quote rows fails before factor and scoring phases.
+
 ### Data sync (prod → dev)
 The `data sync` command uses the `MONGODB_SRC_*` environment variables
 configured in the datahub pod. It reads from prod MongoDB and upserts into

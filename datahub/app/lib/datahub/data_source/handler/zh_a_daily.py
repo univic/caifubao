@@ -1,6 +1,9 @@
 import datetime
 import logging
+import os
 import time
+
+import pandas
 from requests.exceptions import ConnectionError, RequestException
 
 from app.lib.datahub.data_source import interface
@@ -11,6 +14,10 @@ from app.lib.utilities import trading_day_helper, performance_helper, stock_code
 
 
 logger = logging.getLogger(__name__)
+
+
+STOCK_HISTORY_SOURCE_ENV = "DATAHUB_STOCK_HISTORY_SOURCE"
+SUPPORTED_STOCK_HISTORY_SOURCES = {"akshare", "baostock"}
 
 
 TRANSIENT_NETWORK_MARKERS = (
@@ -64,6 +71,99 @@ def _call_with_retry(
             time.sleep(delay)
 
     raise last_error
+
+
+def get_stock_history_source() -> str:
+    source = os.getenv(STOCK_HISTORY_SOURCE_ENV, "akshare").strip().lower()
+    if source not in SUPPORTED_STOCK_HISTORY_SOURCES:
+        raise ValueError(
+            f"{STOCK_HISTORY_SOURCE_ENV} must be one of "
+            f"{sorted(SUPPORTED_STOCK_HISTORY_SOURCES)}"
+        )
+    return source
+
+
+def stock_history_uses_baostock() -> bool:
+    return get_stock_history_source() == "baostock"
+
+
+def _normalize_akshare_stock_history(raw_df, code: str):
+    if raw_df is None or raw_df.empty:
+        return None
+
+    column_mapping = {
+        "日期": "date",
+        "开盘": "open",
+        "收盘": "close",
+        "最高": "high",
+        "最低": "low",
+        "成交量": "volume",
+        "成交额": "trade_amount",
+        "涨跌幅": "change_rate",
+        "涨跌额": "change_amount",
+        "换手率": "turnover_rate",
+    }
+    normalized = raw_df.rename(columns=column_mapping).copy()
+    required_columns = {"date", "open", "close", "high", "low", "volume"}
+    missing_columns = required_columns - set(normalized.columns)
+    if missing_columns:
+        raise ValueError(
+            "AkShare stock history response missing required columns: "
+            f"{sorted(missing_columns)}"
+        )
+
+    normalized["date"] = pandas.to_datetime(normalized["date"])
+    numeric_columns = [
+        "open",
+        "close",
+        "high",
+        "low",
+        "volume",
+        "trade_amount",
+        "change_rate",
+        "change_amount",
+        "turnover_rate",
+    ]
+    for column in numeric_columns:
+        if column not in normalized:
+            normalized[column] = 0
+        normalized[column] = pandas.to_numeric(
+            normalized[column], errors="coerce"
+        ).fillna(0)
+
+    normalized["previous_close"] = (
+        normalized["close"] - normalized["change_amount"]
+    ).round(4)
+    normalized["volume"] = normalized["volume"].astype("int64")
+    normalized["code"] = code
+    normalized["trade_status"] = 1
+    normalized["peTTM"] = 0.0
+    normalized["pbMRQ"] = 0.0
+    normalized["psTTM"] = 0.0
+    normalized["pcfNcfTTM"] = 0.0
+    normalized["isST"] = 0
+
+    canonical_columns = [
+        "date",
+        "code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "previous_close",
+        "volume",
+        "trade_amount",
+        "turnover_rate",
+        "change_rate",
+        "change_amount",
+        "trade_status",
+        "peTTM",
+        "pbMRQ",
+        "psTTM",
+        "pcfNcfTTM",
+        "isST",
+    ]
+    return normalized[canonical_columns]
 
 
 def get_a_stock_trade_date_hist():
@@ -165,6 +265,19 @@ def get_zh_a_index_hist_daily_quote(code, start_date=None, incremental=True):
 
 
 def get_zh_a_stock_hist_daily_quote(code, start_date=None):
+    if get_stock_history_source() == "akshare":
+        symbol = code[2:] if code.startswith(("sh", "sz", "bj")) else code
+        normalized_start_date = start_date.replace("-", "") if start_date else None
+        raw_df = _call_with_retry(
+            lambda: interface.akshare_interface.stock_zh_a_hist(
+                symbol,
+                start_date=normalized_start_date,
+                end_date=datetime.date.today().strftime("%Y%m%d"),
+            ),
+            label=f"akshare_stock_zh_a_hist:{code}",
+        )
+        return _normalize_akshare_stock_history(raw_df, code)
+
     name_mapping = {
         "preclose": "previous_close",
         "pcgChg": "change_rate",
