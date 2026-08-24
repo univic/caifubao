@@ -415,8 +415,8 @@ jobs:
       - name: Install OpenSpec
         run: npm install -g @fission-ai/openspec
 
-      - name: Validate mvp-quant-demo
-        run: openspec validate mvp-quant-demo --strict
+      - name: Validate OpenSpec changes
+        run: openspec validate --all --strict
 
   required-checks:
     name: Required Checks

@@ -2,7 +2,7 @@
 name: scoring-factor
 description: Workflow for adding/changing scoring engine factors in caifubao. Covers components, config, service integration, tests, specs, and frontend.
 license: MIT
-compatibility: opencode
+compatibility: opencode, dsh
 metadata:
   audience: contributors
   project: caifubao
@@ -20,8 +20,8 @@ Adding or modifying a scoring factor in the caifubao A-share quant scoring engin
 | 2. Config | `datahub/app/lib/scoring_engine/config.py` | Add weight + lookback to all 3 horizon configs (5/20/60) |
 | 3. Service | `datahub/app/lib/scoring_engine/scoring_service.py` | Import component, add to `_build_components`, update `max()` history limit if needed |
 | 4. Tests | `datahub/app/test/test_scoring_service.py` | Cover: normal case, fallback/missing-data case, edge case. Use FakeQuote with relevant fields |
-| 5. Spec | `openspec/changes/mvp-quant-demo/specs/stock-scoring/spec.md` | Add a Requirement with GIVEN/WHEN/THEN Scenario |
-| 6. Tasks | `openspec/changes/mvp-quant-demo/tasks.md` | Add task item (check as [x]) |
+| 5. Spec (optional) | `openspec/archive/mvp-quant-demo/specs/stock-scoring/spec.md` | Only if the change alters a public scoring contract: add a Requirement with GIVEN/WHEN/THEN Scenario |
+| 6. Tasks (optional) | `openspec/archive/mvp-quant-demo/tasks.md` | Only for contract-changing work: add task item (check as [x]) |
 | 7. Frontend types | `frontend/src/api/scores.ts` | Add TypeScript interface if exposing new fields |
 | 8. Frontend display | `frontend/src/views/` | Wire into MarketView.vue or QuoteDetailView.vue |
 | 9. Validation | Terminal | `ruff check && ruff format --check` on datahub, `make test-backend` |

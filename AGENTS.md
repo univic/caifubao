@@ -105,8 +105,8 @@ data ownership, or public docs.
 
 Four principles that apply to ALL agents. These address common LLM coding
 pitfalls identified by Andrej Karpathy. Rules are defined in
-`RULES.md#surgical-discipline` with full details in
-[`.opencode/skills/karpathy-discipline/SKILL.md`](.opencode/skills/karpathy-discipline/SKILL.md).
+`RULES.md#surgical-discipline`. The standalone skill was folded into `RULES.md`
+— that file is the single authority; do not re-introduce a separate skill.
 
 In summary:
 
@@ -119,6 +119,28 @@ In summary:
 - **Goal-Driven Execution**: Define a verifiable success criterion. Transform
   "fix the bug" into "write a failing test, then make it pass." Loop until
   verification passes.
+
+## Skills (load before domain work)
+
+Repository skills live in `skills/<name>/SKILL.md` and are referenced from
+`opencode.json` and `docs/`. Load the matching skill before starting domain
+work:
+
+| Skill | When to load |
+|:---|:---|
+| `caifubao-dev` | Always — operating model, gates, validation, conventions |
+| `scoring-factor` | Adding/changing a scoring engine factor |
+| `scoring-validation` | Validating scoring/backtest changes (verification, replay, calibration, grid search, factor eval, walk-forward) |
+| `openclaw-integration` | Any OpenClaw contract, service-token, or `/api/v1/integrations/openclaw` work |
+| `datahub-data-quality` | Freshness, data quality, BSE exclusion, HFQ gaps, deterministic bootstrap |
+
+## OpenSpec Status
+
+The MVP change is archived as the contract ledger:
+`openspec/archive/mvp-quant-demo/` (specs, design, tasks). CI still runs
+`openspec validate --all --strict` on OpenSpec path changes. Create a new
+change under `openspec/changes/` only when a task changes API contracts, auth,
+scoring semantics, data ownership, or public docs (see `RULES.md#spec-gate`).
 
 ## Validation Expectations
 
