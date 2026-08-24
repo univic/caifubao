@@ -10,6 +10,45 @@ import pandas
 from app.lib.datahub.data_source.handler import zh_a_daily
 
 
+class TestRetryPolicy(TestCase):
+    def test_json_decode_error_is_retryable(self):
+        class FakeJSONDecodeError(Exception):
+            pass
+
+        error = FakeJSONDecodeError("Can not decode value starting with character '<'")
+        self.assertTrue(zh_a_daily._is_retryable_market_data_error(error))
+
+    def test_network_error_is_retryable_and_value_error_is_not(self):
+        from requests.exceptions import ConnectionError as RequestsConnectionError
+
+        self.assertTrue(
+            zh_a_daily._is_retryable_market_data_error(
+                RequestsConnectionError("Connection aborted.")
+            )
+        )
+        self.assertFalse(
+            zh_a_daily._is_retryable_market_data_error(ValueError("bad data"))
+        )
+
+    def test_call_with_retry_retries_decode_error_then_succeeds(self):
+        class FakeJSONDecodeError(Exception):
+            pass
+
+        error = FakeJSONDecodeError("Can not decode value starting with character '<'")
+        calls = {"n": 0}
+
+        def fetcher():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise error
+            return "ok"
+
+        result = zh_a_daily._call_with_retry(fetcher, label="test", base_delay=0)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(calls["n"], 3)
+
+
 class TestStockHistorySource(TestCase):
     def test_index_increment_start_date_is_inclusive(self):
         raw = pandas.DataFrame(
