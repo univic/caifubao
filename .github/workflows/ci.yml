@@ -230,6 +230,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Assemble shared backend modules for Datahub
+        run: |
+          cp -r backend/app/utilities/. datahub/app/utilities/
+          cp -r backend/app/model/. datahub/app/model/
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
