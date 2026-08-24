@@ -199,18 +199,18 @@ class TestStockHistorySource(TestCase):
                 return_value=raw,
             ) as fetch:
                 result = zh_a_daily.get_zh_a_stock_hist_daily_quote(
-                    "sh600519", start_date="2026-08-20", end_date="2026-08-21"
+                    "sh600519", start_date="2026-08-20", end_date="2026-08-24"
                 )
 
         fetch.assert_called_once_with(
             "600519.SH",
             start_date="20260820",
-            end_date="20260821",
+            end_date="20260824",
         )
-        # tushare 返回降序 -> 归一化后升序，且按 end_date 过滤（2026-08-24 被排除）
+        # tushare 返回降序 -> 归一化后升序；end_date 含 2026-08-24，两行都保留
         self.assertEqual(
             [str(d)[:10] for d in result["date"].tolist()],
-            ["2026-08-21"],
+            ["2026-08-21", "2026-08-24"],
         )
         self.assertEqual(result.iloc[0]["code"], "sh600519")
         self.assertEqual(result.iloc[0]["previous_close"], 1291.5)
@@ -222,6 +222,135 @@ class TestStockHistorySource(TestCase):
         self.assertEqual(result.iloc[0]["trade_status"], 1)
         self.assertTrue(pandas.api.types.is_datetime64_any_dtype(result["date"]))
 
+    def test_tushare_empty_history_returns_none(self):
+        with patch.dict(os.environ, {zh_a_daily.STOCK_HISTORY_SOURCE_ENV: "tushare"}):
+            with patch.object(
+                zh_a_daily.interface.tushare_interface,
+                "tushare_daily",
+                return_value=pandas.DataFrame(),
+            ):
+                result = zh_a_daily.get_zh_a_stock_hist_daily_quote(
+                    "sh600519", start_date="2026-08-20", end_date="2026-08-24"
+                )
+        self.assertIsNone(result)
+
+    def test_tushare_missing_required_column_raises(self):
+        raw = pandas.DataFrame(
+            [
+                {
+                    "ts_code": "600519.SH",
+                    "trade_date": "20260821",
+                    "open": 1291.5,
+                    "high": 1291.5,
+                    "low": 1272.01,
+                    "close": 1272.83,
+                    "pre_close": 1291.5,
+                    "change": -18.67,
+                    "pct_chg": -1.45,
+                    "vol": 3347200,
+                    "amount": 4278311.0,
+                }
+            ]
+        )
+        del raw["high"]
+        with patch.dict(os.environ, {zh_a_daily.STOCK_HISTORY_SOURCE_ENV: "tushare"}):
+            with patch.object(
+                zh_a_daily.interface.tushare_interface,
+                "tushare_daily",
+                return_value=raw,
+            ):
+                with self.assertRaisesRegex(ValueError, "required columns"):
+                    zh_a_daily.get_zh_a_stock_hist_daily_quote(
+                        "sh600519", start_date="2026-08-20", end_date="2026-08-24"
+                    )
+
+    def test_tushare_branch_retries_transient_error(self):
+        from requests.exceptions import ConnectionError as RequestsConnectionError
+
+        raw = pandas.DataFrame(
+            [
+                {
+                    "ts_code": "600519.SH",
+                    "trade_date": "20260821",
+                    "open": 1291.5,
+                    "high": 1291.5,
+                    "low": 1272.01,
+                    "close": 1272.83,
+                    "pre_close": 1291.5,
+                    "change": -18.67,
+                    "pct_chg": -1.45,
+                    "vol": 3347200,
+                    "amount": 4278311.0,
+                }
+            ]
+        )
+        calls = {"n": 0}
+
+        def flaky_fetch(ts_code, start_date=None, end_date=None):
+            calls["n"] += 1
+            if calls["n"] < 2:
+                raise RequestsConnectionError("Connection aborted.")
+            return raw
+
+        with patch.dict(os.environ, {zh_a_daily.STOCK_HISTORY_SOURCE_ENV: "tushare"}):
+            with patch.object(
+                zh_a_daily.interface.tushare_interface,
+                "tushare_daily",
+                side_effect=flaky_fetch,
+            ):
+                result = zh_a_daily.get_zh_a_stock_hist_daily_quote(
+                    "sh600519", start_date="2026-08-20", end_date="2026-08-24"
+                )
+        self.assertEqual(calls["n"], 2)
+        self.assertIsNotNone(result)
+
+    def test_tushare_daily_paginates_by_year_windows(self):
+
+        from app.lib.datahub.data_source.interface import tushare_interface
+
+        windows = []
+
+        def fake_pro():
+            class FakePro:
+                def daily(self, ts_code, start_date, end_date):
+                    windows.append((start_date, end_date))
+                    year = int(start_date[:4])
+                    return pandas.DataFrame(
+                        [
+                            {
+                                "ts_code": ts_code,
+                                "trade_date": f"{year}0102",
+                                "open": 1.0,
+                                "high": 1.0,
+                                "low": 1.0,
+                                "close": 1.0,
+                                "pre_close": 1.0,
+                                "change": 0.0,
+                                "pct_chg": 0.0,
+                                "vol": 100,
+                                "amount": 1000.0,
+                            }
+                        ]
+                    )
+
+            return FakePro()
+
+        with patch.object(tushare_interface, "_get_pro", side_effect=fake_pro):
+            df = tushare_interface.tushare_daily(
+                "000001.SZ", start_date="19900101", end_date="20260824"
+            )
+
+        # 18 年窗口：1990-2007, 2008-2025, 2026
+        self.assertEqual(
+            windows,
+            [
+                ("19900101", "20071231"),
+                ("20080101", "20251231"),
+                ("20260101", "20260824"),
+            ],
+        )
+        self.assertEqual(len(df), 3)
+
     def test_tushare_source_is_accepted(self):
         with patch.dict(os.environ, {zh_a_daily.STOCK_HISTORY_SOURCE_ENV: "tushare"}):
             self.assertEqual(zh_a_daily.get_stock_history_source(), "tushare")
@@ -232,6 +361,11 @@ class TestStockHistorySource(TestCase):
         self.assertEqual(convert("sh600519"), "600519.SH")
         self.assertEqual(convert("sz000977"), "000977.SZ")
         self.assertEqual(convert("bj920000"), "920000.BJ")
+
+    def test_to_tushare_ts_code_unknown_prefix_raises(self):
+        convert = zh_a_daily.interface.tushare_interface.to_tushare_ts_code
+        with self.assertRaises(ValueError):
+            convert("000977")
 
     def test_tushare_missing_token_fails_clearly(self):
         with patch.dict(os.environ, {}, clear=False):

@@ -29,6 +29,7 @@ TRANSIENT_NETWORK_MARKERS = (
     "Read timed out",
     "ConnectTimeout",
     "Connection reset by peer",
+    "每分钟最多",  # tushare rate-limit message: 抱歉，您每分钟最多访问该接口N次
 )
 
 
@@ -370,6 +371,8 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None, end_date=None):
             label=f"akshare_stock_zh_a_hist:{code}",
         )
         normalized = _normalize_akshare_stock_history(raw_df, code)
+        if normalized is None:
+            return None
         return normalized[normalized["date"] <= pandas.to_datetime(normalized_end_date)]
 
     if get_stock_history_source() == "tushare":
@@ -384,6 +387,8 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None, end_date=None):
             label=f"tushare_daily:{code}",
         )
         normalized = _normalize_tushare_stock_history(raw_df, code)
+        if normalized is None:
+            return None
         return normalized[normalized["date"] <= pandas.to_datetime(normalized_end_date)]
 
     name_mapping = {
