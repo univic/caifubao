@@ -41,21 +41,10 @@ class BaostockInterfaceManager(object):
 
     @staticmethod
     def _resultset_to_dataframe(result):
-        try:
-            return result.get_data()
-        except AttributeError as error:
-            # baostock 0.8.9 still relies on DataFrame.append() internally,
-            # which is removed in pandas 3.x. Build the DataFrame manually.
-            if "append" not in str(error):
-                raise
-
-            logger.warning(
-                "Baostock result.get_data() hit pandas append compatibility issue; falling back to manual row conversion"
-            )
-            rows = []
-            while result.error_code == "0" and result.next():
-                rows.append(result.get_row_data())
-            return pd.DataFrame(rows, columns=result.fields)
+        rows = []
+        while result.error_code == "0" and result.next():
+            rows.append(result.get_row_data())
+        return pd.DataFrame(rows, columns=result.fields)
 
     @staticmethod
     def get_zh_a_stock_hist_k_data(
