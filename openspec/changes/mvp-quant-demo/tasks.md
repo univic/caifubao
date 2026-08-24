@@ -3,7 +3,7 @@
 > **Status (2026-05-25)**: Development complete. Phases 13–19 (strategy discovery,
 > grid search, factor eval, walk-forward, decision dashboard, OpenClaw) all built
 > with backend, frontend, and 34 tests. Sections 12a-d partially done.
->
+> 
 > **Remaining**: Documentation (§1-6, 10.8, 11.6), operational validation
 > (§12d.5-6, 12e.5, 13.10, 20.1-5 — needs running environment),
 > Autoresearch design (§22), and cluster reinitialization resilience (§23).
@@ -333,6 +333,17 @@ autoresearch experiments against regenerated data.
   static local PVs with `Retain` policy and explicit node/path affinity, verify
   pod recreation and rendered node placement, and document the remaining COS
   backup dependency
+- [x] 23.11 Support an HTTPS-capable stock-history source for cluster rebuilds,
+  normalize it into the existing quote schema, and fail quote jobs that attempt
+  updates but write zero rows
+- [x] 23.12 Freeze one `Asia/Shanghai` trading-day `as_of_date` for each quote
+  run and pass it as the inclusive end date to every stock-history source
+- [x] 23.13 Persist stock history idempotently by `(code, date)` so interrupted
+  bootstraps can replay completed and partial stocks safely
+- [x] 23.14 Recompute quote freshness from persisted data against the frozen
+  `as_of_date`, preserving missing, stale, ahead, and OK classifications
+- [x] 23.15 Cover cross-midnight, timezone, source cutoff, idempotent replay,
+  and interrupted-bootstrap recovery with focused tests
 
 ## 24. Tailscale API Server Proxy Deployment Path
 

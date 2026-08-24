@@ -16,6 +16,7 @@
 - 补充 OpenClaw service token 鉴权方案，明确只读 scope、hashed token 存储、请求审计、过期与吊销预期
 - 补充 Karpathy autoresearch skill suite 的项目适配规格，用于把评分、因子、阈值和策略研究收束为可验证实验循环
 - 明确 autoresearch 只能优化研究指标，不能生成收益承诺、投资建议或绕过全市场验证
+- 强化长时间行情初始化：按北京时间冻结单次运行的数据截面，并支持中断后的幂等重放和 freshness 重算
 - 将旧 `openspec/changes/frontend` 视为历史参考，而不是当前执行清单
 
 ## Scope

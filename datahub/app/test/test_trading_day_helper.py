@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 import datetime
 from unittest import TestCase
+from zoneinfo import ZoneInfo
 
 
 class TestDetermineClosestTradingDate(TestCase):
@@ -81,6 +82,48 @@ class TestDetermineClosestTradingDate(TestCase):
             result = trading_day_helper.determine_closest_trading_date(trade_calendar)
 
         self.assertEqual(result, datetime.datetime(2024, 4, 7))
+
+
+class TestDetermineLatestCompleteTradingDate(TestCase):
+    def test_uses_beijing_market_close_boundary(self):
+        from app.lib.utilities.trading_day_helper import (
+            determine_latest_complete_trading_date,
+        )
+
+        calendar = [
+            datetime.datetime(2026, 8, 21),
+            datetime.datetime(2026, 8, 24),
+            datetime.datetime(2026, 8, 25),
+        ]
+
+        before_close = datetime.datetime(
+            2026, 8, 24, 15, 59, tzinfo=ZoneInfo("Asia/Shanghai")
+        )
+        after_close = datetime.datetime(
+            2026, 8, 24, 16, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+        )
+
+        self.assertEqual(
+            determine_latest_complete_trading_date(calendar, before_close),
+            datetime.datetime(2026, 8, 21),
+        )
+        self.assertEqual(
+            determine_latest_complete_trading_date(calendar, after_close),
+            datetime.datetime(2026, 8, 24),
+        )
+
+    def test_converts_utc_input_to_beijing_time(self):
+        from app.lib.utilities.trading_day_helper import (
+            determine_latest_complete_trading_date,
+        )
+
+        calendar = [datetime.datetime(2026, 8, 21), datetime.datetime(2026, 8, 24)]
+        utc_time = datetime.datetime(2026, 8, 24, 8, 1, tzinfo=datetime.UTC)
+
+        self.assertEqual(
+            determine_latest_complete_trading_date(calendar, utc_time),
+            datetime.datetime(2026, 8, 24),
+        )
 
 
 class TestDetermineMostRecentPreviousCompleteTradingDay(TestCase):

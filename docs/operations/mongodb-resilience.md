@@ -173,6 +173,45 @@ When no backup exists, regenerate demo-ready data in this order:
 Regenerated market data is acceptable for demos, but it is not the same as a
 full disaster recovery restore.
 
+### Deterministic quote bootstrap gate
+
+Before starting a long quote bootstrap, verify all of the following:
+
+1. The deployed Datahub image was built from the intended immutable commit.
+2. Datahub CI tested the assembled image tree after overlaying shared backend
+   models and utilities.
+3. Quote CronJobs remain suspended while the one-shot bootstrap runs.
+4. The one-shot Job uses `backoffLimit: 0` and `restartPolicy: Never`.
+5. The operator has selected one completed market trading date and records it
+   as the logical run's `as_of_date`.
+
+Invoke the quote runner with the same explicit date for every continuation of
+the logical run:
+
+```text
+python -m app.jobs.quote_runner \
+  --target stock \
+  --as-of-date YYYY-MM-DD
+```
+
+Do not unsuspend or reuse a bootstrap created from an older image. Create a new
+Job from the verified image instead. If the Job is interrupted, replay the new
+Job with the original `--as-of-date`; quote persistence is idempotent by
+`(code, date)`.
+
+Treat source failures and `NO_DATA` as fatal. A listed stock may remain stale
+without failing the market-wide run only when the history source succeeds and
+the missing target-date row is attributable to temporary suspension. After the
+quote phase, verify persisted freshness against the frozen date before enabling
+or manually running factor, signal, scoring, export, or backup stages.
+
+### Image assembly validation
+
+The Datahub publish workflow overlays shared modules from `backend/app/model`
+and `backend/app/utilities` into the Datahub build context. CI must perform the
+same overlay before Datahub tests. A source-tree-only test result is not enough
+to approve a Datahub image when shared modules changed.
+
 ## Data Survivability Classes
 
 Regenerable or mostly regenerable:
