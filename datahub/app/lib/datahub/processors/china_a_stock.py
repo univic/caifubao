@@ -715,6 +715,11 @@ class ChinaAStock(object):
                     name,
                 )
                 new_stock_obj = new_stock_obj.__class__.objects(code=code).first()
+                if new_stock_obj is None:
+                    raise RuntimeError(
+                        f"Stock Market {self.market.name} - master data for "
+                        f"{code}-{name} vanished after duplicate save"
+                    )
             if obj_type == "stock" and data_capability_helper.stock_supports(
                 new_stock_obj, "daily_quote"
             ):

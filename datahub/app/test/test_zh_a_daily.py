@@ -18,6 +18,15 @@ class TestRetryPolicy(TestCase):
         error = FakeJSONDecodeError("Can not decode value starting with character '<'")
         self.assertTrue(zh_a_daily._is_retryable_market_data_error(error))
 
+    def test_stdlib_style_json_decode_error_class_is_retryable(self):
+        # akshare 1.18.94 surfaces anti-bot HTML as stdlib json.JSONDecodeError
+        # ("Expecting value: ...") whose class name is what the predicate keys on.
+        class JSONDecodeError(Exception):
+            pass
+
+        error = JSONDecodeError("Expecting value: line 1 column 1 (char 0)")
+        self.assertTrue(zh_a_daily._is_retryable_market_data_error(error))
+
     def test_network_error_is_retryable_and_value_error_is_not(self):
         from requests.exceptions import ConnectionError as RequestsConnectionError
 
