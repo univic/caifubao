@@ -1,6 +1,9 @@
 import datetime
 import logging
+import os
 import time
+
+import pandas
 from requests.exceptions import ConnectionError, RequestException
 
 from app.lib.datahub.data_source import interface
@@ -11,6 +14,10 @@ from app.lib.utilities import trading_day_helper, performance_helper, stock_code
 
 
 logger = logging.getLogger(__name__)
+
+
+STOCK_HISTORY_SOURCE_ENV = "DATAHUB_STOCK_HISTORY_SOURCE"
+SUPPORTED_STOCK_HISTORY_SOURCES = {"akshare", "baostock"}
 
 
 TRANSIENT_NETWORK_MARKERS = (
@@ -30,6 +37,12 @@ def _is_retryable_market_data_error(error: Exception) -> bool:
         return True
 
     error_message = str(error)
+    # Anti-bot HTML responses commonly surface as JSON decode errors (e.g.
+    # akshare's demjson JSONDecodeError: "Can not decode value starting with
+    # character '<'"). Treat them as transient like network errors: retry
+    # before failing the run.
+    if type(error).__name__ == "JSONDecodeError" or "Can not decode" in error_message:
+        return True
     return any(marker in error_message for marker in TRANSIENT_NETWORK_MARKERS)
 
 
@@ -64,6 +77,99 @@ def _call_with_retry(
             time.sleep(delay)
 
     raise last_error
+
+
+def get_stock_history_source() -> str:
+    source = os.getenv(STOCK_HISTORY_SOURCE_ENV, "akshare").strip().lower()
+    if source not in SUPPORTED_STOCK_HISTORY_SOURCES:
+        raise ValueError(
+            f"{STOCK_HISTORY_SOURCE_ENV} must be one of "
+            f"{sorted(SUPPORTED_STOCK_HISTORY_SOURCES)}"
+        )
+    return source
+
+
+def stock_history_uses_baostock() -> bool:
+    return get_stock_history_source() == "baostock"
+
+
+def _normalize_akshare_stock_history(raw_df, code: str):
+    if raw_df is None or raw_df.empty:
+        return None
+
+    column_mapping = {
+        "日期": "date",
+        "开盘": "open",
+        "收盘": "close",
+        "最高": "high",
+        "最低": "low",
+        "成交量": "volume",
+        "成交额": "trade_amount",
+        "涨跌幅": "change_rate",
+        "涨跌额": "change_amount",
+        "换手率": "turnover_rate",
+    }
+    normalized = raw_df.rename(columns=column_mapping).copy()
+    required_columns = {"date", "open", "close", "high", "low", "volume"}
+    missing_columns = required_columns - set(normalized.columns)
+    if missing_columns:
+        raise ValueError(
+            "AkShare stock history response missing required columns: "
+            f"{sorted(missing_columns)}"
+        )
+
+    normalized["date"] = pandas.to_datetime(normalized["date"])
+    numeric_columns = [
+        "open",
+        "close",
+        "high",
+        "low",
+        "volume",
+        "trade_amount",
+        "change_rate",
+        "change_amount",
+        "turnover_rate",
+    ]
+    for column in numeric_columns:
+        if column not in normalized:
+            normalized[column] = 0
+        normalized[column] = pandas.to_numeric(
+            normalized[column], errors="coerce"
+        ).fillna(0)
+
+    normalized["previous_close"] = (
+        normalized["close"] - normalized["change_amount"]
+    ).round(4)
+    normalized["volume"] = normalized["volume"].astype("int64")
+    normalized["code"] = code
+    normalized["trade_status"] = 1
+    normalized["peTTM"] = 0.0
+    normalized["pbMRQ"] = 0.0
+    normalized["psTTM"] = 0.0
+    normalized["pcfNcfTTM"] = 0.0
+    normalized["isST"] = 0
+
+    canonical_columns = [
+        "date",
+        "code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "previous_close",
+        "volume",
+        "trade_amount",
+        "turnover_rate",
+        "change_rate",
+        "change_amount",
+        "trade_status",
+        "peTTM",
+        "pbMRQ",
+        "psTTM",
+        "pcfNcfTTM",
+        "isST",
+    ]
+    return normalized[canonical_columns]
 
 
 def get_a_stock_trade_date_hist():
@@ -150,21 +256,45 @@ def get_zh_a_stock_spot():
     return df
 
 
-def get_zh_a_index_hist_daily_quote(code, start_date=None, incremental=True):
+def get_zh_a_index_hist_daily_quote(
+    code, start_date=None, end_date=None, incremental=True
+):
     raw_df = _call_with_retry(
         lambda: interface.akshare_interface.stock_zh_index_daily(code),
         label=f"stock_zh_index_daily:{code}",
     )
     raw_df.fillna(0, inplace=True)
+    if end_date:
+        end_date = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+        raw_df = raw_df[raw_df.date <= end_date]
     if incremental and start_date:
         start_date = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
-        df = raw_df[raw_df.date > start_date].sort_index(axis=1, ascending=False)
+        df = raw_df[raw_df.date >= start_date].sort_index(axis=1, ascending=False)
     else:
         df = raw_df
     return df
 
 
-def get_zh_a_stock_hist_daily_quote(code, start_date=None):
+def get_zh_a_stock_hist_daily_quote(code, start_date=None, end_date=None):
+    normalized_end_date = (
+        end_date.replace("-", "")
+        if end_date
+        else datetime.date.today().strftime("%Y%m%d")
+    )
+    if get_stock_history_source() == "akshare":
+        symbol = code[2:] if code.startswith(("sh", "sz", "bj")) else code
+        normalized_start_date = start_date.replace("-", "") if start_date else None
+        raw_df = _call_with_retry(
+            lambda: interface.akshare_interface.stock_zh_a_hist(
+                symbol,
+                start_date=normalized_start_date,
+                end_date=normalized_end_date,
+            ),
+            label=f"akshare_stock_zh_a_hist:{code}",
+        )
+        normalized = _normalize_akshare_stock_history(raw_df, code)
+        return normalized[normalized["date"] <= pandas.to_datetime(normalized_end_date)]
+
     name_mapping = {
         "preclose": "previous_close",
         "pcgChg": "change_rate",
@@ -189,7 +319,13 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None):
     ]
     int_columns = ["adjustflag", "tradestatus", "isST"]
     raw_df = _call_with_retry(
-        lambda: BaostockInterfaceManager.get_zh_a_stock_hist_k_data(code, start_date),
+        lambda: BaostockInterfaceManager.get_zh_a_stock_hist_k_data(
+            code,
+            start_date,
+            datetime.datetime.strptime(normalized_end_date, "%Y%m%d").strftime(
+                "%Y-%m-%d"
+            ),
+        ),
         label=f"stock_hist_k_data:{code}",
     )
     if len(raw_df) > 0:
@@ -199,6 +335,8 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None):
         raw_df[float_columns] = raw_df[float_columns].astype("float")
         raw_df[int_columns] = raw_df[int_columns].astype("int")
         raw_df.rename(name_mapping, axis=1, inplace=True)  # rename column
+        raw_df["date"] = pandas.to_datetime(raw_df["date"])
+        raw_df = raw_df[raw_df["date"] <= pandas.to_datetime(normalized_end_date)]
         raw_df["code"] = raw_df["code"].apply(
             lambda x: x.replace(".", "")
         )  # replace the dot in the stock code

@@ -126,9 +126,29 @@ def scoring_service(calendar):
     for model in (FakeStock, FakeQuote, FakeFactor, FakeSignal, FakePrediction):
         model.records = []
 
-    with patch(
-        "app.lib.scoring_engine.scoring_service.FinanceMarket.objects"
-    ) as mock_market_objs:
+    with (
+        patch(
+            "app.lib.scoring_engine.scoring_service.FinanceMarket.objects"
+        ) as mock_market_objs,
+        patch(
+            "app.lib.scoring_engine.scoring_service.industry_momentum_component",
+            return_value={
+                "id": "industry_momentum",
+                "group": "industry",
+                "label": "Industry momentum",
+                "raw_value": None,
+                "normalized_value": 0.5,
+                "weight": 0.0,
+                "contribution": 0.0,
+                "direction": "positive",
+                "evidence": {},
+            },
+        ),
+        patch(
+            "app.lib.scoring_engine.scoring_service.aggregate_industry_metrics",
+            return_value=[],
+        ),
+    ):
         mock_market = MagicMock()
         mock_market.trade_calendar = calendar
         mock_market_objs.return_value.first.return_value = mock_market
@@ -140,7 +160,7 @@ def scoring_service(calendar):
             prediction_model=FakePrediction,
         )
         service.calendar = calendar
-        return service
+        yield service
 
 
 def seed_stock():
@@ -296,12 +316,16 @@ def test_verification_transitions_to_verified(scoring_service):
     date = seed_quotes()
     seed_factors_and_signal(date)
     prediction = scoring_service.score_single_stock(stock, date, 5)
+    prediction.date = prediction.date.replace(tzinfo=None)
+    prediction.target_date = prediction.target_date.replace(tzinfo=None)
+    for quote in FakeQuote.records:
+        quote.date = quote.date.replace(tzinfo=None)
     future_dates = [
-        datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC),
-        datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC),
-        datetime.datetime(2026, 4, 15, tzinfo=datetime.UTC),
-        datetime.datetime(2026, 4, 16, tzinfo=datetime.UTC),
-        datetime.datetime(2026, 4, 17, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 13),
+        datetime.datetime(2026, 4, 14),
+        datetime.datetime(2026, 4, 15),
+        datetime.datetime(2026, 4, 16),
+        datetime.datetime(2026, 4, 17),
     ]
     for idx, quote_date in enumerate(future_dates):
         FakeQuote.records.append(
@@ -358,6 +382,7 @@ def test_calibration_report_summarizes_verified_predictions():
             status="VERIFIED",
             score=82.0,
             rank=1,
+            recommendation="BUY",
             verification={
                 "return_at_target": 0.03,
                 "max_return": 0.08,
@@ -382,6 +407,7 @@ def test_calibration_report_summarizes_verified_predictions():
             status="VERIFIED",
             score=35.0,
             rank=2,
+            recommendation="AVOID",
             verification={
                 "return_at_target": -0.01,
                 "max_return": 0.09,
@@ -395,7 +421,10 @@ def test_calibration_report_summarizes_verified_predictions():
         ),
     ]
 
-    report = ScoreCalibrationReport(prediction_model=FakePrediction).generate(
+    report = ScoreCalibrationReport(
+        prediction_model=FakePrediction,
+        model_version="score_v2_202604",
+    ).generate(
         start_date=datetime.datetime(2026, 4, 1, tzinfo=datetime.UTC),
         end_date=datetime.datetime(2026, 4, 30, tzinfo=datetime.UTC),
         horizon=5,

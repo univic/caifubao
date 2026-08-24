@@ -1,5 +1,5 @@
-akshare==1.18.22
-baostock==0.8.9
+akshare==1.18.94
+baostock==0.9.3
 beautifulsoup4==4.14.3
 boto3==1.40.69
 certifi==2026.1.4

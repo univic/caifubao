@@ -2,6 +2,7 @@ import re
 import logging
 import datetime
 import baostock as bs
+import pandas as pd
 
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,13 @@ class BaostockInterfaceManager(object):
         bs.logout()
 
     @staticmethod
+    def _resultset_to_dataframe(result):
+        rows = []
+        while result.error_code == "0" and result.next():
+            rows.append(result.get_row_data())
+        return pd.DataFrame(rows, columns=result.fields)
+
+    @staticmethod
     def get_zh_a_stock_hist_k_data(
         code, start_date=None, end_date=None, adjustflag="3"
     ):
@@ -68,7 +76,7 @@ class BaostockInterfaceManager(object):
             adjustflag=adjustflag,
         )
 
-        return result.get_data()
+        return BaostockInterfaceManager._resultset_to_dataframe(result)
 
 
 if __name__ == "__main__":

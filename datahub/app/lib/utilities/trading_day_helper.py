@@ -1,10 +1,12 @@
 import re
 import logging
 import datetime
+from zoneinfo import ZoneInfo
 from app.model.stock import FinanceMarket, StockDailyQuote
 
 
 logger = logging.getLogger(__name__)
+BEIJING_TIMEZONE = "Asia/Shanghai"
 
 
 def determine_closest_trading_date(trade_calendar, given_time=None):
@@ -17,6 +19,35 @@ def determine_closest_trading_date(trade_calendar, given_time=None):
         trade_calendar, key=lambda x: (x > given_time, abs(x - given_time))
     )
     return closest_avail_trading_day
+
+
+def determine_latest_complete_trading_date(
+    trade_calendar,
+    given_time=None,
+    timezone_name=BEIJING_TIMEZONE,
+    market_close_hour=16,
+):
+    if not trade_calendar:
+        return None
+
+    timezone = ZoneInfo(timezone_name)
+    if given_time is None:
+        local_time = datetime.datetime.now(timezone)
+    elif given_time.tzinfo is None:
+        local_time = given_time.replace(tzinfo=timezone)
+    else:
+        local_time = given_time.astimezone(timezone)
+
+    cutoff_date = local_time.date()
+    if local_time.hour < market_close_hour:
+        cutoff_date -= datetime.timedelta(days=1)
+
+    eligible_days = [
+        item
+        for item in trade_calendar
+        if (item.date() if hasattr(item, "date") else item) <= cutoff_date
+    ]
+    return max(eligible_days) if eligible_days else None
 
 
 def determine_most_recent_previous_complete_trading_day(

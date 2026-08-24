@@ -242,6 +242,11 @@ curl -s http://api.dev.cfb.concorde102.cn/api/market/comprehensive?date=$(date +
 
 ### Workflow 4: Post-reset bootstrap readiness
 
+For a long quote rebuild, first follow the deterministic bootstrap gate in
+[`mongodb-resilience.md`](./mongodb-resilience.md). Keep scheduled quote jobs
+suspended and use a one-shot quote runner with one explicit `--as-of-date` for
+the entire logical run. Do not resume a Job created from an older image.
+
 ```bash
 # 1. Confirm core services and MongoDB are reachable
 ./scripts/caifubao system health
@@ -280,6 +285,11 @@ quote → FQ factor → MA factor → signal → scoring → verification
   │        └── reads quote → adds hfq fields to stock_daily_quote
   └── baostock/akshare → writes stock_daily_quote
 ```
+
+Stock history defaults to AkShare over HTTPS. Set
+`DATAHUB_STOCK_HISTORY_SOURCE=baostock` only where outbound TCP access to
+`www.baostock.com:10030` is known to work. A stock refresh that attempts
+updates but writes zero quote rows fails before factor and scoring phases.
 
 ### Data sync (prod → dev)
 The `data sync` command uses the `MONGODB_SRC_*` environment variables
