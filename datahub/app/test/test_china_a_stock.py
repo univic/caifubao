@@ -638,6 +638,53 @@ class TestChinaAStockHelpers(TestCase):
 
         self.assertTrue(is_duplicate_only_bulk_write_error(error))
 
+    def test_handle_new_stock_reuses_existing_master_on_duplicate_save(self):
+        """Concurrent quote runs must not crash with NotUniqueError when a
+        second run tries to create master data that already exists."""
+        from app.lib.datahub.processors.china_a_stock import ChinaAStock
+        from mongoengine.errors import NotUniqueError
+
+        processor = object.__new__(ChinaAStock)
+        processor.market = SimpleNamespace(name="ChinaAStock")
+        processor.most_recent_trading_day = datetime.datetime(2026, 8, 24)
+        processor.get_hist_stock_quote_data = Mock(
+            return_value={
+                "code": "GOOD",
+                "written_count": 3,
+                "validated_count": 3,
+                "freshness_status": "OK",
+            }
+        )
+
+        class FakeIndividualStock:
+            instances = []
+
+            def __init__(self):
+                self.code = None
+                self.name = None
+                self.object_type = None
+                self.market = None
+                self.data_capabilities = None
+                FakeIndividualStock.instances.append(self)
+
+            def save(self):
+                if len(FakeIndividualStock.instances) > 1:
+                    raise NotUniqueError("Tried to save duplicate unique keys (E11000)")
+
+            @classmethod
+            def objects(cls, code=None):
+                return SimpleNamespace(first=lambda: FakeIndividualStock.instances[0])
+
+        with patch(
+            "app.lib.datahub.processors.china_a_stock.IndividualStock",
+            FakeIndividualStock,
+        ):
+            first = processor.handle_new_stock("stock", "sh600000", "浦发银行")
+            second = processor.handle_new_stock("stock", "sh600000", "浦发银行")
+
+        self.assertEqual(first["written_count"], 3)
+        self.assertEqual(second["written_count"], 3)
+
     def test_stringified_mongoengine_bulk_write_error_is_detected(self):
         from app.lib.utilities.mongo_error_helper import (
             is_duplicate_only_bulk_write_error,

@@ -37,6 +37,12 @@ def _is_retryable_market_data_error(error: Exception) -> bool:
         return True
 
     error_message = str(error)
+    # Anti-bot HTML responses commonly surface as JSON decode errors (e.g.
+    # akshare's demjson JSONDecodeError: "Can not decode value starting with
+    # character '<'"). Treat them as transient like network errors: retry
+    # before failing the run.
+    if type(error).__name__ == "JSONDecodeError" or "Can not decode" in error_message:
+        return True
     return any(marker in error_message for marker in TRANSIENT_NETWORK_MARKERS)
 
 

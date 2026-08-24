@@ -700,7 +700,21 @@ class ChinaAStock(object):
             new_stock_obj.object_type = object_type
             new_stock_obj.market = self.market
             new_stock_obj.data_capabilities = self._capabilities_for_code(code)
-            new_stock_obj.save()
+            try:
+                new_stock_obj.save()
+            except NotUniqueError:
+                # A concurrent quote run (e.g. startup quote catch-up racing a
+                # one-shot bootstrap) may have created this master record
+                # already. Reuse the existing record instead of crashing the
+                # whole run.
+                logger.warning(
+                    "Stock Market %s - Master data for %s-%s already exists, "
+                    "reusing existing record",
+                    self.market.name,
+                    code,
+                    name,
+                )
+                new_stock_obj = new_stock_obj.__class__.objects(code=code).first()
             if obj_type == "stock" and data_capability_helper.stock_supports(
                 new_stock_obj, "daily_quote"
             ):
