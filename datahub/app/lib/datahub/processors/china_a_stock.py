@@ -395,8 +395,7 @@ class ChinaAStock(object):
             # pull's code; NO_DATA for a stock with no history still fails.
             return (
                 is_suspended
-                and result.get("freshness_status", result.get("status"))
-                == STATUS_STALE
+                and result.get("freshness_status", result.get("status")) == STATUS_STALE
             )
 
         remote_code_set = (
