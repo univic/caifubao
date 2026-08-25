@@ -388,9 +388,13 @@ class ChinaAStock(object):
         update_partial_phase_result()
 
         def is_allowed_suspension_gap(is_suspended, result):
+            # A temporarily suspended stock may legitimately be STALE (its last
+            # bar predates the as-of date, and the history pull over a fully
+            # suspended window returns empty -> code FAIL). The missing row is
+            # attributable to the suspension, so tolerate it regardless of the
+            # pull's code; NO_DATA for a stock with no history still fails.
             return (
                 is_suspended
-                and result.get("code", "GOOD") == "GOOD"
                 and result.get("freshness_status", result.get("status")) == STATUS_STALE
             )
 

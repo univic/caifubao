@@ -669,6 +669,46 @@ class TestChinaAStockHelpers(TestCase):
         self.assertEqual(stock.active_status, 0)
         self.assertEqual(result["written_count"], 0)
 
+    def test_suspended_stock_with_failed_stale_pull_is_tolerated(self):
+        # 停牌股的历史拉取在整段停牌窗口返回空 -> FAIL + STALE；
+        # 悬挂容忍不再要求 code==GOOD，仅凭 停牌+STALE 即放行
+        from app.lib.datahub.processors.china_a_stock import ChinaAStock
+
+        processor = object.__new__(ChinaAStock)
+        processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
+        processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
+        processor.perform_date_check = lambda: None
+        processor.check_data_freshness = lambda stock: "UPD"
+        processor.perform_stock_name_check = Mock()
+        processor.get_hist_quote_data = Mock(
+            return_value={
+                "code": "FAIL",
+                "written_count": 0,
+                "validated_count": 0,
+                "freshness_status": "STALE",
+            }
+        )
+        stock = self._stock("sh600000")
+        remote = pandas.DataFrame(
+            [{"code": stock.code, "name": stock.name, "close": 0}]
+        )
+
+        with patch(
+            "app.lib.datahub.processors.china_a_stock.progress_bar",
+            return_value=lambda *args: None,
+        ):
+            result = processor.check_data_integrity(
+                obj_type="stock",
+                local_data_list=DummyQuerySet([stock]),
+                remote_data_df=remote,
+                hist_handler="get_hist_stock_quote_data",
+                allow_update=True,
+            )
+
+        # 走历史路径、被容忍、phase 不失败
+        self.assertEqual(processor.get_hist_quote_data.call_count, 1)
+        self.assertEqual(result["written_count"], 0)
+
     def test_new_suspended_stock_with_stale_history_does_not_fail_bootstrap(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
 
