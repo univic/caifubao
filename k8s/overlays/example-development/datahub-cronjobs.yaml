@@ -172,6 +172,11 @@ spec:
                 secretKeyRef:
                   name: datahub-secret
                   key: MONGODB_PASSWORD
+            - name: TUSHARE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: TUSHARE_TOKEN
             - name: APP_ENV
               valueFrom:
                 configMapKeyRef:

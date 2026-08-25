@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 STOCK_HISTORY_SOURCE_ENV = "DATAHUB_STOCK_HISTORY_SOURCE"
-SUPPORTED_STOCK_HISTORY_SOURCES = {"akshare", "baostock"}
+SUPPORTED_STOCK_HISTORY_SOURCES = {"akshare", "baostock", "tushare"}
 
 
 TRANSIENT_NETWORK_MARKERS = (
@@ -29,6 +29,7 @@ TRANSIENT_NETWORK_MARKERS = (
     "Read timed out",
     "ConnectTimeout",
     "Connection reset by peer",
+    "每分钟最多",  # tushare rate-limit message: 抱歉，您每分钟最多访问该接口N次
 )
 
 
@@ -172,6 +173,85 @@ def _normalize_akshare_stock_history(raw_df, code: str):
     return normalized[canonical_columns]
 
 
+def _normalize_tushare_stock_history(raw_df, code: str):
+    if raw_df is None or raw_df.empty:
+        return None
+
+    normalized = raw_df.rename(
+        columns={
+            "trade_date": "date",
+            "pre_close": "previous_close",
+            "pct_chg": "change_rate",
+            "change": "change_amount",
+            "vol": "volume",
+        }
+    ).copy()
+    required_columns = {"date", "open", "close", "high", "low", "volume"}
+    missing_columns = required_columns - set(normalized.columns)
+    if missing_columns:
+        raise ValueError(
+            "Tushare stock history response missing required columns: "
+            f"{sorted(missing_columns)}"
+        )
+
+    normalized["date"] = pandas.to_datetime(normalized["date"], format="%Y%m%d")
+    numeric_columns = [
+        "open",
+        "close",
+        "high",
+        "low",
+        "volume",
+        "previous_close",
+        "trade_amount",
+        "change_rate",
+        "change_amount",
+        "turnover_rate",
+    ]
+    for column in numeric_columns:
+        if column not in normalized:
+            normalized[column] = 0
+        normalized[column] = pandas.to_numeric(
+            normalized[column], errors="coerce"
+        ).fillna(0)
+
+    # tushare amount 单位千元 -> 元（与 akshare/东财成交额一致）
+    normalized["trade_amount"] = (
+        pandas.to_numeric(normalized["amount"], errors="coerce").fillna(0) * 1000
+        if "amount" in normalized
+        else 0
+    )
+    normalized["volume"] = normalized["volume"].astype("int64")
+    normalized["code"] = code
+    normalized["trade_status"] = 1
+    normalized["peTTM"] = 0.0
+    normalized["pbMRQ"] = 0.0
+    normalized["psTTM"] = 0.0
+    normalized["pcfNcfTTM"] = 0.0
+    normalized["isST"] = 0
+
+    canonical_columns = [
+        "date",
+        "code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "previous_close",
+        "volume",
+        "trade_amount",
+        "turnover_rate",
+        "change_rate",
+        "change_amount",
+        "trade_status",
+        "peTTM",
+        "pbMRQ",
+        "psTTM",
+        "pcfNcfTTM",
+        "isST",
+    ]
+    return normalized[canonical_columns].sort_values("date").reset_index(drop=True)
+
+
 def get_a_stock_trade_date_hist():
     remote_data = _call_with_retry(
         interface.akshare_interface.get_trade_date_hist,
@@ -293,6 +373,24 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None, end_date=None):
             label=f"akshare_stock_zh_a_hist:{code}",
         )
         normalized = _normalize_akshare_stock_history(raw_df, code)
+        if normalized is None:
+            return None
+        return normalized[normalized["date"] <= pandas.to_datetime(normalized_end_date)]
+
+    if get_stock_history_source() == "tushare":
+        ts_code = interface.tushare_interface.to_tushare_ts_code(code)
+        normalized_start_date = start_date.replace("-", "") if start_date else None
+        raw_df = _call_with_retry(
+            lambda: interface.tushare_interface.tushare_daily(
+                ts_code,
+                start_date=normalized_start_date,
+                end_date=normalized_end_date,
+            ),
+            label=f"tushare_daily:{code}",
+        )
+        normalized = _normalize_tushare_stock_history(raw_df, code)
+        if normalized is None:
+            return None
         return normalized[normalized["date"] <= pandas.to_datetime(normalized_end_date)]
 
     name_mapping = {
