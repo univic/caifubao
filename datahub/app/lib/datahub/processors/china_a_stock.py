@@ -465,9 +465,23 @@ class ChinaAStock(object):
                                 prog_bar_msg = (
                                     f"Doing {flag} update for {code} - {name}"
                                 )
-                                hist_result = self.get_hist_quote_data(
-                                    stock_obj=stock_obj, hist_quote_handler=hist_handler
-                                )
+                                if (
+                                    flag == "UPD"
+                                    and not is_temporarily_suspended
+                                    and obj_type == "stock"
+                                ):
+                                    # one trading day behind: write the settled
+                                    # as-of row from the market snapshot
+                                    hist_result = self.write_snapshot_quote(
+                                        stock_obj=stock_obj,
+                                        snapshot_row=remote_stock_item,
+                                        expected_date=self.most_recent_trading_day,
+                                    )
+                                else:
+                                    hist_result = self.get_hist_quote_data(
+                                        stock_obj=stock_obj,
+                                        hist_quote_handler=hist_handler,
+                                    )
                                 written_quote_count += hist_result.get(
                                     "written_count", 0
                                 )
@@ -848,6 +862,66 @@ class ChinaAStock(object):
         #                             callback_object='zh_a_stock_market',
         #                             callback_handler=hist_quote_handler,
         #                             kwargs=kwarg_dict)
+
+    # @performance_helper.func_performance_timer
+    def write_snapshot_quote(self, stock_obj, snapshot_row, expected_date):
+        """Write one daily bar from the settled market snapshot (UPD path).
+
+        Returns the same shape as the history path: code / written_count /
+        validated_count / freshness_status.
+        """
+        status_code = "GOOD"
+        status_msg = None
+        written_count = 0
+        freshness_status = None
+        try:
+            row = {
+                "date": expected_date,
+                "code": stock_obj.code,
+                "open": snapshot_row.get("open", 0),
+                "high": snapshot_row.get("high", 0),
+                "low": snapshot_row.get("low", 0),
+                "close": snapshot_row.get("close", 0),
+                "previous_close": snapshot_row.get("previous_close", 0),
+                "volume": snapshot_row.get("volume", 0),
+                "trade_amount": snapshot_row.get("trade_amount", 0),
+                "turnover_rate": snapshot_row.get("turnover_rate", 0),
+                "change_rate": snapshot_row.get("change_rate", 0),
+                "change_amount": snapshot_row.get("change_amount", 0),
+            }
+            operation = _build_stock_quote_upsert_operation(
+                stock_obj, pandas.Series(row)
+            )
+            result = StockDailyQuote._get_collection().bulk_write(
+                [operation], ordered=False
+            )
+            written_count = result.upserted_count + result.modified_count
+            freshness = data_asset_status_helper.refresh_quote_status(
+                stock_obj=stock_obj,
+                quote_model=StockDailyQuote,
+                last_job_name="stock_quote_sync",
+                expected_latest_date=expected_date,
+                trade_calendar=self.market.trade_calendar,
+            )
+            freshness_status = freshness["status"]
+            if freshness_status != STATUS_OK:
+                status_code = "FAIL"
+                status_msg = "Snapshot row freshness is not OK"
+        except Exception as exc:  # noqa: BLE001
+            status_code = "FAIL"
+            status_msg = str(exc)
+            logger.error(
+                "Datahub - ChinaAStock - Snapshot quote write failed for %s: %s",
+                stock_obj.code,
+                exc,
+            )
+        return {
+            "code": status_code,
+            "message": status_msg,
+            "written_count": written_count,
+            "validated_count": 1,
+            "freshness_status": freshness_status,
+        }
 
     # @performance_helper.func_performance_timer
     def get_hist_stock_quote_data(

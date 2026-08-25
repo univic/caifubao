@@ -129,7 +129,7 @@ class TestChinaAStockHelpers(TestCase):
         self.assertEqual(operation._filter["date"], pandas.Timestamp("2026-08-21"))
         self.assertEqual(operation._doc["$set"]["close"], 1.5)
 
-    def test_one_day_update_uses_history_instead_of_spot_snapshot(self):
+    def test_one_day_update_writes_from_market_snapshot(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
 
         processor = object.__new__(ChinaAStock)
@@ -140,6 +140,14 @@ class TestChinaAStockHelpers(TestCase):
         processor.perform_stock_name_check = Mock()
         processor.update_active_status = Mock()
         processor.get_hist_quote_data = Mock(
+            return_value={
+                "code": "GOOD",
+                "written_count": 1,
+                "validated_count": 1,
+                "freshness_status": "OK",
+            }
+        )
+        processor.write_snapshot_quote = Mock(
             return_value={
                 "code": "GOOD",
                 "written_count": 1,
@@ -158,7 +166,22 @@ class TestChinaAStockHelpers(TestCase):
             save=Mock(),
         )
         remote = pandas.DataFrame(
-            [{"code": stock.code, "name": stock.name, "close": 100.0}]
+            [
+                {
+                    "code": stock.code,
+                    "name": stock.name,
+                    "close": 100.0,
+                    "open": 99.0,
+                    "high": 101.0,
+                    "low": 98.0,
+                    "volume": 1000,
+                    "previous_close": 99.5,
+                    "trade_amount": 1e8,
+                    "turnover_rate": 0.5,
+                    "change_rate": 0.5,
+                    "change_amount": 0.5,
+                }
+            ]
         )
 
         with patch(
@@ -173,9 +196,79 @@ class TestChinaAStockHelpers(TestCase):
                 allow_update=True,
             )
 
-        processor.get_hist_quote_data.assert_called_once()
-        processor.handle_new_quote.assert_not_called()
+        # UPD（差 1 天）→ 快照写入，不拉历史
+        processor.write_snapshot_quote.assert_called_once()
+        processor.get_hist_quote_data.assert_not_called()
         self.assertEqual(result["written_count"], 1)
+
+    def test_deeper_gap_or_suspended_uses_history(self):
+        from app.lib.datahub.processors.china_a_stock import ChinaAStock
+
+        for freshness, close in [("INC", 100.0), ("FULL", 100.0), ("UPD", 0.0)]:
+            with self.subTest(freshness=freshness, close=close):
+                processor = object.__new__(ChinaAStock)
+                processor.market = SimpleNamespace(
+                    name="ChinaAStock", trade_calendar=[]
+                )
+                processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
+                processor.perform_date_check = lambda: None
+                processor.check_data_freshness = lambda stock, f=freshness: f
+                processor.perform_stock_name_check = Mock()
+                processor.update_active_status = Mock()
+                # INC/FULL 成功拉取 -> OK；停牌 UPD 无数据 -> STALE（悬挂容忍）
+                stale = freshness == "UPD"
+                processor.get_hist_quote_data = Mock(
+                    return_value={
+                        "code": "GOOD",
+                        "written_count": 0 if stale else 5,
+                        "validated_count": 0 if stale else 5,
+                        "freshness_status": "STALE" if stale else "OK",
+                    }
+                )
+                processor.write_snapshot_quote = Mock(
+                    return_value={
+                        "code": "GOOD",
+                        "written_count": 0,
+                        "validated_count": 0,
+                        "freshness_status": "STALE",
+                    }
+                )
+                stock = SimpleNamespace(
+                    code="sh600519",
+                    name="Kweichow Moutai",
+                    active_status=0,
+                    data_capabilities=SimpleNamespace(
+                        daily_quote=True, fq_factor=True, ma_factor=True
+                    ),
+                    save=Mock(),
+                )
+                remote = pandas.DataFrame(
+                    [
+                        {
+                            "code": stock.code,
+                            "name": stock.name,
+                            "close": close,
+                            "open": 0,
+                            "high": 0,
+                            "low": 0,
+                            "volume": 0,
+                        }
+                    ]
+                )
+                with patch(
+                    "app.lib.datahub.processors.china_a_stock.progress_bar",
+                    return_value=lambda *args: None,
+                ):
+                    processor.check_data_integrity(
+                        obj_type="stock",
+                        local_data_list=DummyQuerySet([stock]),
+                        remote_data_df=remote,
+                        hist_handler="get_hist_stock_quote_data",
+                        allow_update=True,
+                    )
+                # INC/FULL（差 >1 天）与停牌 UPD 均走历史，不用快照
+                processor.get_hist_quote_data.assert_called_once()
+                processor.write_snapshot_quote.assert_not_called()
 
     def test_partial_quote_validation_failure_fails_the_phase(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
