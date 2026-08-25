@@ -265,11 +265,20 @@ class ChinaAStock(object):
         return status
 
     def check_stock_data_integrity(self, allow_update=False):
+        # Resolve the frozen trading day before the universe snapshot so
+        # default runs (no explicit --as-of-date) snapshot the right date.
+        self.perform_date_check()
         if zh_a_daily.stock_history_uses_baostock():
             baostock_conn_mgr = BaostockInterfaceManager()
             baostock_conn_mgr.establish_baostock_conn()
         local_stock_list = IndividualStock.objects(market=self.market)
-        remote_stock_list = zh_a_daily.get_zh_a_stock_spot()
+        remote_stock_list = zh_a_daily.get_zh_a_stock_universe(
+            as_of_date=(
+                self.most_recent_trading_day.strftime("%Y-%m-%d")
+                if self.most_recent_trading_day
+                else None
+            )
+        )
         status = self.check_data_integrity(
             obj_type="stock",
             local_data_list=local_stock_list,
