@@ -23,6 +23,27 @@ def to_tushare_ts_code(code: str) -> str:
     raise ValueError(f"cannot map internal code {code!r} to a tushare ts_code")
 
 
+def from_tushare_ts_code(ts_code: str) -> str:
+    """Map tushare ts_code (600519.SH) back to internal code (sh600519)."""
+    code, _, market = str(ts_code).partition(".")
+    return market.lower() + code
+
+
+def stock_basic_active():
+    """Active A-share list via tushare pro.stock_basic (list_status='L')."""
+    pro = _get_pro()
+    return pro.stock_basic(exchange="", list_status="L", fields="ts_code,name")
+
+
+def daily_by_trade_date(trade_date):
+    """Full-market daily snapshot for one trade date (YYYYMMDD).
+
+    Columns include ts_code, close, trade_status (0 = suspended).
+    """
+    pro = _get_pro()
+    return pro.daily(trade_date=trade_date)
+
+
 def _get_pro():
     token = os.getenv(TUSHARE_TOKEN_ENV, "").strip()
     if not token:

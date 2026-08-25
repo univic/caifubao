@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import time
+from typing import Any
 
 import pandas
 from requests.exceptions import ConnectionError, RequestException
@@ -18,6 +19,19 @@ logger = logging.getLogger(__name__)
 
 STOCK_HISTORY_SOURCE_ENV = "DATAHUB_STOCK_HISTORY_SOURCE"
 SUPPORTED_STOCK_HISTORY_SOURCES = {"akshare", "baostock", "tushare"}
+
+STOCK_UNIVERSE_SOURCE_ENV = "DATAHUB_STOCK_UNIVERSE_SOURCE"
+SUPPORTED_STOCK_UNIVERSE_SOURCES = {"spot", "tushare"}
+
+
+def get_stock_universe_source() -> str:
+    source = os.getenv(STOCK_UNIVERSE_SOURCE_ENV, "spot").strip().lower()
+    if source not in SUPPORTED_STOCK_UNIVERSE_SOURCES:
+        raise ValueError(
+            f"{STOCK_UNIVERSE_SOURCE_ENV} must be one of "
+            f"{sorted(SUPPORTED_STOCK_UNIVERSE_SOURCES)}"
+        )
+    return source
 
 
 TRANSIENT_NETWORK_MARKERS = (
@@ -335,6 +349,61 @@ def get_zh_a_stock_spot():
     df.rename(name_mapping, axis=1, inplace=True)  # rename column
     df["code"] = df["代码"].apply(stock_code_helper.add_market_prefix)
     return df
+
+
+def _build_tushare_universe(as_of_date: str | None = None):
+    """Build the stock universe from tushare (stock_basic + daily snapshot).
+
+    Returns a DataFrame with columns [code, name, close]; close == 0 means
+    temporarily suspended (absent from the as-of daily snapshot or
+    trade_status == 0), matching the spot path's suspension semantics.
+    """
+    trade_date = (
+        as_of_date.replace("-", "")
+        if as_of_date
+        else datetime.date.today().strftime("%Y%m%d")
+    )
+    basic = _call_with_retry(
+        lambda: interface.tushare_interface.stock_basic_active(),
+        label="tushare_stock_basic",
+    )
+    daily = _call_with_retry(
+        lambda: interface.tushare_interface.daily_by_trade_date(trade_date),
+        label=f"tushare_daily:{trade_date}",
+    )
+    if basic is None or basic.empty:
+        return pandas.DataFrame(columns=["code", "name", "close"])
+
+    daily_map: dict[str, Any] = {}
+    if daily is not None and not daily.empty:
+        for _, row in daily.iterrows():
+            ts_code = row.get("ts_code")
+            if ts_code:
+                daily_map[ts_code] = row
+
+    rows = []
+    for _, row in basic.iterrows():
+        ts_code = row.get("ts_code")
+        name = row.get("name", "")
+        if not ts_code:
+            continue
+        code = interface.tushare_interface.from_tushare_ts_code(ts_code)
+        daily_row = daily_map.get(ts_code)
+        suspended = daily_row is None or int(daily_row.get("trade_status", 1)) == 0
+        close = 0.0 if suspended else float(daily_row.get("close", 0) or 0)
+        rows.append({"code": code, "name": name, "close": close})
+    return pandas.DataFrame(rows)
+
+
+def get_zh_a_stock_universe(as_of_date: str | None = None):
+    """Resolve the stock universe per DATAHUB_STOCK_UNIVERSE_SOURCE.
+
+    spot (default) -> eastmoney/sina spot list; tushare -> stock_basic +
+    the as-of-date daily snapshot. Output columns: code, name, close.
+    """
+    if get_stock_universe_source() == "tushare":
+        return _build_tushare_universe(as_of_date)
+    return get_zh_a_stock_spot()
 
 
 def get_zh_a_index_hist_daily_quote(

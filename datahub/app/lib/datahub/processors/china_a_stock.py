@@ -269,7 +269,13 @@ class ChinaAStock(object):
             baostock_conn_mgr = BaostockInterfaceManager()
             baostock_conn_mgr.establish_baostock_conn()
         local_stock_list = IndividualStock.objects(market=self.market)
-        remote_stock_list = zh_a_daily.get_zh_a_stock_spot()
+        remote_stock_list = zh_a_daily.get_zh_a_stock_universe(
+            as_of_date=(
+                self.most_recent_trading_day.strftime("%Y-%m-%d")
+                if self.most_recent_trading_day
+                else None
+            )
+        )
         status = self.check_data_integrity(
             obj_type="stock",
             local_data_list=local_stock_list,

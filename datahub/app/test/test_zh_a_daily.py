@@ -387,6 +387,67 @@ class TestStockHistorySource(TestCase):
             with self.assertRaisesRegex(RuntimeError, "TUSHARE_TOKEN"):
                 zh_a_daily.interface.tushare_interface.tushare_daily("600519.SH")
 
+    def test_universe_source_defaults_to_spot(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(zh_a_daily.get_stock_universe_source(), "spot")
+        with patch.dict(os.environ, {zh_a_daily.STOCK_UNIVERSE_SOURCE_ENV: "tushare"}):
+            self.assertEqual(zh_a_daily.get_stock_universe_source(), "tushare")
+
+    def test_universe_dispatch_spot_uses_spot_path(self):
+        with patch.object(
+            zh_a_daily,
+            "get_zh_a_stock_spot",
+            return_value=pandas.DataFrame([{"code": "sh600519", "close": 1.0}]),
+        ) as spot:
+            df = zh_a_daily.get_zh_a_stock_universe(as_of_date="2026-08-25")
+        self.assertEqual(len(df), 1)
+        spot.assert_called_once()
+
+    def test_tushare_universe_builds_code_name_close_with_suspension(self):
+        basic = pandas.DataFrame(
+            [
+                {"ts_code": "600519.SH", "name": "贵州茅台"},
+                {"ts_code": "000001.SZ", "name": "平安银行"},
+                {"ts_code": "600000.SH", "name": "浦发银行"},
+            ]
+        )
+        daily = pandas.DataFrame(
+            [
+                {"ts_code": "600519.SH", "close": 1304.66, "trade_status": 1},
+                # 000001.SZ 停牌（trade_status=0），600000.SH 不在当日截面
+                {"ts_code": "000001.SZ", "close": 0.0, "trade_status": 0},
+            ]
+        )
+
+        with patch.dict(os.environ, {zh_a_daily.STOCK_UNIVERSE_SOURCE_ENV: "tushare"}):
+            with (
+                patch.object(
+                    zh_a_daily.interface.tushare_interface,
+                    "stock_basic_active",
+                    return_value=basic,
+                ),
+                patch.object(
+                    zh_a_daily.interface.tushare_interface,
+                    "daily_by_trade_date",
+                    return_value=daily,
+                ) as daily_fetch,
+            ):
+                df = zh_a_daily.get_zh_a_stock_universe(as_of_date="2026-08-25")
+
+        daily_fetch.assert_called_once_with("20260825")
+        rows = {r["code"]: r for _, r in df.iterrows()}
+        self.assertEqual(rows["sh600519"]["name"], "贵州茅台")
+        self.assertEqual(rows["sh600519"]["close"], 1304.66)
+        self.assertEqual(rows["sz000001"]["close"], 0.0)  # trade_status=0 停牌
+        self.assertEqual(rows["sh600000"]["close"], 0.0)  # 当日截面缺失 = 停牌
+        self.assertEqual(rows["sh600000"]["name"], "浦发银行")
+
+    def test_from_tushare_ts_code_mapping(self):
+        convert = zh_a_daily.interface.tushare_interface.from_tushare_ts_code
+        self.assertEqual(convert("600519.SH"), "sh600519")
+        self.assertEqual(convert("000977.SZ"), "sz000977")
+        self.assertEqual(convert("920000.BJ"), "bj920000")
+
     def test_explicit_end_date_is_shared_with_baostock(self):
         raw = pandas.DataFrame(
             [
