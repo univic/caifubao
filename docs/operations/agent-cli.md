@@ -271,9 +271,26 @@ the entire logical run. Do not resume a Job created from an older image.
 - `datahub/` — produces and stores market data, factors, signals, scores
 - `backend/` — exposes Flask APIs, auth, light aggregation
 - `frontend/` — consumes backend APIs, renders UX
-- Dev CronJobs — suspended by default; use CLI for manual operations
+- Dev quote/factor/signal/scoring CronJobs — suspended by default; dev gets its
+  market data from prod via the daily `data-sync` CronJob instead of pulling
+  sources itself. Use the CLI for manual operations.
+- Prod quote/signal/scoring CronJobs — enabled and run the daily routine (see
+  below).
 - MongoDB backup CronJob — public template is suspended by default; private
   overlays must provide real object-storage config before enabling it
+
+### Daily routine schedules (Asia/Shanghai, weekdays)
+
+| CronJob | Schedule | Purpose |
+|:---|:---|:---|
+| prod `caifubao-datahub-quote-stock` | `0 18 * * 1-5` | Pull latest quotes + factors (`DATAHUB_STOCK_HISTORY_SOURCE=tushare`, `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare`); UPD path writes settlement snapshots |
+| prod `caifubao-datahub-signal` | `30 18 * * 1-5` | Compute MA-cross signals from fresh factors |
+| prod `caifubao-datahub-scoring` | `35 18 * * 1-5` | Score latest trading day for all horizons |
+| dev `caifubao-datahub-data-sync` | `30 18 * * 1-5` | Sync prod MongoDB → dev (quotes, factors, signals, market, industry) |
+
+The quote, signal, and scoring jobs run in dependency order (quote → signal →
+scoring). Dev's data-sync runs after prod's quote job so it picks up the same
+day's rows.
 
 ### Data pipeline dependency chain
 ```
@@ -283,7 +300,7 @@ quote → FQ factor → MA factor → signal → scoring → verification
   │        │           │          └── reads factor + quote → writes stock_signal_daily
   │        │           └── reads quote → writes stock_factor_daily
   │        └── reads quote → adds hfq fields to stock_daily_quote
-  └── baostock/akshare → writes stock_daily_quote
+  └── tushare/akshare/baostock → writes stock_daily_quote
 ```
 
 Stock history defaults to AkShare over HTTPS. Set
@@ -291,10 +308,18 @@ Stock history defaults to AkShare over HTTPS. Set
 `www.baostock.com:10030` is known to work. Set
 `DATAHUB_STOCK_HISTORY_SOURCE=tushare` to use the Tushare `pro.daily`
 interface (requires the private `TUSHARE_TOKEN` secret; history is fetched
-in year windows). Set
+in year windows and every call is paced to stay under the 300/min rate
+limit). Set
 `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare` to source the stock universe/list
 from tushare (`pro.stock_basic` + the frozen-date daily snapshot) instead of
-the eastmoney/sina spot list. A stock refresh that attempts updates but writes zero
+the eastmoney/sina spot list.
+
+Daily incremental updates use a snapshot-driven path: when a stock's latest
+quote is exactly one trading day behind, the runner is not suspended, the
+target is a stock, and the universe source is tushare, the settlement snapshot
+(`pro.daily` for the as-of date) is written directly instead of replaying full
+history. INC/FULL refreshes, suspended stocks, and spot-sourced universes still
+replay history. A stock refresh that attempts updates but writes zero
 quote rows fails before factor and scoring phases.
 
 ### Data sync (prod → dev)

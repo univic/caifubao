@@ -24,11 +24,11 @@
 
 ## 4. Review + Merge
 
-- [ ] 4.1 spec-guardian + qa-reviewer (re-review after P1 fixes)
-- [ ] 4.2 Branch conflict check + Draft PR + CI green
+- [x] 4.1 spec-guardian + qa-reviewer (re-review after P1 fixes)
+- [x] 4.2 Branch conflict check + Draft PR + CI green
 
 ## 5. Private Wiring + Deploy (private repo, operator)
 
 - [x] 5.1 `TUSHARE_TOKEN` GitHub secret → `env/root/.env` → datahub secret → pod env (private PR #54)
-- [ ] 5.2 Publish new image; deploy dev → verify → deploy prod (full public_ref)
-- [ ] 5.3 Bootstrap smoke: single stock via tushare; then full-market one-shot Job with frozen `as_of_date`
+- [x] 5.2 Publish new image; deploy dev → verify → deploy prod (full public_ref)
+- [x] 5.3 Bootstrap smoke: single stock via tushare; then full-market one-shot Job with frozen `as_of_date`（08-24 全市场 bootstrap 成功）

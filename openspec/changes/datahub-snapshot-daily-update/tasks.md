@@ -19,11 +19,11 @@
 
 ## 4. Review + Merge
 
-- [ ] 4.1 spec-guardian + qa-reviewer
-- [ ] 4.2 Branch conflict check + Draft PR + CI green
+- [x] 4.1 spec-guardian + qa-reviewer
+- [x] 4.2 Branch conflict check + Draft PR + CI green
 
 ## 5. Deploy + Daily Update (operator)
 
-- [ ] 5.1 Publish new image; deploy dev → verify → deploy prod
-- [ ] 5.2 每日增量 Job（全 tushare）：~3 次调用、分钟级完成、0 限流
-- [ ] 5.3 验证 08-25 全市场行写入与 freshness
+- [x] 5.1 Publish new image; deploy dev → verify → deploy prod
+- [x] 5.2 每日增量 Job（全 tushare）：~3 次调用、分钟级完成、0 限流
+- [x] 5.3 验证 08-25 全市场行写入与 freshness（5,208 行；OK 5208 / STALE 4 停牌）
