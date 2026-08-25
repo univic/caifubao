@@ -354,7 +354,9 @@ def get_zh_a_stock_spot():
 def _build_tushare_universe(as_of_date: str | None = None):
     """Build the stock universe from tushare (stock_basic + daily snapshot).
 
-    Returns a DataFrame with columns [code, name, close]; close == 0 means
+    Returns a DataFrame with code/name/close plus the full daily bar fields
+    (open/high/low/volume/trade_amount/previous_close/change_amount/
+    change_rate/turnover_rate); close == 0 means
     temporarily suspended (absent from the as-of daily snapshot — tushare
     omits suspended stocks), matching the spot path's suspension semantics.
     """
@@ -454,7 +456,7 @@ def get_zh_a_stock_universe(as_of_date: str | None = None):
     """Resolve the stock universe per DATAHUB_STOCK_UNIVERSE_SOURCE.
 
     spot (default) -> eastmoney/sina spot list; tushare -> stock_basic +
-    the as-of-date daily snapshot. Output columns: code, name, close.
+    the as-of-date daily snapshot (full daily bar fields included).
     """
     if get_stock_universe_source() == "tushare":
         return _build_tushare_universe(as_of_date)

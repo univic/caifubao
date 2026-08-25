@@ -469,9 +469,15 @@ class ChinaAStock(object):
                                     flag == "UPD"
                                     and not is_temporarily_suspended
                                     and obj_type == "stock"
+                                    and zh_a_daily.get_stock_universe_source()
+                                    == "tushare"
                                 ):
                                     # one trading day behind: write the settled
-                                    # as-of row from the market snapshot
+                                    # as-of row from the market snapshot (only
+                                    # for the tushare universe, whose
+                                    # daily(trade_date) bar is the settled
+                                    # as-of bar; the real-time spot path keeps
+                                    # the history fallback)
                                     hist_result = self.write_snapshot_quote(
                                         stock_obj=stock_obj,
                                         snapshot_row=remote_stock_item,
@@ -875,19 +881,25 @@ class ChinaAStock(object):
         written_count = 0
         freshness_status = None
         try:
+
+            def _num(value):
+                coerced = pandas.to_numeric(value, errors="coerce")
+                return 0.0 if pandas.isna(coerced) else float(coerced)
+
             row = {
                 "date": expected_date,
                 "code": stock_obj.code,
-                "open": snapshot_row.get("open", 0),
-                "high": snapshot_row.get("high", 0),
-                "low": snapshot_row.get("low", 0),
-                "close": snapshot_row.get("close", 0),
-                "previous_close": snapshot_row.get("previous_close", 0),
-                "volume": snapshot_row.get("volume", 0),
-                "trade_amount": snapshot_row.get("trade_amount", 0),
-                "turnover_rate": snapshot_row.get("turnover_rate", 0),
-                "change_rate": snapshot_row.get("change_rate", 0),
-                "change_amount": snapshot_row.get("change_amount", 0),
+                "open": _num(snapshot_row.get("open", 0)),
+                "high": _num(snapshot_row.get("high", 0)),
+                "low": _num(snapshot_row.get("low", 0)),
+                "close": _num(snapshot_row.get("close", 0)),
+                "previous_close": _num(snapshot_row.get("previous_close", 0)),
+                "volume": _num(snapshot_row.get("volume", 0)),
+                "trade_amount": _num(snapshot_row.get("trade_amount", 0)),
+                "turnover_rate": _num(snapshot_row.get("turnover_rate", 0)),
+                "change_rate": _num(snapshot_row.get("change_rate", 0)),
+                "change_amount": _num(snapshot_row.get("change_amount", 0)),
+                "trade_status": 1,
             }
             operation = _build_stock_quote_upsert_operation(
                 stock_obj, pandas.Series(row)
@@ -910,6 +922,7 @@ class ChinaAStock(object):
         except Exception as exc:  # noqa: BLE001
             status_code = "FAIL"
             status_msg = str(exc)
+            written_count = 0
             logger.error(
                 "Datahub - ChinaAStock - Snapshot quote write failed for %s: %s",
                 stock_obj.code,
@@ -919,7 +932,7 @@ class ChinaAStock(object):
             "code": status_code,
             "message": status_msg,
             "written_count": written_count,
-            "validated_count": 1,
+            "validated_count": 1 if status_code == "GOOD" else 0,
             "freshness_status": freshness_status,
         }
 

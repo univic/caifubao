@@ -16,7 +16,10 @@ if flag in ["UPD", "INC", "FULL"]:
         hist_result = self.get_hist_quote_data(...)
 ```
 
-- UPD + 非停牌 + 股票 → 快照写入；其余（INC/FULL、停牌、指数）→ 历史
+- **UPD + 非停牌 + 股票 + universe 源为 tushare** → 快照写入；其余
+  （INC/FULL、停牌、指数、spot universe）→ 历史
+- 快照路径仅对 tushare universe 开放：`daily(trade_date)` 是 as-of 结算价；
+  spot（实时快照）盘中会与 as-of 日期错位，保持历史回退
 - 停牌股（close=0）不进快照写入，避免写入 close=0 的污染行（沿用悬挂容忍）
 
 ### write_snapshot_quote
@@ -36,6 +39,7 @@ previous_close, change_amount, change_rate, turnover_rate]`
 
 ### 验证
 
-- 单测：UPD 走快照写入（历史不被调用）；INC/FULL 仍走历史；停牌 UPD 走历史；
-  tushare universe 含完整日线字段；快照写入的 freshness 更新
+- 单测：UPD+tushare 走快照写入（历史不被调用）；INC/FULL/停牌/spot-universe
+  走历史；tushare universe 含完整日线字段；`write_snapshot_quote` 直接单测
+  （行构造/数值强转/freshness/异常→FAIL）
 - 生产：每日增量 Job（全 tushare）应 ~3 次调用 + 分钟级完成，0 限流

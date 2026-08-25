@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from unittest import TestCase
 from unittest.mock import Mock, patch
 import datetime
@@ -130,6 +132,7 @@ class TestChinaAStockHelpers(TestCase):
         self.assertEqual(operation._doc["$set"]["close"], 1.5)
 
     def test_one_day_update_writes_from_market_snapshot(self):
+        from app.lib.datahub.data_source.handler import zh_a_daily
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
 
         processor = object.__new__(ChinaAStock)
@@ -184,9 +187,15 @@ class TestChinaAStockHelpers(TestCase):
             ]
         )
 
-        with patch(
-            "app.lib.datahub.processors.china_a_stock.progress_bar",
-            return_value=lambda *args: None,
+        with (
+            patch.dict(
+                os.environ,
+                {zh_a_daily.STOCK_UNIVERSE_SOURCE_ENV: "tushare"},
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.progress_bar",
+                return_value=lambda *args: None,
+            ),
         ):
             result = processor.check_data_integrity(
                 obj_type="stock",
@@ -196,7 +205,7 @@ class TestChinaAStockHelpers(TestCase):
                 allow_update=True,
             )
 
-        # UPD（差 1 天）→ 快照写入，不拉历史
+        # UPD（差 1 天）+ tushare universe → 快照写入，不拉历史
         processor.write_snapshot_quote.assert_called_once()
         processor.get_hist_quote_data.assert_not_called()
         self.assertEqual(result["written_count"], 1)
@@ -269,6 +278,140 @@ class TestChinaAStockHelpers(TestCase):
                 # INC/FULL（差 >1 天）与停牌 UPD 均走历史，不用快照
                 processor.get_hist_quote_data.assert_called_once()
                 processor.write_snapshot_quote.assert_not_called()
+
+    def test_write_snapshot_quote_builds_row_and_refreshes_freshness(self):
+        from app.lib.datahub.processors.china_a_stock import ChinaAStock
+        from app.model.stock import StockDailyQuote
+
+        processor = object.__new__(ChinaAStock)
+        processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
+        stock = SimpleNamespace(code="sh600519", name="贵州茅台")
+
+        collection = Mock()
+        collection.bulk_write.return_value = Mock(upserted_count=1, modified_count=0)
+        captured = {}
+
+        def fake_build(stock_obj, row):
+            captured["row"] = row
+            operation = Mock()
+            operation._doc = {"$set": dict(row)}
+            return operation
+
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock._build_stock_quote_upsert_operation",
+                side_effect=fake_build,
+            ),
+            patch.object(StockDailyQuote, "_get_collection", return_value=collection),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.refresh_quote_status",
+                return_value={"status": "OK"},
+            ) as refresh,
+        ):
+            result = processor.write_snapshot_quote(
+                stock_obj=stock,
+                snapshot_row={
+                    "open": "1271.01",
+                    "high": "1313.8",
+                    "low": "1270.33",
+                    "close": "1304.66",
+                    "previous_close": "1272.83",
+                    "volume": "4844000",
+                    "trade_amount": "6299794000.0",
+                    "turnover_rate": 0.5,
+                    "change_rate": 2.5,
+                    "change_amount": 31.83,
+                },
+                expected_date=datetime.datetime(2026, 8, 25),
+            )
+
+        self.assertEqual(result["code"], "GOOD")
+        self.assertEqual(result["written_count"], 1)
+        self.assertEqual(result["validated_count"], 1)
+        refresh.assert_called_once()
+        self.assertEqual(captured["row"]["close"], 1304.66)
+        self.assertEqual(captured["row"]["trade_status"], 1)
+        self.assertEqual(captured["row"]["date"], datetime.datetime(2026, 8, 25))
+
+    def test_write_snapshot_quote_coerces_non_numeric_cells(self):
+        from app.lib.datahub.processors.china_a_stock import ChinaAStock
+        from app.model.stock import StockDailyQuote
+
+        processor = object.__new__(ChinaAStock)
+        processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
+        stock = SimpleNamespace(code="sh600519", name="贵州茅台")
+
+        collection = Mock()
+        collection.bulk_write.return_value = Mock(upserted_count=1, modified_count=0)
+        captured = {}
+
+        def fake_build(stock_obj, row):
+            captured["row"] = row
+            operation = Mock()
+            operation._doc = {"$set": dict(row)}
+            return operation
+
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock._build_stock_quote_upsert_operation",
+                side_effect=fake_build,
+            ),
+            patch.object(StockDailyQuote, "_get_collection", return_value=collection),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.refresh_quote_status",
+                return_value={"status": "OK"},
+            ),
+        ):
+            result = processor.write_snapshot_quote(
+                stock_obj=stock,
+                snapshot_row={
+                    "close": "-",
+                    "high": None,
+                    "low": "",
+                    "previous_close": "0.00",
+                    "volume": "--",
+                    "trade_amount": "1e8",
+                },
+                expected_date=datetime.datetime(2026, 8, 25),
+            )
+
+        # 非数值单元格被强转为 0，不抛 TypeError
+        self.assertEqual(result["code"], "GOOD")
+        self.assertEqual(captured["row"]["close"], 0.0)
+        self.assertEqual(captured["row"]["volume"], 0.0)
+        self.assertEqual(captured["row"]["previous_close"], 0.0)
+        self.assertEqual(captured["row"]["trade_amount"], 100000000.0)
+
+    def test_write_snapshot_quote_failure_returns_fail(self):
+        from app.lib.datahub.processors.china_a_stock import ChinaAStock
+        from app.model.stock import StockDailyQuote
+
+        processor = object.__new__(ChinaAStock)
+        processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
+        stock = SimpleNamespace(code="sh600519", name="贵州茅台")
+
+        collection = Mock()
+        collection.bulk_write.side_effect = RuntimeError("boom")
+
+        def fake_build(stock_obj, row):
+            return Mock()
+
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock._build_stock_quote_upsert_operation",
+                side_effect=fake_build,
+            ),
+            patch.object(StockDailyQuote, "_get_collection", return_value=collection),
+        ):
+            result = processor.write_snapshot_quote(
+                stock_obj=stock,
+                snapshot_row={"close": 1.0},
+                expected_date=datetime.datetime(2026, 8, 25),
+            )
+
+        self.assertEqual(result["code"], "FAIL")
+        self.assertEqual(result["written_count"], 0)
+        self.assertEqual(result["validated_count"], 0)
 
     def test_partial_quote_validation_failure_fails_the_phase(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
