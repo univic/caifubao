@@ -30,6 +30,7 @@ TRANSIENT_NETWORK_MARKERS = (
     "ConnectTimeout",
     "Connection reset by peer",
     "每分钟最多",  # tushare rate-limit message: 抱歉，您每分钟最多访问该接口N次
+    "频率超限",  # tushare rate-limit message: 您访问接口(daily)频率超限(300次/分钟)
 )
 
 
