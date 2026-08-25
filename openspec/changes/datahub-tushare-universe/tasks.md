@@ -21,11 +21,11 @@
 
 ## 4. Review + Merge
 
-- [ ] 4.1 spec-guardian + qa-reviewer
-- [ ] 4.2 Branch conflict check + Draft PR + CI green
+- [x] 4.1 spec-guardian + qa-reviewer
+- [x] 4.2 Branch conflict check + Draft PR + CI green
 
 ## 5. Deploy + Daily Update (operator)
 
-- [ ] 5.1 Publish new image; deploy dev → verify → deploy prod
-- [ ] 5.2 每日增量 Job：`DATAHUB_STOCK_HISTORY_SOURCE=tushare` + `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare`，`--as-of-date` 当日
-- [ ] 5.3 验证 08-25 行写入与 freshness（无超期行、AHEAD=0）
+- [x] 5.1 Publish new image; deploy dev → verify → deploy prod
+- [x] 5.2 每日增量 Job：`DATAHUB_STOCK_HISTORY_SOURCE=tushare` + `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare`，`--as-of-date` 当日（已固化为 prod quote-stock CronJob env）
+- [x] 5.3 验证 08-25 行写入与 freshness（无超期行、AHEAD=0；OK 5208 / STALE 4 停牌）
