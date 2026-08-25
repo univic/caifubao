@@ -6,7 +6,12 @@
 if flag in ["UPD", "INC", "FULL"]:
     if not is_temporarily_suspended:
         required_quote_attempt_count += 1
-    if flag == "UPD" and not is_temporarily_suspended and obj_type == "stock":
+    if (
+        flag == "UPD"
+        and not is_temporarily_suspended
+        and obj_type == "stock"
+        and zh_a_daily.get_stock_universe_source() == "tushare"
+    ):
         hist_result = self.write_snapshot_quote(
             stock_obj=stock_obj,
             snapshot_row=remote_stock_item,
@@ -35,7 +40,8 @@ if flag in ["UPD", "INC", "FULL"]:
 `_build_tushare_universe` 输出列从 `[code, name, close]` 扩展为
 `[code, name, close, open, high, low, volume, trade_amount,
 previous_close, change_amount, change_rate, turnover_rate]`
-（trade_amount = amount×1000；停牌行全 0）。spot 路径字段本就齐全。
+（trade_amount = amount×1000；停牌行全 0）。快照写入仅限 tushare
+universe（spot 为实时快照，保持历史回退）。
 
 ### 验证
 

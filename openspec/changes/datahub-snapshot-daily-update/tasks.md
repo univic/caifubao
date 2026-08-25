@@ -7,7 +7,7 @@
 
 ## 2. Processor
 
-- [x] 2.1 `check_data_integrity` UPD 分支：股票+非停牌 → 快照写入；INC/FULL/停牌/指数 → 历史
+- [x] 2.1 `check_data_integrity` UPD 分支：股票+非停牌+tushare universe → 快照写入；INC/FULL/停牌/指数/spot-universe → 历史
 
 ## 3. Tests
 

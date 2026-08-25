@@ -27,12 +27,6 @@ of pulling per-stock history, when the stock universe source is `tushare`
 - **THEN** the runner SHALL use the history source (the real-time spot is not
   the settled as-of bar)
 
-- **GIVEN** a stock with quotes through the previous trading day and a
-  settled market snapshot for the as-of date
-- **WHEN** a stock quote runner processes the stock (UPD)
-- **THEN** the runner SHALL write the as-of row from the snapshot row
-- **AND** SHALL NOT call the history source
-
 #### Scenario: Stock is more than one day behind, or suspended
 
 - **GIVEN** a stock more than one day behind (INC/FULL) or flagged suspended

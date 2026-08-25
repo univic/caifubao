@@ -213,7 +213,13 @@ class TestChinaAStockHelpers(TestCase):
     def test_deeper_gap_or_suspended_uses_history(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
 
-        for freshness, close in [("INC", 100.0), ("FULL", 100.0), ("UPD", 0.0)]:
+        # 默认 universe 源为 spot：UPD+交易中 也走历史（快照路径仅限 tushare）
+        for freshness, close in [
+            ("INC", 100.0),
+            ("FULL", 100.0),
+            ("UPD", 0.0),
+            ("UPD", 100.0),
+        ]:
             with self.subTest(freshness=freshness, close=close):
                 processor = object.__new__(ChinaAStock)
                 processor.market = SimpleNamespace(
@@ -224,8 +230,8 @@ class TestChinaAStockHelpers(TestCase):
                 processor.check_data_freshness = lambda stock, f=freshness: f
                 processor.perform_stock_name_check = Mock()
                 processor.update_active_status = Mock()
-                # INC/FULL 成功拉取 -> OK；停牌 UPD 无数据 -> STALE（悬挂容忍）
-                stale = freshness == "UPD"
+                # INC/FULL 成功拉取 -> OK；停牌 UPD（close=0）无数据 -> STALE
+                stale = close == 0.0
                 processor.get_hist_quote_data = Mock(
                     return_value={
                         "code": "GOOD",
