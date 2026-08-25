@@ -15,7 +15,7 @@
 ## 3. Tests
 
 - [x] 3.1 Universe dispatch（spot 默认不变 / tushare 生效）
-- [x] 3.2 Tushare universe：code/name/close 映射、停牌（缺行 / trade_status=0 → close=0）
+- [x] 3.2 Tushare universe：code/name/close 映射、停牌（缺席 → close=0）
 - [x] 3.3 ts_code 反映射（sh/sz/bj）
 - [x] 3.4 现有 spot 路径测试不回归
 

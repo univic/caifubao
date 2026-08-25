@@ -355,8 +355,8 @@ def _build_tushare_universe(as_of_date: str | None = None):
     """Build the stock universe from tushare (stock_basic + daily snapshot).
 
     Returns a DataFrame with columns [code, name, close]; close == 0 means
-    temporarily suspended (absent from the as-of daily snapshot or
-    trade_status == 0), matching the spot path's suspension semantics.
+    temporarily suspended (absent from the as-of daily snapshot — tushare
+    omits suspended stocks), matching the spot path's suspension semantics.
     """
     trade_date = (
         as_of_date.replace("-", "")

@@ -16,7 +16,7 @@
    close=0（停牌）**，与 spot 的 close==0 语义一致
 4. **空快照守卫**：daily 为空 → `RuntimeError`（否则全市场误判停牌、
    静默零写入），与"spot 列表为空"守卫对齐
-4. 输出 DataFrame 列：`code, name, close`
+5. 输出 DataFrame 列：`code, name, close`
 
 ### Handler 分发
 
