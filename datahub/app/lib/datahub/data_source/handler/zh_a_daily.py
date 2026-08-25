@@ -373,13 +373,19 @@ def _build_tushare_universe(as_of_date: str | None = None):
     )
     if basic is None or basic.empty:
         return pandas.DataFrame(columns=["code", "name", "close"])
+    if daily is None or daily.empty:
+        # An empty snapshot would flag the whole market as suspended and
+        # silently no-op the quote phase; fail loudly instead.
+        raise RuntimeError(
+            f"Tushare daily snapshot for {trade_date} is empty; "
+            "cannot resolve the stock universe"
+        )
 
     daily_map: dict[str, Any] = {}
-    if daily is not None and not daily.empty:
-        for _, row in daily.iterrows():
-            ts_code = row.get("ts_code")
-            if ts_code:
-                daily_map[ts_code] = row
+    for _, row in daily.iterrows():
+        ts_code = row.get("ts_code")
+        if ts_code:
+            daily_map[ts_code] = row
 
     rows = []
     for _, row in basic.iterrows():
@@ -389,8 +395,12 @@ def _build_tushare_universe(as_of_date: str | None = None):
             continue
         code = interface.tushare_interface.from_tushare_ts_code(ts_code)
         daily_row = daily_map.get(ts_code)
-        suspended = daily_row is None or int(daily_row.get("trade_status", 1)) == 0
-        close = 0.0 if suspended else float(daily_row.get("close", 0) or 0)
+        if daily_row is None:
+            # tushare omits suspended stocks for the date -> close=0
+            close = 0.0
+        else:
+            close_raw = pandas.to_numeric(daily_row.get("close"), errors="coerce")
+            close = 0.0 if pandas.isna(close_raw) else float(close_raw)
         rows.append({"code": code, "name": name, "close": close})
     return pandas.DataFrame(rows)
 

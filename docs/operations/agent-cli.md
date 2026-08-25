@@ -291,7 +291,10 @@ Stock history defaults to AkShare over HTTPS. Set
 `www.baostock.com:10030` is known to work. Set
 `DATAHUB_STOCK_HISTORY_SOURCE=tushare` to use the Tushare `pro.daily`
 interface (requires the private `TUSHARE_TOKEN` secret; history is fetched
-in year windows). A stock refresh that attempts updates but writes zero
+in year windows). Set
+`DATAHUB_STOCK_UNIVERSE_SOURCE=tushare` to source the stock universe/list
+from tushare (`pro.stock_basic` + the frozen-date daily snapshot) instead of
+the eastmoney/sina spot list. A stock refresh that attempts updates but writes zero
 quote rows fails before factor and scoring phases.
 
 ### Data sync (prod → dev)

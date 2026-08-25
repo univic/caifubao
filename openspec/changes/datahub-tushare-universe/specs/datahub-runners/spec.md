@@ -13,7 +13,15 @@ snapshot.
 - **WHEN** a stock quote runner resolves the stock universe
 - **THEN** the runner SHALL enumerate active A-shares from `pro.stock_basic`
 - **AND** SHALL flag a stock as temporarily suspended (close = 0) when it is
-  absent from the frozen-date daily snapshot or has `trade_status = 0`
+  absent from the frozen-date daily snapshot (tushare omits suspended stocks)
+
+#### Scenario: Daily snapshot is empty
+
+- **GIVEN** `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare` and the frozen-date daily
+  snapshot returns no rows (e.g. a non-trading day or source failure)
+- **WHEN** a stock quote runner resolves the stock universe
+- **THEN** the runner SHALL fail loudly instead of flagging the whole market
+  as suspended and silently no-op'ing the quote phase
 
 #### Scenario: Spot remains the default
 

@@ -691,6 +691,45 @@ class TestChinaAStockHelpers(TestCase):
         # record (objects() is only called from the NotUniqueError path).
         self.assertGreaterEqual(reuse_info["objects_calls"], 1)
 
+    def test_stock_universe_snapshot_uses_resolved_trading_day(self):
+        from app.lib.datahub.processors.china_a_stock import ChinaAStock
+
+        processor = object.__new__(ChinaAStock)
+        processor.market = SimpleNamespace(
+            name="ChinaAStock",
+            trade_calendar=[
+                datetime.datetime(2026, 8, 24),
+                datetime.datetime(2026, 8, 25),
+            ],
+        )
+        processor.today = datetime.date(2026, 8, 25)
+        processor.run_started_at = datetime.datetime(
+            2026, 8, 25, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+        )
+        processor.explicit_as_of_date = False
+        processor.most_recent_trading_day = None
+        processor.check_data_integrity = Mock()
+
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock.IndividualStock",
+                Mock(),
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.zh_a_daily.get_zh_a_stock_universe",
+                return_value=pandas.DataFrame(),
+            ) as universe,
+            patch(
+                "app.lib.datahub.processors.china_a_stock.zh_a_daily.stock_history_uses_baostock",
+                return_value=False,
+            ),
+        ):
+            processor.check_stock_data_integrity()
+
+        # perform_date_check must resolve the frozen trading day BEFORE the
+        # universe snapshot so default runs snapshot the right date.
+        self.assertEqual(universe.call_args.kwargs["as_of_date"], "2026-08-25")
+
     def test_stringified_mongoengine_bulk_write_error_is_detected(self):
         from app.lib.utilities.mongo_error_helper import (
             is_duplicate_only_bulk_write_error,

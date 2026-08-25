@@ -38,7 +38,9 @@ def stock_basic_active():
 def daily_by_trade_date(trade_date):
     """Full-market daily snapshot for one trade date (YYYYMMDD).
 
-    Columns include ts_code, close, trade_status (0 = suspended).
+    Columns include ts_code, open, high, low, close, pre_close, change,
+    pct_chg, vol, amount. Tushare omits suspended stocks for that date
+    (absence = temporarily suspended).
     """
     pro = _get_pro()
     return pro.daily(trade_date=trade_date)
