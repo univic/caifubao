@@ -87,10 +87,10 @@ def tushare_daily(ts_code, start_date=None, end_date=None):
         )
         if df is not None and not df.empty:
             frames.append(df)
-        if window_end < end_year:
-            # pace to stay under tushare's per-minute call cap (300/min tier):
-            # ~0.25s between calls keeps us at <=240 calls/min
-            time.sleep(0.25)
+        # pace EVERY call (not only between windows) to stay under tushare's
+        # per-minute cap (300/min tier): ~0.25s/call keeps us at <=240/min
+        # even for single-window incremental pulls
+        time.sleep(0.25)
 
     if not frames:
         return pandas.DataFrame()
