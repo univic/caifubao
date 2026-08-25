@@ -413,7 +413,18 @@ class TestStockHistorySource(TestCase):
         )
         daily = pandas.DataFrame(
             [
-                {"ts_code": "600519.SH", "close": 1304.66},
+                {
+                    "ts_code": "600519.SH",
+                    "close": 1304.66,
+                    "open": 1271.01,
+                    "high": 1313.8,
+                    "low": 1270.33,
+                    "vol": 4844000,
+                    "amount": 6299794.0,
+                    "pre_close": 1272.83,
+                    "change": 31.83,
+                    "pct_chg": 2.5,
+                },
                 {"ts_code": "000001.SZ", "close": 11.56},
                 # 600000.SH 不在当日截面 -> tushare 省略停牌股
             ]
@@ -438,8 +449,18 @@ class TestStockHistorySource(TestCase):
         rows = {r["code"]: r for _, r in df.iterrows()}
         self.assertEqual(rows["sh600519"]["name"], "贵州茅台")
         self.assertEqual(rows["sh600519"]["close"], 1304.66)
+        self.assertEqual(rows["sh600519"]["open"], 1271.01)
+        self.assertEqual(rows["sh600519"]["high"], 1313.8)
+        self.assertEqual(rows["sh600519"]["low"], 1270.33)
+        self.assertEqual(rows["sh600519"]["volume"], 4844000)
+        # amount 千元 -> 元
+        self.assertEqual(rows["sh600519"]["trade_amount"], 6299794000.0)
+        self.assertEqual(rows["sh600519"]["previous_close"], 1272.83)
+        self.assertEqual(rows["sh600519"]["change_amount"], 31.83)
+        self.assertEqual(rows["sh600519"]["change_rate"], 2.5)
         self.assertEqual(rows["sz000001"]["close"], 11.56)
         self.assertEqual(rows["sh600000"]["close"], 0.0)  # 缺席 = 停牌
+        self.assertEqual(rows["sh600000"]["open"], 0.0)
         self.assertEqual(rows["sh600000"]["name"], "浦发银行")
 
     def test_from_tushare_ts_code_mapping(self):

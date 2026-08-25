@@ -354,7 +354,9 @@ def get_zh_a_stock_spot():
 def _build_tushare_universe(as_of_date: str | None = None):
     """Build the stock universe from tushare (stock_basic + daily snapshot).
 
-    Returns a DataFrame with columns [code, name, close]; close == 0 means
+    Returns a DataFrame with code/name/close plus the full daily bar fields
+    (open/high/low/volume/trade_amount/previous_close/change_amount/
+    change_rate/turnover_rate); close == 0 means
     temporarily suspended (absent from the as-of daily snapshot — tushare
     omits suspended stocks), matching the spot path's suspension semantics.
     """
@@ -372,7 +374,22 @@ def _build_tushare_universe(as_of_date: str | None = None):
         label=f"tushare_daily:{trade_date}",
     )
     if basic is None or basic.empty:
-        return pandas.DataFrame(columns=["code", "name", "close"])
+        return pandas.DataFrame(
+            columns=[
+                "code",
+                "name",
+                "close",
+                "open",
+                "high",
+                "low",
+                "volume",
+                "trade_amount",
+                "previous_close",
+                "change_amount",
+                "change_rate",
+                "turnover_rate",
+            ]
+        )
     if daily is None or daily.empty:
         # An empty snapshot would flag the whole market as suspended and
         # silently no-op the quote phase; fail loudly instead.
@@ -387,6 +404,10 @@ def _build_tushare_universe(as_of_date: str | None = None):
         if ts_code:
             daily_map[ts_code] = row
 
+    def _num(daily_row, key):
+        value = pandas.to_numeric(daily_row.get(key), errors="coerce")
+        return 0.0 if pandas.isna(value) else float(value)
+
     rows = []
     for _, row in basic.iterrows():
         ts_code = row.get("ts_code")
@@ -396,12 +417,38 @@ def _build_tushare_universe(as_of_date: str | None = None):
         code = interface.tushare_interface.from_tushare_ts_code(ts_code)
         daily_row = daily_map.get(ts_code)
         if daily_row is None:
-            # tushare omits suspended stocks for the date -> close=0
-            close = 0.0
+            # tushare omits suspended stocks for the date -> all fields 0
+            out = {
+                "code": code,
+                "name": name,
+                "close": 0.0,
+                "open": 0.0,
+                "high": 0.0,
+                "low": 0.0,
+                "volume": 0.0,
+                "trade_amount": 0.0,
+                "previous_close": 0.0,
+                "change_amount": 0.0,
+                "change_rate": 0.0,
+                "turnover_rate": 0.0,
+            }
         else:
-            close_raw = pandas.to_numeric(daily_row.get("close"), errors="coerce")
-            close = 0.0 if pandas.isna(close_raw) else float(close_raw)
-        rows.append({"code": code, "name": name, "close": close})
+            out = {
+                "code": code,
+                "name": name,
+                "close": _num(daily_row, "close"),
+                "open": _num(daily_row, "open"),
+                "high": _num(daily_row, "high"),
+                "low": _num(daily_row, "low"),
+                "volume": _num(daily_row, "vol"),
+                # amount 千元 -> 元
+                "trade_amount": _num(daily_row, "amount") * 1000,
+                "previous_close": _num(daily_row, "pre_close"),
+                "change_amount": _num(daily_row, "change"),
+                "change_rate": _num(daily_row, "pct_chg"),
+                "turnover_rate": 0.0,
+            }
+        rows.append(out)
     return pandas.DataFrame(rows)
 
 
@@ -409,7 +456,7 @@ def get_zh_a_stock_universe(as_of_date: str | None = None):
     """Resolve the stock universe per DATAHUB_STOCK_UNIVERSE_SOURCE.
 
     spot (default) -> eastmoney/sina spot list; tushare -> stock_basic +
-    the as-of-date daily snapshot. Output columns: code, name, close.
+    the as-of-date daily snapshot (full daily bar fields included).
     """
     if get_stock_universe_source() == "tushare":
         return _build_tushare_universe(as_of_date)
