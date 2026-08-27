@@ -191,9 +191,7 @@ class FQFactorService:
         )
         return {"code": "GOOD", "written_count": len(output_df), "message": None}
 
-    def _load_adj_factor_df(
-        self, code: str, quote_df: pd.DataFrame
-    ) -> pd.DataFrame:
+    def _load_adj_factor_df(self, code: str, quote_df: pd.DataFrame) -> pd.DataFrame:
         """Fetch real tushare adj_factor for the quote date span.
 
         Falls back to an empty frame when the factor source is unavailable
