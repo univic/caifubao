@@ -302,9 +302,7 @@ def test_update_code_keeps_existing_factors_when_adj_factor_unavailable():
             # simulate tushare outage / empty response
             return None
 
-    service = FakeService(
-        quote_model=FakeQuoteModel, stock_model=FakeStockModel
-    )
+    service = FakeService(quote_model=FakeQuoteModel, stock_model=FakeStockModel)
     result = service.update_code("sh600000")
 
     # existing non-1 factors -> skip rewrite, do NOT clobber with factor=1
