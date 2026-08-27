@@ -95,3 +95,40 @@ def tushare_daily(ts_code, start_date=None, end_date=None):
     if not frames:
         return pandas.DataFrame()
     return pandas.concat(frames, ignore_index=True)
+
+
+def adj_factor(ts_code, start_date=None, end_date=None):
+    """Return real after-adjustment factors for one A-share via pro.adj_factor.
+
+    Columns: ts_code, trade_date (YYYYMMDD), adj_factor. adj_factor only
+    changes on ex-dividend dates; it is constant otherwise. Paginates by
+    calendar-year windows (same as tushare_daily) and paces every call.
+    """
+    pro = _get_pro()
+    start_date = start_date or "19900101"
+    end_date = end_date or datetime.date.today().strftime("%Y%m%d")
+    start_year = int(start_date[:4])
+    end_year = int(end_date[:4])
+
+    frames = []
+    for window_start in range(start_year, end_year + 1, WINDOW_YEARS):
+        window_end = min(window_start + WINDOW_YEARS - 1, end_year)
+        window_start_date = (
+            start_date if window_start == start_year else f"{window_start}0101"
+        )
+        window_end_date = end_date if window_end == end_year else f"{window_end}1231"
+        if window_start_date > window_end_date:
+            continue
+        df = pro.adj_factor(
+            ts_code=ts_code,
+            start_date=window_start_date,
+            end_date=window_end_date,
+        )
+        if df is not None and not df.empty:
+            frames.append(df)
+        # pace EVERY call to stay under the per-minute cap (same as daily)
+        time.sleep(0.25)
+
+    if not frames:
+        return pandas.DataFrame()
+    return pandas.concat(frames, ignore_index=True)

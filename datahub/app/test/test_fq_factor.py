@@ -31,39 +31,284 @@ def test_build_fq_factor_frame_for_full_history():
         ]
     ).set_index("date")
 
-    result = FQFactorService.build_fq_factor_frame(quote_df)
+    # Real adj_factor frame: constant factor (no dividend in window)
+    adj_df = pd.DataFrame(
+        [
+            {"trade_date": "20240108", "adj_factor": 2.0},
+            {"trade_date": "20240109", "adj_factor": 2.0},
+        ]
+    )
 
-    assert result.loc[datetime.datetime(2024, 1, 8), "fq_factor"] == 1.05
-    assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 10.5
-    assert result.loc[datetime.datetime(2024, 1, 9), "fq_factor"] == 1.1
-    assert result.loc[datetime.datetime(2024, 1, 9), "close_hfq"] == 11.0
+    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=adj_df)
+
+    # factor is the REAL tushare factor, not a cumulative close ratio
+    assert result.loc[datetime.datetime(2024, 1, 8), "fq_factor"] == 2.0
+    assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 21.0  # 10.5*2
+    assert result.loc[datetime.datetime(2024, 1, 9), "fq_factor"] == 2.0
+    assert result.loc[datetime.datetime(2024, 1, 9), "close_hfq"] == 22.0  # 11.0*2
+    # open/high/low scale by the same ratio as close
+    assert result.loc[datetime.datetime(2024, 1, 8), "open_hfq"] == 20.0
+    assert result.loc[datetime.datetime(2024, 1, 8), "high_hfq"] == 22.0
+    assert result.loc[datetime.datetime(2024, 1, 8), "low_hfq"] == 19.0
 
 
-def test_build_fq_factor_frame_from_incremental_anchor():
+def test_build_fq_factor_frame_dividend_change():
     from app.lib.factor_factory import FQFactorService
 
     quote_df = pd.DataFrame(
         [
             {
-                "date": datetime.datetime(2024, 1, 10),
+                "date": datetime.datetime(2024, 1, 8),
                 "code": "sh600000",
-                "open": 11.1,
-                "high": 11.6,
-                "low": 10.9,
-                "close": 11.55,
-                "previous_close": 11.0,
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.5,
+                "close": 10.5,
+                "previous_close": 10.0,
+            },
+            {
+                "date": datetime.datetime(2024, 1, 9),
+                "code": "sh600000",
+                "open": 10.6,
+                "high": 11.2,
+                "low": 10.2,
+                "close": 11.0,
+                "previous_close": 10.5,
+            },
+        ]
+    ).set_index("date")
+
+    # ex-dividend on 01-09: factor changes once, exactly
+    adj_df = pd.DataFrame(
+        [
+            {"trade_date": "20240108", "adj_factor": 2.0},
+            {"trade_date": "20240109", "adj_factor": 1.8},
+        ]
+    )
+
+    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=adj_df)
+
+    assert result.loc[datetime.datetime(2024, 1, 8), "fq_factor"] == 2.0
+    assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 21.0
+    assert result.loc[datetime.datetime(2024, 1, 9), "fq_factor"] == 1.8
+    assert result.loc[datetime.datetime(2024, 1, 9), "close_hfq"] == 19.8  # 11.0*1.8
+
+
+def test_build_fq_factor_frame_missing_factor_rows_carry_forward():
+    from app.lib.factor_factory import FQFactorService
+
+    quote_df = pd.DataFrame(
+        [
+            {
+                "date": datetime.datetime(2024, 1, 8),
+                "code": "sh600000",
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.5,
+                "close": 10.5,
+                "previous_close": 10.0,
+            },
+            {
+                "date": datetime.datetime(2024, 1, 9),
+                "code": "sh600000",
+                "open": 10.6,
+                "high": 11.2,
+                "low": 10.2,
+                "close": 11.0,
+                "previous_close": 10.5,
+            },
+        ]
+    ).set_index("date")
+
+    # only the first day has a factor; second day must carry it forward
+    adj_df = pd.DataFrame([{"trade_date": "20240108", "adj_factor": 3.0}])
+
+    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=adj_df)
+
+    assert result.loc[datetime.datetime(2024, 1, 8), "fq_factor"] == 3.0
+    assert result.loc[datetime.datetime(2024, 1, 9), "fq_factor"] == 3.0
+    assert result.loc[datetime.datetime(2024, 1, 9), "close_hfq"] == 33.0
+
+
+def test_build_fq_factor_frame_no_factor_falls_back_to_one():
+    from app.lib.factor_factory import FQFactorService
+
+    quote_df = pd.DataFrame(
+        [
+            {
+                "date": datetime.datetime(2024, 1, 8),
+                "code": "sh600000",
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.5,
+                "close": 10.5,
+                "previous_close": 10.0,
             }
         ]
     ).set_index("date")
 
-    result = FQFactorService.build_fq_factor_frame(
-        quote_df,
-        base_fq_factor=1.1,
-        base_close_hfq=11.0,
+    # no factor data at all -> factor=1, hfq == raw price
+    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=None)
+
+    assert result.loc[datetime.datetime(2024, 1, 8), "fq_factor"] == 1.0
+    assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 10.5
+
+
+def test_factor_before_first_factor_row_uses_earliest_factor():
+    from app.lib.factor_factory import FQFactorService
+
+    quote_df = pd.DataFrame(
+        [
+            {
+                "date": datetime.datetime(2024, 1, 6),
+                "code": "sh600000",
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.5,
+                "close": 10.5,
+                "previous_close": 10.0,
+            }
+        ]
+    ).set_index("date")
+
+    # factor series starts 01-08 (2.0 -> 1.8); a quote BEFORE the first
+    # factor row must use the earliest factor (2.0), not the minimum value
+    # (1.8)
+    adj_df = pd.DataFrame(
+        [
+            {"trade_date": "20240108", "adj_factor": 2.0},
+            {"trade_date": "20240109", "adj_factor": 1.8},
+        ]
     )
 
-    assert result.loc[datetime.datetime(2024, 1, 10), "fq_factor"] == 1.155
-    assert result.loc[datetime.datetime(2024, 1, 10), "close_hfq"] == 11.55
+    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=adj_df)
+
+    assert result.loc[datetime.datetime(2024, 1, 6), "fq_factor"] == 2.0
+    assert result.loc[datetime.datetime(2024, 1, 6), "close_hfq"] == 21.0
+
+
+def test_build_fq_factor_frame_skips_nan_factors():
+    from app.lib.factor_factory import FQFactorService
+
+    quote_df = pd.DataFrame(
+        [
+            {
+                "date": datetime.datetime(2024, 1, 8),
+                "code": "sh600000",
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.5,
+                "close": 10.5,
+                "previous_close": 10.0,
+            }
+        ]
+    ).set_index("date")
+
+    # NaN adj_factor must be skipped, not propagated into close_hfq
+    adj_df = pd.DataFrame([{"trade_date": "20240108", "adj_factor": float("nan")}])
+
+    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=adj_df)
+
+    assert result.loc[datetime.datetime(2024, 1, 8), "fq_factor"] == 1.0
+    assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 10.5
+
+
+def test_update_code_keeps_existing_factors_when_adj_factor_unavailable():
+    """P1 guard: a tushare adj_factor failure must NOT clobber existing
+    non-1 factor history with factor=1."""
+
+    from app.lib.factor_factory import FQFactorService
+
+    class FakeQuery:
+        def __init__(self, results):
+            self.results = results
+
+        def only(self, *fields):
+            return self
+
+        def first(self):
+            return self.results[0] if self.results else None
+
+        def order_by(self, *fields):
+            return self
+
+        def as_pymongo(self):
+            import pandas as pd
+
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "sh600000",
+                        "date": datetime.datetime(2024, 1, 8),
+                        "open": 10.0,
+                        "high": 11.0,
+                        "low": 9.5,
+                        "close": 10.5,
+                        "previous_close": 10.0,
+                    }
+                ]
+            )
+
+    class FakeQuoteModel:
+        _collection_ops = []
+
+        @staticmethod
+        def objects(**kwargs):
+            # fq_factor__ne=1.0 filter -> existing non-1 history present
+            if "fq_factor__ne" in kwargs:
+                return FakeQuery([SimpleNamespace()])
+            # plain filter -> quote rows
+            return FakeQuery([])
+
+        @staticmethod
+        def _get_collection():
+            return SimpleNamespace(bulk_write=lambda ops, ordered=False: None)
+
+    class FakeStockModel:
+        @staticmethod
+        def objects(**kwargs):
+            return FakeQuery(
+                [
+                    SimpleNamespace(
+                        code=kwargs["code"],
+                        name="测试样本",
+                        object_type="individual_stock",
+                        data_capabilities=SimpleNamespace(
+                            daily_quote=True,
+                            fq_factor=True,
+                            ma_factor=True,
+                        ),
+                    )
+                ]
+            )
+
+    class FakeService(FQFactorService):
+        def _load_quote_df(self, code, date_gt=None):
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "sh600000",
+                        "date": datetime.datetime(2024, 1, 8),
+                        "open": 10.0,
+                        "high": 11.0,
+                        "low": 9.5,
+                        "close": 10.5,
+                        "previous_close": 10.0,
+                    }
+                ]
+            ).set_index("date")
+
+        def _load_adj_factor_df(self, code, quote_df):
+            # simulate tushare outage / empty response
+            return None
+
+    service = FakeService(quote_model=FakeQuoteModel, stock_model=FakeStockModel)
+    result = service.update_code("sh600000")
+
+    # existing non-1 factors -> skip rewrite, do NOT clobber with factor=1
+    assert result["code"] == "GOOD"
+    assert result["written_count"] == 0
+    assert result["message"] == "kept existing"
 
 
 def test_update_market_isolates_single_code_failure():
