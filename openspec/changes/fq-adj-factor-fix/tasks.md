@@ -21,8 +21,8 @@
 
 ## 4. Review + Merge
 
-- [ ] 4.1 spec-guardian + qa-reviewer
-- [ ] 4.2 Branch conflict check + Draft PR + CI green
+- [x] 4.1 spec-guardian + qa-reviewer（均 PASS，P1 已修复并有测试覆盖）
+- [x] 4.2 Branch conflict check + Draft PR + CI green（PR #135，全绿后 merged）
 
 ## 5. Deploy + Recompute (operator)
 
