@@ -213,6 +213,106 @@ def test_build_fq_factor_frame_skips_nan_factors():
     assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 10.5
 
 
+def test_update_code_keeps_existing_factors_when_adj_factor_unavailable():
+    """P1 guard: a tushare adj_factor failure must NOT clobber existing
+    non-1 factor history with factor=1."""
+
+    from app.lib.factor_factory import FQFactorService
+
+    class FakeQuery:
+        def __init__(self, results):
+            self.results = results
+
+        def only(self, *fields):
+            return self
+
+        def first(self):
+            return self.results[0] if self.results else None
+
+        def order_by(self, *fields):
+            return self
+
+        def as_pymongo(self):
+            import pandas as pd
+
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "sh600000",
+                        "date": datetime.datetime(2024, 1, 8),
+                        "open": 10.0,
+                        "high": 11.0,
+                        "low": 9.5,
+                        "close": 10.5,
+                        "previous_close": 10.0,
+                    }
+                ]
+            )
+
+    class FakeQuoteModel:
+        _collection_ops = []
+
+        @staticmethod
+        def objects(**kwargs):
+            # fq_factor__ne=1.0 filter -> existing non-1 history present
+            if "fq_factor__ne" in kwargs:
+                return FakeQuery([SimpleNamespace()])
+            # plain filter -> quote rows
+            return FakeQuery([])
+
+        @staticmethod
+        def _get_collection():
+            return SimpleNamespace(bulk_write=lambda ops, ordered=False: None)
+
+    class FakeStockModel:
+        @staticmethod
+        def objects(**kwargs):
+            return FakeQuery(
+                [
+                    SimpleNamespace(
+                        code=kwargs["code"],
+                        name="测试样本",
+                        object_type="individual_stock",
+                        data_capabilities=SimpleNamespace(
+                            daily_quote=True,
+                            fq_factor=True,
+                            ma_factor=True,
+                        ),
+                    )
+                ]
+            )
+
+    class FakeService(FQFactorService):
+        def _load_quote_df(self, code, date_gt=None):
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "sh600000",
+                        "date": datetime.datetime(2024, 1, 8),
+                        "open": 10.0,
+                        "high": 11.0,
+                        "low": 9.5,
+                        "close": 10.5,
+                        "previous_close": 10.0,
+                    }
+                ]
+            ).set_index("date")
+
+        def _load_adj_factor_df(self, code, quote_df):
+            # simulate tushare outage / empty response
+            return None
+
+    service = FakeService(
+        quote_model=FakeQuoteModel, stock_model=FakeStockModel
+    )
+    result = service.update_code("sh600000")
+
+    # existing non-1 factors -> skip rewrite, do NOT clobber with factor=1
+    assert result["code"] == "GOOD"
+    assert result["written_count"] == 0
+    assert result["message"] == "kept existing"
+
+
 def test_update_market_isolates_single_code_failure():
     from app.lib.factor_factory import FQFactorService
 
