@@ -154,6 +154,65 @@ def test_build_fq_factor_frame_no_factor_falls_back_to_one():
     assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 10.5
 
 
+def test_factor_before_first_factor_row_uses_earliest_factor():
+    from app.lib.factor_factory import FQFactorService
+
+    quote_df = pd.DataFrame(
+        [
+            {
+                "date": datetime.datetime(2024, 1, 6),
+                "code": "sh600000",
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.5,
+                "close": 10.5,
+                "previous_close": 10.0,
+            }
+        ]
+    ).set_index("date")
+
+    # factor series starts 01-08 (2.0 -> 1.8); a quote BEFORE the first
+    # factor row must use the earliest factor (2.0), not the minimum value
+    # (1.8)
+    adj_df = pd.DataFrame(
+        [
+            {"trade_date": "20240108", "adj_factor": 2.0},
+            {"trade_date": "20240109", "adj_factor": 1.8},
+        ]
+    )
+
+    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=adj_df)
+
+    assert result.loc[datetime.datetime(2024, 1, 6), "fq_factor"] == 2.0
+    assert result.loc[datetime.datetime(2024, 1, 6), "close_hfq"] == 21.0
+
+
+def test_build_fq_factor_frame_skips_nan_factors():
+    from app.lib.factor_factory import FQFactorService
+
+    quote_df = pd.DataFrame(
+        [
+            {
+                "date": datetime.datetime(2024, 1, 8),
+                "code": "sh600000",
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.5,
+                "close": 10.5,
+                "previous_close": 10.0,
+            }
+        ]
+    ).set_index("date")
+
+    # NaN adj_factor must be skipped, not propagated into close_hfq
+    adj_df = pd.DataFrame([{"trade_date": "20240108", "adj_factor": float("nan")}])
+
+    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=adj_df)
+
+    assert result.loc[datetime.datetime(2024, 1, 8), "fq_factor"] == 1.0
+    assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 10.5
+
+
 def test_update_market_isolates_single_code_failure():
     from app.lib.factor_factory import FQFactorService
 

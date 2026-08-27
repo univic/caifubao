@@ -75,14 +75,22 @@ class FQFactorService:
                     ts = row["trade_date"]
                     if not isinstance(ts, str):
                         ts = str(int(ts))
+                    factor_value = float(row["adj_factor"])
+                    if pd.isna(factor_value):
+                        continue
                     d = pd.Timestamp(ts)
-                    factor_map[d] = float(row["adj_factor"])
+                    factor_map[d] = factor_value
                 except (KeyError, TypeError, ValueError):
                     continue
-            # carry forward the most recent known factor for missing days
-            process_df["fq_factor"] = [
-                cls._factor_for_date(d, factor_map) for d in process_df.index
-            ]
+            if not factor_map:
+                # every row failed to parse: degrade to factor=1 like the
+                # no-data path instead of raising
+                process_df["fq_factor"] = 1.0
+            else:
+                # carry forward the most recent known factor for missing days
+                process_df["fq_factor"] = [
+                    cls._factor_for_date(d, factor_map) for d in process_df.index
+                ]
         else:
             # No factor data: fall back to factor=1 (raw price == hfq price).
             # This keeps the pipeline functional for codes/sources without
@@ -108,7 +116,7 @@ class FQFactorService:
         candidates = [d for d in factor_map if d <= date]
         if not candidates:
             # before the first factor row: use the earliest known factor
-            return min(factor_map.values())
+            return factor_map[min(factor_map)]
         return factor_map[max(candidates)]
 
     def _load_quote_df(self, code: str, date_gt=None) -> pd.DataFrame:
@@ -169,6 +177,28 @@ class FQFactorService:
             return {"code": "GOOD", "written_count": 0, "message": None}
 
         adj_factor_df = self._load_adj_factor_df(code, quote_df)
+        if adj_factor_df is None:
+            # tushare adj_factor fetch failed/returned empty. For a stock that
+            # already holds correct non-1 factors, skip the rewrite instead of
+            # clobbering history with factor=1 (P1 guard). Only stocks with no
+            # prior factor data (first compute) fall back to factor=1.
+            existing = self.quote_model.objects(
+                code=code, fq_factor__exists=True, fq_factor__ne=1.0
+            ).first()
+            if existing is not None:
+                logger.warning(
+                    "FQ adj_factor unavailable for %s; keeping existing factors "
+                    "(skip rewrite to avoid clobbering history)",
+                    code,
+                )
+                return {"code": "GOOD", "written_count": 0, "message": "kept existing"}
+            logger.warning(
+                "FQ adj_factor unavailable for %s; using factor=1 fallback "
+                "(no prior factor history)",
+                code,
+            )
+            adj_factor_df = pd.DataFrame()
+
         output_df = self.build_fq_factor_frame(quote_df, adj_factor_df=adj_factor_df)
 
         bulk_operations = self._build_bulk_operations(output_df)
@@ -191,12 +221,14 @@ class FQFactorService:
         )
         return {"code": "GOOD", "written_count": len(output_df), "message": None}
 
-    def _load_adj_factor_df(self, code: str, quote_df: pd.DataFrame) -> pd.DataFrame:
+    def _load_adj_factor_df(
+        self, code: str, quote_df: pd.DataFrame
+    ) -> pd.DataFrame | None:
         """Fetch real tushare adj_factor for the quote date span.
 
-        Falls back to an empty frame when the factor source is unavailable
-        (e.g. non-tushare history source), so build_fq_factor_frame degrades to
-        factor=1 instead of fabricating cumulative ratios.
+        Returns None when the factor source is unavailable or returns no rows
+        (outage / rate-limit / coverage gap). Returns an empty-but-not-None
+        frame only for the truly factor-free case (never constructed today).
         """
         try:
             from app.lib.datahub.data_source.interface import tushare_interface
@@ -206,15 +238,15 @@ class FQFactorService:
             end = quote_df.index.max().strftime("%Y%m%d")
             raw = tushare_interface.adj_factor(ts_code, start, end)
             if raw is None or raw.empty:
-                return pd.DataFrame()
+                return None
             return raw
         except Exception as exc:  # noqa: BLE001 - degrade gracefully
             logger.warning(
-                "FQ adj_factor fetch failed for %s; using factor=1 fallback: %s",
+                "FQ adj_factor fetch failed for %s: %s",
                 code,
                 exc,
             )
-            return pd.DataFrame()
+            return None
 
     def get_codes_requiring_update(self, market=None) -> list[str]:
         stock_query = self.stock_model.objects(active_status=0)
