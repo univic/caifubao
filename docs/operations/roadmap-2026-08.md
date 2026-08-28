@@ -93,3 +93,10 @@
 - **影响**：任何 backend 改动触发 Backend Tests 即红，阻塞合入（#149 已标注）。
 - **待办**：专项诊断 CI 环境下 conftest 连接初始化时序（可能 pytest 版本/requirements
   依赖差异），修复后 backend 测试可稳定在 CI 运行。
+
+### P1 — backend 与 MongoDB 硬亲和限制故障转移（2026-08-29 确认）
+- backend Deployment 配置 `podAffinity requiredDuringScheduling`（app=mongodb，
+  topologyKey=hostname）→ MongoDB 所在节点故障时 backend 无法调度到其他节点
+  （实测：vm-4-12 失联期间 backend 新副本 Pending 32 分钟，0/5 节点可用）。
+- **建议**：评估改为软亲和（preferredDuringScheduling）或移除亲和，让 backend
+  在 MongoDB 故障时至少可调度（连接层面由 connect_to_db 重试兜底）。
