@@ -34,7 +34,7 @@
 - [x] 4.2 Branch conflict check + Draft PR + CI green（PR #135，全绿后 merged）
 - [x] 4.3 本轮可靠性修复 spec-guardian + qa-reviewer（P1 清零）
 - [x] 4.4 Branch conflict check + Draft PR #139 + CI green
-- [ ] 4.5 快照增量路径 spec/contract/qa review + branch conflict + PR #139 CI
+- [x] 4.5 快照增量路径 spec/contract/qa review + branch conflict + PR #139 CI green
 - [x] 4.6 5,547 行本地合成基准：join 0.44s，构造单日 UpdateOne 0.14s
 
 ## 5. Deploy + Recompute (operator)
