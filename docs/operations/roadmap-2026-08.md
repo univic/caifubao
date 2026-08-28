@@ -8,12 +8,14 @@
 
 ### P0 — 失败即告警（当前最大缺口）
 08-26~08-28 连续 4 个交易日任务失败无人知晓，全靠人工巡检发现。
-- **方案**：`datahub_job_runs` 状态变化（FAILED/SKIPPED 且非预期）→ 通知
-  （钉钉/邮件/webhook）。可用现有 `datahub_job_runs` 集合 + 一个轻量 watcher
-  （datahub pod 内定时任务或独立 CronJob）。
-- 告警规则：① quote/signal/scoring 任务 FAILED；② 数据新鲜度落后
-  （`data_asset_status` latest < expected，利用现有 STALE 判定）；
-  ③ data-sync FAILED。
+- **✅ 已实现（2026-08-29）**：`datahub/app/jobs/health_watcher.py` —— 检查
+  `datahub_job_runs` 近 26h FAILED 任务（quote/signal/scoring/data_sync）与
+  `data_asset_status` STALE/NO_DATA 资产，输出 JSON 报告；`--fail-on-issues`
+  使 CronJob 失败可见；可选 `HEALTH_WEBHOOK_URL` webhook 通知（私有 overlay
+  配置真实地址）。示例 CronJob：`caifubao-datahub-health-watcher`
+  （工作日 20:00，收盘链路 19:15 之后）。
+- **待办**：① 私有 overlay 配置 `HEALTH_WEBHOOK_URL`（钉钉/邮件）；② 告警阈值
+  与误报调优（如停牌股 STALE 豁免策略）。
 
 ### P1 — 节点治理
 - `ubuntu-5700x` 失联超 1 个月（07-25 起 kubelet 停止上报），应**下线清理**

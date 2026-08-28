@@ -333,3 +333,77 @@ spec:
                 cpu: "500m"
           imagePullSecrets:
           - name: ccr-secret
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: caifubao-datahub-health-watcher
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: health-watcher
+spec:
+  # Post-close chain check: quote(18:00) -> signal(18:30) -> scoring(18:35) ->
+  # dev data-sync(19:15); run 20:00 weekdays to catch the whole chain.
+  schedule: "0 20 * * 1-5"
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: caifubao-datahub
+            job.caifubao.io/type: health-watcher
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: health-watcher
+            image: caifubao-datahub:latest
+            imagePullPolicy: Always
+            command: ["python", "-m", "app.jobs.health_watcher", "run", "--hours", "26", "--fail-on-issues"]
+            env:
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-config
+                  key: MONGODB_HOST
+            - name: MONGODB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-config
+                  key: MONGODB_PORT
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-config
+                  key: MONGODB_INITDB_ROOT_USERNAME
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-secret
+                  key: MONGODB_ROOT_PASSWORD
+            - name: MONGODB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-config
+                  key: MONGODB_INITDB_DATABASE
+            # Optional notification target; private overlays set the real URL.
+            # - name: HEALTH_WEBHOOK_URL
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: health-notify
+            #       key: webhook-url
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "50m"
+              limits:
+                memory: "512Mi"
+                cpu: "200m"
+          imagePullSecrets:
+          - name: ccr-secret
