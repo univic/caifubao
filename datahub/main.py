@@ -163,13 +163,18 @@ def main():
             health_worker.start()
             logger.info("Health check worker started")
 
+            # Reap orphan RUNNING job runs regardless of the catch-up flag:
+            # cron pods rely on this service-side pass too, and it must run
+            # before the catch-up check so stale records cannot skew
+            # has_active_job_run or block the uniqueness claim.
+            reap_stale_job_runs()
+
             if os.getenv("DATAHUB_STARTUP_CATCHUP_ENABLED", "true").strip().lower() in {
                 "1",
                 "true",
                 "yes",
                 "on",
             }:
-                reap_stale_job_runs()
                 catchup_worker = threading.Thread(
                     target=startup_quote_catchup_worker,
                     daemon=True,

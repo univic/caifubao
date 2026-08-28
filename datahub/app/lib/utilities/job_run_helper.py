@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from typing import Any
 
 from mongoengine.errors import NotUniqueError
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from app.model.datahub_job_run import (
     JOB_NAME_STARTUP_CATCHUP,
@@ -114,6 +114,18 @@ def create_job_run(context: JobRunContext) -> DatahubJobRun:
             f"job_name={context.job_name} "
             f"scheduled_at={context.scheduled_at}"
         ) from error
+    except OperationFailure:
+        # mongoengine ensures indexes on the first collection touch of a
+        # process. If that ensure fails (e.g. a pre-existing duplicate RUNNING
+        # document blocks the partial-unique index), the first save raises
+        # before writing anything, while every later touch in the same process
+        # succeeds because the collection is then cached. Retry once so a
+        # failed index creation degrades the race protection instead of
+        # crashing whichever runner happened to touch the model first.
+        logger.warning(
+            "First save of job run failed during index ensure; retrying once"
+        )
+        job_run.save()
     return job_run
 
 
@@ -198,25 +210,27 @@ def has_active_job_run(
     return age.total_seconds() < max_age_minutes * 60
 
 
-def mark_stale_running_job_runs_failed(
-    max_age_minutes: int = 180,
-    now: datetime.datetime | None = None,
-) -> int:
-    """Reap RUNNING records whose process died without finishing the run.
+DEFAULT_STALE_RUNNING_MAX_AGE_MINUTES = 240
+STALE_RUNNING_MAX_AGE_MINUTES_BY_JOB_NAME = {
+    # The catch-up runs inside the unbounded deployment process (no
+    # activeDeadlineSeconds) and must survive rollouts: only reap its records
+    # once they are older than any plausible full-market run (24h).
+    JOB_NAME_STARTUP_CATCHUP: 1440,
+}
 
-    Mirrors the max-age window of ``has_active_job_run``: anything still
-    RUNNING after ``max_age_minutes`` cannot be a live run protected by the
-    deployment (cron pods are killed at 2h via activeDeadlineSeconds), so it
-    is an orphan that would otherwise pollute latest-run queries forever.
-    The original document fields are preserved; only status, completed_at,
-    and an explanatory error_message are set.
-    """
-    reference = now or utc_now_naive()
+
+def _reap_stale_running_group(
+    *,
+    filters: dict[str, Any],
+    max_age_minutes: int,
+    reference: datetime.datetime,
+) -> int:
     cutoff = reference - datetime.timedelta(minutes=max_age_minutes)
     marked_at = utc_now_naive()
     updated = DatahubJobRun.objects(
         status=STATUS_RUNNING,
         started_at__lt=cutoff,
+        **filters,
     ).update(
         set__status=STATUS_FAILED,
         set__completed_at=marked_at,
@@ -231,8 +245,48 @@ def mark_stale_running_job_runs_failed(
     if updated:
         logger.info(
             "Startup cleanup marked %s stale RUNNING job run(s) as FAILED "
-            "(started before %s)",
+            "(filters=%s, started before %s)",
             updated,
+            filters or "any job",
             cutoff.isoformat(),
+        )
+    return updated
+
+
+def mark_stale_running_job_runs_failed(
+    max_age_minutes: int = DEFAULT_STALE_RUNNING_MAX_AGE_MINUTES,
+    now: datetime.datetime | None = None,
+) -> int:
+    """Reap RUNNING records whose process died without finishing the run.
+
+    Anything still RUNNING past its window is an orphan: it would otherwise
+    pollute latest-run queries forever. The window must exceed every live
+    run's deadline — cron pods are killed by activeDeadlineSeconds (max 3h
+    for scoring, so the default is 4h) — and job names with unbounded or
+    longer windows get their own entry in
+    ``STALE_RUNNING_MAX_AGE_MINUTES_BY_JOB_NAME``. The original document
+    fields are preserved; only status, completed_at, and an explanatory
+    error_message are set.
+    """
+    reference = now or utc_now_naive()
+    overridden = STALE_RUNNING_MAX_AGE_MINUTES_BY_JOB_NAME
+    updated = 0
+    if overridden:
+        updated += _reap_stale_running_group(
+            filters={"job_name__nin": sorted(overridden)},
+            max_age_minutes=max_age_minutes,
+            reference=reference,
+        )
+    else:
+        updated += _reap_stale_running_group(
+            filters={},
+            max_age_minutes=max_age_minutes,
+            reference=reference,
+        )
+    for name, minutes in overridden.items():
+        updated += _reap_stale_running_group(
+            filters={"job_name": name},
+            max_age_minutes=minutes,
+            reference=reference,
         )
     return updated

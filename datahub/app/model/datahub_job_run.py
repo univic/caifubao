@@ -33,8 +33,13 @@ class DatahubJobRun(Document):
             ("job_family", "status"),
             ("job_family", "status", "-started_at"),
             {
+                # Explicit name: without it, pymongo derives the same
+                # auto-generated name as the plain ("job_family",
+                # "scheduled_at") index above and MongoDB rejects creation
+                # with IndexKeySpecsConflict (code 86).
                 "fields": ["job_family", "scheduled_at"],
                 "unique": True,
+                "name": "uq_running_catchup_family_scheduled_at",
                 "partialFilterExpression": {
                     "status": STATUS_RUNNING,
                     "job_name": JOB_NAME_STARTUP_CATCHUP,
