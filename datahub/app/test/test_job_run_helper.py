@@ -1,6 +1,10 @@
 import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+from mongoengine.errors import NotUniqueError
+from pymongo.errors import DuplicateKeyError
+
 
 def test_compute_daily_schedule_at_normalizes_to_utc():
     from app.lib.utilities.job_run_helper import compute_daily_schedule_at
@@ -14,6 +18,199 @@ def test_compute_daily_schedule_at_normalizes_to_utc():
     )
 
     assert scheduled == datetime.datetime(2026, 4, 14, 10, 10)
+
+
+class _DuplicateSaveDocument:
+    def __init__(self, error):
+        self.error = error
+
+    def save(self):
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    "duplicate_error",
+    [
+        DuplicateKeyError("E11000 duplicate key error"),
+        NotUniqueError("Not unique error"),
+    ],
+    ids=["pymongo", "mongoengine"],
+)
+def test_create_job_run_translates_duplicate_claim(monkeypatch, duplicate_error):
+    import app.lib.utilities.job_run_helper as job_run_helper
+    from app.lib.utilities.job_run_helper import JobRunContext
+
+    monkeypatch.setattr(
+        job_run_helper,
+        "DatahubJobRun",
+        lambda **kwargs: _DuplicateSaveDocument(duplicate_error),
+    )
+    context = JobRunContext(
+        job_name="datahub_quote_startup_catchup",
+        job_family="quote_daily",
+        trigger="startup",
+        source="datahub-service",
+        scheduled_at=datetime.datetime(2026, 4, 14, 10, 10),
+    )
+
+    with pytest.raises(job_run_helper.JobRunClaimExistsError) as excinfo:
+        job_run_helper.create_job_run(context)
+
+    message = str(excinfo.value)
+    assert "quote_daily" in message
+    assert "datahub_quote_startup_catchup" in message
+    assert "2026-04-14 10:10" in message
+
+
+class _RecordingQuerySet:
+    def __init__(self, store, filters):
+        self.store = store
+        self.filters = filters
+
+    def update(self, **updates):
+        self.store.setdefault("groups", []).append(
+            {"filters": self.filters, "updates": updates}
+        )
+        results = self.store.setdefault("update_results", [])
+        return results.pop(0) if results else 0
+
+
+class _FakeJobRunManager:
+    """Captures every objects(filters).update(updates) group the reaper runs."""
+
+    store: dict = {}
+
+    @classmethod
+    def objects(cls, **filters):
+        return _RecordingQuerySet(cls.store, filters)
+
+
+def test_mark_stale_running_job_runs_failed_reaps_only_stale_running(
+    monkeypatch,
+):
+    import app.lib.utilities.job_run_helper as job_run_helper
+
+    store = {"update_results": [2, 0]}
+    monkeypatch.setattr(job_run_helper, "DatahubJobRun", _FakeJobRunManager)
+    _FakeJobRunManager.store = store
+
+    now = datetime.datetime(2026, 4, 14, 12, 0)
+    updated = job_run_helper.mark_stale_running_job_runs_failed(now=now)
+
+    assert updated == 2
+    # Default group: every job name except the unbounded catch-up, reaped
+    # after 4 hours (must exceed the largest activeDeadlineSeconds, 3h).
+    assert store["groups"][0]["filters"] == {
+        "status": "RUNNING",
+        "started_at__lt": datetime.datetime(2026, 4, 14, 8, 0),
+        "job_name__nin": ["datahub_quote_startup_catchup"],
+    }
+    updates = store["groups"][0]["updates"]
+    assert updates["set__status"] == "FAILED"
+    assert updates["set__completed_at"] is not None
+    assert "240 minutes" in updates["set__error_message"]
+    assert "startup cleanup" in updates["set__error_message"]
+
+
+def test_mark_stale_running_job_runs_failed_gives_catchup_a_wider_window(
+    monkeypatch,
+):
+    import app.lib.utilities.job_run_helper as job_run_helper
+
+    store = {"update_results": [0, 1]}
+    monkeypatch.setattr(job_run_helper, "DatahubJobRun", _FakeJobRunManager)
+    _FakeJobRunManager.store = store
+
+    now = datetime.datetime(2026, 4, 14, 12, 0)
+    updated = job_run_helper.mark_stale_running_job_runs_failed(now=now)
+
+    assert updated == 1
+    # Second group: the catch-up is only reaped once it cannot be a live
+    # unbounded deployment run (24h).
+    catchup_group = store["groups"][1]
+    assert catchup_group["filters"] == {
+        "status": "RUNNING",
+        "started_at__lt": datetime.datetime(2026, 4, 13, 12, 0),
+        "job_name": "datahub_quote_startup_catchup",
+    }
+    assert "1440 minutes" in catchup_group["updates"]["set__error_message"]
+
+
+def test_mark_stale_running_job_runs_failed_respects_custom_window(
+    monkeypatch,
+):
+    import app.lib.utilities.job_run_helper as job_run_helper
+
+    store = {"update_results": [0, 0]}
+    monkeypatch.setattr(job_run_helper, "DatahubJobRun", _FakeJobRunManager)
+    _FakeJobRunManager.store = store
+
+    now = datetime.datetime(2026, 4, 14, 12, 0)
+    updated = job_run_helper.mark_stale_running_job_runs_failed(
+        max_age_minutes=30, now=now
+    )
+
+    assert updated == 0
+    default_group = store["groups"][0]
+    assert default_group["filters"]["started_at__lt"] == datetime.datetime(
+        2026, 4, 14, 11, 30
+    )
+    assert "30 minutes" in default_group["updates"]["set__error_message"]
+    # The catch-up keeps its own 24h window regardless of the custom default.
+    assert "1440 minutes" in store["groups"][1]["updates"]["set__error_message"]
+
+
+class _FlakySaveDocument:
+    """First save hits a failed index ensure; the retry succeeds."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.saved = 0
+
+    def save(self):
+        self.saved += 1
+        if self.saved == 1:
+            raise __import__("pymongo").errors.OperationFailure("IndexKeySpecsConflict")
+
+
+def test_create_job_run_retries_once_after_failed_index_ensure(monkeypatch):
+    import app.lib.utilities.job_run_helper as job_run_helper
+    from app.lib.utilities.job_run_helper import JobRunContext
+
+    monkeypatch.setattr(job_run_helper, "DatahubJobRun", _FlakySaveDocument)
+    context = JobRunContext(
+        job_name="datahub_signal_daily",
+        job_family="signal_daily",
+        trigger="cron",
+        source="k8s-cronjob",
+    )
+
+    job_run = job_run_helper.create_job_run(context)
+
+    assert job_run.saved == 2
+
+
+def test_datahub_job_run_index_specs_are_distinct():
+    from app.model.datahub_job_run import DatahubJobRun
+
+    indexes = DatahubJobRun._meta["indexes"]
+    partial = next(
+        spec
+        for spec in indexes
+        if isinstance(spec, dict) and "partialFilterExpression" in spec
+    )
+    # Explicit distinct name: without it pymongo would derive the same
+    # auto-generated name as the plain key-pattern index and MongoDB rejects
+    # creation with IndexKeySpecsConflict (code 86).
+    assert partial["name"] != "job_family_1_scheduled_at_1"
+    assert partial["unique"] is True
+    assert partial["fields"] == ["job_family", "scheduled_at"]
+    assert partial["partialFilterExpression"] == {
+        "status": "RUNNING",
+        "job_name": "datahub_quote_startup_catchup",
+    }
+    plain = [spec for spec in indexes if spec == ("job_family", "scheduled_at")]
+    assert plain, "plain lookup index must remain for non-catchup queries"
 
 
 def test_compute_daily_schedule_at_uses_same_calendar_day():

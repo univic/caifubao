@@ -227,6 +227,85 @@ def test_datahub_clears_previous_summary_before_processor_construction():
     assert datahub.last_job_summary is None
 
 
+def test_run_quote_job_propagates_claim_error_without_finishing(monkeypatch):
+    import pytest
+
+    from app.lib.utilities.job_run_helper import (
+        JobRunClaimExistsError,
+        JobRunContext,
+    )
+
+    datahub = FakeDatahub()
+    finished = []
+
+    def claiming_create_job_run(context):
+        assert isinstance(context, JobRunContext)
+        raise JobRunClaimExistsError("claim held by an active RUNNING run")
+
+    def unexpected_finish(job_run, **kwargs):
+        finished.append(job_run)
+
+    monkeypatch.setattr(
+        "app.jobs.quote_runner.job_run_helper.create_job_run",
+        claiming_create_job_run,
+    )
+    monkeypatch.setattr(
+        "app.jobs.quote_runner.job_run_helper.finish_job_run",
+        unexpected_finish,
+    )
+
+    metadata = QuoteJobMetadata(
+        job_name="datahub_quote_stock_daily",
+        job_family="quote_daily",
+        trigger="cron",
+        source="k8s-cronjob",
+    )
+
+    # The claim is lost before the try block in run_quote_job, so the error
+    # must propagate untouched: no job work, no finish_job_run overwrite.
+    with pytest.raises(JobRunClaimExistsError):
+        run_quote_job(
+            TARGET_STOCK,
+            datahub_factory=lambda: datahub,
+            job_metadata=metadata,
+        )
+
+    assert datahub.calls == []
+    assert finished == []
+
+
+def test_reap_stale_running_job_runs_is_best_effort(monkeypatch):
+    from app.jobs import quote_runner
+
+    calls = []
+
+    class FakeWatcher:
+        @staticmethod
+        def get_db_connection():
+            calls.append("connect")
+
+    monkeypatch.setattr(
+        "app.lib.db_watcher.mongoengine_tool.mongo_watcher", FakeWatcher
+    )
+    monkeypatch.setattr(
+        "app.lib.utilities.job_run_helper.mark_stale_running_job_runs_failed",
+        lambda: calls.append("reap"),
+    )
+
+    quote_runner._reap_stale_running_job_runs()
+    assert calls == ["connect", "reap"]
+
+    def broken_reap():
+        raise RuntimeError("index ensure blew up")
+
+    monkeypatch.setattr(
+        "app.lib.utilities.job_run_helper.mark_stale_running_job_runs_failed",
+        broken_reap,
+    )
+    # A failed cleanup must never block the job.
+    quote_runner._reap_stale_running_job_runs()
+
+
 def test_run_quote_job_records_job_run(monkeypatch):
     from app.lib.utilities.job_run_helper import JobRunContext
 

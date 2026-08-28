@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import logging
 from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any
@@ -176,6 +177,25 @@ def run_quote_job(
         raise
 
 
+def _reap_stale_running_job_runs() -> None:
+    """Best-effort startup cleanup: orphan RUNNING records left by dead runs.
+
+    Re-run cron attempts (the 2026-08-26 pattern) would otherwise keep
+    accumulating zombie records whenever a pod dies mid-run. Never blocks
+    the job: a failure to clean up must not stop today's quote update.
+    """
+    try:
+        from app.lib.db_watcher.mongoengine_tool import mongo_watcher
+
+        mongo_watcher.get_db_connection()
+        job_run_helper.mark_stale_running_job_runs_failed()
+    except Exception:
+        logger = logging.getLogger(__name__)
+        logger.exception(
+            "Stale RUNNING job-run cleanup failed; continuing with the job"
+        )
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run datahub quote update jobs without relying on scheduler timing."
@@ -243,6 +263,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    _reap_stale_running_job_runs()
     scheduled_at = None
     if args.scheduled_at:
         scheduled_at = job_run_helper.normalize_datetime(
