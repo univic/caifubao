@@ -4,10 +4,15 @@
     "AGENTS.md",
     "DESIGN.md",
     "openspec/config.yaml",
-    "openspec/changes/mvp-quant-demo/design.md",
-    "openspec/changes/mvp-quant-demo/tasks.md",
+    "openspec/archive/mvp-quant-demo/design.md",
+    "openspec/archive/mvp-quant-demo/tasks.md",
     ".opencode/openclaw-development-workflow.md",
-    "docs/integrations/openclaw.md"
+    "docs/integrations/openclaw.md",
+    "skills/caifubao-dev/SKILL.md",
+    "skills/scoring-factor/SKILL.md",
+    "skills/scoring-validation/SKILL.md",
+    "skills/openclaw-integration/SKILL.md",
+    "skills/datahub-data-quality/SKILL.md"
   ],
   "permission": {
     "edit": "allow",

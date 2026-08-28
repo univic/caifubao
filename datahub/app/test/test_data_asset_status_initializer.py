@@ -211,3 +211,43 @@ def test_initializer_respects_batch_size():
     assert result["written_count"] == 0
     assert result["batch_count"] == 2
     assert result["batch_size"] == 1
+
+
+class RecordingStatusCollection:
+    def __init__(self):
+        self.batches = []
+
+    def bulk_write(self, operations, ordered=False):
+        self.batches.append(operations)
+        return SimpleNamespace(upserted_count=len(operations), modified_count=0)
+
+
+class RecordingStatusModel:
+    collection = RecordingStatusCollection()
+
+    @classmethod
+    def _get_collection(cls):
+        return cls.collection
+
+
+def test_initializer_writes_records_with_bulk_upsert():
+    initializer = DataAssetStatusInitializer(
+        stock_model=FakeStockModel,
+        quote_model=FakeQuoteModel,
+        factor_model=FakeFactorModel,
+        status_model=RecordingStatusModel,
+    )
+
+    result = initializer.run(dry_run=False)
+
+    assert result["written_count"] == 14
+    operations = [
+        operation
+        for batch in RecordingStatusModel.collection.batches
+        for operation in batch
+    ]
+    assert len(operations) == 14
+    first = operations[0]
+    assert first._upsert is True
+    assert first._filter["code"] == "sh600000"
+    assert first._doc["$set"]["asset_name"] in {"daily_quote", "FQ_FACTOR", "MA_120"}

@@ -107,6 +107,22 @@ def health_check_worker(datahub_instance, interval=30):
         time.sleep(interval)
 
 
+def reap_stale_job_runs():
+    """Mark orphan RUNNING job_run records as FAILED before catch-up starts.
+
+    Records left RUNNING by a dead process would otherwise linger until
+    manual cleanup and could confuse has_active_job_run checks.
+    """
+    try:
+        from app.lib.db_watcher.mongoengine_tool import mongo_watcher
+        from app.lib.utilities import job_run_helper
+
+        mongo_watcher.get_db_connection()
+        job_run_helper.mark_stale_running_job_runs_failed()
+    except Exception:
+        logger.exception("Stale RUNNING job-run cleanup failed; continuing")
+
+
 def startup_quote_catchup_worker():
     """Run a one-time quote catch-up when the service boots behind schedule."""
     try:
@@ -146,6 +162,12 @@ def main():
             )
             health_worker.start()
             logger.info("Health check worker started")
+
+            # Reap orphan RUNNING job runs regardless of the catch-up flag:
+            # cron pods rely on this service-side pass too, and it must run
+            # before the catch-up check so stale records cannot skew
+            # has_active_job_run or block the uniqueness claim.
+            reap_stale_job_runs()
 
             if os.getenv("DATAHUB_STARTUP_CATCHUP_ENABLED", "true").strip().lower() in {
                 "1",

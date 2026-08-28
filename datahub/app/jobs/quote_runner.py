@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import logging
 from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any
@@ -60,7 +61,11 @@ def run_quote_job(
     )
     job_run = None
     if job_metadata:
-        from app.lib.utilities.job_run_helper import JobRunContext, create_job_run
+        from app.lib.utilities.job_run_helper import (
+            JobRunContext,
+            create_job_run,
+            update_job_run_progress,
+        )
 
         job_run = create_job_run(
             JobRunContext(
@@ -74,6 +79,20 @@ def run_quote_job(
                 extra=job_metadata.extra,
             )
         )
+
+        # Persist per-phase progress so a run killed mid-way (deadline expiry,
+        # OOM, node loss) still leaves evidence of which phases completed and
+        # how much data was written, instead of a blank RUNNING record.
+        def _on_phase_progress(job_name, phase_name, phase_summary, summary):
+            update_job_run_progress(
+                job_run,
+                failed_phase=None,
+                pulled_total=summary.get("pulled_total", 0),
+                written_total=summary.get("written_total", 0),
+                phase_stats=summary.get("phase_stats", {}),
+            )
+
+        datahub.set_progress_callback(_on_phase_progress)
 
     completed_results = []
     current_result_target = target
@@ -176,6 +195,25 @@ def run_quote_job(
         raise
 
 
+def _reap_stale_running_job_runs() -> None:
+    """Best-effort startup cleanup: orphan RUNNING records left by dead runs.
+
+    Re-run cron attempts (the 2026-08-26 pattern) would otherwise keep
+    accumulating zombie records whenever a pod dies mid-run. Never blocks
+    the job: a failure to clean up must not stop today's quote update.
+    """
+    try:
+        from app.lib.db_watcher.mongoengine_tool import mongo_watcher
+
+        mongo_watcher.get_db_connection()
+        job_run_helper.mark_stale_running_job_runs_failed()
+    except Exception:
+        logger = logging.getLogger(__name__)
+        logger.exception(
+            "Stale RUNNING job-run cleanup failed; continuing with the job"
+        )
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run datahub quote update jobs without relying on scheduler timing."
@@ -243,6 +281,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    _reap_stale_running_job_runs()
     scheduled_at = None
     if args.scheduled_at:
         scheduled_at = job_run_helper.normalize_datetime(

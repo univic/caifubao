@@ -178,11 +178,22 @@ def run_grid_search(args):
 
 
 def _check_dependency() -> bool:
-    """Check if the required upstream job family has a SUCCESS record for today.
+    """Check whether the upstream signal job is ready for scoring.
 
     Always uses the upstream job's schedule time (DEPENDENCY_JOB_HOUR/MINUTE),
     regardless of this job's own scheduled_at, to correctly match the upstream
     job's recorded scheduled_at value.
+
+    Two paths satisfy the dependency:
+
+    1. A SUCCESS record for today (the historical gate).
+    2. A record with written_total > 0 (preserved on partial failures — the
+       signal run finishes FAILED but keeps the signals it persisted). This
+       keeps scoring from stalling when the signal job failed part-way.
+       A RUNNING record only passes when progress persistence has already
+       recorded real writes; the signal runner does not yet persist per-phase
+       progress, so in practice this branch is reserved for future parity with
+       the quote runner and remains fail-closed today.
     """
     upstream_scheduled_at = job_run_helper.compute_daily_schedule_at(
         DEPENDENCY_JOB_HOUR, DEPENDENCY_JOB_MINUTE
@@ -194,7 +205,18 @@ def _check_dependency() -> bool:
         scheduled_at=upstream_scheduled_at,
         statuses=[job_run_helper.STATUS_SUCCESS],
     )
-    return latest is not None
+    if latest is not None:
+        return True
+
+    record = job_run_helper.latest_job_run(
+        job_family=DEPENDENCY_JOB_FAMILY,
+        job_name=DEPENDENCY_JOB_NAME,
+        scheduled_at=upstream_scheduled_at,
+        statuses=[job_run_helper.STATUS_RUNNING, job_run_helper.STATUS_FAILED],
+    )
+    if record is None:
+        return False
+    return int(record.written_total or 0) > 0
 
 
 def add_common_options(

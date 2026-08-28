@@ -82,6 +82,18 @@ spec:
           value: "false"
         - name: DATAHUB_STARTUP_CATCHUP_ENABLED
           value: "true"
+        - name: TUSHARE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: datahub-secret
+              key: TUSHARE_TOKEN
+        # Keep quote history/universe on the tushare pro API in every
+        # environment: akshare/eastmoney history endpoints drop connections
+        # under sustained polling and can stall full-market catchup runs.
+        - name: DATAHUB_STOCK_HISTORY_SOURCE
+          value: "tushare"
+        - name: DATAHUB_STOCK_UNIVERSE_SOURCE
+          value: "tushare"
         - name: HEALTH_CHECK_LOG_ENABLED
           value: "false"
         - name: POD_NAME

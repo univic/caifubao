@@ -48,6 +48,7 @@ secretGenerator:
   - MONGODB_PASSWORD=change-me-example
   - MONGODB_SRC_USER=readonly_user
   - MONGODB_SRC_PASS=PLACEHOLDER_SRC_PASSWORD
+  - TUSHARE_TOKEN=PLACEHOLDER_TUSHARE_TOKEN
 - name: mongodb-secret
   literals:
   - MONGODB_ROOT_PASSWORD=change-me-example

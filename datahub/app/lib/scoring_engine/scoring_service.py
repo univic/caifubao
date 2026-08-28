@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 
 import datetime
+import hashlib
 import logging
+
+from pymongo import UpdateOne
 
 from app.lib.scoring_engine.components import (
     aggregate_industry_metrics,
@@ -84,7 +87,18 @@ class StockScoringService:
         dry_run: bool = False,
         replace: bool = False,
     ) -> dict:
-        """Run scoring for all active stocks on one evaluation date."""
+        """Run scoring for all active stocks on one evaluation date.
+
+        When env DATAHUB_SCORING_MODE=ranked, delegates to the
+        cross-sectional rank-normalized path (score_all_stocks_ranked).
+        Default (raw) keeps the legacy component-weighted path.
+        """
+        import os
+
+        if os.getenv("DATAHUB_SCORING_MODE", "raw").strip().lower() == "ranked":
+            return self.score_all_stocks_ranked(
+                date=date, horizon=horizon, dry_run=dry_run, replace=replace
+            )
         if date is None:
             date = trading_day_helper.determine_closest_trading_date(self.calendar)
         date = normalize_date(date)
@@ -92,7 +106,22 @@ class StockScoringService:
         horizons = [horizon] if horizon else list(SUPPORTED_HORIZONS)
         stocks = list(self.stock_model.objects(active_status=0))
         results = []
+        skipped_complete_horizons = []
+        expected_codes = [stock.code for stock in stocks]
         for current_horizon in horizons:
+            if (
+                not dry_run
+                and not replace
+                and self._is_complete_cohort(
+                    stocks, date, current_horizon, scoring_mode="raw"
+                )
+            ):
+                skipped_complete_horizons.append(current_horizon)
+                self._aggregate_industry_metrics(
+                    date, current_horizon, expected_codes=expected_codes
+                )
+                continue
+            failed_codes = []
             for stock in stocks:
                 try:
                     prediction = self.score_single_stock(
@@ -104,6 +133,7 @@ class StockScoringService:
                     )
                     results.append(prediction)
                 except Exception as exc:
+                    failed_codes.append(getattr(stock, "code", "unknown"))
                     logger.exception(
                         "Failed to score %s horizon=%s date=%s: %s",
                         getattr(stock, "code", None),
@@ -112,50 +142,27 @@ class StockScoringService:
                         exc,
                     )
 
-            if not dry_run:
-                self.assign_ranks(date, current_horizon)
-
-                # Apply hybrid recommendation logic using percentile rankings
-                try:
-                    self._upgrade_recommendations(date, current_horizon)
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to upgrade recommendations for h=%d: %s",
-                        current_horizon,
-                        exc,
-                    )
-
-                # Aggregate industry metrics per horizon
-                horizon_predictions = list(
-                    self.prediction_model.objects(
-                        date=date,
-                        horizon=current_horizon,
-                        model_version=self.model_version,
-                    )
+            if failed_codes:
+                raise RuntimeError(
+                    f"scoring failed for horizon={current_horizon}: "
+                    + ", ".join(failed_codes)
                 )
-                try:
-                    aggregate_industry_metrics(
-                        date=date,
-                        predictions=horizon_predictions,
-                        model_version=self.model_version,
-                    )
-                    logger.info(
-                        "Industry metrics aggregated for date=%s horizon=%d predictions=%d",
-                        date,
-                        current_horizon,
-                        len(horizon_predictions),
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to aggregate industry metrics for horizon=%d: %s",
-                        current_horizon,
-                        exc,
-                    )
+            if not dry_run:
+                self._require_complete_prediction_set(stocks, date, current_horizon)
+                self._repair_blocked_predictions(date, current_horizon, expected_codes)
+                self.assign_ranks(date, current_horizon, expected_codes=expected_codes)
+                self._upgrade_recommendations(
+                    date, current_horizon, expected_codes=expected_codes
+                )
+                self._aggregate_industry_metrics(
+                    date, current_horizon, expected_codes=expected_codes
+                )
 
         return {
             "date": date,
             "horizons": horizons,
             "scored_count": len(results),
+            "skipped_complete_horizons": skipped_complete_horizons,
             "dry_run": dry_run,
         }
 
@@ -210,6 +217,7 @@ class StockScoringService:
             config=config,
             blocked_reason=None,
         )
+        input_snapshot["scoring_mode"] = "raw"
         explanation = self._build_explanation(
             horizon=horizon,
             score=score,
@@ -243,36 +251,68 @@ class StockScoringService:
         }
         return self._persist_prediction(payload, existing, dry_run)
 
-    def assign_ranks(self, date: datetime.datetime, horizon: int) -> None:
+    def assign_ranks(
+        self,
+        date: datetime.datetime,
+        horizon: int,
+        *,
+        expected_codes: list[str] | None = None,
+    ) -> int:
+        filters = {
+            "date": normalize_date(date),
+            "horizon": horizon,
+            "model_version": self.model_version,
+            "status__ne": "BLOCKED",
+        }
+        if expected_codes is not None:
+            filters["stock_code__in"] = expected_codes
         predictions = list(
-            self.prediction_model.objects(
-                date=normalize_date(date),
-                horizon=horizon,
-                model_version=self.model_version,
-                status__ne="BLOCKED",
-            ).order_by("-score")
+            self.prediction_model.objects(**filters).order_by("-score", "+stock_code")
         )
         total = len(predictions)
+        operations = []
         for idx, prediction in enumerate(predictions, start=1):
-            prediction.rank = idx
-            prediction.percentile = round(1 - ((idx - 1) / total), 4) if total else None
-            prediction.save()
+            percentile = round(1 - ((idx - 1) / total), 4) if total else None
+            if (
+                getattr(prediction, "rank", None) == idx
+                and getattr(prediction, "percentile", None) == percentile
+            ):
+                continue
+            operations.append(
+                UpdateOne(
+                    {"_id": prediction.id},
+                    {"$set": {"rank": idx, "percentile": percentile}},
+                )
+            )
+        if not operations:
+            return 0
+        result = self.prediction_model._get_collection().bulk_write(
+            operations, ordered=False
+        )
+        return int(getattr(result, "modified_count", 0) or 0)
 
-    def _upgrade_recommendations(self, date: datetime.datetime, horizon: int) -> None:
+    def _upgrade_recommendations(
+        self,
+        date: datetime.datetime,
+        horizon: int,
+        *,
+        expected_codes: list[str] | None = None,
+    ) -> None:
         """Re-compute recommendations using hybrid logic after ranks are assigned.
 
         Called after assign_ranks() so that percentiles are available.
         Updates the recommendation field in-place for all predictions on this
         date/horizon/model_version.
         """
-        predictions = list(
-            self.prediction_model.objects(
-                date=normalize_date(date),
-                horizon=horizon,
-                model_version=self.model_version,
-                status__ne="BLOCKED",
-            )
-        )
+        filters = {
+            "date": normalize_date(date),
+            "horizon": horizon,
+            "model_version": self.model_version,
+            "status__ne": "BLOCKED",
+        }
+        if expected_codes is not None:
+            filters["stock_code__in"] = expected_codes
+        predictions = list(self.prediction_model.objects(**filters))
         if not predictions:
             return
 
@@ -285,8 +325,6 @@ class StockScoringService:
                 percentile=p.percentile,
             )
             if new_rec != p.recommendation:
-                from pymongo import UpdateOne
-
                 bulk_ops.append(
                     UpdateOne(
                         {"_id": p.id},
@@ -318,6 +356,506 @@ class StockScoringService:
             model_version=self.model_version,
         ).first()
 
+    @staticmethod
+    def _prediction_matches_mode(prediction, scoring_mode: str) -> bool:
+        snapshot = getattr(prediction, "input_snapshot", None) or {}
+        stored_mode = snapshot.get("scoring_mode")
+        if stored_mode is None:
+            stored_mode = "ranked" if snapshot.get("status") == "RANKED" else "raw"
+        return stored_mode == scoring_mode
+
+    @staticmethod
+    def _cohort_fingerprint(codes) -> str:
+        payload = "\n".join(sorted(codes)).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def _cohort_predictions(self, date, horizon, expected_codes=None):
+        filters = {
+            "date": normalize_date(date),
+            "horizon": horizon,
+            "model_version": self.model_version,
+        }
+        if expected_codes is not None:
+            filters["stock_code__in"] = expected_codes
+        return list(
+            self.prediction_model.objects(**filters)
+            .only(
+                "stock_code",
+                "status",
+                "score",
+                "rank",
+                "percentile",
+                "recommendation",
+                "input_snapshot",
+            )
+            .order_by("-score", "+stock_code")
+        )
+
+    def _require_complete_prediction_set(self, stocks, date, horizon) -> None:
+        expected_codes = {stock.code for stock in stocks}
+        stored_codes = {
+            prediction.stock_code
+            for prediction in self._cohort_predictions(date, horizon, expected_codes)
+        }
+        missing_codes = sorted(expected_codes - stored_codes)
+        if missing_codes:
+            raise RuntimeError(
+                f"scoring cohort incomplete for horizon={horizon}: "
+                + ", ".join(missing_codes)
+            )
+
+    def _is_complete_cohort(
+        self, stocks, date, horizon: int, *, scoring_mode: str
+    ) -> bool:
+        expected_codes = {stock.code for stock in stocks}
+        predictions = self._cohort_predictions(date, horizon, expected_codes)
+        by_code = {prediction.stock_code: prediction for prediction in predictions}
+        incompatible = sorted(
+            code
+            for code in expected_codes.intersection(by_code)
+            if not self._prediction_matches_mode(by_code[code], scoring_mode)
+        )
+        if incompatible:
+            raise RuntimeError(
+                f"scoring mode mismatch for horizon={horizon}; use replace: "
+                + ", ".join(incompatible)
+            )
+        if scoring_mode == "ranked" and predictions:
+            expected_fingerprint = self._cohort_fingerprint(expected_codes)
+            fingerprints = {
+                (getattr(prediction, "input_snapshot", None) or {}).get(
+                    "cohort_fingerprint"
+                )
+                for prediction in predictions
+            }
+            if fingerprints != {expected_fingerprint}:
+                raise RuntimeError(
+                    f"ranked cohort membership changed for horizon={horizon}; "
+                    "use replace"
+                )
+        if not expected_codes.issubset(by_code):
+            return False
+
+        ranked_predictions = [
+            prediction
+            for prediction in predictions
+            if getattr(prediction, "status", None) != "BLOCKED"
+        ]
+        for prediction in predictions:
+            if getattr(prediction, "status", None) == "BLOCKED" and (
+                getattr(prediction, "rank", None) is not None
+                or getattr(prediction, "percentile", None) is not None
+                or getattr(prediction, "recommendation", None) != "NONE"
+            ):
+                return False
+        total = len(ranked_predictions)
+        config = self._get_horizon_config(horizon)
+        for idx, prediction in enumerate(ranked_predictions, start=1):
+            expected_percentile = round(1 - ((idx - 1) / total), 4) if total else None
+            if (
+                getattr(prediction, "rank", None) != idx
+                or getattr(prediction, "percentile", None) != expected_percentile
+                or prediction.recommendation
+                != self._recommendation(prediction.score, config, expected_percentile)
+            ):
+                return False
+        return True
+
+    def _repair_blocked_predictions(self, date, horizon, expected_codes) -> int:
+        blocked = list(
+            self.prediction_model.objects(
+                date=normalize_date(date),
+                horizon=horizon,
+                model_version=self.model_version,
+                stock_code__in=expected_codes,
+                status="BLOCKED",
+            )
+        )
+        operations = []
+        for prediction in blocked:
+            changes = {}
+            if getattr(prediction, "rank", None) is not None:
+                changes["rank"] = None
+            if getattr(prediction, "percentile", None) is not None:
+                changes["percentile"] = None
+            if getattr(prediction, "recommendation", None) != "NONE":
+                changes["recommendation"] = "NONE"
+            if changes:
+                operations.append(UpdateOne({"_id": prediction.id}, {"$set": changes}))
+        if not operations:
+            return 0
+        result = self.prediction_model._get_collection().bulk_write(
+            operations, ordered=False
+        )
+        return int(getattr(result, "modified_count", 0) or 0)
+
+    def _aggregate_industry_metrics(self, date, horizon, *, expected_codes) -> None:
+        horizon_predictions = list(
+            self.prediction_model.objects(
+                date=date,
+                horizon=horizon,
+                model_version=self.model_version,
+                stock_code__in=expected_codes,
+            )
+        )
+        try:
+            aggregate_industry_metrics(
+                date=date,
+                predictions=horizon_predictions,
+                model_version=self.model_version,
+            )
+            logger.info(
+                "Industry metrics aggregated for date=%s horizon=%d predictions=%d",
+                date,
+                horizon,
+                len(horizon_predictions),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to aggregate industry metrics for horizon=%d: %s",
+                horizon,
+                exc,
+            )
+
+    def _compute_raw_components(
+        self, stock, date: datetime.datetime, horizon: int
+    ) -> dict | None:
+        """Compute raw component values for one stock WITHOUT persisting.
+
+        Returns None when the stock has no quote on ``date`` (blocked).
+        Otherwise returns {stock_code, components: [{id, raw_value, weight}],
+        penalties: [{id, raw_value, weight}], base_price, target_date}.
+        """
+        date = normalize_date(date)
+        config = self._get_horizon_config(horizon)
+        quote = self._get_quote_on_date(stock.code, date)
+        target_date = self.get_t_plus_n_day(date, horizon)
+        if not quote:
+            return None
+
+        factors = self._get_factor_on_date(stock.code, date)
+        signals = self._get_signals_on_date(stock.code, date)
+        history_quotes = self._get_previous_quotes(
+            stock.code,
+            date,
+            max(
+                config["minimum_quote_count"],
+                config["breakout_lookback"],
+                config["risk_lookback"],
+            ),
+        )
+        components, penalties = self._build_components(
+            quote, factors, signals, history_quotes, date, horizon, config, stock.code
+        )
+        return {
+            "stock_code": stock.code,
+            "stock_name": stock.name,
+            "base_price": quote_price(quote),
+            "target_date": target_date,
+            "components": [
+                {
+                    "id": c["id"],
+                    "raw_value": c.get("raw_value"),
+                    "weight": c.get("weight", 0.0),
+                }
+                for c in components
+            ],
+            "penalties": [
+                {
+                    "id": p["id"],
+                    # penalties put the scaled value in normalized_value
+                    # (risk_penalty raw_value is plain volatility; the +1.0
+                    # ST/suspended surcharge lives in normalized_value)
+                    "raw_value": p.get("normalized_value", p.get("raw_value")),
+                    "weight": p.get("weight", 0.0),
+                }
+                for p in penalties
+            ],
+        }
+
+    def score_all_stocks_ranked(
+        self,
+        date: datetime.datetime | None = None,
+        horizon: int | None = None,
+        dry_run: bool = False,
+        replace: bool = False,
+    ) -> dict:
+        """Market-wide scoring with cross-sectional component rank normalization.
+
+        Two phases:
+        1. Compute raw component values for every active stock (no writes).
+        2. Rank-normalize each component across the cohort to [0, 1], then
+           compute score = sum(component_rank * weight) with weights
+           normalized to sum to 1. This makes scores cross-sectionally
+           comparable regardless of absolute score drift.
+        """
+        if date is None:
+            date = trading_day_helper.determine_closest_trading_date(self.calendar)
+        date = normalize_date(date)
+
+        horizons = [horizon] if horizon else list(SUPPORTED_HORIZONS)
+        stocks = list(self.stock_model.objects(active_status=0))
+        results = []
+        skipped_complete_horizons = []
+        expected_codes = [stock.code for stock in stocks]
+        cohort_fingerprint = self._cohort_fingerprint(expected_codes)
+
+        for current_horizon in horizons:
+            if (
+                not dry_run
+                and not replace
+                and self._is_complete_cohort(
+                    stocks, date, current_horizon, scoring_mode="ranked"
+                )
+            ):
+                skipped_complete_horizons.append(current_horizon)
+                continue
+            config = self._get_horizon_config(current_horizon)
+            raw_by_code = {}
+            blocked_codes = []
+            failed_codes = []
+            for stock in stocks:
+                try:
+                    raw = self._compute_raw_components(stock, date, current_horizon)
+                    if raw is None:
+                        blocked_codes.append(stock.code)
+                        continue
+                    raw_by_code[stock.code] = raw
+                except Exception as exc:
+                    failed_codes.append(getattr(stock, "code", "unknown"))
+                    logger.exception(
+                        "Failed to compute components for %s h=%s date=%s: %s",
+                        getattr(stock, "code", None),
+                        current_horizon,
+                        date,
+                        exc,
+                    )
+
+            if not raw_by_code and not blocked_codes:
+                logger.warning(
+                    "No computable components for %s h=%d; skipping",
+                    date.strftime("%Y-%m-%d"),
+                    current_horizon,
+                )
+                continue
+
+            # --- rank-normalize each component across the cohort ---
+            component_ids = sorted(
+                {c["id"] for raw in raw_by_code.values() for c in raw["components"]}
+            )
+            penalty_ids = sorted(
+                {p["id"] for raw in raw_by_code.values() for p in raw["penalties"]}
+            )
+            rank_maps = {}
+            for cid in component_ids:
+                values = {
+                    code: raw["components"][
+                        next(
+                            i for i, c in enumerate(raw["components"]) if c["id"] == cid
+                        )
+                    ]["raw_value"]
+                    for code, raw in raw_by_code.items()
+                }
+                rank_maps[cid] = self._rank_normalize(values)
+            for pid in penalty_ids:
+                values = {
+                    code: raw["penalties"][
+                        next(
+                            i for i, p in enumerate(raw["penalties"]) if p["id"] == pid
+                        )
+                    ]["raw_value"]
+                    for code, raw in raw_by_code.items()
+                }
+                rank_maps[pid] = self._rank_normalize(values)
+
+            # weights per component id (same for all stocks in cohort)
+            weights = {}
+            for code, raw in raw_by_code.items():
+                for c in raw["components"]:
+                    weights.setdefault(c["id"], c["weight"])
+                for p in raw["penalties"]:
+                    weights.setdefault(p["id"], p["weight"])
+            weight_sum = sum(weights.values()) or 1.0
+
+            # --- build and persist scored predictions ---
+            for code, raw in raw_by_code.items():
+                score = 0.0
+                for c in raw["components"]:
+                    score += rank_maps[c["id"]][code] * (c["weight"] / weight_sum)
+                for p in raw["penalties"]:
+                    # penalties must SUBTRACT: higher raw penalty (more
+                    # volatile/ST/suspended) must lower the score, mirroring
+                    # the raw path's negative penalty contribution
+                    score -= rank_maps[p["id"]][code] * (p["weight"] / weight_sum)
+                score = round(max(0.0, min(100.0, score * 100.0)), 2)
+
+                existing = self._find_existing_prediction(code, date, current_horizon)
+                if existing is not None and not replace and not dry_run:
+                    results.append(existing)
+                    continue
+                recommendation = self._recommendation(score, config)
+                # persist real component values so downstream analysis
+                # (factor_eval, calibration, backtest attribution) still works
+                explanation_components = [
+                    {
+                        "id": c["id"],
+                        "raw_value": c["raw_value"],
+                        "weight": c["weight"],
+                        "contribution": round(
+                            rank_maps[c["id"]][code]
+                            * (c["weight"] / weight_sum)
+                            * 100.0,
+                            4,
+                        ),
+                    }
+                    for c in raw["components"]
+                ]
+                explanation_penalties = [
+                    {
+                        "id": p["id"],
+                        "raw_value": p["raw_value"],
+                        "weight": p["weight"],
+                        "contribution": round(
+                            -rank_maps[p["id"]][code]
+                            * (p["weight"] / weight_sum)
+                            * 100.0,
+                            4,
+                        ),
+                    }
+                    for p in raw["penalties"]
+                ]
+                payload = {
+                    "stock_code": code,
+                    "stock_name": raw["stock_name"],
+                    "date": date,
+                    "horizon": current_horizon,
+                    "score": score,
+                    "recommendation": recommendation,
+                    "base_price": raw["base_price"],
+                    "target_date": raw["target_date"],
+                    "status": "PENDING",
+                    "explanation": {
+                        "summary": "rank-normalized cross-sectional score",
+                        "horizon": current_horizon,
+                        "score": score,
+                        "components": explanation_components,
+                        "penalties": explanation_penalties,
+                        "thresholds": self._thresholds(config),
+                        "model_version": self.model_version,
+                    },
+                    "verification": {
+                        "status": "PENDING",
+                        "target_date": raw["target_date"].isoformat(),
+                        "expected_quote_count": current_horizon,
+                        "verified_quote_count": 0,
+                        "effective_threshold": config["effective_threshold"],
+                        "stop_loss_threshold": config["stop_loss_threshold"],
+                    },
+                    "input_snapshot": {
+                        "status": "RANKED",
+                        "scoring_mode": "ranked",
+                        "cohort_fingerprint": cohort_fingerprint,
+                    },
+                    "model_version": self.model_version,
+                }
+                try:
+                    persisted = self._persist_prediction(payload, existing, dry_run)
+                    results.append(persisted)
+                except Exception as exc:
+                    failed_codes.append(code)
+                    logger.exception(
+                        "Failed to persist score for %s h=%d: %s",
+                        code,
+                        current_horizon,
+                        exc,
+                    )
+
+            for code in blocked_codes:
+                try:
+                    existing = self._find_existing_prediction(
+                        code, date, current_horizon
+                    )
+                    if existing is not None and not replace and not dry_run:
+                        continue
+                    target_date = self.get_t_plus_n_day(date, current_horizon)
+                    payload = self._build_blocked_prediction(
+                        stock=next((s for s in stocks if s.code == code), None),
+                        date=date,
+                        horizon=current_horizon,
+                        target_date=target_date,
+                        reason="missing_quote",
+                        scoring_mode="ranked",
+                        cohort_fingerprint=cohort_fingerprint,
+                    )
+                    self._persist_prediction(payload, existing, dry_run)
+                except Exception as exc:
+                    failed_codes.append(code)
+                    logger.warning(
+                        "Failed to persist blocked prediction for %s: %s", code, exc
+                    )
+
+            if failed_codes:
+                raise RuntimeError(
+                    f"ranked scoring failed for horizon={current_horizon}: "
+                    + ", ".join(sorted(set(failed_codes)))
+                )
+            if not dry_run:
+                self._require_complete_prediction_set(stocks, date, current_horizon)
+                self._repair_blocked_predictions(date, current_horizon, expected_codes)
+                self.assign_ranks(date, current_horizon, expected_codes=expected_codes)
+                self._upgrade_recommendations(
+                    date, current_horizon, expected_codes=expected_codes
+                )
+
+        return {
+            "date": date,
+            "horizons": horizons,
+            "scored_count": len(results),
+            "skipped_complete_horizons": skipped_complete_horizons,
+            "dry_run": dry_run,
+        }
+
+    @staticmethod
+    def _rank_normalize(values: dict) -> dict:
+        """Rank-normalize a dict of code->value to code->[0,1] percentile.
+
+        None and non-numeric (e.g. dict) values are treated as the lowest
+        rank (0.0). Ties get the same rank. Normalization is over ALL codes
+        (including None ones), so a code with the second-highest real value
+        in a 3-code cohort gets 0.5.
+        """
+        codes = list(values.keys())
+
+        def _numeric(v):
+            return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+        real = {k: v for k, v in values.items() if _numeric(v)}
+        n = len(codes)
+        result = {}
+        if real:
+            sorted_real = sorted(real, key=lambda c: real[c])
+            m = len(sorted_real)
+            ranks = {}
+            i = 0
+            while i < m:
+                j = i
+                while j + 1 < m and real[sorted_real[j + 1]] == real[sorted_real[i]]:
+                    j += 1
+                # position in the FULL cohort: real values sit above None ones,
+                # so the offset is (n - m)
+                full_rank = n - m + i + 1
+                rank_high = n - m + j + 1
+                rank = (full_rank + rank_high) / 2.0
+                for k in range(i, j + 1):
+                    ranks[sorted_real[k]] = rank
+                i = j + 1
+            for code in sorted_real:
+                result[code] = (ranks[code] - 1) / (n - 1) if n > 1 else 1.0
+        for code in codes:
+            if code not in result:
+                result[code] = 0.0  # None/non-numeric values rank lowest
+        return result
+
     def _persist_prediction(self, payload: dict, existing, dry_run: bool):
         if dry_run:
             return payload
@@ -328,10 +866,22 @@ class StockScoringService:
             prediction = existing
             for key, value in payload.items():
                 setattr(prediction, key, value)
+            if payload.get("status") == "BLOCKED":
+                prediction.rank = None
+                prediction.percentile = None
         prediction.save()
         return prediction
 
-    def _build_blocked_prediction(self, stock, date, horizon, target_date, reason):
+    def _build_blocked_prediction(
+        self,
+        stock,
+        date,
+        horizon,
+        target_date,
+        reason,
+        scoring_mode="raw",
+        cohort_fingerprint=None,
+    ):
         config = self._get_horizon_config(horizon)
         return {
             "stock": stock,
@@ -359,6 +909,8 @@ class StockScoringService:
             },
             "input_snapshot": {
                 "status": "BLOCKED",
+                "scoring_mode": scoring_mode,
+                "cohort_fingerprint": cohort_fingerprint,
                 "blocked_reason": reason,
                 "quote": {"status": "missing"},
                 "factor": {"status": "unknown"},
@@ -480,11 +1032,16 @@ class StockScoringService:
     def _recommendation(
         self, score: float, config: dict, percentile: float | None = None
     ) -> str:
-        """Determine recommendation using hybrid absolute + percentile thresholds.
+        """Determine recommendation using cross-sectional percentile.
 
-        When percentile is available (post-ranking), uses percentile as the primary
-        driver with absolute thresholds as guards. Without percentile, falls back
-        to pure absolute thresholds.
+        When percentile is available (post-ranking), the recommendation is
+        driven by the cohort percentile alone — BUY = top buy_percentile,
+        WATCH = top watch_percentile, AVOID = bottom avoid_percentile. The
+        absolute score thresholds are NOT required, because absolute scores
+        drift with weight configuration and lose meaning across cohorts.
+
+        Without percentile (single-stock path), falls back to pure absolute
+        thresholds.
         """
         buy_abs = config["buy_threshold"]
         watch_abs = config["watch_threshold"]
@@ -495,21 +1052,18 @@ class StockScoringService:
             watch_pct = config.get("watch_percentile", 0.80)
             avoid_pct = config.get("avoid_percentile", 0.20)
 
-            # BUY: must pass BOTH absolute guard AND percentile threshold
-            if score >= buy_abs and percentile >= buy_pct:
+            # BUY: top buy_percentile of the cohort
+            if percentile >= buy_pct:
                 return "BUY"
-            # WATCH: either passes absolute guard with weaker percentile, or
-            #        passes BUY absolute but not BUY percentile
-            if score >= watch_abs and percentile >= watch_pct:
+            # WATCH: next band down to watch_percentile
+            if percentile >= watch_pct:
                 return "WATCH"
-            if score >= buy_abs and percentile < buy_pct:
-                return "WATCH"
-            # AVOID: bottom percentile OR below absolute floor
-            if score <= avoid_abs or percentile <= avoid_pct:
+            # AVOID: bottom avoid_percentile
+            if percentile <= avoid_pct:
                 return "AVOID"
             return "NONE"
         else:
-            # Fallback: pure absolute thresholds (used before ranking)
+            # Fallback: pure absolute thresholds (single-stock path)
             if score >= buy_abs:
                 return "WATCH"  # placeholder — will be upgraded post-ranking
             if score >= watch_abs:

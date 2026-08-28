@@ -14,15 +14,15 @@ Load the relevant parts of:
 - `RULES.md`
 - `AGENTS.md`
 - `openspec/config.yaml`
-- `openspec/changes/mvp-quant-demo/design.md`
-- `openspec/changes/mvp-quant-demo/tasks.md`
-- Any matching spec under `openspec/changes/mvp-quant-demo/specs/`
+- `openspec/archive/mvp-quant-demo/design.md`
+- `openspec/archive/mvp-quant-demo/tasks.md`
+- Any matching spec under `openspec/archive/mvp-quant-demo/specs/`
 
 For OpenClaw-related work, also load:
 
 - `docs/integrations/openclaw.md`
-- `openspec/changes/mvp-quant-demo/specs/openclaw-data-access/spec.md`
-- `openspec/changes/mvp-quant-demo/specs/openclaw-data-access/implementation.md`
+- `openspec/archive/mvp-quant-demo/specs/openclaw-data-access/spec.md`
+- `openspec/archive/mvp-quant-demo/specs/openclaw-data-access/implementation.md`
 
 ## Spec Gate
 
