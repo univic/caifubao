@@ -113,3 +113,35 @@ def test_stale_fq_uses_market_snapshot_batch_path():
     ]
     assert service.updated_codes == []
     assert result["written_count"] == 2
+
+
+def test_stale_ma_uses_market_batch_path_with_exact_selected_codes():
+    class FakeBatchMAService(FakeFactorService):
+        def __init__(self):
+            super().__init__()
+            self.market_calls = []
+
+        def update_market(self, market=None, selected_codes=None):
+            self.market_calls.append((market, selected_codes))
+            return {
+                "written_count": 4,
+                "skipped_count": 1,
+                "failed_count": 0,
+                "failed_codes": [],
+            }
+
+    service = FakeBatchMAService()
+    market = object()
+    result = run_factor(
+        FACTOR_MA,
+        mode=MODE_STALE,
+        limit=2,
+        configs=_configs(service),
+        market_loader=lambda name: market,
+    )
+
+    assert service.market_calls == [(market, ["sh600000", "sz000001"])]
+    assert service.updated_codes == []
+    assert result["pulled_count"] == 2
+    assert result["written_count"] == 4
+    assert result["skipped_count"] == 1

@@ -50,14 +50,25 @@
 
 ## 4. 信号增量 anchor（G1/G3）
 
-- anchor = 该 code `StockSignalDaily` 最新 date（按 signal_name 各自维护，
-  初始缺省回退到全量重算一次）。
+- anchor = 该 `(code, signal_name)` 的 `DataAssetStatus.latest_data_date`，
+  表示“已评估至”；即使当日零命中也推进。不以稀疏的
+  `StockSignalDaily` 最大 date 作为水位；任一 signal status 缺失时，
+  该 code 回退到全量读取以完成冷启动。
 - MA10_CROSS_MA20：读 `date >= anchor 前一交易日` 的 factor/quote（shift(1)
   需要 1 行 lookback），只计算 `date > anchor` 的窗口。
-- PRICE_ABOVE_MA60 / MA20_ABOVE_MA60（状态型）：只写最新交易日一行判定。
+- PRICE_ABOVE_MA60 / MA20_ABOVE_MA60（状态型）：评估并写入各自
+  anchor 之后的所有新交易日；常态日仅一日，多日积压不丢历史命中。
 - `generated_at`：`$setOnInsert`（新文档记录生成时间，重算不触碰旧文档）——
   这是 specs/signals-mvp delta 显式约定的唯一语义变化（旧文档生成时间冻结）。
-- `source_freshness`：每 code 计算一份，写入时作为循环外常量。
+- `source_freshness`：每 code 计算一份，与 `generated_at` 一样仅在插入时
+  写入，表示生成时的来源快照，重跑不触碰旧文档。
+- stale 增量仅用于 anchor 之前上游未被修正的日常路径。`force`
+  为权威全历史重建：先 upsert 完整因子输入对应的命中集，再精确删除
+  不再命中的旧键，避免写入中途失败时先破坏旧权威集；
+  落库成功后才推进 status。任何计算、bulk write 或 status write 失败都
+  向调用方传播，不把该 code 记为成功。
+- 全市场 status 刷新从最终落库数据一次 `$group`，再批量 upsert；
+  `data_count` 是实际持久化命中数，而不是本次构造的 operation 数。
 - 语义不变量：任何日期的信号命中集、strength、direction、factor_snapshot
   与全量重算逐字段一致（等价性测试：增量重跑 vs 全量重算 diff 为空）。
 

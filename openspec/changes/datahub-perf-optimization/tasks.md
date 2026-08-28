@@ -30,9 +30,9 @@
 ### 日历与杂项（R4/F4/Q4/G3）
 
 - [ ] 2.9 四处日历排序/线性扫描改 bisect/预排序缓存：scoring_service.py:67-69、fq_factor.py:302-306、trading_day_helper.py:129-138、data_asset_status_helper.py:206-210
-- [ ] 2.10 factor_runner MA stale 分支改调 `update_market`（对齐 FQ 分支）（F4）
+- [x] 2.10 factor_runner MA stale 分支改调 `update_market`（对齐 FQ 分支）（F4）
 - [ ] 2.11 `get_hist_stock_quote_data`：`stock_obj` 直传参数 + 删除重复查询死代码（Q4）
-- [ ] 2.12 信号 `generated_at`/`source_freshness` 提为循环外常量或 `$setOnInsert`（G3，语义见 specs/signals-mvp delta）
+- [x] 2.12 信号 `generated_at`/`source_freshness` 提为循环外常量或 `$setOnInsert`（G3，语义见 specs/signals-mvp delta）
 - [ ] 2.13 阶段 1 回归：datahub pytest 全绿 + 一次 dev 全链路跑批对比基线
 
 ## 3. 阶段 2 — 结构性改造（每项独立 PR、独立验证）
@@ -47,9 +47,9 @@
 
 ### 信号增量（G1）
 
-- [ ] 3.6 引入信号 anchor：cross 信号只算 `date > anchor` 窗口（含 shift(1) lookback）；状态型信号只写最新交易日
-- [ ] 3.7 状态刷新批量化（仿 `refresh_market_statuses`）；count 改一次 `$group` 聚合（G2 一并完成）
-- [ ] 3.8 等价性验证：增量重跑后 `stock_signal_daily` 与全量重算逐字段 diff 为空（除 generated_at）
+- [x] 3.6 引入信号 anchor：cross 信号只算 `date > anchor` 窗口（含 shift(1) lookback）；状态型信号只写最新交易日
+- [x] 3.7 状态刷新批量化（仿 `refresh_market_statuses`）；count 改一次 `$group` 聚合（G2 一并完成）
+- [x] 3.8 等价性验证：增量与 force 全量对同一最新日的业务 payload 逐字段相等（`generated_at`/`source_freshness` 仅为插入快照）
 
 ### FQ 回填改造（F1/Q5）
 

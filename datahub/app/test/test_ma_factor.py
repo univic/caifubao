@@ -155,6 +155,7 @@ def test_update_market_counts_skipped_and_failed_codes():
         "written_count": 2,
         "skipped_count": 1,
         "failed_count": 1,
+        "failed_codes": ["bad-code"],
     }
     # GOOD 股票统一走批量 freshness 刷新
     assert service.refreshed_codes == ["ok-code"]
