@@ -213,7 +213,9 @@ routine is now enabled in dependency order:
 
 - prod quote-stock (18:00, tushare history + universe) → signal (18:30) →
   scoring (18:35), weekdays Asia/Shanghai;
-- dev `data-sync` (18:30) syncs prod → dev instead of pulling sources itself.
+- dev `data-sync` (19:15) syncs prod → dev instead of pulling sources itself
+  (after prod signal/scoring so dev gets the same day's signals; scoring is
+  not synced — run scoring_runner manually in dev).
 
 Factor/signal/scoring one-shot stages are run as separate Jobs with `--mode
 stale` after the quote gate, matching the sequence in

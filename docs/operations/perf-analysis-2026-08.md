@@ -23,8 +23,8 @@
 12日/月 industry-sync
 ```
 
-**Dev**：18:10 quote-stock（不带 factors）→ 18:30 data-sync CronJob（**不带 `--from-date`，见 S1**）；
-评分靠 `./scripts/caifubao score score-all`（kubectl exec 进 datahub pod，**CPU limit 500m**，
+**Dev**：18:10 quote-stock（`--include-factors`，suspend 默认）→ 19:15 data-sync CronJob（**不带 `--from-date`，见 S1**，prod signal/scoring 之后拿到当日信号）；
+评分不同步到 dev，靠 `./scripts/caifubao score score-all`（kubectl exec 进 datahub pod，**CPU limit 500m**，
 `k8s/base/datahub.yaml:95-101`）。
 
 | 环节 | 每日常态成本 | 主要瓶颈 |
