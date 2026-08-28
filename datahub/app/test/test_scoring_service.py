@@ -457,46 +457,53 @@ class TestHybridRecommendation:
             **overrides,
         }
 
-    # --- Hybrid path (percentile provided) ---
+    # --- Percentile-driven path (percentile provided) ---
+    # Recommendation is driven by cohort percentile alone; absolute score
+    # thresholds are NOT required (they drift with weight configuration).
 
     def test_hybrid_buy(self, scoring_service):
-        """score>=70 AND pct>=0.95 → BUY"""
+        """pct>=0.95 → BUY regardless of absolute score"""
         cfg = self._cfg()
         assert scoring_service._recommendation(80.0, cfg, 0.97) == "BUY"
         assert scoring_service._recommendation(70.0, cfg, 0.95) == "BUY"
+        # low absolute score but top percentile still BUY (rank-driven)
+        assert scoring_service._recommendation(30.0, cfg, 0.98) == "BUY"
 
     def test_hybrid_strong_score_weak_pct(self, scoring_service):
-        """score>=70 but pct<0.95 → WATCH (strong absolute, weak relative)"""
+        """pct<0.95 but >=0.80 → WATCH; pct mid-band → NONE (rank-driven)"""
         cfg = self._cfg()
         assert scoring_service._recommendation(75.0, cfg, 0.80) == "WATCH"
-        assert scoring_service._recommendation(85.0, cfg, 0.50) == "WATCH"
+        assert scoring_service._recommendation(85.0, cfg, 0.50) == "NONE"
 
     def test_hybrid_weak_score_strong_pct(self, scoring_service):
-        """score between watch and buy, pct>=0.80 → WATCH"""
+        """pct>=0.95 → BUY, pct in 0.80-0.95 → WATCH regardless of score"""
         cfg = self._cfg()
         assert scoring_service._recommendation(55.0, cfg, 0.90) == "WATCH"
-        assert scoring_service._recommendation(60.0, cfg, 0.96) == "WATCH"
+        assert scoring_service._recommendation(10.0, cfg, 0.96) == "BUY"
 
     def test_hybrid_avoid_by_percentile(self, scoring_service):
-        """score>20 but pct<=0.20 → AVOID (bottom 20%)"""
+        """pct<=0.20 → AVOID (bottom 20%) regardless of absolute score"""
         cfg = self._cfg()
         assert scoring_service._recommendation(25.0, cfg, 0.10) == "AVOID"
         assert scoring_service._recommendation(30.0, cfg, 0.05) == "AVOID"
+        assert scoring_service._recommendation(80.0, cfg, 0.10) == "AVOID"
 
     def test_hybrid_avoid_by_absolute(self, scoring_service):
-        """score<=20 → AVOID regardless of percentile"""
+        """score<=20 with no useful percentile → AVOID (fallback absolute)"""
         cfg = self._cfg()
-        assert scoring_service._recommendation(20.0, cfg, 0.99) == "AVOID"
-        assert scoring_service._recommendation(10.0, cfg, 0.50) == "AVOID"
+        # percentile=0.0 falls back to absolute thresholds
+        assert scoring_service._recommendation(20.0, cfg, 0.0) == "AVOID"
+        assert scoring_service._recommendation(10.0, cfg, None) == "AVOID"
 
     def test_hybrid_none(self, scoring_service):
-        """score between avoid and watch, pct between avoid and watch → NONE"""
+        """pct between avoid and watch → NONE"""
         cfg = self._cfg()
         assert scoring_service._recommendation(25.0, cfg, 0.50) == "NONE"
         assert scoring_service._recommendation(40.0, cfg, 0.60) == "NONE"
+        assert scoring_service._recommendation(95.0, cfg, 0.50) == "NONE"
 
     def test_hybrid_boundaries(self, scoring_service):
-        """Exact boundary values: score=70.0/50.0/20.0, pct=0.95/0.80/0.20"""
+        """Exact boundary percentiles: 0.95/0.80/0.20"""
         cfg = self._cfg()
         # At BUY boundary
         assert scoring_service._recommendation(70.0, cfg, 0.95) == "BUY"
@@ -505,8 +512,8 @@ class TestHybridRecommendation:
         assert scoring_service._recommendation(50.0, cfg, 0.80) == "WATCH"
         assert scoring_service._recommendation(50.0, cfg, 0.79) == "NONE"
         # At AVOID boundary
-        assert scoring_service._recommendation(20.0, cfg, 0.99) == "AVOID"
-        assert scoring_service._recommendation(20.1, cfg, 0.21) == "NONE"
+        assert scoring_service._recommendation(20.0, cfg, 0.20) == "AVOID"
+        assert scoring_service._recommendation(20.0, cfg, 0.21) == "NONE"
 
     # --- Fallback path (percentile=None or 0.0) ---
 
@@ -539,3 +546,97 @@ class TestHybridRecommendation:
         cfg = {"buy_threshold": 70.0, "watch_threshold": 50.0, "avoid_threshold": 20.0}
         assert scoring_service._recommendation(80.0, cfg, 0.97) == "BUY"
         assert scoring_service._recommendation(25.0, cfg, 0.10) == "AVOID"
+
+
+# ---------------------------------------------------------------------------
+# Rank-normalized component scoring tests (scoring-percentile-rank change)
+# ---------------------------------------------------------------------------
+
+
+class TestRankNormalize:
+    """Unit tests for cross-sectional component rank normalization."""
+
+    def test_rank_normalize_basic(self):
+        from app.lib.scoring_engine.scoring_service import StockScoringService
+
+        values = {"a": 10.0, "b": 20.0, "c": 30.0}
+        result = StockScoringService._rank_normalize(values)
+        assert result["a"] == 0.0
+        assert result["b"] == 0.5
+        assert result["c"] == 1.0
+
+    def test_rank_normalize_ties(self):
+        from app.lib.scoring_engine.scoring_service import StockScoringService
+
+        values = {"a": 5.0, "b": 5.0, "c": 10.0}
+        result = StockScoringService._rank_normalize(values)
+        # a and b share ranks 1,2 -> avg 1.5 -> (1.5-1)/2 = 0.25
+        assert result["a"] == result["b"] == 0.25
+        assert result["c"] == 1.0
+
+    def test_rank_normalize_none_ranks_lowest(self):
+        from app.lib.scoring_engine.scoring_service import StockScoringService
+
+        values = {"a": None, "b": 10.0, "c": 20.0}
+        result = StockScoringService._rank_normalize(values)
+        assert result["a"] == 0.0
+        assert result["b"] == 0.5
+        assert result["c"] == 1.0
+
+    def test_rank_normalize_single(self):
+        from app.lib.scoring_engine.scoring_service import StockScoringService
+
+        result = StockScoringService._rank_normalize({"a": 42.0})
+        assert result["a"] == 1.0
+
+    def test_rank_normalize_all_none(self):
+        from app.lib.scoring_engine.scoring_service import StockScoringService
+
+        result = StockScoringService._rank_normalize({"a": None, "b": None})
+        assert result["a"] == 0.0
+        assert result["b"] == 0.0
+
+    def test_score_all_stocks_ranked_dispatch(self, monkeypatch, scoring_service):
+        """DATAHUB_SCORING_MODE=ranked dispatches to ranked path."""
+
+        monkeypatch.setenv("DATAHUB_SCORING_MODE", "ranked")
+        called = {}
+
+        def fake_ranked(self_obj, **kwargs):
+            called["hit"] = True
+            return {"date": kwargs.get("date"), "scored_count": 1}
+
+        monkeypatch.setattr(
+            type(scoring_service), "score_all_stocks_ranked", fake_ranked
+        )
+        scoring_service.score_all_stocks()
+        assert called.get("hit") is True
+        monkeypatch.delenv("DATAHUB_SCORING_MODE", raising=False)
+
+    def test_score_all_stocks_default_raw(self, monkeypatch, scoring_service):
+        """Without env, score_all_stocks does NOT dispatch to ranked."""
+        import datetime
+
+        monkeypatch.delenv("DATAHUB_SCORING_MODE", raising=False)
+        called = {}
+
+        def fake_ranked(self_obj, **kwargs):
+            called["hit"] = True
+            return {"scored_count": 1}
+
+        monkeypatch.setattr(
+            type(scoring_service), "score_all_stocks_ranked", fake_ranked
+        )
+
+        # empty stock model -> raw path scores nothing, ranked not called
+        class EmptyStockModel:
+            records = []
+
+            @staticmethod
+            def objects(**kwargs):
+                return []
+
+        monkeypatch.setattr(scoring_service, "stock_model", EmptyStockModel)
+        result = scoring_service.score_all_stocks(date=datetime.datetime(2026, 6, 1))
+        assert called.get("hit") is None
+        assert result["scored_count"] == 0
