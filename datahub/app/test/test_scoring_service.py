@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import datetime
+import copy
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,9 +25,12 @@ class FakeQuerySet:
         items = self.items
         for field in reversed(fields):
             reverse = field.startswith("-")
-            key = field[1:] if reverse else field
+            key = field[1:] if field.startswith(("-", "+")) else field
             items = sorted(items, key=lambda item: getattr(item, key), reverse=reverse)
         return FakeQuerySet(items)
+
+    def only(self, *fields):
+        return self
 
     def limit(self, count):
         return FakeQuerySet(self.items[:count])
@@ -76,7 +81,40 @@ class FakeSignal(FakeModel):
 
 
 class FakePrediction(FakeModel):
-    pass
+    next_id = 1
+    bulk_calls = []
+    fail_bulk = False
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.id = kwargs.get("id", self.__class__.next_id)
+        self.__class__.next_id += 1
+
+    @classmethod
+    def _get_collection(cls):
+        class Collection:
+            @staticmethod
+            def bulk_write(operations, ordered=False):
+                if cls.fail_bulk:
+                    raise RuntimeError("prediction bulk failed")
+                cls.bulk_calls.append((operations, ordered))
+                modified = 0
+                for operation in operations:
+                    prediction = next(
+                        item
+                        for item in cls.records
+                        if item.id == operation._filter["_id"]
+                    )
+                    changed = False
+                    for key, value in operation._doc["$set"].items():
+                        if getattr(prediction, key, None) != value:
+                            setattr(prediction, key, value)
+                            changed = True
+                    if changed:
+                        modified += 1
+                return SimpleNamespace(modified_count=modified)
+
+        return Collection()
 
 
 def matches_query(record, query):
@@ -125,6 +163,8 @@ def calendar():
 def scoring_service(calendar):
     for model in (FakeStock, FakeQuote, FakeFactor, FakeSignal, FakePrediction):
         model.records = []
+    FakePrediction.bulk_calls = []
+    FakePrediction.fail_bulk = False
 
     with (
         patch(
@@ -275,6 +315,340 @@ def test_score_all_stocks_generates_all_horizons_and_ranks(scoring_service):
     assert result["scored_count"] == 3
     assert {item.horizon for item in FakePrediction.records} == {5, 20, 60}
     assert all(item.rank == 1 for item in FakePrediction.records)
+
+
+def test_complete_raw_cohort_rerun_skips_before_component_reads(
+    scoring_service, monkeypatch
+):
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    scoring_service.score_all_stocks(date=date, horizon=5)
+    FakePrediction.bulk_calls = []
+
+    def fail_if_scored(*args, **kwargs):
+        raise AssertionError("complete cohort must skip per-stock scoring")
+
+    monkeypatch.setattr(scoring_service, "score_single_stock", fail_if_scored)
+    result = scoring_service.score_all_stocks(date=date, horizon=5)
+
+    assert result["skipped_complete_horizons"] == [5]
+    assert result["scored_count"] == 0
+    assert FakePrediction.bulk_calls == []
+
+
+def test_complete_raw_cohort_still_retries_industry_aggregation(
+    scoring_service, monkeypatch
+):
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    scoring_service.score_all_stocks(date=date, horizon=5)
+    calls = []
+    monkeypatch.setattr(
+        "app.lib.scoring_engine.scoring_service.aggregate_industry_metrics",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    result = scoring_service.score_all_stocks(date=date, horizon=5)
+
+    assert result["skipped_complete_horizons"] == [5]
+    assert len(calls) == 1
+
+
+def test_complete_gate_does_not_override_dry_run_or_replace(
+    scoring_service, monkeypatch
+):
+    stock = seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    scoring_service.score_all_stocks(date=date, horizon=5)
+    calls = []
+    original = scoring_service.score_single_stock
+
+    def recording_score(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(scoring_service, "score_single_stock", recording_score)
+    scoring_service.score_all_stocks(date=date, horizon=5, dry_run=True)
+    scoring_service.score_all_stocks(date=date, horizon=5, replace=True)
+
+    assert len(calls) == 2
+    assert calls[0]["dry_run"] is True
+    assert calls[1]["replace"] is True
+    assert FakePrediction.records[0].stock_code == stock.code
+
+
+def test_complete_gate_is_per_horizon(scoring_service, monkeypatch):
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    scoring_service.score_all_stocks(date=date)
+    FakePrediction.records = [
+        prediction for prediction in FakePrediction.records if prediction.horizon != 20
+    ]
+    called_horizons = []
+    original = scoring_service.score_single_stock
+
+    def recording_score(stock, run_date, horizon, **kwargs):
+        called_horizons.append(horizon)
+        return original(stock, run_date, horizon, **kwargs)
+
+    monkeypatch.setattr(scoring_service, "score_single_stock", recording_score)
+    result = scoring_service.score_all_stocks(date=date)
+
+    assert result["skipped_complete_horizons"] == [5, 60]
+    assert called_horizons == [20]
+
+
+def test_partial_raw_cohort_repairs_missing_without_overwriting_existing(
+    scoring_service,
+):
+    first = seed_stock()
+    second = FakeStock(code="sh600001", name="Second", active_status=0)
+    FakeStock.records.append(second)
+    date = seed_quotes(first.code)
+    seed_quotes(second.code)
+    seed_factors_and_signal(date, first.code)
+    seed_factors_and_signal(date, second.code)
+    scoring_service.score_all_stocks(date=date, horizon=5)
+    existing = next(
+        prediction
+        for prediction in FakePrediction.records
+        if prediction.stock_code == first.code
+    )
+    existing_business = {
+        "score": existing.score,
+        "explanation": copy.deepcopy(existing.explanation),
+        "verification": copy.deepcopy(existing.verification),
+        "input_snapshot": copy.deepcopy(existing.input_snapshot),
+    }
+    FakePrediction.records = [existing]
+
+    scoring_service.score_all_stocks(date=date, horizon=5)
+
+    assert {p.stock_code for p in FakePrediction.records} == {first.code, second.code}
+    assert existing.score == existing_business["score"]
+    assert existing.explanation == existing_business["explanation"]
+    assert existing.verification == existing_business["verification"]
+    assert existing.input_snapshot == existing_business["input_snapshot"]
+
+
+def test_assign_ranks_bulk_updates_only_changed_rows_and_excludes_blocked(
+    scoring_service,
+):
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    predictions = [
+        FakePrediction(
+            stock_code="sh600000",
+            date=date,
+            horizon=5,
+            model_version=scoring_service.model_version,
+            status="PENDING",
+            score=80.0,
+            rank=1,
+            percentile=1.0,
+        ),
+        FakePrediction(
+            stock_code="sh600001",
+            date=date,
+            horizon=5,
+            model_version=scoring_service.model_version,
+            status="PENDING",
+            score=80.0,
+            rank=99,
+            percentile=0.0,
+        ),
+        FakePrediction(
+            stock_code="sh600002",
+            date=date,
+            horizon=5,
+            model_version=scoring_service.model_version,
+            status="BLOCKED",
+            score=100.0,
+        ),
+    ]
+    FakePrediction.records.extend(predictions)
+
+    modified = scoring_service.assign_ranks(date, 5)
+
+    assert modified == 1
+    operations = FakePrediction.bulk_calls[0][0]
+    assert len(operations) == 1
+    assert operations[0]._filter == {"_id": predictions[1].id}
+    assert operations[0]._doc == {"$set": {"rank": 2, "percentile": 0.5}}
+    assert not hasattr(predictions[2], "rank")
+
+    FakePrediction.bulk_calls = []
+    assert scoring_service.assign_ranks(date, 5) == 0
+    assert FakePrediction.bulk_calls == []
+
+
+def test_assign_ranks_uses_stock_code_as_stable_tie_break(scoring_service):
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    later_code = FakePrediction(
+        stock_code="sh600002",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=80.0,
+    )
+    earlier_code = FakePrediction(
+        stock_code="sh600001",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=80.0,
+    )
+    FakePrediction.records.extend([later_code, earlier_code])
+
+    scoring_service.assign_ranks(date, 5)
+
+    assert earlier_code.rank == 1
+    assert later_code.rank == 2
+
+
+def test_legacy_blocked_fields_are_repaired_then_fast_skipped(scoring_service):
+    stock = seed_stock()
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    scoring_service.score_all_stocks(date=date, horizon=5)
+    blocked = FakePrediction.records[0]
+    blocked.rank = 1
+    blocked.percentile = 1.0
+    blocked.recommendation = "BUY"
+    FakePrediction.bulk_calls = []
+
+    first_retry = scoring_service.score_all_stocks(date=date, horizon=5)
+
+    assert first_retry["skipped_complete_horizons"] == []
+    assert blocked.stock_code == stock.code
+    assert blocked.rank is None
+    assert blocked.percentile is None
+    assert blocked.recommendation == "NONE"
+    assert FakePrediction.bulk_calls
+
+    FakePrediction.bulk_calls = []
+    second_retry = scoring_service.score_all_stocks(date=date, horizon=5)
+    assert second_retry["skipped_complete_horizons"] == [5]
+    assert FakePrediction.bulk_calls == []
+
+
+def test_wrong_recommendation_is_repaired_then_fast_skipped(scoring_service):
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    scoring_service.score_all_stocks(date=date, horizon=5)
+    prediction = FakePrediction.records[0]
+    correct = prediction.recommendation
+    prediction.recommendation = "AVOID" if correct != "AVOID" else "BUY"
+
+    first_retry = scoring_service.score_all_stocks(date=date, horizon=5)
+
+    assert first_retry["skipped_complete_horizons"] == []
+    assert prediction.recommendation == correct
+    second_retry = scoring_service.score_all_stocks(date=date, horizon=5)
+    assert second_retry["skipped_complete_horizons"] == [5]
+
+
+def test_inactive_extra_prediction_does_not_affect_active_cohort(
+    scoring_service, monkeypatch
+):
+    stock = seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    scoring_service.score_all_stocks(date=date, horizon=5)
+    active_prediction = FakePrediction.records[0]
+    FakePrediction.records.append(
+        FakePrediction(
+            stock_code="sh600999",
+            date=date,
+            horizon=5,
+            model_version=scoring_service.model_version,
+            status="PENDING",
+            score=100.0,
+            rank=1,
+            percentile=1.0,
+            recommendation="BUY",
+            input_snapshot={"scoring_mode": "ranked", "status": "RANKED"},
+        )
+    )
+    aggregated_codes = []
+    monkeypatch.setattr(
+        "app.lib.scoring_engine.scoring_service.aggregate_industry_metrics",
+        lambda **kwargs: aggregated_codes.extend(
+            prediction.stock_code for prediction in kwargs["predictions"]
+        ),
+    )
+
+    result = scoring_service.score_all_stocks(date=date, horizon=5)
+
+    assert result["skipped_complete_horizons"] == [5]
+    assert active_prediction.stock_code == stock.code
+    assert active_prediction.rank == 1
+    assert aggregated_codes == [stock.code]
+
+
+def test_rank_bulk_failure_propagates_before_recommendations(
+    scoring_service, monkeypatch
+):
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    FakePrediction.fail_bulk = True
+    recommendation_called = False
+
+    def mark_recommendation(*args, **kwargs):
+        nonlocal recommendation_called
+        recommendation_called = True
+
+    monkeypatch.setattr(
+        scoring_service, "_upgrade_recommendations", mark_recommendation
+    )
+
+    with pytest.raises(RuntimeError, match="prediction bulk failed"):
+        scoring_service.score_all_stocks(date=date, horizon=5)
+
+    assert recommendation_called is False
+
+
+def test_recommendation_bulk_failure_propagates(scoring_service, monkeypatch):
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+
+    def fail_recommendations(*args, **kwargs):
+        raise RuntimeError("recommendation bulk failed")
+
+    monkeypatch.setattr(
+        scoring_service, "_upgrade_recommendations", fail_recommendations
+    )
+    with pytest.raises(RuntimeError, match="recommendation bulk failed"):
+        scoring_service.score_all_stocks(date=date, horizon=5)
+
+
+def test_scoring_mode_mismatch_requires_replace(scoring_service):
+    stock = seed_stock()
+    date = seed_quotes()
+    FakePrediction.records.append(
+        FakePrediction(
+            stock_code=stock.code,
+            date=date,
+            horizon=5,
+            model_version=scoring_service.model_version,
+            status="PENDING",
+            score=50.0,
+            rank=1,
+            percentile=1.0,
+            recommendation="WATCH",
+            input_snapshot={"status": "RANKED", "scoring_mode": "ranked"},
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="use replace"):
+        scoring_service.score_all_stocks(date=date, horizon=5)
 
 
 def test_missing_quote_creates_blocked_prediction(scoring_service):
@@ -714,6 +1088,70 @@ class TestScoreAllStocksRankedEndToEnd:
         # second run with replace=False must NOT overwrite (same count)
         scoring_service.score_all_stocks_ranked(date=d, horizon=5, replace=False)
         assert len(scoring_service.prediction_model.records) == first
+
+    def test_complete_ranked_cohort_skips_all_component_computation(
+        self, scoring_service, monkeypatch
+    ):
+        import datetime
+
+        self._seed_cohort(scoring_service)
+        d = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+        FakePrediction.bulk_calls = []
+
+        def fail_if_computed(*args, **kwargs):
+            raise AssertionError("complete ranked cohort must skip computation")
+
+        monkeypatch.setattr(
+            scoring_service, "_compute_raw_components", fail_if_computed
+        )
+        result = scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+
+        assert result["skipped_complete_horizons"] == [5]
+        assert FakePrediction.bulk_calls == []
+
+    def test_partial_ranked_cohort_recomputes_full_cross_section(
+        self, scoring_service, monkeypatch
+    ):
+        import datetime
+
+        codes = self._seed_cohort(scoring_service)
+        d = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+        FakePrediction.records = [
+            prediction
+            for prediction in FakePrediction.records
+            if prediction.stock_code != "sh600001"
+        ]
+        computed_codes = []
+        original = scoring_service._compute_raw_components
+
+        def recording_compute(stock, *args, **kwargs):
+            computed_codes.append(stock.code)
+            return original(stock, *args, **kwargs)
+
+        monkeypatch.setattr(
+            scoring_service, "_compute_raw_components", recording_compute
+        )
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+
+        assert computed_codes == codes
+        assert {prediction.stock_code for prediction in FakePrediction.records} == set(
+            codes
+        )
+
+    def test_ranked_active_membership_change_requires_replace(self, scoring_service):
+        import datetime
+
+        self._seed_cohort(scoring_service)
+        d = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+        FakeStock.records.append(
+            FakeStock(code="sh600777", name="New active", active_status=0)
+        )
+
+        with pytest.raises(RuntimeError, match="membership changed"):
+            scoring_service.score_all_stocks_ranked(date=d, horizon=5)
 
 
 class TestRankedPenaltyDirection:
