@@ -1,4 +1,33 @@
-"""Tests for sync_engine business-key upsert (idempotent prod->dev sync)."""
+from app.lib.datahub.sync_engine import _resolve_sync_collections
+
+
+def test_resolve_sync_collections_keeps_signal_in_dev():
+    assert _resolve_sync_collections(None, is_dev_environment=True) == [
+        "stock_daily_quote",
+        "stock_factor_daily",
+        "stock_signal_daily",
+        "finance_market",
+        "stock_industry",
+    ]
+
+
+def test_resolve_sync_collections_skips_signal_outside_dev():
+    assert _resolve_sync_collections(None, is_dev_environment=False) == [
+        "stock_daily_quote",
+        "stock_factor_daily",
+        "finance_market",
+        "stock_industry",
+    ]
+
+
+def test_resolve_sync_collections_skips_signal_alias_outside_dev():
+    assert _resolve_sync_collections(
+        ["quote", "signal"],
+        is_dev_environment=False,
+    ) == ["stock_daily_quote"]
+
+
+# --- Business-key upsert tests (fix/sync-business-key-upsert) ---
 
 import datetime
 from unittest.mock import MagicMock
@@ -34,7 +63,13 @@ def _doc(code, date, _id=None):
 def test_quote_sync_matches_by_code_and_date():
     src = _fake_collection(
         "stock_daily_quote",
-        [_doc("sz000001", datetime.datetime(2026, 8, 27), _id="prod-id")],
+        [
+            _doc(
+                "sz000001",
+                datetime.datetime(2026, 8, 27, tzinfo=datetime.timezone.utc),
+                _id="prod-id",
+            )
+        ],
     )
     dst = MagicMock()
     dst.name = "stock_daily_quote"
@@ -50,7 +85,7 @@ def test_quote_sync_matches_by_code_and_date():
     # Filter is the business key, not _id.
     assert op._filter == {
         "code": "sz000001",
-        "date": datetime.datetime(2026, 8, 27),
+        "date": datetime.datetime(2026, 8, 27, tzinfo=datetime.timezone.utc),
     }
     assert op._doc["$set"]["close"] == 10.0
     assert op._doc["$set"]["code"] == "sz000001"
