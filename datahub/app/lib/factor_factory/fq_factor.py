@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import math
 from collections import defaultdict
@@ -386,17 +387,46 @@ class FQFactorService:
         return tushare_interface.adj_factor_by_trade_date(trade_date)
 
     def _refresh_market_snapshot_statuses(self, codes: list[str]) -> None:
+        """Refresh FQ statuses for the snapshot batch with bulk round trips.
+
+        Reads committed data only: the FQ aggregate runs after the snapshot
+        bulk write has completed, and the quote statuses it compares against
+        were committed by the earlier quote phase. Record construction uses
+        the same pure builder as the single-code path, so statuses are
+        identical to per-stock refresh_fq_factor_status calls.
+        """
         stock_list = list(
             self.stock_model.objects(code__in=codes).only(
                 "code", "name", "object_type", "data_capabilities"
             )
         )
-        for stock_obj in stock_list:
-            data_asset_status_helper.refresh_fq_factor_status(
-                stock_obj=stock_obj,
-                quote_model=self.quote_model,
+        object_type_by_code = {
+            stock.code: getattr(stock, "object_type", "individual_stock")
+            for stock in stock_list
+        }
+        quote_status_map = data_asset_status_helper.read_quote_status_map(codes)
+        fq_stats_by_code = data_asset_status_helper.aggregate_stats_by_code(
+            self.quote_model._get_collection(),
+            match={
+                "code": {"$in": codes},
+                "fq_factor": {"$exists": True, "$ne": None},
+            },
+            code_field="code",
+        )
+        calculated_at = datetime.datetime.now()
+        records = [
+            data_asset_status_helper.build_fq_status_record(
+                code=code,
+                object_type=object_type_by_code[code],
+                stats_row=fq_stats_by_code.get(code),
+                quote_status=quote_status_map.get(code),
                 last_job_name="fq_factor_sync",
+                calculated_at=calculated_at,
             )
+            for code in codes
+            if code in object_type_by_code
+        ]
+        data_asset_status_helper.bulk_upsert_asset_status(records)
 
     def update_codes_from_market_snapshots(
         self, code_dates: dict[str, object]

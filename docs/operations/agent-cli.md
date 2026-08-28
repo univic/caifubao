@@ -311,24 +311,36 @@ quote → FQ factor → MA factor → signal → scoring → verification
   └── tushare/akshare/baostock → writes stock_daily_quote
 ```
 
-Stock history defaults to AkShare over HTTPS. Set
-`DATAHUB_STOCK_HISTORY_SOURCE=baostock` only where outbound TCP access to
-`www.baostock.com:10030` is known to work. Set
-`DATAHUB_STOCK_HISTORY_SOURCE=tushare` to use the Tushare `pro.daily`
-interface (requires the private `TUSHARE_TOKEN` secret; history is fetched
-in year windows and every call is paced to stay under the 300/min rate
-limit). Set
-`DATAHUB_STOCK_UNIVERSE_SOURCE=tushare` to source the stock universe/list
-from tushare (`pro.stock_basic` + the frozen-date daily snapshot) instead of
-the eastmoney/sina spot list.
+Stock history defaults to AkShare over HTTPS, but the k8s base deployment and
+the daily quote-stock CronJob pin
+`DATAHUB_STOCK_HISTORY_SOURCE=tushare` +
+`DATAHUB_STOCK_UNIVERSE_SOURCE=tushare` (Tushare `pro.daily`, requires the
+private `TUSHARE_TOKEN` secret; history is fetched in year windows and every
+call is paced to stay under the 300/min rate limit). Keep the tushare source
+pinned for dev deployments and manually triggered full-market runs too:
+akshare/eastmoney history endpoints drop connections under sustained polling
+and previously stalled dev catchup runs for 30+ minutes before failing.
+`DATAHUB_STOCK_HISTORY_SOURCE=baostock` remains available only where outbound
+TCP access to `www.baostock.com:10030` is known to work.
+`DATAHUB_STOCK_UNIVERSE_SOURCE=tushare` sources the stock universe/list from
+tushare (`pro.stock_basic` + the frozen-date daily snapshot) instead of the
+eastmoney/sina spot list.
+
+A circuit breaker protects full-market runs: once 25 consecutive history
+pulls fail (not attributable to suspension), the quote phase aborts early
+with "history source appears unavailable" instead of grinding through the
+whole universe before the final validation failure. Re-run against a healthy
+source; the run stays fail-closed either way.
 
 Daily incremental updates use a snapshot-driven path: when a stock's latest
 quote is exactly one trading day behind, the runner is not suspended, the
 target is a stock, and the universe source is tushare, the settlement snapshot
 (`pro.daily` for the as-of date) is written directly instead of replaying full
-history. INC/FULL refreshes, suspended stocks, and spot-sourced universes still
-replay history. A stock refresh that attempts updates but writes zero
-quote rows fails before factor and scoring phases.
+history, and quote freshness is refreshed in one batch (single aggregate +
+bulk upsert) after the snapshot write. INC/FULL refreshes, suspended stocks,
+and spot-sourced universes still replay history. A stock refresh that
+attempts updates but writes zero quote rows fails before factor and scoring
+phases.
 
 ### Data sync (prod → dev)
 The `data sync` command uses the `MONGODB_SRC_*` environment variables

@@ -175,6 +175,10 @@ spec:
                 secretKeyRef:
                   name: datahub-secret
                   key: TUSHARE_TOKEN
+            - name: DATAHUB_STOCK_HISTORY_SOURCE
+              value: "tushare"
+            - name: DATAHUB_STOCK_UNIVERSE_SOURCE
+              value: "tushare"
             - name: APP_ENV
               valueFrom:
                 configMapKeyRef:

@@ -132,17 +132,23 @@ def test_update_market_counts_skipped_and_failed_codes():
     from app.lib.factor_factory import MovingAverageFactorService
 
     class FakeMovingAverageFactorService(MovingAverageFactorService):
+        refreshed_codes = []
+
         def get_codes_requiring_update(self, market=None):
             return ["ok-code", "skip-code", "bad-code"]
 
-        def update_code(self, code):
+        def update_code(self, code, *, refresh_statuses=True):
             if code == "skip-code":
                 return {"code": "SKIP", "written_count": 0, "message": "missing hfq"}
             if code == "bad-code":
                 raise ValueError("bad data")
             return {"code": "GOOD", "written_count": 2, "message": None}
 
-    result = FakeMovingAverageFactorService().update_market()
+        def refresh_market_statuses(self, codes):
+            self.refreshed_codes.extend(codes)
+
+    service = FakeMovingAverageFactorService()
+    result = service.update_market()
 
     assert result == {
         "pulled_count": 3,
@@ -150,6 +156,8 @@ def test_update_market_counts_skipped_and_failed_codes():
         "skipped_count": 1,
         "failed_count": 1,
     }
+    # GOOD 股票统一走批量 freshness 刷新
+    assert service.refreshed_codes == ["ok-code"]
 
 
 def test_update_code_skips_unsupported_ma_factor_stock():
