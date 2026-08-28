@@ -177,6 +177,39 @@ class TestRetryPolicy(TestCase):
 
         self.assertEqual(pro.calls, 2)
 
+    def test_adj_factor_by_trade_date_fetches_one_market_snapshot(self):
+        class FakePro:
+            def __init__(self):
+                self.calls = []
+
+            def adj_factor(self, **kwargs):
+                self.calls.append(kwargs)
+                return pandas.DataFrame(
+                    [
+                        {
+                            "ts_code": "600000.SH",
+                            "trade_date": "20260827",
+                            "adj_factor": 2.0,
+                        },
+                        {
+                            "ts_code": "000001.SZ",
+                            "trade_date": "20260827",
+                            "adj_factor": 3.0,
+                        },
+                    ]
+                )
+
+        pro = FakePro()
+        with (
+            patch.object(tushare_interface, "_get_pro", return_value=pro),
+            patch.object(tushare_interface.time, "sleep") as sleep,
+        ):
+            result = tushare_interface.adj_factor_by_trade_date("20260827")
+
+        self.assertEqual(pro.calls, [{"trade_date": "20260827"}])
+        sleep.assert_called_once_with(0.25)
+        self.assertEqual(len(result), 2)
+
 
 class TestStockHistorySource(TestCase):
     def test_index_increment_start_date_is_inclusive(self):

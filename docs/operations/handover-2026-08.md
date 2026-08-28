@@ -45,8 +45,10 @@
 | #134 | `docs/operations/agent-cli.md` 更新每日例行与数据源说明 |
 
 **结果**：quote 每日增量从 ~5,200 次调用 / 30–40 分钟降到 ~3 次调用 / 分钟级，
-08-25 全市场验证 OK 5208 / STALE 4（停牌）。FQ stale 路径目前仍逐股读取、拉取
-并重写全历史，是尚待实测和增量化的主要性能风险。
+08-25 全市场验证 OK 5208 / STALE 4（停牌）。FQ stale 路径也已改为每个目标日
+一次 `adj_factor(trade_date)` 全市场快照并只写当日；首次计算、多日积压及
+force/backfill 仍走逐股全历史，防止用最新日掩盖历史缺口。该路径尚待随新镜像
+在 dev 验证调用数、覆盖率与写入量。
 
 ### 2.2 复权因子修复（#135，重要）
 
@@ -166,11 +168,10 @@ carry-forward 项挂在 GitHub issue #125。
 5. **评审**：非平凡改动必须过 qa-reviewer（契约改动加 contract-reviewer），
    合并前做 branch-conflict 检查，Draft PR + CI 全绿后再 merge。
 6. **建议的下一步**（按优先级）：
-   1. 补齐 `adj_factor` 限流重试（fq-adj-factor-fix 1.2）+ 单测；
-   2. 发布新镜像 → dev 部署 → 验证 → prod 部署（两个 change 的 5.x）；
-   3. 全市场 FQ 重算 + 重跑 50 只股票评分/验证实验，对比 corr；
-   4. 决定 prod 是否启用 `DATAHUB_SCORING_MODE=ranked`（私有 overlay）；
-   5. 刷新 `docs/capability-inventory.md`；评估归档 3 个已完成 change。
+   1. 发布新镜像 → dev 部署，验证 FQ 日快照为每目标日一次请求且只写当日；
+   2. prod 部署后全市场 FQ 重算 + 重跑 50 只股票评分/验证实验，对比 corr；
+   3. 决定 prod 是否启用 `DATAHUB_SCORING_MODE=ranked`（私有 overlay）；
+   4. 刷新 `docs/capability-inventory.md`；评估归档 3 个已完成 change。
 
 ---
 

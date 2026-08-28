@@ -59,6 +59,14 @@ Collections: `quote` → `stock_daily_quote`, `factor` → `stock_factor_daily`,
 **Important**: This syncs data but does NOT update `data_asset_status`.
 Run `data refresh-status` after syncing.
 
+Daily stock jobs that include factors use one full-market Tushare
+`adj_factor(trade_date)` snapshot per target trading day and join it locally to
+that day's persisted quotes. Only the target-day FQ/HFQ fields are written.
+Initial computation, multi-day gaps, `force`, and backfill retain the per-stock
+historical factor path so incomplete history is not hidden by a latest-day-only
+update. The standalone `factor_runner --factor fq --mode stale` uses the same
+snapshot path; `--mode force` remains historical.
+
 #### `data refresh-status [LIMIT]`
 Refresh the `data_asset_status` freshness collection. Must run after any
 data sync to update the data quality page.

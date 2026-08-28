@@ -25,6 +25,9 @@ close_hfq 却为 3255）。对比 tushare 官方 `adj_factor` 接口（同期恒
 - 保留幂等 upsert 与 `(code, date)` 主键语义不变
 - `adj_factor` 的网络、解码与限流错误按单个窗口请求进行有限重试；重试耗尽、
   空响应或全无效响应时该股票失败且不写 FQ/HFQ 字段，不再静默回退 factor=1
+- 日常 stale market refresh 按目标交易日一次获取全市场 `adj_factor` 快照，
+  与已落库的当日 quote 一对一合并且只写当日 FQ/HFQ；逐股全历史请求仅保留
+  给 force/backfill，避免每日约 5,000 次请求和全历史重写
 
 ## Non-goals
 
@@ -32,3 +35,4 @@ close_hfq 却为 3255）。对比 tushare 官方 `adj_factor` 接口（同期恒
 - 不改变评分/验证的业务逻辑（它们在复权价修复后自动获得正确输入）
 - 不引入前复权（qfq）模式；统一使用后复权（hfq）
 - 不在本次引入 Tushare 并发、跨股票批量接口或新的缓存语义
+- 不使用当前账号无权限的 `stk_factor`，不改变 quote 来源或 Mongo schema

@@ -139,3 +139,18 @@ def adj_factor(ts_code, start_date=None, end_date=None):
         time.sleep(0.25)
 
     return pandas.concat(frames, ignore_index=True)
+
+
+def adj_factor_by_trade_date(trade_date):
+    """Return the full-market adj_factor snapshot for one trade date."""
+    pro = _get_pro()
+    df = call_with_retry(
+        lambda: pro.adj_factor(trade_date=trade_date),
+        label=f"tushare.adj_factor:{trade_date}",
+    )
+    if df is None or df.empty:
+        raise RuntimeError(
+            f"tushare adj_factor returned no rows: trade_date={trade_date}"
+        )
+    time.sleep(0.25)
+    return df

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections import defaultdict
 
 import pandas as pd
 from pymongo import UpdateOne
@@ -141,6 +142,85 @@ class FQFactorService:
             )
         return bulk_operations
 
+    @classmethod
+    def build_market_snapshot_frame(
+        cls,
+        quote_df: pd.DataFrame,
+        adj_factor_df: pd.DataFrame,
+        target_date,
+    ) -> pd.DataFrame:
+        """Join one trading day's persisted quotes to its market factor snapshot."""
+        if quote_df.empty:
+            return quote_df.copy()
+        if adj_factor_df is None or adj_factor_df.empty:
+            raise RuntimeError("daily adj_factor snapshot is empty")
+
+        process_df = quote_df.copy()
+        if process_df.index.name == "date":
+            process_df = process_df.reset_index()
+        cls._validate_quote_df(process_df)
+
+        target = pd.Timestamp(target_date).normalize()
+        quote_dates = pd.to_datetime(process_df["date"], errors="coerce").dt.normalize()
+        if quote_dates.isna().any() or not quote_dates.eq(target).all():
+            raise RuntimeError("daily quote snapshot contains mismatched dates")
+        if process_df["code"].duplicated().any():
+            raise RuntimeError("daily quote snapshot contains duplicate codes")
+
+        required_factor_columns = {"ts_code", "trade_date", "adj_factor"}
+        missing_columns = required_factor_columns - set(adj_factor_df.columns)
+        if missing_columns:
+            raise RuntimeError(
+                f"daily adj_factor snapshot missing columns: {sorted(missing_columns)}"
+            )
+
+        factor_df = adj_factor_df.copy()
+        factor_dates = pd.to_datetime(
+            factor_df["trade_date"], format="%Y%m%d", errors="coerce"
+        ).dt.normalize()
+        if factor_dates.isna().any() or not factor_dates.eq(target).all():
+            raise RuntimeError("daily adj_factor snapshot contains mismatched dates")
+        if factor_df["ts_code"].duplicated().any():
+            raise RuntimeError("daily adj_factor snapshot contains duplicate codes")
+
+        from app.lib.datahub.data_source.interface import tushare_interface
+
+        factor_df["code"] = factor_df["ts_code"].map(
+            tushare_interface.from_tushare_ts_code
+        )
+        factor_df["adj_factor"] = pd.to_numeric(
+            factor_df["adj_factor"], errors="coerce"
+        )
+        valid_factor = factor_df["adj_factor"].map(
+            lambda value: math.isfinite(value) and value > 0
+        )
+        factor_df = factor_df[valid_factor]
+
+        quote_codes = set(process_df["code"])
+        factor_codes = set(factor_df["code"])
+        missing_codes = sorted(quote_codes - factor_codes)
+        if missing_codes:
+            raise RuntimeError(
+                "daily adj_factor snapshot missing valid factors: "
+                f"count={len(missing_codes)} examples={missing_codes[:10]}"
+            )
+
+        merged = process_df.merge(
+            factor_df[["code", "adj_factor"]],
+            on="code",
+            how="left",
+            validate="one_to_one",
+        )
+        merged["fq_factor"] = merged["adj_factor"]
+        merged["close_hfq"] = merged["close"] * merged["fq_factor"]
+        scale = merged["close_hfq"] / merged["close"]
+        merged["open_hfq"] = merged["open"] * scale
+        merged["high_hfq"] = merged["high"] * scale
+        merged["low_hfq"] = merged["low"] * scale
+        for column in ["fq_factor", "close_hfq", "open_hfq", "high_hfq", "low_hfq"]:
+            merged[column] = merged[column].round(4)
+        return merged.drop(columns=["adj_factor"]).set_index("date")
+
     def update_code(self, code: str) -> dict[str, int | str | None]:
         stock_obj = (
             self.stock_model.objects(code=code)
@@ -207,7 +287,31 @@ class FQFactorService:
             raise RuntimeError(f"adj_factor returned no rows for {code}")
         return raw
 
-    def get_codes_requiring_update(self, market=None) -> list[str]:
+    @staticmethod
+    def _is_next_trading_day(previous_date, target_date, market) -> bool:
+        if (
+            previous_date is None
+            or target_date is None
+            or not market
+            or not getattr(market, "trade_calendar", None)
+        ):
+            return False
+        previous = pd.Timestamp(previous_date).normalize()
+        target = pd.Timestamp(target_date).normalize()
+        calendar = sorted(
+            pd.Timestamp(value).normalize()
+            for value in market.trade_calendar
+            if pd.Timestamp(value).normalize() <= target
+        )
+        try:
+            target_position = calendar.index(target)
+        except ValueError:
+            return False
+        return target_position > 0 and calendar[target_position - 1] == previous
+
+    def _get_market_update_plan(
+        self, market=None
+    ) -> tuple[dict[str, object], list[str]]:
         stock_query = self.stock_model.objects(active_status=0)
         if market is not None:
             stock_query = stock_query.filter(market=market)
@@ -218,7 +322,7 @@ class FQFactorService:
             if data_capability_helper.stock_supports(stock, "fq_factor")
         ]
         if not stock_list:
-            return []
+            return {}, []
 
         code_list = [stock.code for stock in stock_list]
         quote_status_list = list(
@@ -246,31 +350,143 @@ class FQFactorService:
             for item in factor_status_list
         }
 
-        result: list[str] = []
+        snapshot_updates: dict[str, object] = {}
+        historical_updates: list[str] = []
         for code in code_list:
             quote_dt = quote_status_map.get(code)
             factor_dt, factor_status = factor_status_map.get(code, (None, None))
             if quote_dt and (factor_status != STATUS_OK or quote_dt != factor_dt):
-                result.append(code)
-        return result
+                if factor_dt and self._is_next_trading_day(factor_dt, quote_dt, market):
+                    snapshot_updates[code] = quote_dt
+                else:
+                    historical_updates.append(code)
+        return snapshot_updates, historical_updates
 
-    def update_market(self, market=None) -> dict[str, int]:
-        codes = self.get_codes_requiring_update(market=market)
+    def get_codes_requiring_update(self, market=None) -> list[str]:
+        snapshot_updates, historical_updates = self._get_market_update_plan(
+            market=market
+        )
+        return list(snapshot_updates) + historical_updates
+
+    def _load_market_quote_snapshot(
+        self, codes: list[str], target_date
+    ) -> pd.DataFrame:
+        quote_rows = (
+            self.quote_model.objects(code__in=codes, date=target_date)
+            .only("code", "date", "open", "close", "high", "low", "previous_close")
+            .as_pymongo()
+        )
+        return pd.DataFrame(quote_rows)
+
+    @staticmethod
+    def _load_market_adj_factor_snapshot(target_date) -> pd.DataFrame:
+        from app.lib.datahub.data_source.interface import tushare_interface
+
+        trade_date = pd.Timestamp(target_date).strftime("%Y%m%d")
+        return tushare_interface.adj_factor_by_trade_date(trade_date)
+
+    def _refresh_market_snapshot_statuses(self, codes: list[str]) -> None:
+        stock_list = list(
+            self.stock_model.objects(code__in=codes).only(
+                "code", "name", "object_type", "data_capabilities"
+            )
+        )
+        for stock_obj in stock_list:
+            data_asset_status_helper.refresh_fq_factor_status(
+                stock_obj=stock_obj,
+                quote_model=self.quote_model,
+                last_job_name="fq_factor_sync",
+            )
+
+    def update_codes_from_market_snapshots(
+        self, code_dates: dict[str, object]
+    ) -> dict[str, int]:
+        grouped_codes: dict[object, list[str]] = defaultdict(list)
+        for code, target_date in code_dates.items():
+            grouped_codes[pd.Timestamp(target_date).to_pydatetime()].append(code)
+
         written_total = 0
-        failed_count = 0
-        for code in codes:
-            try:
-                result = self.update_code(code)
-            except Exception:
-                failed_count += 1
-                logger.exception("FQ factor update failed: code=%s", code)
-                continue
-            written_total += int(result.get("written_count", 0))
+        snapshot_count = 0
+        factor_total = 0
+        matched_total = 0
+        ignored_extra_total = 0
+        for target_date, codes in sorted(grouped_codes.items()):
+            quote_df = self._load_market_quote_snapshot(codes, target_date)
+            loaded_codes = set(quote_df["code"]) if "code" in quote_df else set()
+            missing_quote_codes = sorted(set(codes) - loaded_codes)
+            if missing_quote_codes:
+                raise RuntimeError(
+                    "daily quote snapshot missing planned codes: "
+                    f"target_date={pd.Timestamp(target_date).date()} "
+                    f"count={len(missing_quote_codes)} "
+                    f"examples={missing_quote_codes[:10]}"
+                )
+            adj_factor_df = self._load_market_adj_factor_snapshot(target_date)
+            snapshot_count += 1
+            factor_total += len(adj_factor_df)
+            output_df = self.build_market_snapshot_frame(
+                quote_df, adj_factor_df, target_date
+            )
+            operations = self._build_bulk_operations(output_df)
+            if operations:
+                self.quote_model._get_collection().bulk_write(operations, ordered=False)
+            written_codes = output_df["code"].tolist()
+            self._refresh_market_snapshot_statuses(written_codes)
+            written_total += len(output_df)
+            matched_total += len(output_df)
+            ignored_extra_total += len(adj_factor_df) - len(output_df)
+            logger.info(
+                "FQ market snapshot updated: target_date=%s quotes=%s factors=%s "
+                "matched=%s ignored_extra=%s written=%s",
+                pd.Timestamp(target_date).date(),
+                len(quote_df),
+                len(adj_factor_df),
+                len(output_df),
+                len(adj_factor_df) - len(output_df),
+                len(output_df),
+            )
+
         return {
-            "pulled_count": len(codes),
+            "pulled_count": len(code_dates),
             "written_count": written_total,
-            "failed_count": failed_count,
+            "failed_count": 0,
+            "snapshot_count": snapshot_count,
+            "factor_count": factor_total,
+            "matched_count": matched_total,
+            "ignored_extra_count": ignored_extra_total,
         }
+
+    def update_market(
+        self, market=None, selected_codes: list[str] | None = None
+    ) -> dict[str, object]:
+        code_dates, historical_codes = self._get_market_update_plan(market=market)
+        if selected_codes is not None:
+            selected = set(selected_codes)
+            code_dates = {
+                code: target_date
+                for code, target_date in code_dates.items()
+                if code in selected
+            }
+            historical_codes = [code for code in historical_codes if code in selected]
+        result = self.update_codes_from_market_snapshots(code_dates)
+        failed_codes = []
+        for code in historical_codes:
+            try:
+                update_result = self.update_code(code)
+            except Exception:
+                failed_codes.append(code)
+                logger.exception("FQ historical repair failed: code=%s", code)
+                continue
+            result["written_count"] += int(update_result.get("written_count", 0))
+        result["pulled_count"] += len(historical_codes)
+        result["failed_count"] += len(failed_codes)
+        result["failed_codes"] = failed_codes
+        if failed_codes:
+            raise RuntimeError(
+                "FQ historical repair failed: "
+                f"count={len(failed_codes)} examples={failed_codes[:10]}"
+            )
+        return result
 
     def backfill_code(self, code: str) -> dict[str, int | str | None]:
         return self.update_code(code)
