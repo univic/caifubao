@@ -15,6 +15,13 @@ STATUS_SUCCESS = "SUCCESS"
 STATUS_FAILED = "FAILED"
 STATUS_SKIPPED = "SKIPPED"
 
+# Startup catch-up is the only path that can race across overlapping pod
+# rollouts (the deployment restarts while the previous pod's catch-up thread
+# is still deciding), so its RUNNING claims are uniqueness-constrained. The
+# partial filter keeps every other runner (manual re-runs, retries) free to
+# create as many records as before.
+JOB_NAME_STARTUP_CATCHUP = "datahub_quote_startup_catchup"
+
 
 class DatahubJobRun(Document):
     meta = {
@@ -25,6 +32,14 @@ class DatahubJobRun(Document):
             ("status", "-started_at"),
             ("job_family", "status"),
             ("job_family", "status", "-started_at"),
+            {
+                "fields": ["job_family", "scheduled_at"],
+                "unique": True,
+                "partialFilterExpression": {
+                    "status": STATUS_RUNNING,
+                    "job_name": JOB_NAME_STARTUP_CATCHUP,
+                },
+            },
         ],
     }
 
