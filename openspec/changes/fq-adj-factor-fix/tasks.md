@@ -3,7 +3,8 @@
 ## 1. Interface
 
 - [x] 1.1 `tushare_interface.adj_factor(ts_code, start_date, end_date)` → DataFrame(ts_code, trade_date, adj_factor)
-- [ ] 1.2 Token/错误处理与 `tushare_daily` 一致（缺 token 报错、限流标记）
+- [x] 1.2 Token/错误处理与 `tushare_daily` 一致（缺 token 报错、逐请求限流重试）
+- [x] 1.3 adj_factor 空响应、无有效行或重试耗尽时该 code 失败且不写入
 
 ## 2. FQ Factor Rewrite
 
@@ -18,11 +19,15 @@
 - [x] 3.2 除权股：因子仅在除权日变化，close_hfq 与真实 adj_factor 一致
 - [x] 3.3 缺失 adj_factor 行回退最近因子
 - [x] 3.4 现有 FQ/评分/验证测试不回归（6 passed，本地环境仅 apscheduler 依赖测试待 CI）
+- [x] 3.5 限流重试/耗尽、分窗空响应、非正或非有限响应和失败不写入测试
+- [x] 3.6 因子日期对齐由逐行扫描改为排序后 ffill/bfill，保持结果语义不变
 
 ## 4. Review + Merge
 
 - [x] 4.1 spec-guardian + qa-reviewer（均 PASS，P1 已修复并有测试覆盖）
 - [x] 4.2 Branch conflict check + Draft PR + CI green（PR #135，全绿后 merged）
+- [x] 4.3 本轮可靠性修复 spec-guardian + qa-reviewer（P1 清零）
+- [ ] 4.4 Branch conflict check + Draft PR + CI green
 
 ## 5. Deploy + Recompute (operator)
 

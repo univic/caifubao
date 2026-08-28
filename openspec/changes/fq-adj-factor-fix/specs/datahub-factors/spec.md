@@ -30,12 +30,21 @@ The datahub FQ factor pipeline MUST compute `fq_factor` from the tushare
 - WHEN the factor frame is built
 - THEN the most recent known adj_factor is carried forward for that day
 
-#### Scenario: No factor data available
+#### Scenario: Factor source is temporarily unavailable
 
-- GIVEN no adj_factor data can be fetched for a code
-- WHEN `build_fq_factor_frame` runs
-- THEN `fq_factor` defaults to 1.0
-- AND `close_hfq` equals the raw `close`
+- GIVEN the adj_factor request fails with a retryable network, decoding, or
+  rate-limit error
+- WHEN the FQ pipeline fetches the factor series
+- THEN each failed request is retried with bounded exponential backoff
+- AND retry exhaustion fails that code without writing FQ fields
+
+#### Scenario: Factor response has no usable data
+
+- GIVEN a code has quote rows but any requested adj_factor window is empty or
+  the aggregate response contains no finite, positive factor values
+- WHEN the FQ pipeline validates the factor series
+- THEN that code fails without writing FQ fields
+- AND the missing data is not converted to `factor=1`
 
 #### Scenario: Persistence is idempotent
 

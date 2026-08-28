@@ -1,13 +1,13 @@
 import datetime
 import logging
 import os
-import time
 from typing import Any
 
 import pandas
 from requests.exceptions import ConnectionError, RequestException
 
 from app.lib.datahub.data_source import interface
+from app.lib.datahub.data_source import retry as market_data_retry
 from app.lib.datahub.data_source.interface.baostock_interface import (
     BaostockInterfaceManager,
 )
@@ -15,6 +15,9 @@ from app.lib.utilities import trading_day_helper, performance_helper, stock_code
 
 
 logger = logging.getLogger(__name__)
+
+_call_with_retry = market_data_retry.call_with_retry
+_is_retryable_market_data_error = market_data_retry.is_retryable_market_data_error
 
 
 STOCK_HISTORY_SOURCE_ENV = "DATAHUB_STOCK_HISTORY_SOURCE"
@@ -32,67 +35,6 @@ def get_stock_universe_source() -> str:
             f"{sorted(SUPPORTED_STOCK_UNIVERSE_SOURCES)}"
         )
     return source
-
-
-TRANSIENT_NETWORK_MARKERS = (
-    "Temporary failure in name resolution",
-    "NameResolutionError",
-    "Max retries exceeded",
-    "Connection aborted",
-    "RemoteDisconnected",
-    "Read timed out",
-    "ConnectTimeout",
-    "Connection reset by peer",
-    "每分钟最多",  # tushare rate-limit message: 抱歉，您每分钟最多访问该接口N次
-    "频率超限",  # tushare rate-limit message: 您访问接口(daily)频率超限(300次/分钟)
-)
-
-
-def _is_retryable_market_data_error(error: Exception) -> bool:
-    if isinstance(error, (ConnectionError, RequestException)):
-        return True
-
-    error_message = str(error)
-    # Anti-bot HTML responses commonly surface as JSON decode errors (e.g.
-    # akshare's demjson JSONDecodeError: "Can not decode value starting with
-    # character '<'"). Treat them as transient like network errors: retry
-    # before failing the run.
-    if type(error).__name__ == "JSONDecodeError" or "Can not decode" in error_message:
-        return True
-    return any(marker in error_message for marker in TRANSIENT_NETWORK_MARKERS)
-
-
-def _call_with_retry(
-    fetcher, label: str, max_attempts: int = 3, base_delay: float = 1.0
-):
-    last_error = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return fetcher()
-        except Exception as error:  # noqa: BLE001
-            last_error = error
-            if attempt >= max_attempts or not _is_retryable_market_data_error(error):
-                logger.error(
-                    "Market data request failed: source=%s attempt=%s/%s error=%s",
-                    label,
-                    attempt,
-                    max_attempts,
-                    error,
-                )
-                raise
-
-            delay = base_delay * (2 ** (attempt - 1))
-            logger.warning(
-                "Market data request retrying: source=%s attempt=%s/%s delay=%.1fs error=%s",
-                label,
-                attempt,
-                max_attempts,
-                delay,
-                error,
-            )
-            time.sleep(delay)
-
-    raise last_error
 
 
 def get_stock_history_source() -> str:

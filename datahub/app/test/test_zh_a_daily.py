@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pandas
 
 from app.lib.datahub.data_source.handler import zh_a_daily
+from app.lib.datahub.data_source.interface import tushare_interface
 
 
 class TestRetryPolicy(TestCase):
@@ -56,6 +57,125 @@ class TestRetryPolicy(TestCase):
 
         self.assertEqual(result, "ok")
         self.assertEqual(calls["n"], 3)
+
+    def test_adj_factor_retries_rate_limit_per_window(self):
+        class FakePro:
+            def __init__(self):
+                self.calls = 0
+
+            def adj_factor(self, **kwargs):
+                self.calls += 1
+                if self.calls < 3:
+                    raise RuntimeError("您访问接口(adj_factor)频率超限(300次/分钟)")
+                return pandas.DataFrame(
+                    [
+                        {
+                            "ts_code": kwargs["ts_code"],
+                            "trade_date": "20260827",
+                            "adj_factor": 1.2,
+                        }
+                    ]
+                )
+
+        pro = FakePro()
+        with (
+            patch.object(tushare_interface, "_get_pro", return_value=pro),
+            patch("app.lib.datahub.data_source.retry.time.sleep") as sleep,
+        ):
+            result = tushare_interface.adj_factor(
+                "600000.SH", start_date="20260101", end_date="20260828"
+            )
+
+        self.assertEqual(pro.calls, 3)
+        self.assertEqual(
+            [call.args for call in sleep.call_args_list], [(1.0,), (2.0,), (0.25,)]
+        )
+        self.assertEqual(result.iloc[0]["adj_factor"], 1.2)
+
+    def test_adj_factor_does_not_retry_non_transient_error(self):
+        pro = type(
+            "FakePro",
+            (),
+            {
+                "adj_factor": lambda self, **kwargs: (_ for _ in ()).throw(
+                    ValueError("permission denied")
+                )
+            },
+        )()
+
+        with (
+            patch.object(tushare_interface, "_get_pro", return_value=pro),
+            patch("app.lib.datahub.data_source.retry.time.sleep") as retry_sleep,
+        ):
+            with self.assertRaisesRegex(ValueError, "permission denied"):
+                tushare_interface.adj_factor(
+                    "600000.SH", start_date="20260101", end_date="20260828"
+                )
+
+        retry_sleep.assert_not_called()
+
+    def test_adj_factor_raises_after_retry_exhaustion(self):
+        class FakePro:
+            def __init__(self):
+                self.calls = 0
+
+            def adj_factor(self, **kwargs):
+                self.calls += 1
+                raise RuntimeError("频率超限")
+
+        pro = FakePro()
+        with (
+            patch.object(tushare_interface, "_get_pro", return_value=pro),
+            patch("app.lib.datahub.data_source.retry.time.sleep") as sleep,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "频率超限"):
+                tushare_interface.adj_factor(
+                    "600000.SH", start_date="20260101", end_date="20260828"
+                )
+
+        self.assertEqual(pro.calls, 3)
+        self.assertEqual([call.args for call in sleep.call_args_list], [(1.0,), (2.0,)])
+
+    def test_adj_factor_rejects_empty_window(self):
+        pro = type(
+            "FakePro",
+            (),
+            {"adj_factor": lambda self, **kwargs: pandas.DataFrame()},
+        )()
+
+        with (
+            patch.object(tushare_interface, "_get_pro", return_value=pro),
+            patch.object(tushare_interface.time, "sleep"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "returned no rows"):
+                tushare_interface.adj_factor(
+                    "600000.SH", start_date="20260101", end_date="20260828"
+                )
+
+    def test_adj_factor_rejects_partially_empty_multi_window_response(self):
+        class FakePro:
+            def __init__(self):
+                self.calls = 0
+
+            def adj_factor(self, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return pandas.DataFrame(
+                        [{"trade_date": "20000104", "adj_factor": 1.0}]
+                    )
+                return pandas.DataFrame()
+
+        pro = FakePro()
+        with (
+            patch.object(tushare_interface, "_get_pro", return_value=pro),
+            patch.object(tushare_interface.time, "sleep"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "2018.*2026"):
+                tushare_interface.adj_factor(
+                    "600000.SH", start_date="20000101", end_date="20260828"
+                )
+
+        self.assertEqual(pro.calls, 2)
 
 
 class TestStockHistorySource(TestCase):

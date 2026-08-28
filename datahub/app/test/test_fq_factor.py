@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 
 def test_build_fq_factor_frame_for_full_history():
@@ -130,7 +131,7 @@ def test_build_fq_factor_frame_missing_factor_rows_carry_forward():
     assert result.loc[datetime.datetime(2024, 1, 9), "close_hfq"] == 33.0
 
 
-def test_build_fq_factor_frame_no_factor_falls_back_to_one():
+def test_build_fq_factor_frame_rejects_missing_factor_data():
     from app.lib.factor_factory import FQFactorService
 
     quote_df = pd.DataFrame(
@@ -147,11 +148,8 @@ def test_build_fq_factor_frame_no_factor_falls_back_to_one():
         ]
     ).set_index("date")
 
-    # no factor data at all -> factor=1, hfq == raw price
-    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=None)
-
-    assert result.loc[datetime.datetime(2024, 1, 8), "fq_factor"] == 1.0
-    assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 10.5
+    with pytest.raises(RuntimeError, match="adj_factor unavailable"):
+        FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=None)
 
 
 def test_factor_before_first_factor_row_uses_earliest_factor():
@@ -187,7 +185,8 @@ def test_factor_before_first_factor_row_uses_earliest_factor():
     assert result.loc[datetime.datetime(2024, 1, 6), "close_hfq"] == 21.0
 
 
-def test_build_fq_factor_frame_skips_nan_factors():
+@pytest.mark.parametrize("invalid_factor", [float("nan"), 0.0, -1.0, float("inf")])
+def test_build_fq_factor_frame_rejects_all_invalid_factors(invalid_factor):
     from app.lib.factor_factory import FQFactorService
 
     quote_df = pd.DataFrame(
@@ -204,18 +203,15 @@ def test_build_fq_factor_frame_skips_nan_factors():
         ]
     ).set_index("date")
 
-    # NaN adj_factor must be skipped, not propagated into close_hfq
-    adj_df = pd.DataFrame([{"trade_date": "20240108", "adj_factor": float("nan")}])
+    # NaN adj_factor must not be converted into a plausible factor=1 result.
+    adj_df = pd.DataFrame([{"trade_date": "20240108", "adj_factor": invalid_factor}])
 
-    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=adj_df)
-
-    assert result.loc[datetime.datetime(2024, 1, 8), "fq_factor"] == 1.0
-    assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 10.5
+    with pytest.raises(RuntimeError, match="no valid factor rows"):
+        FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=adj_df)
 
 
-def test_update_code_keeps_existing_factors_when_adj_factor_unavailable():
-    """P1 guard: a tushare adj_factor failure must NOT clobber existing
-    non-1 factor history with factor=1."""
+def test_update_code_fails_without_writing_when_adj_factor_unavailable():
+    """A missing adj_factor response must fail instead of silently succeeding."""
 
     from app.lib.factor_factory import FQFactorService
 
@@ -303,12 +299,10 @@ def test_update_code_keeps_existing_factors_when_adj_factor_unavailable():
             return None
 
     service = FakeService(quote_model=FakeQuoteModel, stock_model=FakeStockModel)
-    result = service.update_code("sh600000")
+    with pytest.raises(RuntimeError, match="adj_factor unavailable"):
+        service.update_code("sh600000")
 
-    # existing non-1 factors -> skip rewrite, do NOT clobber with factor=1
-    assert result["code"] == "GOOD"
-    assert result["written_count"] == 0
-    assert result["message"] == "kept existing"
+    assert FakeQuoteModel._collection_ops == []
 
 
 def test_update_market_isolates_single_code_failure():
@@ -324,6 +318,39 @@ def test_update_market_isolates_single_code_failure():
             return {"code": "GOOD", "written_count": 2, "message": None}
 
     result = FakeFQFactorService().update_market()
+
+    assert result == {"pulled_count": 3, "written_count": 4, "failed_count": 1}
+
+
+def test_backfill_all_isolates_single_code_failure():
+    from app.lib.factor_factory import FQFactorService
+
+    class FakeQuery(list):
+        def only(self, *fields):
+            return self
+
+        def filter(self, **kwargs):
+            return self
+
+    class FakeStockModel:
+        @staticmethod
+        def objects(**kwargs):
+            capability = SimpleNamespace(fq_factor=True)
+            return FakeQuery(
+                [
+                    SimpleNamespace(code="ok-code", data_capabilities=capability),
+                    SimpleNamespace(code="bad-code", data_capabilities=capability),
+                    SimpleNamespace(code="next-code", data_capabilities=capability),
+                ]
+            )
+
+    class FakeService(FQFactorService):
+        def update_code(self, code):
+            if code == "bad-code":
+                raise RuntimeError("source unavailable")
+            return {"code": "GOOD", "written_count": 2, "message": None}
+
+    result = FakeService(stock_model=FakeStockModel).backfill_all()
 
     assert result == {"pulled_count": 3, "written_count": 4, "failed_count": 1}
 
