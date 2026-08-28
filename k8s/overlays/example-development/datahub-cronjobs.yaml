@@ -216,7 +216,10 @@ metadata:
     app: caifubao-datahub
     job.caifubao.io/type: data-sync
 spec:
-  schedule: "30 18 * * 1-5"
+  # Runs after prod's signal (18:30) and scoring (18:35) jobs so dev picks
+  # up the same day's signals; quotes/factors are synced too, scoring is not
+  # synced (dev-only gap, run scoring_runner manually if needed).
+  schedule: "15 19 * * 1-5"
   timeZone: Asia/Shanghai
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 900

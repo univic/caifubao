@@ -294,11 +294,13 @@ the entire logical run. Do not resume a Job created from an older image.
 | prod `caifubao-datahub-quote-stock` | `0 18 * * 1-5` | Pull latest quotes + factors only (`DATAHUB_STOCK_HISTORY_SOURCE=tushare`, `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare`); UPD path writes settlement snapshots. Signals/scoring are NOT produced here — they run as the standalone jobs below, gated on this job's persisted data |
 | prod `caifubao-datahub-signal` | `30 18 * * 1-5` | Compute MA-cross signals from fresh factors (incremental, stale-only by default) |
 | prod `caifubao-datahub-scoring` | `35 18 * * 1-5` | Score latest trading day for all horizons (skips already-complete cohorts) |
-| dev `caifubao-datahub-data-sync` | `30 18 * * 1-5` | Sync prod MongoDB → dev (quotes, factors, signals, market, industry) |
+| dev `caifubao-datahub-data-sync` | `15 19 * * 1-5` | Sync prod MongoDB → dev (quotes, factors, signals, market, industry; runs after prod signal/scoring so dev gets the same day's signals) |
 
 The quote, signal, and scoring jobs run in dependency order (quote → signal →
-scoring). Dev's data-sync runs after prod's quote job so it picks up the same
-day's rows.
+scoring). Dev's data-sync runs **after prod's signal and scoring jobs** (19:15)
+so it picks up the same day's rows, including signals. Note prod→dev sync does
+**not** copy `stock_score_predictions`; dev scoring must be produced by running
+`scoring_runner` manually.
 
 Dependency gates are data-aware, not just status-aware: a signal run proceeds
 when today's quote job has a SUCCESS record **or** its record (RUNNING or
