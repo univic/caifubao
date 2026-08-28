@@ -51,3 +51,11 @@ cross-sectionally comparable.
 - GIVEN `score_single_stock` is called directly
 - WHEN scoring a single stock
 - THEN raw component weighting is used (backward compatible)
+
+#### Scenario: Ranked mode is gated by an environment flag
+
+- GIVEN the scoring engine is invoked for market-wide scoring
+- WHEN env `DATAHUB_SCORING_MODE` equals `ranked`
+- THEN `score_all_stocks` uses the cross-sectional rank-normalized path
+- AND when `DATAHUB_SCORING_MODE` is unset or not `ranked`
+- THEN the legacy component-weighted path is used (default behavior)

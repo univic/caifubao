@@ -640,3 +640,77 @@ class TestRankNormalize:
         result = scoring_service.score_all_stocks(date=datetime.datetime(2026, 6, 1))
         assert called.get("hit") is None
         assert result["scored_count"] == 0
+
+
+class TestScoreAllStocksRankedEndToEnd:
+    """End-to-end tests for score_all_stocks_ranked using fake models."""
+
+    def _seed_cohort(self, scoring_service):
+        """Seed 3 stocks with quotes; 1 stock without (blocked)."""
+        from app.test.test_scoring_service import (
+            FakeStock,
+            seed_quotes,
+        )
+
+        codes = ["sh600000", "sh600001", "sh600002"]
+        for code in codes:
+            s = FakeStock(code=code, name=f"Stock {code}", active_status=0)
+            FakeStock.records.append(s)
+            seed_quotes(stock_code=code)
+        # blocked stock: no quotes
+        blocked = FakeStock(code="sh600099", name="Blocked", active_status=0)
+        FakeStock.records.append(blocked)
+        return codes + ["sh600099"]
+
+    def test_ranked_scores_all_and_persists_blocked(self, scoring_service, monkeypatch):
+        import datetime
+
+        self._seed_cohort(scoring_service)
+        monkeypatch.delenv("DATAHUB_SCORING_MODE", raising=False)
+
+        result = scoring_service.score_all_stocks_ranked(
+            date=datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+            horizon=5,
+        )
+
+        # all 4 stocks get a prediction row (3 scored + 1 blocked)
+        assert result["scored_count"] >= 3
+        preds = list(scoring_service.prediction_model.records)
+        assert len(preds) == 4
+        blocked = [p for p in preds if p.stock_code == "sh600099"]
+        assert len(blocked) == 1
+        assert blocked[0].status == "BLOCKED"
+
+    def test_ranked_explanation_has_components(self, scoring_service, monkeypatch):
+        import datetime
+
+        self._seed_cohort(scoring_service)
+        monkeypatch.delenv("DATAHUB_SCORING_MODE", raising=False)
+
+        scoring_service.score_all_stocks_ranked(
+            date=datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+            horizon=5,
+        )
+        scored = [
+            p
+            for p in scoring_service.prediction_model.records
+            if p.stock_code != "sh600099"
+        ]
+        assert scored, "expected at least one scored prediction"
+        comps = scored[0].explanation.get("components", [])
+        assert comps, "explanation must carry real components"
+        assert all("id" in c and "raw_value" in c for c in comps)
+
+    def test_ranked_respects_replace_false(self, scoring_service, monkeypatch):
+        import datetime
+
+        self._seed_cohort(scoring_service)
+        monkeypatch.delenv("DATAHUB_SCORING_MODE", raising=False)
+        d = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5, replace=True)
+        first = len(scoring_service.prediction_model.records)
+
+        # second run with replace=False must NOT overwrite (same count)
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5, replace=False)
+        assert len(scoring_service.prediction_model.records) == first

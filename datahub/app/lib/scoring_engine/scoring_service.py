@@ -482,7 +482,40 @@ class StockScoringService:
                 score = round(max(0.0, min(100.0, score * 100.0)), 2)
 
                 existing = self._find_existing_prediction(code, date, current_horizon)
+                if existing is not None and not replace and not dry_run:
+                    results.append(existing)
+                    continue
                 recommendation = self._recommendation(score, config)
+                # persist real component values so downstream analysis
+                # (factor_eval, calibration, backtest attribution) still works
+                explanation_components = [
+                    {
+                        "id": c["id"],
+                        "raw_value": c["raw_value"],
+                        "weight": c["weight"],
+                        "contribution": round(
+                            rank_maps[c["id"]][code]
+                            * (c["weight"] / weight_sum)
+                            * 100.0,
+                            4,
+                        ),
+                    }
+                    for c in raw["components"]
+                ]
+                explanation_penalties = [
+                    {
+                        "id": p["id"],
+                        "raw_value": p["raw_value"],
+                        "weight": p["weight"],
+                        "contribution": round(
+                            rank_maps[p["id"]][code]
+                            * (p["weight"] / weight_sum)
+                            * 100.0,
+                            4,
+                        ),
+                    }
+                    for p in raw["penalties"]
+                ]
                 payload = {
                     "stock_code": code,
                     "stock_name": raw["stock_name"],
@@ -497,8 +530,8 @@ class StockScoringService:
                         "summary": "rank-normalized cross-sectional score",
                         "horizon": current_horizon,
                         "score": score,
-                        "components": [],
-                        "penalties": [],
+                        "components": explanation_components,
+                        "penalties": explanation_penalties,
                         "thresholds": self._thresholds(config),
                         "model_version": self.model_version,
                     },
@@ -526,7 +559,12 @@ class StockScoringService:
 
             for code in blocked_codes:
                 try:
-                    target_date = self.get_t_plus_n_day(code, current_horizon)
+                    existing = self._find_existing_prediction(
+                        code, date, current_horizon
+                    )
+                    if existing is not None and not replace and not dry_run:
+                        continue
+                    target_date = self.get_t_plus_n_day(date, current_horizon)
                     payload = self._build_blocked_prediction(
                         stock=next((s for s in stocks if s.code == code), None),
                         date=date,
@@ -534,7 +572,7 @@ class StockScoringService:
                         target_date=target_date,
                         reason="missing_quote",
                     )
-                    self._persist_prediction(payload, None, dry_run)
+                    self._persist_prediction(payload, existing, dry_run)
                 except Exception as exc:
                     logger.warning(
                         "Failed to persist blocked prediction for %s: %s", code, exc
@@ -562,12 +600,17 @@ class StockScoringService:
     def _rank_normalize(values: dict) -> dict:
         """Rank-normalize a dict of code->value to code->[0,1] percentile.
 
-        None values are treated as the lowest rank (0.0). Ties get the same
-        rank. Normalization is over ALL codes (including None ones), so a
-        code with the second-highest real value in a 3-code cohort gets 0.5.
+        None and non-numeric (e.g. dict) values are treated as the lowest
+        rank (0.0). Ties get the same rank. Normalization is over ALL codes
+        (including None ones), so a code with the second-highest real value
+        in a 3-code cohort gets 0.5.
         """
         codes = list(values.keys())
-        real = {k: v for k, v in values.items() if v is not None}
+
+        def _numeric(v):
+            return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+        real = {k: v for k, v in values.items() if _numeric(v)}
         n = len(codes)
         result = {}
         if real:
@@ -591,7 +634,7 @@ class StockScoringService:
                 result[code] = (ranks[code] - 1) / (n - 1) if n > 1 else 1.0
         for code in codes:
             if code not in result:
-                result[code] = 0.0  # None values rank lowest
+                result[code] = 0.0  # None/non-numeric values rank lowest
         return result
 
     def _persist_prediction(self, payload: dict, existing, dry_run: bool):

@@ -51,23 +51,11 @@ class ScoreReplayService:
                         replace=replace,
                     )
                     scored_count += 1
-                    # Assign ranks and apply hybrid recommendations even
-                    # for single-stock backfill. With only one stock in the
-                    # cohort the percentile is degenerate (always 1.0), but
-                    # the absolute-guard path still works correctly.
-                    if not dry_run:
-                        self.scoring_service.assign_ranks(date, current_horizon)
-                        try:
-                            self.scoring_service._upgrade_recommendations(
-                                date, current_horizon
-                            )
-                        except Exception as exc:
-                            logger.exception(
-                                "Failed to upgrade recommendations for %s h=%d: %s",
-                                stock_code,
-                                current_horizon,
-                                exc,
-                            )
+                    # Do NOT re-rank a single-stock cohort: with one stock the
+                    # percentile is degenerate (always 1.0), which would turn
+                    # percentile-driven recommendations into a blanket BUY.
+                    # score_single_stock already applied absolute-threshold
+                    # recommendations; leave them intact.
                 else:
                     result = self.scoring_service.score_all_stocks(
                         date=date,
