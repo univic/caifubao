@@ -46,6 +46,25 @@ for _alias in ("datahub_db", "data_sync_db"):
     _mongo_connect(db="testdb", alias=_alias)
 
 
+@pytest.fixture(autouse=True)
+def _ensure_default_connection():
+    """Guarantee a registered 'default' mongoengine connection per test.
+
+    Some API tests reach mongoengine's get_connection("default") indirectly
+    (e.g. replacing Document.objects with a fake touches _get_collection).
+    If an earlier test or module import disconnected the alias, the query
+    fails with "You have not defined a default connection" instead of a
+    connection error. Re-register lazily when missing.
+    """
+    from mongoengine import get_connection
+
+    try:
+        get_connection("default")
+    except Exception:
+        _mongo_connect(db="testdb", alias="default")
+    yield
+
+
 @pytest.fixture
 def mock_mongodb():
     """Mock MongoDB connection"""
