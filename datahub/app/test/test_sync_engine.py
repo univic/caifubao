@@ -1,4 +1,13 @@
-from app.lib.datahub.sync_engine import _resolve_sync_collections
+"""Tests for the prod→dev sync engine (collection resolution + upsert keys)."""
+
+import datetime
+from unittest.mock import MagicMock
+
+from app.lib.datahub.sync_engine import (
+    SYNC_UPSERT_KEYS,
+    _resolve_sync_collections,
+    _sync_collection,
+)
 
 
 def test_resolve_sync_collections_keeps_signal_in_dev():
@@ -25,14 +34,6 @@ def test_resolve_sync_collections_skips_signal_alias_outside_dev():
         ["quote", "signal"],
         is_dev_environment=False,
     ) == ["stock_daily_quote"]
-
-
-# --- Business-key upsert tests (fix/sync-business-key-upsert) ---
-
-import datetime
-from unittest.mock import MagicMock
-
-from app.lib.datahub.sync_engine import SYNC_UPSERT_KEYS, _sync_collection
 
 
 class _FakeCursor:
