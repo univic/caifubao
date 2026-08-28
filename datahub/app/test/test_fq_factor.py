@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 
 def test_build_fq_factor_frame_for_full_history():
@@ -130,7 +131,7 @@ def test_build_fq_factor_frame_missing_factor_rows_carry_forward():
     assert result.loc[datetime.datetime(2024, 1, 9), "close_hfq"] == 33.0
 
 
-def test_build_fq_factor_frame_no_factor_falls_back_to_one():
+def test_build_fq_factor_frame_rejects_missing_factor_data():
     from app.lib.factor_factory import FQFactorService
 
     quote_df = pd.DataFrame(
@@ -147,11 +148,8 @@ def test_build_fq_factor_frame_no_factor_falls_back_to_one():
         ]
     ).set_index("date")
 
-    # no factor data at all -> factor=1, hfq == raw price
-    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=None)
-
-    assert result.loc[datetime.datetime(2024, 1, 8), "fq_factor"] == 1.0
-    assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 10.5
+    with pytest.raises(RuntimeError, match="adj_factor unavailable"):
+        FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=None)
 
 
 def test_factor_before_first_factor_row_uses_earliest_factor():
@@ -187,7 +185,8 @@ def test_factor_before_first_factor_row_uses_earliest_factor():
     assert result.loc[datetime.datetime(2024, 1, 6), "close_hfq"] == 21.0
 
 
-def test_build_fq_factor_frame_skips_nan_factors():
+@pytest.mark.parametrize("invalid_factor", [float("nan"), 0.0, -1.0, float("inf")])
+def test_build_fq_factor_frame_rejects_all_invalid_factors(invalid_factor):
     from app.lib.factor_factory import FQFactorService
 
     quote_df = pd.DataFrame(
@@ -204,18 +203,15 @@ def test_build_fq_factor_frame_skips_nan_factors():
         ]
     ).set_index("date")
 
-    # NaN adj_factor must be skipped, not propagated into close_hfq
-    adj_df = pd.DataFrame([{"trade_date": "20240108", "adj_factor": float("nan")}])
+    # NaN adj_factor must not be converted into a plausible factor=1 result.
+    adj_df = pd.DataFrame([{"trade_date": "20240108", "adj_factor": invalid_factor}])
 
-    result = FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=adj_df)
-
-    assert result.loc[datetime.datetime(2024, 1, 8), "fq_factor"] == 1.0
-    assert result.loc[datetime.datetime(2024, 1, 8), "close_hfq"] == 10.5
+    with pytest.raises(RuntimeError, match="no valid factor rows"):
+        FQFactorService.build_fq_factor_frame(quote_df, adj_factor_df=adj_df)
 
 
-def test_update_code_keeps_existing_factors_when_adj_factor_unavailable():
-    """P1 guard: a tushare adj_factor failure must NOT clobber existing
-    non-1 factor history with factor=1."""
+def test_update_code_fails_without_writing_when_adj_factor_unavailable():
+    """A missing adj_factor response must fail instead of silently succeeding."""
 
     from app.lib.factor_factory import FQFactorService
 
@@ -303,27 +299,455 @@ def test_update_code_keeps_existing_factors_when_adj_factor_unavailable():
             return None
 
     service = FakeService(quote_model=FakeQuoteModel, stock_model=FakeStockModel)
-    result = service.update_code("sh600000")
+    with pytest.raises(RuntimeError, match="adj_factor unavailable"):
+        service.update_code("sh600000")
 
-    # existing non-1 factors -> skip rewrite, do NOT clobber with factor=1
-    assert result["code"] == "GOOD"
-    assert result["written_count"] == 0
-    assert result["message"] == "kept existing"
+    assert FakeQuoteModel._collection_ops == []
 
 
-def test_update_market_isolates_single_code_failure():
+def test_build_market_snapshot_frame_joins_all_quotes_and_ignores_extra_factors():
     from app.lib.factor_factory import FQFactorService
 
+    target = datetime.datetime(2026, 8, 27)
+    quote_df = pd.DataFrame(
+        [
+            {
+                "date": target,
+                "code": "sh600000",
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.0,
+                "close": 10.5,
+                "previous_close": 10.0,
+            },
+            {
+                "date": target,
+                "code": "sz000001",
+                "open": 12.0,
+                "high": 13.0,
+                "low": 11.0,
+                "close": 12.5,
+                "previous_close": 12.0,
+            },
+        ]
+    )
+    factor_df = pd.DataFrame(
+        [
+            {"ts_code": "600000.SH", "trade_date": "20260827", "adj_factor": 2.0},
+            {"ts_code": "000001.SZ", "trade_date": "20260827", "adj_factor": 3.0},
+            {"ts_code": "600519.SH", "trade_date": "20260827", "adj_factor": 4.0},
+        ]
+    )
+
+    result = FQFactorService.build_market_snapshot_frame(quote_df, factor_df, target)
+
+    assert result["code"].tolist() == ["sh600000", "sz000001"]
+    assert result["fq_factor"].tolist() == [2.0, 3.0]
+    assert result["close_hfq"].tolist() == [21.0, 37.5]
+
+
+@pytest.mark.parametrize(
+    ("factor_rows", "message"),
+    [
+        (
+            [{"ts_code": "600000.SH", "trade_date": "20260826", "adj_factor": 2.0}],
+            "mismatched dates",
+        ),
+        (
+            [
+                {"ts_code": "600000.SH", "trade_date": "20260827", "adj_factor": 2.0},
+                {"ts_code": "600000.SH", "trade_date": "20260827", "adj_factor": 2.0},
+            ],
+            "duplicate codes",
+        ),
+        (
+            [{"ts_code": "600000.SH", "trade_date": "20260827", "adj_factor": 0.0}],
+            "missing valid factors",
+        ),
+    ],
+)
+def test_build_market_snapshot_frame_rejects_invalid_batch(factor_rows, message):
+    from app.lib.factor_factory import FQFactorService
+
+    target = datetime.datetime(2026, 8, 27)
+    quote_df = pd.DataFrame(
+        [
+            {
+                "date": target,
+                "code": "sh600000",
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.0,
+                "close": 10.5,
+                "previous_close": 10.0,
+            }
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        FQFactorService.build_market_snapshot_frame(
+            quote_df, pd.DataFrame(factor_rows), target
+        )
+
+
+def test_update_market_uses_one_snapshot_and_one_bulk_write_for_same_date():
+    from app.lib.factor_factory import FQFactorService
+
+    target = datetime.datetime(2026, 8, 27)
+
+    class FakeQuoteModel:
+        writes = []
+
+        @staticmethod
+        def _get_collection():
+            return SimpleNamespace(
+                bulk_write=lambda operations, ordered=False: (
+                    FakeQuoteModel.writes.append(operations)
+                )
+            )
+
     class FakeFQFactorService(FQFactorService):
-        def get_codes_requiring_update(self, market=None):
-            return ["ok-code", "bad-code", "next-code"]
+        snapshot_calls = 0
+        refreshed_codes = []
+
+        def _get_market_update_plan(self, market=None):
+            return {"sh600000": target, "sz000001": target}, []
+
+        def _load_market_quote_snapshot(self, codes, target_date):
+            return pd.DataFrame(
+                [
+                    {
+                        "date": target,
+                        "code": "sh600000",
+                        "open": 10.0,
+                        "high": 11.0,
+                        "low": 9.0,
+                        "close": 10.5,
+                        "previous_close": 10.0,
+                    },
+                    {
+                        "date": target,
+                        "code": "sz000001",
+                        "open": 12.0,
+                        "high": 13.0,
+                        "low": 11.0,
+                        "close": 12.5,
+                        "previous_close": 12.0,
+                    },
+                ]
+            )
+
+        def _load_market_adj_factor_snapshot(self, target_date):
+            self.snapshot_calls += 1
+            return pd.DataFrame(
+                [
+                    {
+                        "ts_code": "600000.SH",
+                        "trade_date": "20260827",
+                        "adj_factor": 2.0,
+                    },
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": "20260827",
+                        "adj_factor": 3.0,
+                    },
+                ]
+            )
+
+        def _refresh_market_snapshot_statuses(self, codes):
+            self.refreshed_codes.extend(codes)
+
+    service = FakeFQFactorService(quote_model=FakeQuoteModel)
+    result = service.update_market()
+
+    assert service.snapshot_calls == 1
+    assert len(FakeQuoteModel.writes) == 1
+    assert len(FakeQuoteModel.writes[0]) == 2
+    assert {operation._filter["date"] for operation in FakeQuoteModel.writes[0]} == {
+        target
+    }
+    assert service.refreshed_codes == ["sh600000", "sz000001"]
+    assert result == {
+        "pulled_count": 2,
+        "written_count": 2,
+        "failed_count": 0,
+        "snapshot_count": 1,
+        "factor_count": 2,
+        "matched_count": 2,
+        "ignored_extra_count": 0,
+        "failed_codes": [],
+    }
+
+
+def test_update_market_validation_failure_writes_nothing():
+    from app.lib.factor_factory import FQFactorService
+
+    target = datetime.datetime(2026, 8, 27)
+
+    class FakeQuoteModel:
+        writes = []
+
+        @staticmethod
+        def _get_collection():
+            return SimpleNamespace(
+                bulk_write=lambda operations, ordered=False: (
+                    FakeQuoteModel.writes.append(operations)
+                )
+            )
+
+    class FakeFQFactorService(FQFactorService):
+        def _get_market_update_plan(self, market=None):
+            return {"sh600000": target, "sz000001": target}, []
+
+        def _load_market_quote_snapshot(self, codes, target_date):
+            return pd.DataFrame(
+                [
+                    {
+                        "date": target,
+                        "code": "sh600000",
+                        "open": 10.0,
+                        "high": 11.0,
+                        "low": 9.0,
+                        "close": 10.5,
+                        "previous_close": 10.0,
+                    },
+                    {
+                        "date": target,
+                        "code": "sz000001",
+                        "open": 12.0,
+                        "high": 13.0,
+                        "low": 11.0,
+                        "close": 12.5,
+                        "previous_close": 12.0,
+                    },
+                ]
+            )
+
+        def _load_market_adj_factor_snapshot(self, target_date):
+            return pd.DataFrame(
+                [{"ts_code": "600000.SH", "trade_date": "20260827", "adj_factor": 2.0}]
+            )
+
+    service = FakeFQFactorService(quote_model=FakeQuoteModel)
+    with pytest.raises(RuntimeError, match="sz000001"):
+        service.update_market()
+
+    assert FakeQuoteModel.writes == []
+
+
+def test_market_update_plan_uses_snapshot_only_for_one_trading_day_gap():
+    from app.lib.factor_factory import FQFactorService
+
+    friday = datetime.datetime(2026, 8, 21)
+    monday = datetime.datetime(2026, 8, 24)
+    tuesday = datetime.datetime(2026, 8, 25)
+    market = SimpleNamespace(trade_calendar=[friday, monday, tuesday])
+
+    assert FQFactorService._is_next_trading_day(friday, monday, market) is True
+    assert FQFactorService._is_next_trading_day(friday, tuesday, market) is False
+    assert FQFactorService._is_next_trading_day(None, monday, market) is False
+
+
+def test_update_market_keeps_full_history_path_for_repairs():
+    from app.lib.factor_factory import FQFactorService
+
+    class FakeService(FQFactorService):
+        updated_codes = []
+
+        def _get_market_update_plan(self, market=None):
+            return {}, ["new-code", "gap-code", "bad-code"]
 
         def update_code(self, code):
+            self.updated_codes.append(code)
             if code == "bad-code":
-                raise ValueError("bad quote data")
+                raise RuntimeError("source unavailable")
+            return {"code": "GOOD", "written_count": 4, "message": None}
+
+    service = FakeService()
+    with pytest.raises(RuntimeError, match="bad-code"):
+        service.update_market()
+
+    assert service.updated_codes == ["new-code", "gap-code", "bad-code"]
+
+
+def test_update_market_missing_planned_quote_fails_before_factor_request():
+    from app.lib.factor_factory import FQFactorService
+
+    target = datetime.datetime(2026, 8, 27)
+
+    class FakeService(FQFactorService):
+        factor_calls = 0
+
+        def _get_market_update_plan(self, market=None):
+            return {"sh600000": target, "sz000001": target}, []
+
+        def _load_market_quote_snapshot(self, codes, target_date):
+            return pd.DataFrame(
+                [
+                    {
+                        "date": target,
+                        "code": "sh600000",
+                        "open": 10.0,
+                        "high": 11.0,
+                        "low": 9.0,
+                        "close": 10.5,
+                        "previous_close": 10.0,
+                    }
+                ]
+            )
+
+        def _load_market_adj_factor_snapshot(self, target_date):
+            self.factor_calls += 1
+            return pd.DataFrame()
+
+    service = FakeService()
+    with pytest.raises(RuntimeError, match="sz000001"):
+        service.update_market()
+
+    assert service.factor_calls == 0
+
+
+def test_update_market_bulk_failure_does_not_refresh_freshness():
+    from app.lib.factor_factory import FQFactorService
+
+    target = datetime.datetime(2026, 8, 27)
+
+    class FakeQuoteModel:
+        @staticmethod
+        def _get_collection():
+            return SimpleNamespace(
+                bulk_write=lambda operations, ordered=False: (_ for _ in ()).throw(
+                    RuntimeError("write failed")
+                )
+            )
+
+    class FakeService(FQFactorService):
+        refreshed_codes = []
+
+        def _get_market_update_plan(self, market=None):
+            return {"sh600000": target}, []
+
+        def _load_market_quote_snapshot(self, codes, target_date):
+            return pd.DataFrame(
+                [
+                    {
+                        "date": target,
+                        "code": "sh600000",
+                        "open": 10.0,
+                        "high": 11.0,
+                        "low": 9.0,
+                        "close": 10.5,
+                        "previous_close": 10.0,
+                    }
+                ]
+            )
+
+        def _load_market_adj_factor_snapshot(self, target_date):
+            return pd.DataFrame(
+                [
+                    {
+                        "ts_code": "600000.SH",
+                        "trade_date": "20260827",
+                        "adj_factor": 2.0,
+                    }
+                ]
+            )
+
+        def _refresh_market_snapshot_statuses(self, codes):
+            self.refreshed_codes.extend(codes)
+
+    service = FakeService(quote_model=FakeQuoteModel)
+    with pytest.raises(RuntimeError, match="write failed"):
+        service.update_market()
+
+    assert service.refreshed_codes == []
+
+
+def test_market_update_plan_partitions_daily_snapshot_from_history_repair(
+    monkeypatch,
+):
+    from app.lib.factor_factory import fq_factor
+
+    friday = datetime.datetime(2026, 8, 21)
+    monday = datetime.datetime(2026, 8, 24)
+    tuesday = datetime.datetime(2026, 8, 25)
+    capability = SimpleNamespace(fq_factor=True)
+
+    class FakeQuery(list):
+        def only(self, *fields):
+            return self
+
+        def filter(self, **kwargs):
+            return self
+
+    class FakeStockModel:
+        @staticmethod
+        def objects(**kwargs):
+            return FakeQuery(
+                [
+                    SimpleNamespace(code="one-day", data_capabilities=capability),
+                    SimpleNamespace(code="multi-day", data_capabilities=capability),
+                    SimpleNamespace(code="no-history", data_capabilities=capability),
+                ]
+            )
+
+    quote_statuses = [
+        SimpleNamespace(code="one-day", latest_data_date=tuesday),
+        SimpleNamespace(code="multi-day", latest_data_date=tuesday),
+        SimpleNamespace(code="no-history", latest_data_date=tuesday),
+    ]
+    factor_statuses = [
+        SimpleNamespace(code="one-day", latest_data_date=monday, status="STALE"),
+        SimpleNamespace(code="multi-day", latest_data_date=friday, status="STALE"),
+        SimpleNamespace(code="no-history", latest_data_date=None, status="NO_DATA"),
+    ]
+
+    class FakeStatusModel:
+        @staticmethod
+        def objects(**kwargs):
+            if kwargs["asset_type"] == "quote":
+                return FakeQuery(quote_statuses)
+            return FakeQuery(factor_statuses)
+
+    monkeypatch.setattr(fq_factor, "DataAssetStatus", FakeStatusModel)
+    service = fq_factor.FQFactorService(stock_model=FakeStockModel)
+    market = SimpleNamespace(trade_calendar=[friday, monday, tuesday])
+
+    snapshots, historical = service._get_market_update_plan(market=market)
+
+    assert snapshots == {"one-day": tuesday}
+    assert historical == ["multi-day", "no-history"]
+
+
+def test_backfill_all_isolates_single_code_failure():
+    from app.lib.factor_factory import FQFactorService
+
+    class FakeQuery(list):
+        def only(self, *fields):
+            return self
+
+        def filter(self, **kwargs):
+            return self
+
+    class FakeStockModel:
+        @staticmethod
+        def objects(**kwargs):
+            capability = SimpleNamespace(fq_factor=True)
+            return FakeQuery(
+                [
+                    SimpleNamespace(code="ok-code", data_capabilities=capability),
+                    SimpleNamespace(code="bad-code", data_capabilities=capability),
+                    SimpleNamespace(code="next-code", data_capabilities=capability),
+                ]
+            )
+
+    class FakeService(FQFactorService):
+        def update_code(self, code):
+            if code == "bad-code":
+                raise RuntimeError("source unavailable")
             return {"code": "GOOD", "written_count": 2, "message": None}
 
-    result = FakeFQFactorService().update_market()
+    result = FakeService(stock_model=FakeStockModel).backfill_all()
 
     assert result == {"pulled_count": 3, "written_count": 4, "failed_count": 1}
 
@@ -385,3 +809,46 @@ def test_run_stock_job_includes_fq_factor_phase():
     assert source.index(
         '"mark_inactive_stocks", self.mark_inactive_stocks'
     ) < source.index('"update_fq_factor", self.update_fq_factor')
+
+
+def test_run_stock_job_stops_downstream_when_fq_phase_fails():
+    from app.lib.datahub.processors.china_a_stock import ChinaAStock
+
+    class FakeChinaAStock(ChinaAStock):
+        def __init__(self):
+            self.market_name = "ChinaAStock"
+            self.market = SimpleNamespace(name="ChinaAStock")
+            self.most_recent_trading_day = datetime.datetime(2026, 8, 27)
+            self._partial_phase_result = None
+            self.last_job_summary = None
+            self.calls = []
+
+        def check_prerequisite(self, allow_update=False):
+            self.calls.append("prerequisite")
+
+        def check_stock_data_integrity(self, allow_update=False):
+            self.calls.append("quote")
+
+        def mark_inactive_stocks(self, allow_update=False):
+            self.calls.append("inactive")
+
+        def update_fq_factor(self, allow_update=False):
+            self.calls.append("fq")
+            raise RuntimeError("FQ historical repair failed")
+
+        def update_ma_factor(self, allow_update=False):
+            self.calls.append("ma")
+
+        def update_signals(self, allow_update=False):
+            self.calls.append("signal")
+
+        def update_scoring(self, allow_update=False):
+            self.calls.append("scoring")
+
+    processor = FakeChinaAStock()
+    with pytest.raises(RuntimeError, match="historical repair"):
+        processor.run_stock_job()
+
+    assert processor.calls == ["prerequisite", "quote", "inactive", "fq"]
+    assert processor.last_job_summary["status"] == "FAILED"
+    assert processor.last_job_summary["failed_phase"] == "update_fq_factor"

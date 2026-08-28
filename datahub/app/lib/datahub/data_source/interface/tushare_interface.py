@@ -4,6 +4,8 @@ import time
 
 import pandas
 
+from app.lib.datahub.data_source.retry import call_with_retry
+
 TUSHARE_TOKEN_ENV = "TUSHARE_TOKEN"
 # tushare pro.daily returns at most 6000 rows per call (~23 years); request
 # history in year windows so old listings never silently truncate their
@@ -119,16 +121,36 @@ def adj_factor(ts_code, start_date=None, end_date=None):
         window_end_date = end_date if window_end == end_year else f"{window_end}1231"
         if window_start_date > window_end_date:
             continue
-        df = pro.adj_factor(
-            ts_code=ts_code,
-            start_date=window_start_date,
-            end_date=window_end_date,
+        df = call_with_retry(
+            lambda: pro.adj_factor(
+                ts_code=ts_code,
+                start_date=window_start_date,
+                end_date=window_end_date,
+            ),
+            label=f"tushare.adj_factor:{ts_code}:{window_start_date}-{window_end_date}",
         )
-        if df is not None and not df.empty:
-            frames.append(df)
+        if df is None or df.empty:
+            raise RuntimeError(
+                "tushare adj_factor returned no rows: "
+                f"ts_code={ts_code} window={window_start_date}-{window_end_date}"
+            )
+        frames.append(df)
         # pace EVERY call to stay under the per-minute cap (same as daily)
         time.sleep(0.25)
 
-    if not frames:
-        return pandas.DataFrame()
     return pandas.concat(frames, ignore_index=True)
+
+
+def adj_factor_by_trade_date(trade_date):
+    """Return the full-market adj_factor snapshot for one trade date."""
+    pro = _get_pro()
+    df = call_with_retry(
+        lambda: pro.adj_factor(trade_date=trade_date),
+        label=f"tushare.adj_factor:{trade_date}",
+    )
+    if df is None or df.empty:
+        raise RuntimeError(
+            f"tushare adj_factor returned no rows: trade_date={trade_date}"
+        )
+    time.sleep(0.25)
+    return df
