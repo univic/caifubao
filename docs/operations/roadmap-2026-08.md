@@ -33,8 +33,10 @@
   补 `date` 单列索引（mongoengine 模型或运维建索引），校验阶段显著提速。
 
 ### P1 — 服务启动 MongoDB 就绪重试
-- backend/datahub 启动时一次连接失败即 exit（08-28 节点重启时 backend 崩溃循环
-  2 次）。`connect_to_db` 增加重试（如 10×5s），消除节点重启引发的崩溃。
+- **✅ 已实现（#149 backend + #153 datahub）**：backend 与 datahub 的
+  `connect_to_db` 均增加重试（10×5s），耗尽后保持 exit(1) 契约；08-28/29
+  节点重启场景不再崩溃循环（datahub 侧未配 connect/serverSelection 超时，
+  最坏窗口 ~350s，可接受）。
 
 ### P2 — 镜像仓库稳定性
 - 腾讯云 CCR（hkccr.ccs.tencentyun.com）拉取间歇性 `connection reset by peer`
