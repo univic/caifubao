@@ -48,3 +48,41 @@ opt-in flag.
 - **THEN** `stock_signal_daily` SHALL still be skipped outside dev
 - **AND** small snapshot collections (`finance_market`, `stock_industry`)
   SHALL continue to sync in full
+
+### Requirement: Stale MA Factor Runs Preserve the Selected Set
+
+The factor runner SHALL route stale MA updates through the market batch path
+without expanding or changing the code set selected by runner arguments.
+
+#### Scenario: Stale MA run uses one market batch
+
+- **GIVEN** stale MA mode and a selected code set produced after applying
+  market, explicit `--code`, and `--limit` filters
+- **WHEN** the factor runner executes
+- **THEN** it SHALL call the MA market update path once with exactly that set
+- **AND** pulled, written, skipped, failed, and failed-code results SHALL retain
+  the existing runner meanings
+
+#### Scenario: Dry-run and force behavior remain unchanged
+
+- **GIVEN** MA factor runner arguments
+- **WHEN** `--dry-run` is selected
+- **THEN** it SHALL report the same selected set and perform zero writes
+- **AND WHEN** force mode is selected
+- **THEN** it SHALL retain the existing per-code full-recompute behavior
+
+### Requirement: Stale Signal Runs Preserve the Selected Set
+
+The signal runner SHALL route stale MA-signal updates through one market batch
+without expanding the code set selected by market, explicit `--code`, or
+`--limit` arguments. Dry-run SHALL report that same set without writes, while
+force mode SHALL retain the authoritative per-code rebuild path.
+
+#### Scenario: Stale signal run uses one market batch
+
+- **GIVEN** stale signal mode and a selected code set produced after applying
+  market, explicit `--code`, and `--limit` filters
+- **WHEN** the signal runner executes
+- **THEN** it SHALL call the signal market update path once with exactly that set
+- **AND** dry-run SHALL perform zero writes for that same set
+- **AND** force mode SHALL retain the authoritative per-code rebuild behavior

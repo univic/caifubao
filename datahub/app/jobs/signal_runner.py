@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.lib.utilities import job_run_helper
+from app.lib.signal_factory import SignalUpdateError
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +118,19 @@ def run_signal(
     if dry_run:
         return result
 
+    if mode == MODE_STALE and hasattr(service, "update_market"):
+        batch_result = service.update_market(
+            market=market, selected_codes=selected_codes
+        )
+        result["written_count"] = int(batch_result.get("written_count", 0))
+        result["skipped_count"] = int(batch_result.get("skipped_count", 0))
+        result["failed_count"] = int(batch_result.get("failed_count", 0))
+        result["failed_codes"] = list(batch_result.get("failed_codes", []))
+        return result
+
     for code in selected_codes:
         try:
-            update_result = service.update_code(code)
+            update_result = service.update_code(code, force=mode == MODE_FORCE)
         except Exception as exc:
             result["failed_count"] += 1
             result["failed_codes"].append(code)
@@ -129,8 +140,17 @@ def run_signal(
 
         if update_result.get("code") == "SKIP":
             result["skipped_count"] += 1
+        elif update_result.get("code") != "GOOD":
+            result["failed_count"] += 1
+            result["failed_codes"].append(code)
+            continue
         result["written_count"] += int(update_result.get("written_count", 0))
 
+    if result["failed_count"]:
+        raise SignalUpdateError(
+            "signal update failed for codes: " + ", ".join(result["failed_codes"]),
+            failed_codes=result["failed_codes"],
+        )
     return result
 
 
@@ -351,6 +371,7 @@ def main(argv: list[str] | None = None) -> None:
             summary={
                 "signal": args.signal,
                 "mode": args.mode,
+                "failed_codes": list(getattr(exc, "failed_codes", [])),
             },
             error_message=str(exc),
         )

@@ -143,11 +143,12 @@ def _run_single_factor(
     if dry_run:
         return result
 
-    if factor == FACTOR_FQ and mode == MODE_STALE and hasattr(service, "update_market"):
+    if mode == MODE_STALE and hasattr(service, "update_market"):
         batch_result = service.update_market(
             market=market, selected_codes=selected_codes
         )
         result["written_count"] = int(batch_result.get("written_count", 0))
+        result["skipped_count"] = int(batch_result.get("skipped_count", 0))
         result["failed_count"] = int(batch_result.get("failed_count", 0))
         result["failed_codes"] = list(batch_result.get("failed_codes", []))
         return result

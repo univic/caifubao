@@ -331,23 +331,35 @@ class MovingAverageFactorService:
                 result.append(code)
         return result
 
-    def update_market(self, market=None) -> dict[str, int]:
-        codes = self.get_codes_requiring_update(market=market)
+    def update_market(
+        self, market=None, selected_codes: list[str] | None = None
+    ) -> dict[str, int]:
+        codes = (
+            list(selected_codes)
+            if selected_codes is not None
+            else self.get_codes_requiring_update(market=market)
+        )
         written_total = 0
         skipped_count = 0
         failed_count = 0
+        failed_codes: list[str] = []
         refreshed_codes: list[str] = []
         for code in codes:
             try:
                 result = self.update_code(code, refresh_statuses=False)
             except Exception:
                 failed_count += 1
+                failed_codes.append(code)
                 logger.exception("MA factor update failed: code=%s", code)
                 continue
             if result.get("code") == "SKIP":
                 skipped_count += 1
-            if result.get("code") == "GOOD":
+            elif result.get("code") == "GOOD":
                 refreshed_codes.append(code)
+            else:
+                failed_count += 1
+                failed_codes.append(code)
+                continue
             written_total += int(result.get("written_count", 0))
         # One batched freshness refresh for every updated code, after all
         # factor writes of this run have committed (see refresh_market_statuses).
@@ -357,6 +369,7 @@ class MovingAverageFactorService:
             "written_count": written_total,
             "skipped_count": skipped_count,
             "failed_count": failed_count,
+            "failed_codes": failed_codes,
         }
 
     def backfill_code(self, code: str) -> dict[str, int | str | None]:
