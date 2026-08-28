@@ -7,18 +7,25 @@
 ## 一、稳定性方向（按优先级）
 
 ### P0 — 失败即告警（当前最大缺口）
-08-26~08-28 连续 4 个交易日任务失败无人知晓，全靠人工巡检发现。
-- **方案**：`datahub_job_runs` 状态变化（FAILED/SKIPPED 且非预期）→ 通知
-  （钉钉/邮件/webhook）。可用现有 `datahub_job_runs` 集合 + 一个轻量 watcher
-  （datahub pod 内定时任务或独立 CronJob）。
-- 告警规则：① quote/signal/scoring 任务 FAILED；② 数据新鲜度落后
-  （`data_asset_status` latest < expected，利用现有 STALE 判定）；
-  ③ data-sync FAILED。
+08-26~08-28 连续 3 个交易日任务失败无人知晓，全靠人工巡检发现。
+- **✅ 已实现（2026-08-29）**：`datahub/app/jobs/health_watcher.py` —— 检查
+  `datahub_job_runs` 近 26h FAILED 任务（quote/signal/scoring/data_sync）与
+  `data_asset_status` STALE/NO_DATA 资产，输出 JSON 报告；`--fail-on-issues`
+  使 CronJob 失败可见；可选 `HEALTH_WEBHOOK_URL` webhook 通知（私有 overlay
+  配置真实地址）。示例 CronJob：`caifubao-datahub-health-watcher`
+  （工作日 20:00，收盘链路 19:15 之后）。
+- **待办**：① 私有 overlay 配置 `HEALTH_WEBHOOK_URL`（钉钉/邮件）；② 告警阈值
+  与误报调优（如停牌股 STALE 豁免策略）。
 
 ### P1 — 节点治理
 - `ubuntu-5700x` 失联超 1 个月（07-25 起 kubelet 停止上报），应**下线清理**
   （保留 NoExecute taint 已驱逐其上 pod，直接删除节点对象）。
 - `racknerd-0ab4159` Ready 但被 cordon（08-23），确认后 **uncordon 或明确下线**。
+- **`vm-4-12-ubuntu` 2026-08-28/29 两次节点级故障**（13:20 快速恢复；17:18Z 起
+  网络失联 40+ 分钟，ping 100% 丢包）——该节点承载 **prod+dev 双环境的
+  MongoDB 与 backend**，单节点故障 = 全环境数据/API 不可用。**这是当前最大
+  单点风险**：① 排查节点硬件/网络（云控制台）；② 评估 MongoDB 副本（≥2 副本
+  + 跨节点）与 PVC 迁移能力；③ 至少保证关键服务跨节点分布。
 - 保证 ≥3 个健康 worker 节点冗余；评估节点内存水位（当前 40-65%）。
 
 ### P1 — MongoDB 大集合索引
@@ -70,7 +77,7 @@
 
 ## 三、执行建议
 
-1. **先做 P0 告警**（投入小、收益最大——避免再次"4 天无人知"）。
+1. **先做 P0 告警**（投入小、收益最大——避免再次"3 天无人知"）。
 2. **节点治理 + MongoDB 索引**（运维动作，周末窗口执行）。
 3. **观测 1-2 个交易日的拆分后链路**（quote ≤30min、signal/scoring 正常、
    dev 19:15 同步），据实测校准告警阈值与 deadline。
