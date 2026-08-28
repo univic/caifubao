@@ -7,7 +7,7 @@
 ## 一、稳定性方向（按优先级）
 
 ### P0 — 失败即告警（当前最大缺口）
-08-26~08-28 连续 4 个交易日任务失败无人知晓，全靠人工巡检发现。
+08-26~08-28 连续 3 个交易日任务失败无人知晓，全靠人工巡检发现。
 - **✅ 已实现（2026-08-29）**：`datahub/app/jobs/health_watcher.py` —— 检查
   `datahub_job_runs` 近 26h FAILED 任务（quote/signal/scoring/data_sync）与
   `data_asset_status` STALE/NO_DATA 资产，输出 JSON 报告；`--fail-on-issues`
@@ -77,7 +77,7 @@
 
 ## 三、执行建议
 
-1. **先做 P0 告警**（投入小、收益最大——避免再次"4 天无人知"）。
+1. **先做 P0 告警**（投入小、收益最大——避免再次"3 天无人知"）。
 2. **节点治理 + MongoDB 索引**（运维动作，周末窗口执行）。
 3. **观测 1-2 个交易日的拆分后链路**（quote ≤30min、signal/scoring 正常、
    dev 19:15 同步），据实测校准告警阈值与 deadline。
