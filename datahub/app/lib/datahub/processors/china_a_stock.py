@@ -1,6 +1,7 @@
 import time
 import logging
 import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pandas
@@ -30,6 +31,19 @@ from app.lib.utilities import data_asset_status_helper
 from app.lib.utilities import data_capability_helper
 
 logger = logging.getLogger(__name__)
+
+# A full-market run aborts early once this many consecutive history pulls
+# failed (not attributable to suspension). Soft-failing sources would
+# otherwise burn the whole loop (one absorbed FAIL + sleep per stock) before
+# the final validation failure.
+HISTORY_FAILURE_CIRCUIT_LIMIT = 25
+
+STATUS_WRITE_CHUNK_SIZE = 1000
+
+
+def _chunked(values, chunk_size):
+    for start in range(0, len(values), chunk_size):
+        yield values[start : start + chunk_size]
 
 
 def _build_index_quote_upsert_operation(index_obj, row):
@@ -75,6 +89,30 @@ def _build_stock_quote_upsert_operation(stock_obj, row):
         {"$set": raw_doc},
         upsert=True,
     )
+
+
+def _build_snapshot_quote_row(snapshot_row, expected_date, code):
+    """Build one settled daily-bar row from a market snapshot row."""
+
+    def _num(value):
+        coerced = pandas.to_numeric(value, errors="coerce")
+        return 0.0 if pandas.isna(coerced) else float(coerced)
+
+    return {
+        "date": expected_date,
+        "code": code,
+        "open": _num(snapshot_row.get("open", 0)),
+        "high": _num(snapshot_row.get("high", 0)),
+        "low": _num(snapshot_row.get("low", 0)),
+        "close": _num(snapshot_row.get("close", 0)),
+        "previous_close": _num(snapshot_row.get("previous_close", 0)),
+        "volume": _num(snapshot_row.get("volume", 0)),
+        "trade_amount": _num(snapshot_row.get("trade_amount", 0)),
+        "turnover_rate": _num(snapshot_row.get("turnover_rate", 0)),
+        "change_rate": _num(snapshot_row.get("change_rate", 0)),
+        "change_amount": _num(snapshot_row.get("change_amount", 0)),
+        "trade_status": 1,
+    }
 
 
 class ChinaAStock(object):
@@ -406,6 +444,25 @@ class ChinaAStock(object):
         # prepare the progress bar
         prog_bar = progress_bar()
 
+        # Batched quote-phase state: freshness refreshes and settled snapshot
+        # writes are collected while the loop walks the remote rows and
+        # flushed once afterwards, replacing per-stock aggregate/upsert round
+        # trips with a handful of bulk calls. Flag decisions stay per-stock
+        # and read each code's pre-run status document, which is exactly what
+        # the previous sequential per-stock loop observed.
+        pending_snapshot_writes: list[tuple[Any, Any]] = []
+        pending_refresh_targets: dict[str, Any] = {}
+        suspension_by_code: dict[str, bool] = {}
+        consecutive_history_failures = 0
+        latest_quote_date_by_code: dict[str, Any] = {}
+        if allow_update:
+            quote_status_docs = data_asset_status_helper.read_quote_status_map(
+                sorted(local_code_set | remote_code_set)
+            )
+            latest_quote_date_by_code = {
+                code: doc.latest_data_date for code, doc in quote_status_docs.items()
+            }
+
         if local_only_codes:
             logger.warning(
                 "Stock Market %s - Remote %s spot list is missing %s local codes. sample=%s",
@@ -424,15 +481,7 @@ class ChinaAStock(object):
                         )
                     ):
                         continue
-                    freshness = data_asset_status_helper.refresh_quote_status(
-                        stock_obj=stock_obj,
-                        quote_model=StockDailyQuote,
-                        last_job_name="stock_quote_sync",
-                        expected_latest_date=self.most_recent_trading_day,
-                        trade_calendar=self.market.trade_calendar,
-                    )
-                    if freshness["status"] != STATUS_OK:
-                        failed_quote_codes.append(code)
+                    pending_refresh_targets[code] = stock_obj
 
         # check the existence of the stock list
         if local_data_num > 0:
@@ -455,7 +504,10 @@ class ChinaAStock(object):
                     if allow_update:
                         self.sync_stock_data_capabilities(stock_obj)
                     # check the quote data freshness of each index
-                    flag = self.check_data_freshness(stock_obj)
+                    flag = self.check_data_freshness(
+                        stock_obj,
+                        precomputed_latest_date=latest_quote_date_by_code.get(code),
+                    )
                     if flag != "SKIP":
                         is_temporarily_suspended = (
                             obj_type == "stock" and remote_stock_item["close"] == 0
@@ -476,60 +528,62 @@ class ChinaAStock(object):
                                     and zh_a_daily.get_stock_universe_source()
                                     == "tushare"
                                 ):
-                                    # one trading day behind: write the settled
+                                    # one trading day behind: queue the settled
                                     # as-of row from the market snapshot (only
                                     # for the tushare universe, whose
                                     # daily(trade_date) bar is the settled
                                     # as-of bar; the real-time spot path keeps
-                                    # the history fallback)
-                                    hist_result = self.write_snapshot_quote(
-                                        stock_obj=stock_obj,
-                                        snapshot_row=remote_stock_item,
-                                        expected_date=self.most_recent_trading_day,
+                                    # the history fallback). Rows are written
+                                    # in one bulk call after the loop.
+                                    pending_snapshot_writes.append(
+                                        (stock_obj, remote_stock_item)
                                     )
+                                    suspension_by_code[code] = False
                                 else:
                                     hist_result = self.get_hist_quote_data(
                                         stock_obj=stock_obj,
                                         hist_quote_handler=hist_handler,
                                     )
-                                written_quote_count += hist_result.get(
-                                    "written_count", 0
-                                )
-                                validated_quote_count += hist_result.get(
-                                    "validated_count",
-                                    hist_result.get("written_count", 0),
-                                )
-                                update_partial_phase_result()
-                                quote_validation_failed = (
-                                    hist_result.get("code") != "GOOD"
-                                    or hist_result.get("freshness_status") != STATUS_OK
-                                )
-                                if (
-                                    quote_validation_failed
-                                    and not is_allowed_suspension_gap(
-                                        is_temporarily_suspended, hist_result
+                                    written_quote_count += hist_result.get(
+                                        "written_count", 0
                                     )
-                                ):
-                                    failed_quote_codes.append(code)
-                                elif quote_validation_failed:
-                                    logger.info(
-                                        "Allowing stale quote for temporarily suspended stock %s",
-                                        code,
+                                    validated_quote_count += hist_result.get(
+                                        "validated_count",
+                                        hist_result.get("written_count", 0),
                                     )
+                                    update_partial_phase_result()
+                                    quote_validation_failed = (
+                                        hist_result.get("code") != "GOOD"
+                                        or hist_result.get("freshness_status")
+                                        != STATUS_OK
+                                    )
+                                    if (
+                                        quote_validation_failed
+                                        and not is_allowed_suspension_gap(
+                                            is_temporarily_suspended, hist_result
+                                        )
+                                    ):
+                                        failed_quote_codes.append(code)
+                                        consecutive_history_failures += 1
+                                    else:
+                                        consecutive_history_failures = 0
+                                        if quote_validation_failed:
+                                            logger.info(
+                                                "Allowing stale quote for temporarily suspended stock %s",
+                                                code,
+                                            )
+                                    if (
+                                        consecutive_history_failures
+                                        >= HISTORY_FAILURE_CIRCUIT_LIMIT
+                                    ):
+                                        raise RuntimeError(
+                                            "Stock history source appears unavailable: "
+                                            f"{consecutive_history_failures} consecutive "
+                                            f"failed history pulls; sample={failed_quote_codes[-10:]}"
+                                        )
                             elif flag in ["GOOD", "WARN"]:
-                                freshness = data_asset_status_helper.refresh_quote_status(
-                                    stock_obj=stock_obj,
-                                    quote_model=StockDailyQuote,
-                                    last_job_name="stock_quote_sync",
-                                    expected_latest_date=self.most_recent_trading_day,
-                                    trade_calendar=self.market.trade_calendar,
-                                )
-                                if freshness[
-                                    "status"
-                                ] != STATUS_OK and not is_allowed_suspension_gap(
-                                    is_temporarily_suspended, freshness
-                                ):
-                                    failed_quote_codes.append(code)
+                                pending_refresh_targets[code] = stock_obj
+                                suspension_by_code[code] = is_temporarily_suspended
                     else:
                         logger.debug(
                             f"Stock Market {self.market.name} - Skipped quote data update for {code}-{name}"
@@ -567,6 +621,18 @@ class ChinaAStock(object):
                             )
                         ):
                             failed_quote_codes.append(code)
+                            consecutive_history_failures += 1
+                        else:
+                            consecutive_history_failures = 0
+                        if (
+                            consecutive_history_failures
+                            >= HISTORY_FAILURE_CIRCUIT_LIMIT
+                        ):
+                            raise RuntimeError(
+                                "Stock history source appears unavailable: "
+                                f"{consecutive_history_failures} consecutive "
+                                f"failed history pulls; sample={failed_quote_codes[-10:]}"
+                            )
                         upd_counter_dict["NEW"] += 1
                 prog_bar(i, remote_data_num, prog_bar_msg)
             msg_str = (
@@ -635,9 +701,47 @@ class ChinaAStock(object):
                         is_temporarily_suspended, new_stock_result
                     ):
                         failed_quote_codes.append(code)
+                        consecutive_history_failures += 1
+                    else:
+                        consecutive_history_failures = 0
+                    if consecutive_history_failures >= HISTORY_FAILURE_CIRCUIT_LIMIT:
+                        raise RuntimeError(
+                            "Stock history source appears unavailable: "
+                            f"{consecutive_history_failures} consecutive "
+                            f"failed history pulls; sample={failed_quote_codes[-10:]}"
+                        )
                     check_counter_dict["NEW"] += 1
                     upd_counter_dict["NEW"] += 1
                     prog_bar(i, remote_data_num)
+
+        snapshot_written_count = 0
+        snapshot_validated_count = 0
+        if allow_update and (pending_snapshot_writes or pending_refresh_targets):
+            snapshot_written_count, snapshot_statuses = (
+                self._flush_batched_quote_updates(
+                    pending_snapshot_writes, pending_refresh_targets
+                )
+            )
+            written_quote_count += snapshot_written_count
+            snapshot_codes = {
+                stock_obj.code for stock_obj, _ in pending_snapshot_writes
+            }
+            for code, status_value in snapshot_statuses.items():
+                if status_value == STATUS_OK:
+                    if code in snapshot_codes:
+                        snapshot_validated_count += 1
+                    continue
+                if is_allowed_suspension_gap(
+                    suspension_by_code.get(code, False), {"status": status_value}
+                ):
+                    logger.info(
+                        "Allowing stale quote for temporarily suspended stock %s",
+                        code,
+                    )
+                    continue
+                failed_quote_codes.append(code)
+            validated_quote_count += snapshot_validated_count
+            update_partial_phase_result()
 
         status = {
             "code": status_code,
@@ -665,16 +769,22 @@ class ChinaAStock(object):
             )
         return status
 
-    def check_data_freshness(self, stock_obj):
+    def check_data_freshness(self, stock_obj, precomputed_latest_date=None):
         update_flag = ""
         if not data_capability_helper.stock_supports(stock_obj, "daily_quote"):
             return "SKIP"
-        most_recent_quote_date = data_asset_status_helper.read_asset_latest_date(
-            code=stock_obj.code,
-            object_type=stock_obj.object_type,
-            asset_type="quote",
-            asset_name="daily_quote",
-        )
+        if precomputed_latest_date is not None:
+            # Pre-read in one batched query before the loop. A code with no
+            # status document (or a null latest date) passes None here, which
+            # falls back to the single-code read below -- both return None.
+            most_recent_quote_date = precomputed_latest_date
+        else:
+            most_recent_quote_date = data_asset_status_helper.read_asset_latest_date(
+                code=stock_obj.code,
+                object_type=stock_obj.object_type,
+                asset_type="quote",
+                asset_name="daily_quote",
+            )
         if stock_obj.active_status == 0:
             if most_recent_quote_date:
                 # determine time difference
@@ -873,72 +983,80 @@ class ChinaAStock(object):
         #                             callback_handler=hist_quote_handler,
         #                             kwargs=kwarg_dict)
 
-    # @performance_helper.func_performance_timer
-    def write_snapshot_quote(self, stock_obj, snapshot_row, expected_date):
-        """Write one daily bar from the settled market snapshot (UPD path).
+    def _flush_batched_quote_updates(
+        self,
+        pending_snapshot_writes: list[tuple[Any, Any]],
+        pending_refresh_targets: dict[str, Any],
+    ) -> tuple[int, dict[str, str]]:
+        """Write queued snapshot rows and refresh quote statuses in batches.
 
-        Returns the same shape as the history path: code / written_count /
-        validated_count / freshness_status.
+        Consistency ordering: every queued quote write is committed first,
+        then per-code stats are aggregated from the persisted quotes, and
+        only then are the status records upserted. Freshness therefore keeps
+        being derived from committed Mongo data, exactly like the per-stock
+        write -> aggregate -> upsert sequence it replaces.
+
+        Returns (written_count, status_by_code).
         """
-        status_code = "GOOD"
-        status_msg = None
         written_count = 0
-        freshness_status = None
-        try:
-
-            def _num(value):
-                coerced = pandas.to_numeric(value, errors="coerce")
-                return 0.0 if pandas.isna(coerced) else float(coerced)
-
-            row = {
-                "date": expected_date,
-                "code": stock_obj.code,
-                "open": _num(snapshot_row.get("open", 0)),
-                "high": _num(snapshot_row.get("high", 0)),
-                "low": _num(snapshot_row.get("low", 0)),
-                "close": _num(snapshot_row.get("close", 0)),
-                "previous_close": _num(snapshot_row.get("previous_close", 0)),
-                "volume": _num(snapshot_row.get("volume", 0)),
-                "trade_amount": _num(snapshot_row.get("trade_amount", 0)),
-                "turnover_rate": _num(snapshot_row.get("turnover_rate", 0)),
-                "change_rate": _num(snapshot_row.get("change_rate", 0)),
-                "change_amount": _num(snapshot_row.get("change_amount", 0)),
-                "trade_status": 1,
-            }
-            operation = _build_stock_quote_upsert_operation(
-                stock_obj, pandas.Series(row)
-            )
-            result = StockDailyQuote._get_collection().bulk_write(
-                [operation], ordered=False
-            )
-            written_count = result.upserted_count + result.modified_count
-            freshness = data_asset_status_helper.refresh_quote_status(
-                stock_obj=stock_obj,
-                quote_model=StockDailyQuote,
-                last_job_name="stock_quote_sync",
-                expected_latest_date=expected_date,
-                trade_calendar=self.market.trade_calendar,
-            )
-            freshness_status = freshness["status"]
-            if freshness_status != STATUS_OK:
-                status_code = "FAIL"
-                status_msg = "Snapshot row freshness is not OK"
-        except Exception as exc:  # noqa: BLE001
-            status_code = "FAIL"
-            status_msg = str(exc)
-            written_count = 0
-            logger.error(
-                "Datahub - ChinaAStock - Snapshot quote write failed for %s: %s",
-                stock_obj.code,
-                exc,
-            )
-        return {
-            "code": status_code,
-            "message": status_msg,
-            "written_count": written_count,
-            "validated_count": 1 if status_code == "GOOD" else 0,
-            "freshness_status": freshness_status,
+        snapshot_stock_by_code = {
+            stock_obj.code: stock_obj for stock_obj, _ in pending_snapshot_writes
         }
+
+        if pending_snapshot_writes:
+            operations = [
+                _build_stock_quote_upsert_operation(
+                    stock_obj,
+                    pandas.Series(
+                        _build_snapshot_quote_row(
+                            snapshot_row,
+                            self.most_recent_trading_day,
+                            stock_obj.code,
+                        )
+                    ),
+                )
+                for stock_obj, snapshot_row in pending_snapshot_writes
+            ]
+            for chunk in _chunked(operations, STATUS_WRITE_CHUNK_SIZE):
+                result = StockDailyQuote._get_collection().bulk_write(
+                    chunk, ordered=False
+                )
+                written_count += result.upserted_count + result.modified_count
+
+        statuses: dict[str, str] = {}
+        codes = list(pending_refresh_targets) + [
+            code
+            for code in snapshot_stock_by_code
+            if code not in pending_refresh_targets
+        ]
+        if not codes:
+            return written_count, statuses
+
+        stats_by_code = data_asset_status_helper.aggregate_stats_by_code(
+            StockDailyQuote._get_collection(),
+            match={"code": {"$in": codes}},
+            code_field="code",
+        )
+        calculated_at = datetime.datetime.now()
+        records = []
+        for code in codes:
+            stock_obj = (
+                pending_refresh_targets.get(code) or snapshot_stock_by_code[code]
+            )
+            records.append(
+                data_asset_status_helper.build_quote_status_record(
+                    code=code,
+                    object_type=getattr(stock_obj, "object_type", "individual_stock"),
+                    stats_row=stats_by_code.get(code),
+                    expected_latest_date=self.most_recent_trading_day,
+                    trade_calendar=self.market.trade_calendar,
+                    last_job_name="stock_quote_sync",
+                    calculated_at=calculated_at,
+                )
+            )
+        data_asset_status_helper.bulk_upsert_asset_status(records)
+        statuses = {record["code"]: record["status"] for record in records}
+        return written_count, statuses
 
     # @performance_helper.func_performance_timer
     def get_hist_stock_quote_data(

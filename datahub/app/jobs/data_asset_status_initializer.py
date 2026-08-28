@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from app.lib.utilities import data_asset_status_helper
 from app.lib.utilities import data_capability_helper
 from app.model.data_asset_status import (
     STATUS_NO_DATA,
@@ -286,8 +287,9 @@ class DataAssetStatusInitializer:
         )
 
         if not dry_run:
-            for record in records:
-                self._upsert_record(record)
+            data_asset_status_helper.bulk_upsert_asset_status(
+                records, collection=self.status_model._get_collection()
+            )
 
         status_counts: dict[str, int] = {}
         for record in records:
@@ -376,16 +378,6 @@ class DataAssetStatusInitializer:
             for row in rows
             if row.get("_id")
         }
-
-    def _upsert_record(self, record: dict[str, Any]) -> None:
-        query = {
-            "code": record["code"],
-            "object_type": record["object_type"],
-            "asset_type": record["asset_type"],
-            "asset_name": record["asset_name"],
-        }
-        updates = {f"set__{key}": value for key, value in record.items()}
-        self.status_model.objects(**query).update_one(upsert=True, **updates)
 
 
 def _load_default_initializer() -> DataAssetStatusInitializer:

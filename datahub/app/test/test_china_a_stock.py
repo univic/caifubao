@@ -134,23 +134,16 @@ class TestChinaAStockHelpers(TestCase):
     def test_one_day_update_writes_from_market_snapshot(self):
         from app.lib.datahub.data_source.handler import zh_a_daily
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
+        from app.model.stock import StockDailyQuote
 
         processor = object.__new__(ChinaAStock)
         processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
         processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
         processor.perform_date_check = lambda: None
-        processor.check_data_freshness = lambda stock: "UPD"
+        processor.check_data_freshness = lambda stock, **kwargs: "UPD"
         processor.perform_stock_name_check = Mock()
         processor.update_active_status = Mock()
         processor.get_hist_quote_data = Mock(
-            return_value={
-                "code": "GOOD",
-                "written_count": 1,
-                "validated_count": 1,
-                "freshness_status": "OK",
-            }
-        )
-        processor.write_snapshot_quote = Mock(
             return_value={
                 "code": "GOOD",
                 "written_count": 1,
@@ -187,6 +180,18 @@ class TestChinaAStockHelpers(TestCase):
             ]
         )
 
+        quote_collection = Mock()
+        quote_collection.bulk_write.return_value = Mock(
+            upserted_count=1, modified_count=0
+        )
+
+        def fake_build_op(stock_obj, row):
+            return Mock(
+                _filter={"code": stock_obj.code, "date": row["date"]},
+                _doc={"$set": dict(row)},
+                _upsert=True,
+            )
+
         with (
             patch.dict(
                 os.environ,
@@ -196,6 +201,31 @@ class TestChinaAStockHelpers(TestCase):
                 "app.lib.datahub.processors.china_a_stock.progress_bar",
                 return_value=lambda *args: None,
             ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock._build_stock_quote_upsert_operation",
+                side_effect=fake_build_op,
+            ),
+            patch.object(
+                StockDailyQuote, "_get_collection", return_value=quote_collection
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.aggregate_stats_by_code",
+                return_value={
+                    "sh600519": {
+                        "first_data_date": None,
+                        "latest_data_date": pandas.Timestamp("2026-08-21"),
+                        "data_count": 1,
+                    }
+                },
+            ) as aggregate,
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.bulk_upsert_asset_status",
+                return_value=1,
+            ) as bulk_upsert,
         ):
             result = processor.check_data_integrity(
                 obj_type="stock",
@@ -206,8 +236,14 @@ class TestChinaAStockHelpers(TestCase):
             )
 
         # UPD（差 1 天）+ tushare universe → 快照写入，不拉历史
-        processor.write_snapshot_quote.assert_called_once()
         processor.get_hist_quote_data.assert_not_called()
+        quote_collection.bulk_write.assert_called_once()
+        operations = quote_collection.bulk_write.call_args[0][0]
+        self.assertEqual(len(operations), 1)
+        self.assertEqual(operations[0]._filter["date"], pandas.Timestamp("2026-08-21"))
+        # 快照行 + 批量 freshness 刷新各一次
+        aggregate.assert_called_once()
+        bulk_upsert.assert_called_once()
         self.assertEqual(result["written_count"], 1)
 
     def test_deeper_gap_or_suspended_uses_history(self):
@@ -227,7 +263,7 @@ class TestChinaAStockHelpers(TestCase):
                 )
                 processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
                 processor.perform_date_check = lambda: None
-                processor.check_data_freshness = lambda stock, f=freshness: f
+                processor.check_data_freshness = lambda stock, f=freshness, **kwargs: f
                 processor.perform_stock_name_check = Mock()
                 processor.update_active_status = Mock()
                 # INC/FULL 成功拉取 -> OK；停牌 UPD（close=0）无数据 -> STALE
@@ -238,14 +274,6 @@ class TestChinaAStockHelpers(TestCase):
                         "written_count": 0 if stale else 5,
                         "validated_count": 0 if stale else 5,
                         "freshness_status": "STALE" if stale else "OK",
-                    }
-                )
-                processor.write_snapshot_quote = Mock(
-                    return_value={
-                        "code": "GOOD",
-                        "written_count": 0,
-                        "validated_count": 0,
-                        "freshness_status": "STALE",
                     }
                 )
                 stock = SimpleNamespace(
@@ -270,9 +298,15 @@ class TestChinaAStockHelpers(TestCase):
                         }
                     ]
                 )
-                with patch(
-                    "app.lib.datahub.processors.china_a_stock.progress_bar",
-                    return_value=lambda *args: None,
+                with (
+                    patch(
+                        "app.lib.datahub.processors.china_a_stock.progress_bar",
+                        return_value=lambda *args: None,
+                    ),
+                    patch(
+                        "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                        return_value={},
+                    ),
                 ):
                     processor.check_data_integrity(
                         obj_type="stock",
@@ -283,141 +317,139 @@ class TestChinaAStockHelpers(TestCase):
                     )
                 # INC/FULL（差 >1 天）与停牌 UPD 均走历史，不用快照
                 processor.get_hist_quote_data.assert_called_once()
-                processor.write_snapshot_quote.assert_not_called()
 
-    def test_write_snapshot_quote_builds_row_and_refreshes_freshness(self):
-        from app.lib.datahub.processors.china_a_stock import ChinaAStock
-        from app.model.stock import StockDailyQuote
+    def test_build_snapshot_quote_row_coerces_non_numeric_cells(self):
+        from app.lib.datahub.processors.china_a_stock import (
+            _build_snapshot_quote_row,
+        )
 
-        processor = object.__new__(ChinaAStock)
-        processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
-        stock = SimpleNamespace(code="sh600519", name="贵州茅台")
+        row = _build_snapshot_quote_row(
+            {
+                "open": "1271.01",
+                "high": "1313.8",
+                "low": "1270.33",
+                "close": 1304.66,
+                "previous_close": "1272.83",
+                "volume": "4844000",
+                "trade_amount": "6299794000.0",
+                "turnover_rate": 0.5,
+                "change_rate": 2.5,
+                "change_amount": 31.83,
+            },
+            datetime.datetime(2026, 8, 25),
+            "sh600519",
+        )
 
-        collection = Mock()
-        collection.bulk_write.return_value = Mock(upserted_count=1, modified_count=0)
-        captured = {}
+        self.assertEqual(row["close"], 1304.66)
+        self.assertEqual(row["trade_status"], 1)
+        self.assertEqual(row["date"], datetime.datetime(2026, 8, 25))
+        self.assertEqual(row["code"], "sh600519")
 
-        def fake_build(stock_obj, row):
-            captured["row"] = row
-            operation = Mock()
-            operation._doc = {"$set": dict(row)}
-            return operation
-
-        with (
-            patch(
-                "app.lib.datahub.processors.china_a_stock._build_stock_quote_upsert_operation",
-                side_effect=fake_build,
-            ),
-            patch.object(StockDailyQuote, "_get_collection", return_value=collection),
-            patch(
-                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.refresh_quote_status",
-                return_value={"status": "OK"},
-            ) as refresh,
-        ):
-            result = processor.write_snapshot_quote(
-                stock_obj=stock,
-                snapshot_row={
-                    "open": "1271.01",
-                    "high": "1313.8",
-                    "low": "1270.33",
-                    "close": "1304.66",
-                    "previous_close": "1272.83",
-                    "volume": "4844000",
-                    "trade_amount": "6299794000.0",
-                    "turnover_rate": 0.5,
-                    "change_rate": 2.5,
-                    "change_amount": 31.83,
-                },
-                expected_date=datetime.datetime(2026, 8, 25),
-            )
-
-        self.assertEqual(result["code"], "GOOD")
-        self.assertEqual(result["written_count"], 1)
-        self.assertEqual(result["validated_count"], 1)
-        refresh.assert_called_once()
-        self.assertEqual(captured["row"]["close"], 1304.66)
-        self.assertEqual(captured["row"]["trade_status"], 1)
-        self.assertEqual(captured["row"]["date"], datetime.datetime(2026, 8, 25))
-
-    def test_write_snapshot_quote_coerces_non_numeric_cells(self):
-        from app.lib.datahub.processors.china_a_stock import ChinaAStock
-        from app.model.stock import StockDailyQuote
-
-        processor = object.__new__(ChinaAStock)
-        processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
-        stock = SimpleNamespace(code="sh600519", name="贵州茅台")
-
-        collection = Mock()
-        collection.bulk_write.return_value = Mock(upserted_count=1, modified_count=0)
-        captured = {}
-
-        def fake_build(stock_obj, row):
-            captured["row"] = row
-            operation = Mock()
-            operation._doc = {"$set": dict(row)}
-            return operation
-
-        with (
-            patch(
-                "app.lib.datahub.processors.china_a_stock._build_stock_quote_upsert_operation",
-                side_effect=fake_build,
-            ),
-            patch.object(StockDailyQuote, "_get_collection", return_value=collection),
-            patch(
-                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.refresh_quote_status",
-                return_value={"status": "OK"},
-            ),
-        ):
-            result = processor.write_snapshot_quote(
-                stock_obj=stock,
-                snapshot_row={
-                    "close": "-",
-                    "high": None,
-                    "low": "",
-                    "previous_close": "0.00",
-                    "volume": "--",
-                    "trade_amount": "1e8",
-                },
-                expected_date=datetime.datetime(2026, 8, 25),
-            )
+        row = _build_snapshot_quote_row(
+            {
+                "close": "-",
+                "high": None,
+                "low": "",
+                "previous_close": "0.00",
+                "volume": "--",
+                "trade_amount": "1e8",
+            },
+            datetime.datetime(2026, 8, 25),
+            "sh600519",
+        )
 
         # 非数值单元格被强转为 0，不抛 TypeError
-        self.assertEqual(result["code"], "GOOD")
-        self.assertEqual(captured["row"]["close"], 0.0)
-        self.assertEqual(captured["row"]["volume"], 0.0)
-        self.assertEqual(captured["row"]["previous_close"], 0.0)
-        self.assertEqual(captured["row"]["trade_amount"], 100000000.0)
+        self.assertEqual(row["close"], 0.0)
+        self.assertEqual(row["volume"], 0.0)
+        self.assertEqual(row["previous_close"], 0.0)
+        self.assertEqual(row["trade_amount"], 100000000.0)
 
-    def test_write_snapshot_quote_failure_returns_fail(self):
+    def test_flush_batched_quote_updates_writes_and_refreshes_freshness(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
         from app.model.stock import StockDailyQuote
 
         processor = object.__new__(ChinaAStock)
         processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
+        processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
+        stock = SimpleNamespace(code="sh600519", name="贵州茅台")
+
+        collection = Mock()
+        collection.bulk_write.return_value = Mock(upserted_count=1, modified_count=0)
+        captured = {}
+
+        def fake_build(stock_obj, row):
+            captured["row"] = row
+            operation = Mock()
+            operation._doc = {"$set": dict(row)}
+            return operation
+
+        upserted_records = []
+
+        def fake_bulk_upsert(records, **kwargs):
+            upserted_records.extend(records)
+            return len(records)
+
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock._build_stock_quote_upsert_operation",
+                side_effect=fake_build,
+            ),
+            patch.object(StockDailyQuote, "_get_collection", return_value=collection),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.aggregate_stats_by_code",
+                return_value={
+                    "sh600519": {
+                        "first_data_date": None,
+                        "latest_data_date": pandas.Timestamp("2026-08-21"),
+                        "data_count": 1,
+                    }
+                },
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.bulk_upsert_asset_status",
+                side_effect=fake_bulk_upsert,
+            ),
+        ):
+            written_count, statuses = processor._flush_batched_quote_updates(
+                [(stock, {"close": 1.5})],
+                {},
+            )
+
+        self.assertEqual(written_count, 1)
+        self.assertEqual(statuses, {"sh600519": "OK"})
+        self.assertEqual(len(upserted_records), 1)
+        self.assertEqual(upserted_records[0]["code"], "sh600519")
+        self.assertEqual(upserted_records[0]["asset_name"], "daily_quote")
+        self.assertEqual(upserted_records[0]["status"], "OK")
+        self.assertEqual(captured["row"]["close"], 1.5)
+
+    def test_flush_batched_quote_updates_write_failure_propagates(self):
+        from app.lib.datahub.processors.china_a_stock import ChinaAStock
+        from app.model.stock import StockDailyQuote
+
+        processor = object.__new__(ChinaAStock)
+        processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
+        processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
         stock = SimpleNamespace(code="sh600519", name="贵州茅台")
 
         collection = Mock()
         collection.bulk_write.side_effect = RuntimeError("boom")
 
-        def fake_build(stock_obj, row):
-            return Mock()
-
         with (
             patch(
                 "app.lib.datahub.processors.china_a_stock._build_stock_quote_upsert_operation",
-                side_effect=fake_build,
+                return_value=Mock(),
             ),
             patch.object(StockDailyQuote, "_get_collection", return_value=collection),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.aggregate_stats_by_code"
+            ) as aggregate,
         ):
-            result = processor.write_snapshot_quote(
-                stock_obj=stock,
-                snapshot_row={"close": 1.0},
-                expected_date=datetime.datetime(2026, 8, 25),
-            )
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                processor._flush_batched_quote_updates([(stock, {"close": 1.0})], {})
 
-        self.assertEqual(result["code"], "FAIL")
-        self.assertEqual(result["written_count"], 0)
-        self.assertEqual(result["validated_count"], 0)
+        # fail-closed：写入失败时不刷新 freshness
+        aggregate.assert_not_called()
 
     def test_partial_quote_validation_failure_fails_the_phase(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
@@ -426,7 +458,7 @@ class TestChinaAStockHelpers(TestCase):
         processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
         processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
         processor.perform_date_check = lambda: None
-        processor.check_data_freshness = lambda stock: "FULL"
+        processor.check_data_freshness = lambda stock, **kwargs: "FULL"
         processor.perform_stock_name_check = Mock()
         processor.update_active_status = Mock()
         processor.get_hist_quote_data = Mock(
@@ -450,9 +482,15 @@ class TestChinaAStockHelpers(TestCase):
             [{"code": stock.code, "name": stock.name, "close": 1} for stock in stocks]
         )
 
-        with patch(
-            "app.lib.datahub.processors.china_a_stock.progress_bar",
-            return_value=lambda *args: None,
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock.progress_bar",
+                return_value=lambda *args: None,
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
+            ),
         ):
             with self.assertRaisesRegex(RuntimeError, "sh600004"):
                 processor.check_data_integrity(
@@ -470,7 +508,7 @@ class TestChinaAStockHelpers(TestCase):
         processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
         processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
         processor.perform_date_check = lambda: None
-        processor.check_data_freshness = lambda stock: "GOOD"
+        processor.check_data_freshness = lambda stock, **kwargs: "GOOD"
         processor.perform_stock_name_check = Mock()
         processor.update_active_status = Mock()
         present = self._stock("sh600000")
@@ -479,14 +517,36 @@ class TestChinaAStockHelpers(TestCase):
             [{"code": present.code, "name": present.name, "close": 1}]
         )
 
+        from app.model.stock import StockDailyQuote as _QuoteModel
+
         with (
             patch(
                 "app.lib.datahub.processors.china_a_stock.progress_bar",
                 return_value=lambda *args: None,
             ),
+            patch.object(_QuoteModel, "_get_collection", return_value=Mock()),
             patch(
-                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.refresh_quote_status",
-                side_effect=[{"status": "STALE"}, {"status": "OK"}],
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.aggregate_stats_by_code",
+                return_value={
+                    "sh600000": {
+                        "first_data_date": None,
+                        "latest_data_date": pandas.Timestamp("2026-08-21"),
+                        "data_count": 1,
+                    },
+                    "sh600004": {
+                        "first_data_date": None,
+                        "latest_data_date": pandas.Timestamp("2026-08-20"),
+                        "data_count": 1,
+                    },
+                },
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.bulk_upsert_asset_status",
+                return_value=2,
             ),
         ):
             with self.assertRaisesRegex(RuntimeError, missing.code):
@@ -505,7 +565,7 @@ class TestChinaAStockHelpers(TestCase):
         processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
         processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
         processor.perform_date_check = lambda: None
-        processor.check_data_freshness = lambda stock: "GOOD"
+        processor.check_data_freshness = lambda stock, **kwargs: "GOOD"
         processor.perform_stock_name_check = Mock()
         processor.update_active_status = Mock()
         stock = self._stock("sh600000")
@@ -513,15 +573,32 @@ class TestChinaAStockHelpers(TestCase):
             [{"code": stock.code, "name": stock.name, "close": 1}]
         )
 
+        from app.model.stock import StockDailyQuote as _QuoteModel
+
         with (
             patch(
                 "app.lib.datahub.processors.china_a_stock.progress_bar",
                 return_value=lambda *args: None,
             ),
+            patch.object(_QuoteModel, "_get_collection", return_value=Mock()),
             patch(
-                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.refresh_quote_status",
-                return_value={"status": "OK"},
-            ) as refresh,
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.aggregate_stats_by_code",
+                return_value={
+                    "sh600000": {
+                        "first_data_date": None,
+                        "latest_data_date": pandas.Timestamp("2026-08-21"),
+                        "data_count": 1,
+                    }
+                },
+            ) as aggregate,
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.bulk_upsert_asset_status",
+                return_value=1,
+            ) as bulk_upsert,
         ):
             processor.check_data_integrity(
                 obj_type="stock",
@@ -531,7 +608,12 @@ class TestChinaAStockHelpers(TestCase):
                 allow_update=True,
             )
 
-        refresh.assert_called_once()
+        # GOOD 股票仍然批量重算 freshness 并 upsert
+        aggregate.assert_called_once()
+        bulk_upsert.assert_called_once()
+        records = bulk_upsert.call_args[0][0]
+        self.assertEqual([record["code"] for record in records], ["sh600000"])
+        self.assertEqual(records[0]["status"], "OK")
 
     def test_none_history_result_is_reported_as_failure_and_no_data(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
@@ -581,13 +663,17 @@ class TestChinaAStockHelpers(TestCase):
             [{"code": "sh600519", "name": "Kweichow Moutai", "close": 1}]
         )
 
-        result = processor.check_data_integrity(
-            obj_type="stock",
-            local_data_list=EmptyQuerySet(),
-            remote_data_df=remote,
-            hist_handler="get_hist_stock_quote_data",
-            allow_update=True,
-        )
+        with patch(
+            "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+            return_value={},
+        ):
+            result = processor.check_data_integrity(
+                obj_type="stock",
+                local_data_list=EmptyQuerySet(),
+                remote_data_df=remote,
+                hist_handler="get_hist_stock_quote_data",
+                allow_update=True,
+            )
 
         self.assertEqual(result["written_count"], 3)
 
@@ -607,7 +693,13 @@ class TestChinaAStockHelpers(TestCase):
             [{"code": "sh600519", "name": "Kweichow Moutai", "close": 1}]
         )
 
-        with self.assertRaisesRegex(RuntimeError, "wrote zero quote rows"):
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
+            ),
+            self.assertRaisesRegex(RuntimeError, "wrote zero quote rows"),
+        ):
             processor.check_data_integrity(
                 obj_type="stock",
                 local_data_list=EmptyQuerySet(),
@@ -639,7 +731,7 @@ class TestChinaAStockHelpers(TestCase):
         processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
         processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
         processor.perform_date_check = lambda: None
-        processor.check_data_freshness = lambda stock: "INC"
+        processor.check_data_freshness = lambda stock, **kwargs: "INC"
         processor.perform_stock_name_check = Mock()
         processor.get_hist_quote_data = Mock(
             return_value={
@@ -654,9 +746,15 @@ class TestChinaAStockHelpers(TestCase):
             [{"code": stock.code, "name": stock.name, "close": 0}]
         )
 
-        with patch(
-            "app.lib.datahub.processors.china_a_stock.progress_bar",
-            return_value=lambda *args: None,
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock.progress_bar",
+                return_value=lambda *args: None,
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
+            ),
         ):
             result = processor.check_data_integrity(
                 obj_type="stock",
@@ -678,7 +776,7 @@ class TestChinaAStockHelpers(TestCase):
         processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
         processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
         processor.perform_date_check = lambda: None
-        processor.check_data_freshness = lambda stock: "UPD"
+        processor.check_data_freshness = lambda stock, **kwargs: "UPD"
         processor.perform_stock_name_check = Mock()
         processor.get_hist_quote_data = Mock(
             return_value={
@@ -693,9 +791,15 @@ class TestChinaAStockHelpers(TestCase):
             [{"code": stock.code, "name": stock.name, "close": 0}]
         )
 
-        with patch(
-            "app.lib.datahub.processors.china_a_stock.progress_bar",
-            return_value=lambda *args: None,
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock.progress_bar",
+                return_value=lambda *args: None,
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
+            ),
         ):
             result = processor.check_data_integrity(
                 obj_type="stock",
@@ -725,13 +829,17 @@ class TestChinaAStockHelpers(TestCase):
             [{"code": "sh600000", "name": "Suspended", "close": 0}]
         )
 
-        result = processor.check_data_integrity(
-            obj_type="stock",
-            local_data_list=EmptyQuerySet(),
-            remote_data_df=remote,
-            hist_handler="get_hist_stock_quote_data",
-            allow_update=True,
-        )
+        with patch(
+            "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+            return_value={},
+        ):
+            result = processor.check_data_integrity(
+                obj_type="stock",
+                local_data_list=EmptyQuerySet(),
+                remote_data_df=remote,
+                hist_handler="get_hist_stock_quote_data",
+                allow_update=True,
+            )
 
         self.assertEqual(result["written_count"], 3)
 
@@ -751,7 +859,13 @@ class TestChinaAStockHelpers(TestCase):
             [{"code": "sh600000", "name": "Suspended", "close": 0}]
         )
 
-        with self.assertRaisesRegex(RuntimeError, "sh600000"):
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
+            ),
+            self.assertRaisesRegex(RuntimeError, "sh600000"),
+        ):
             processor.check_data_integrity(
                 obj_type="stock",
                 local_data_list=EmptyQuerySet(),
@@ -767,7 +881,7 @@ class TestChinaAStockHelpers(TestCase):
         processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
         processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
         processor.perform_date_check = lambda: None
-        processor.check_data_freshness = lambda stock: "FULL"
+        processor.check_data_freshness = lambda stock, **kwargs: "FULL"
         processor.perform_stock_name_check = Mock()
         processor.get_hist_quote_data = Mock(
             return_value={
@@ -786,6 +900,10 @@ class TestChinaAStockHelpers(TestCase):
             patch(
                 "app.lib.datahub.processors.china_a_stock.progress_bar",
                 return_value=lambda *args: None,
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
             ),
             self.assertRaisesRegex(RuntimeError, index.code),
         ):
@@ -807,7 +925,7 @@ class TestChinaAStockHelpers(TestCase):
         processor.last_job_summary = None
         processor._partial_phase_result = None
         processor.perform_date_check = lambda: None
-        processor.check_data_freshness = lambda stock: "FULL"
+        processor.check_data_freshness = lambda stock, **kwargs: "FULL"
         processor.perform_stock_name_check = Mock()
         processor.get_hist_quote_data = Mock(
             side_effect=[
@@ -839,12 +957,74 @@ class TestChinaAStockHelpers(TestCase):
                 "app.lib.datahub.processors.china_a_stock.progress_bar",
                 return_value=lambda *args: None,
             ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
+            ),
             self.assertRaisesRegex(RuntimeError, "source failed"),
         ):
             processor._run_job("stock_quote_sync", [("quotes", run_phase)])
 
         self.assertEqual(processor.last_job_summary["written_total"], 3)
         self.assertEqual(processor.last_job_summary["validated_total"], 1)
+
+    def test_consecutive_history_failures_trip_circuit_breaker(self):
+        from app.lib.datahub.processors.china_a_stock import (
+            HISTORY_FAILURE_CIRCUIT_LIMIT,
+            ChinaAStock,
+        )
+
+        processor = object.__new__(ChinaAStock)
+        processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
+        processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
+        processor.perform_date_check = lambda: None
+        processor.check_data_freshness = lambda stock, **kwargs: "INC"
+        processor.perform_stock_name_check = Mock()
+        processor.update_active_status = Mock()
+        processor.get_hist_quote_data = Mock(
+            return_value={
+                "code": "FAIL",
+                "written_count": 0,
+                "validated_count": 0,
+                "freshness_status": "NO_DATA",
+            }
+        )
+        stocks = DummyQuerySet(
+            [
+                self._stock(f"sh6{index:05d}")
+                for index in range(HISTORY_FAILURE_CIRCUIT_LIMIT + 5)
+            ]
+        )
+        remote = pandas.DataFrame(
+            [{"code": stock.code, "name": stock.name, "close": 1} for stock in stocks]
+        )
+
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock.progress_bar",
+                return_value=lambda *args: None,
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "history source appears unavailable"
+            ):
+                processor.check_data_integrity(
+                    obj_type="stock",
+                    local_data_list=stocks,
+                    remote_data_df=remote,
+                    hist_handler="get_hist_stock_quote_data",
+                    allow_update=True,
+                )
+
+        # 熔断提前中止：不再遍历剩余股票
+        self.assertLess(
+            processor.get_hist_quote_data.call_count,
+            len(stocks),
+        )
 
     def test_failed_phase_preserves_partial_quote_stats(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
