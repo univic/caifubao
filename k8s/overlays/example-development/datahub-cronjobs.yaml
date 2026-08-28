@@ -365,33 +365,38 @@ spec:
           - name: health-watcher
             image: caifubao-datahub:latest
             imagePullPolicy: Always
-            command: ["python", "-m", "app.jobs.health_watcher", "run", "--hours", "26", "--fail-on-issues"]
+            command: ["python", "-m", "app.jobs.health_watcher", "--hours", "26", "--fail-on-issues"]
             env:
             - name: MONGODB_HOST
               valueFrom:
                 configMapKeyRef:
-                  name: mongodb-config
+                  name: backend-config
                   key: MONGODB_HOST
             - name: MONGODB_PORT
               valueFrom:
                 configMapKeyRef:
-                  name: mongodb-config
+                  name: backend-config
                   key: MONGODB_PORT
-            - name: MONGODB_USER
-              valueFrom:
-                configMapKeyRef:
-                  name: mongodb-config
-                  key: MONGODB_INITDB_ROOT_USERNAME
-            - name: MONGODB_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: mongodb-secret
-                  key: MONGODB_ROOT_PASSWORD
             - name: MONGODB_NAME
               valueFrom:
                 configMapKeyRef:
-                  name: mongodb-config
-                  key: MONGODB_INITDB_DATABASE
+                  name: backend-config
+                  key: MONGODB_NAME
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_USER
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: MONGODB_PASSWORD
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: ENVIRONMENT
             # Optional notification target; private overlays set the real URL.
             # - name: HEALTH_WEBHOOK_URL
             #   valueFrom:
