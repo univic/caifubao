@@ -202,3 +202,45 @@ carry-forward 项挂在 GitHub issue #125。
 ./scripts/caifubao system bootstrap-check # 数据组装检查
 openspec validate --all --strict          # OpenSpec 校验
 ```
+
+---
+
+## 7. 2026-08-29 凌晨运维事件记录（补充）
+
+### 7.1 生产事件：vm-4-12 节点三次失联（需运维）
+
+- **13:20Z / 17:18Z（1.5h）/ 03:25Z（截至 04:16 未恢复）三次节点级故障**
+  ——网络间歇性通断（ping 时通时断）、kubelet 心跳中断、SSH 不可达。
+- 承载 **prod+dev 双环境 MongoDB 与 backend**，单点故障 = 全环境数据/API 不可用。
+- 数据安全：PVC 本地盘，每次恢复后数据完好（前两次已验证）。
+- **需运维/云控制台物理排查**（网络硬件/配置）；恢复后执行
+  `scripts/verify-prod-after-outage.sh` 一键验证。
+
+### 7.2 本次连续工作交付（PR #147-#155，全部合入）
+
+| PR | 内容 |
+|---|---|
+| #147 | 工作区 venv（Python 3.12.14）+ AGENTS.md 文档化 |
+| #148 | health-watcher P0 告警（失败/新鲜度检查 + 示例 CronJob） |
+| #149 | backend MongoDB 连接重试 + 60 个预存 backend 测试 CI 修复 |
+| #150 | 节点事件记录 + post-outage 验证脚本 |
+| #151 | sync 业务键 upsert（E11000 修复，dev 实测） |
+| #152 | main 发布（#147-#151 到 main，prod datahub 已部署） |
+| #153 | datahub MongoDB 连接重试（补全 #149） |
+| #154/#155 | roadmap 状态更新 + TUSHARE_TOKEN 缺口记录 |
+
+### 7.3 改善效果实证（#144/#146 拆分）
+
+- quote-stock：2h 超时被杀 → **70 秒完成**（5 phases，无信号/评分）
+- quote-index：恢复后 5m55s 补 3 天指数数据（562 指数全部 08-28）
+- 进度持久化/依赖门：被杀进程的 run 记录保留阶段证据（实证）
+- dev data-sync：E11000 失败 → 业务键合并成功（modified=1184+2868）
+
+### 7.4 待运维介入（无法自主解决）
+
+1. **vm-4-12 节点恢复**（物理排查）→ verify-prod-after-outage.sh
+2. **私有仓库 caifubao-private 补 `TUSHARE_TOKEN`**（datahub-secret 缺失，
+   08-29 临时置空降级，tushare 行情源待恢复）
+3. **私有仓库修 backend 部署 workflow**（deploy-dispatch 对 backend 不生效）
+4. **周一 09-01 18:00** 自动链路确认（quote → signal 18:30 → scoring 18:35
+   → dev data-sync 19:15）
