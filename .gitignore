@@ -25,6 +25,8 @@ backend/app/tmp/
 backend/app/log/
 backend/venv
 backend/venv312
+**/.venv/
+datahub/.tools/
 .DS_Store
 .pytest_cache/
 .ruff_cache/

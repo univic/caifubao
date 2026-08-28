@@ -163,3 +163,22 @@ patterns are sufficient.
 For dev environment operations (data sync, scoring, health checks), use the
 unified CLI: `./scripts/caifubao`. See `docs/operations/agent-cli.md` for
 the full command reference.
+
+## Local Python Environment (datahub)
+
+The datahub module requires **Python 3.12** (code uses `datetime.UTC` and
+other 3.11+ features). A ready venv lives at `datahub/.venv` — always use it
+for local datahub work:
+
+```bash
+datahub/.venv/bin/python -m pytest datahub/app/test/     # full test suite
+datahub/.venv/bin/ruff check datahub/ && datahub/.venv/bin/ruff format --check datahub/
+```
+
+- Interpreter source: `datahub/.tools/python312/` (uv-managed CPython 3.12).
+  Rebuild the venv with:
+  `datahub/.tools/python312/bin/python3.12 -m venv datahub/.venv &&
+   datahub/.venv/bin/pip install -r datahub/requirements.txt pytest`
+- Do **not** use the brew Python 3.14 (broken pyexpat — pip/venv unusable) or
+  Python 3.10 (`datetime.UTC` missing; pandas-ta 0.4.71b0 requires >=3.12).
+- `.venv/` and `.tools/` are git-ignored; never commit them.
