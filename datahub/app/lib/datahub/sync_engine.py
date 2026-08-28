@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """MongoDB-to-MongoDB data sync engine.
 
 Copies external/read-only data collections from a source (prod) MongoDB to
@@ -50,6 +49,20 @@ COLLECTION_ALIASES = {
 # Number of documents per bulk-write batch
 BATCH_SIZE = 500
 DEV_ENV_VALUES = {"dev", "development", "local", "test"}
+
+# Business keys for idempotent upsert. Syncing merges by these fields instead
+# of _id so documents produced independently in the target (e.g. a dev quote
+# job writing the same (code, date) with a different _id) do not collide on
+# the unique (code, date) indexes with E11000. Collections without a unique
+# business key (snapshots) keep the _id-based upsert.
+SYNC_UPSERT_KEYS = {
+    "stock_daily_quote": ["code", "date"],
+    "stock_factor_daily": ["stock_code", "date"],
+    "stock_signal_daily": ["stock_code", "date", "signal_name"],
+    # stock_industry has a unique stock_code (model/industry.py) — a dev-side
+    # doc with the same stock_code but a different _id would otherwise E11000.
+    "stock_industry": ["stock_code"],
+}
 
 
 def _is_dev_environment() -> bool:
@@ -171,9 +184,21 @@ def _sync_collection(
         # Remove _id from the update but keep it for the filter
         doc_copy = {k: v for k, v in doc.items() if k != "_id"}
 
+        # Match by business key when the collection has one (see
+        # SYNC_UPSERT_KEYS) — documents with the same business key but a
+        # different _id (produced independently in dev) would otherwise hit
+        # E11000 on the unique (code, date) index.
+        upsert_keys = SYNC_UPSERT_KEYS.get(src_col.name)
+        if upsert_keys:
+            doc_filter = {k: doc.get(k) for k in upsert_keys}
+            if any(v is None for v in doc_filter.values()):
+                doc_filter = {"_id": doc_id}
+        else:
+            doc_filter = {"_id": doc_id}
+
         batch.append(
             UpdateOne(
-                {"_id": doc_id},
+                doc_filter,
                 {"$set": doc_copy},
                 upsert=True,
             )
