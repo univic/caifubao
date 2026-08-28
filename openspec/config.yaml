@@ -12,6 +12,7 @@ context: |
   未完成: fq-adj-factor-fix 与 scoring-percentile-rank 两个 change 的部署/全市场验证任务未执行（见各 change tasks.md 5.x）；评分有效性全市场验收（12d.5 / 20.x）未做，carry-forward 见 GitHub issue #125
   已归档: openspec/archive/mvp-quant-demo/ (MVP 契约账本，含 11 份 spec)、openspec/archive/frontend/ (Django/Celery/AkQuant 旧架构，仅历史参考)、openspec/archive/homepage-20260321/ (首页提案，未实施)
   运营: 使用 ./scripts/caifubao 统一 CLI；agent 规则见 RULES.md / AGENTS.md；领域 skill 见 skills/
+  性能盘点 (2026-08-28): 全量性能/CPU 热点审查结论与分阶段修复路线见 docs/operations/perf-analysis-2026-08.md；修复任务按 openspec/changes/datahub-perf-optimization/ 推进（P0：sync 无水位线全量重灌、signal 无增量全历史重算、scoring 逐股 N+1 与 prod 评分双跑、FQ 回填逐股 pacing 阻塞待办 5.2）
   注意: 仅在触及 API 契约、鉴权、评分语义、数据所有权或公开文档时才需要新建 OpenSpec change
 
 # Per-artifact rules (optional)

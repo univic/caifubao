@@ -129,6 +129,18 @@ FQ 修复后评分与收益仍为负相关（见 2.3），百分位推荐是当�
   百分位评分补进去。
 - `openspec/config.yaml` 的 context 未提及 tushare/百分位评分（见 §5）。
 
+### 3.5 性能与 CPU 热点盘点（2026-08-28）
+
+对 prod→dev 同步 / factor / signal / scoring 四条链路完成了全量性能审查
+（只读，未改代码）。P0 结论：sync 夜间无水位线全量重灌（30–90 分钟/晚）、
+signal 无增量全历史重算（~3,000 万级写/晚）、scoring 逐股 N+1 且 prod 每日
+双跑、FQ 全历史回填被 tushare pacing 钉死（**阻塞上面 §3.1 待办 5.2 的
+全市场 FQ 重算——先落地 `datahub-perf-optimization` 的 3.9–3.12 再执行重算**）。
+完整发现清单（S/Q/F/G/C/W 编号 + file:line + 量级 + 修复）见
+[`perf-analysis-2026-08.md`](./perf-analysis-2026-08.md)；分阶段任务清单见
+`openspec/changes/datahub-perf-optimization/tasks.md`，后续性能工作以该
+change 为准。
+
 ---
 
 ## 4. OpenSpec 状态（2026-08-28 实况）
@@ -169,9 +181,13 @@ carry-forward 项挂在 GitHub issue #125。
    合并前做 branch-conflict 检查，Draft PR + CI 全绿后再 merge。
 6. **建议的下一步**（按优先级）：
    1. 发布新镜像 → dev 部署，验证 FQ 日快照为每目标日一次请求且只写当日；
-   2. prod 部署后全市场 FQ 重算 + 重跑 50 只股票评分/验证实验，对比 corr；
+   2. prod 部署后全市场 FQ 重算 + 重跑 50 只股票评分/验证实验，对比 corr
+      （注意：重算前先按 `datahub-perf-optimization` 任务 3.9–3.12 把回填
+      改为按交易日快照路径，见 §3.5）；
    3. 决定 prod 是否启用 `DATAHUB_SCORING_MODE=ranked`（私有 overlay）；
-   4. 刷新 `docs/capability-inventory.md`；评估归档 3 个已完成 change。
+   4. 刷新 `docs/capability-inventory.md`；评估归档 3 个已完成 change；
+   5. 按 `openspec/changes/datahub-perf-optimization/tasks.md` 推进性能
+      优化（先做阶段 0 度量基线与阶段 1 快赢项）。
 
 ---
 
