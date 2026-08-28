@@ -22,8 +22,8 @@
 
 ## 4. Review + Merge
 
-- [ ] 4.1 spec-guardian + qa-reviewer
-- [ ] 4.2 Branch conflict check + Draft PR + CI green
+- [x] 4.1 spec-guardian + qa-reviewer（spec-guardian PASS、qa-reviewer 两轮修复后 CONFIRMED MERGEABLE）
+- [x] 4.2 Branch conflict check + Draft PR + CI green（PR #137 merged）
 
 ## 5. Deploy + Validation (operator)
 
