@@ -116,3 +116,51 @@ def test_snapshot_collection_falls_back_to_id():
 
     op = dst.bulk_write.call_args.args[0][0]
     assert op._filter == {"_id": "snap-id"}
+
+
+def test_same_business_key_different_id_merges_not_inserts():
+    """Regression: dev doc with same (code, date) but different _id must be
+    updated via the business-key filter, not inserted (E11000)."""
+    src = _fake_collection(
+        "stock_daily_quote",
+        [
+            _doc(
+                "sz000001",
+                datetime.datetime(2026, 8, 27, tzinfo=datetime.timezone.utc),
+                _id="prod-id",
+            )
+        ],
+    )
+    dst = MagicMock()
+    dst.name = "stock_daily_quote"
+    # dev already holds the same business key under a different _id
+    dst.bulk_write.return_value = MagicMock(upserted_count=0, modified_count=1)
+
+    _sync_collection(
+        src, dst, date_field="date", from_date=None, to_date=None, dry_run=False
+    )
+
+    op = dst.bulk_write.call_args.args[0][0]
+    assert op._filter == {
+        "code": "sz000001",
+        "date": datetime.datetime(2026, 8, 27, tzinfo=datetime.timezone.utc),
+    }
+    assert "_id" not in op._doc["$set"]
+    # upsert=True with a business-key filter merges (no duplicate insert)
+    assert op._upsert is True
+
+
+def test_business_key_collection_falls_back_to_id_when_key_missing():
+    src = _fake_collection(
+        "stock_daily_quote",
+        [{"_id": "odd-doc", "code": "sz000001", "close": 1.0}],  # no date field
+    )
+    dst = MagicMock()
+    dst.name = "stock_daily_quote"
+
+    _sync_collection(
+        src, dst, date_field="date", from_date=None, to_date=None, dry_run=False
+    )
+
+    op = dst.bulk_write.call_args.args[0][0]
+    assert op._filter == {"_id": "odd-doc"}

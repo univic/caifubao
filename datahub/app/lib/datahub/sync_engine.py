@@ -59,6 +59,9 @@ SYNC_UPSERT_KEYS = {
     "stock_daily_quote": ["code", "date"],
     "stock_factor_daily": ["stock_code", "date"],
     "stock_signal_daily": ["stock_code", "date", "signal_name"],
+    # stock_industry has a unique stock_code (model/industry.py) — a dev-side
+    # doc with the same stock_code but a different _id would otherwise E11000.
+    "stock_industry": ["stock_code"],
 }
 
 
