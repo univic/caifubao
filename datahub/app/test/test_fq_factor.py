@@ -821,6 +821,7 @@ def test_run_stock_job_stops_downstream_when_fq_phase_fails():
             self.most_recent_trading_day = datetime.datetime(2026, 8, 27)
             self._partial_phase_result = None
             self.last_job_summary = None
+            self._progress_callback = None
             self.calls = []
 
         def check_prerequisite(self, allow_update=False):
@@ -838,12 +839,6 @@ def test_run_stock_job_stops_downstream_when_fq_phase_fails():
 
         def update_ma_factor(self, allow_update=False):
             self.calls.append("ma")
-
-        def update_signals(self, allow_update=False):
-            self.calls.append("signal")
-
-        def update_scoring(self, allow_update=False):
-            self.calls.append("scoring")
 
     processor = FakeChinaAStock()
     with pytest.raises(RuntimeError, match="historical repair"):

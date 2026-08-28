@@ -90,7 +90,9 @@ def test_mark_stale_running_job_runs_failed_reaps_only_stale_running(
 ):
     import app.lib.utilities.job_run_helper as job_run_helper
 
-    store = {"update_results": [2, 0]}
+    # Each reaped group runs two updates: records that wrote data first
+    # (written_total > 0), then records without writes.
+    store = {"update_results": [2, 0, 0, 0]}
     monkeypatch.setattr(job_run_helper, "DatahubJobRun", _FakeJobRunManager)
     _FakeJobRunManager.store = store
 
@@ -100,16 +102,27 @@ def test_mark_stale_running_job_runs_failed_reaps_only_stale_running(
     assert updated == 2
     # Default group: every job name except the unbounded catch-up, reaped
     # after 4 hours (must exceed the largest activeDeadlineSeconds, 3h).
-    assert store["groups"][0]["filters"] == {
+    written_group = store["groups"][0]
+    assert written_group["filters"] == {
         "status": "RUNNING",
         "started_at__lt": datetime.datetime(2026, 4, 14, 8, 0),
         "job_name__nin": ["datahub_quote_startup_catchup"],
+        "written_total__gt": 0,
     }
-    updates = store["groups"][0]["updates"]
+    updates = written_group["updates"]
     assert updates["set__status"] == "FAILED"
     assert updates["set__completed_at"] is not None
     assert "240 minutes" in updates["set__error_message"]
     assert "startup cleanup" in updates["set__error_message"]
+    assert "data was already written" in updates["set__error_message"]
+
+    empty_group = store["groups"][1]
+    assert empty_group["filters"] == {
+        "status": "RUNNING",
+        "started_at__lt": datetime.datetime(2026, 4, 14, 8, 0),
+        "job_name__nin": ["datahub_quote_startup_catchup"],
+    }
+    assert "no data was written" in empty_group["updates"]["set__error_message"]
 
 
 def test_mark_stale_running_job_runs_failed_gives_catchup_a_wider_window(
@@ -117,7 +130,7 @@ def test_mark_stale_running_job_runs_failed_gives_catchup_a_wider_window(
 ):
     import app.lib.utilities.job_run_helper as job_run_helper
 
-    store = {"update_results": [0, 1]}
+    store = {"update_results": [0, 0, 0, 1]}
     monkeypatch.setattr(job_run_helper, "DatahubJobRun", _FakeJobRunManager)
     _FakeJobRunManager.store = store
 
@@ -126,12 +139,13 @@ def test_mark_stale_running_job_runs_failed_gives_catchup_a_wider_window(
 
     assert updated == 1
     # Second group: the catch-up is only reaped once it cannot be a live
-    # unbounded deployment run (24h).
-    catchup_group = store["groups"][1]
+    # unbounded deployment run (24h). Its written-first update is groups[2].
+    catchup_group = store["groups"][2]
     assert catchup_group["filters"] == {
         "status": "RUNNING",
         "started_at__lt": datetime.datetime(2026, 4, 13, 12, 0),
         "job_name": "datahub_quote_startup_catchup",
+        "written_total__gt": 0,
     }
     assert "1440 minutes" in catchup_group["updates"]["set__error_message"]
 
@@ -141,7 +155,7 @@ def test_mark_stale_running_job_runs_failed_respects_custom_window(
 ):
     import app.lib.utilities.job_run_helper as job_run_helper
 
-    store = {"update_results": [0, 0]}
+    store = {"update_results": [0, 0, 0, 0]}
     monkeypatch.setattr(job_run_helper, "DatahubJobRun", _FakeJobRunManager)
     _FakeJobRunManager.store = store
 
@@ -151,13 +165,13 @@ def test_mark_stale_running_job_runs_failed_respects_custom_window(
     )
 
     assert updated == 0
-    default_group = store["groups"][0]
-    assert default_group["filters"]["started_at__lt"] == datetime.datetime(
+    written_group = store["groups"][0]
+    assert written_group["filters"]["started_at__lt"] == datetime.datetime(
         2026, 4, 14, 11, 30
     )
-    assert "30 minutes" in default_group["updates"]["set__error_message"]
+    assert "30 minutes" in written_group["updates"]["set__error_message"]
     # The catch-up keeps its own 24h window regardless of the custom default.
-    assert "1440 minutes" in store["groups"][1]["updates"]["set__error_message"]
+    assert "1440 minutes" in store["groups"][2]["updates"]["set__error_message"]
 
 
 class _FlakySaveDocument:
@@ -225,3 +239,66 @@ def test_compute_daily_schedule_at_uses_same_calendar_day():
     )
 
     assert scheduled == datetime.datetime(2026, 4, 14, 10, 10)
+
+
+class _RecordingJobRun:
+    """Fake DatahubJobRun capturing progress updates."""
+
+    def __init__(self, job_name="datahub_quote_stock_daily", fail_update=False):
+        self.job_name = job_name
+        self.fail_update = fail_update
+        self.updates = []
+        self.reloaded = 0
+
+    def update(self, **updates):
+        if self.fail_update:
+            raise RuntimeError("mongo gone")
+        self.updates.append(updates)
+        return self
+
+    def reload(self):
+        self.reloaded += 1
+        return self
+
+
+def test_update_job_run_progress_persists_partial_state():
+    import app.lib.utilities.job_run_helper as job_run_helper
+
+    job_run = _RecordingJobRun()
+    phase_stats = {
+        "check_stock_data_integrity": {"written_count": 5209, "validated_count": 5209}
+    }
+
+    result = job_run_helper.update_job_run_progress(
+        job_run,
+        pulled_total=5550,
+        written_total=5209,
+        phase_stats=phase_stats,
+    )
+
+    assert result is job_run
+    assert job_run.updates[-1] == {
+        "set__failed_phase": None,
+        "set__pulled_total": 5550,
+        "set__written_total": 5209,
+        "set__phase_stats": phase_stats,
+    }
+    assert job_run.reloaded == 1
+
+
+def test_update_job_run_progress_never_raises_on_failure():
+    import app.lib.utilities.job_run_helper as job_run_helper
+
+    job_run = _RecordingJobRun(fail_update=True)
+
+    # Progress persistence is best-effort: a DB failure must not break the
+    # data job itself.
+    result = job_run_helper.update_job_run_progress(
+        job_run,
+        pulled_total=1,
+        written_total=2,
+        phase_stats={},
+    )
+
+    assert result is job_run
+    assert job_run.reloaded == 0

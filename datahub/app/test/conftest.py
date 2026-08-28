@@ -33,6 +33,26 @@ from unittest.mock import MagicMock, patch
 # Set test environment
 os.environ["APP_ENV"] = "test"
 
+# akshare is only reachable at module level in the interface module
+# (``akshare.stock_zh_a_spot()`` etc.) and unit tests never call those
+# functions. Provide a stub so the test suite can run on machines without
+# the full akshare install (akshare requires Python >= 3.11). Environments
+# with a real akshare are unaffected: setdefault never overrides it.
+try:
+    import akshare  # noqa: F401
+except ImportError:
+    import types
+
+    _akshare_stub = types.ModuleType("akshare")
+
+    def _raise_not_implemented(*args, **kwargs):
+        raise NotImplementedError(
+            "akshare is stubbed in tests; real market calls are not available"
+        )
+
+    _akshare_stub.__getattr__ = lambda name: _raise_not_implemented
+    sys.modules.setdefault("akshare", _akshare_stub)
+
 
 @pytest.fixture
 def mock_mongo_connection():

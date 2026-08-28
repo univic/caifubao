@@ -291,14 +291,24 @@ the entire logical run. Do not resume a Job created from an older image.
 
 | CronJob | Schedule | Purpose |
 |:---|:---|:---|
-| prod `caifubao-datahub-quote-stock` | `0 18 * * 1-5` | Pull latest quotes + factors (`DATAHUB_STOCK_HISTORY_SOURCE=tushare`, `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare`); UPD path writes settlement snapshots |
-| prod `caifubao-datahub-signal` | `30 18 * * 1-5` | Compute MA-cross signals from fresh factors |
-| prod `caifubao-datahub-scoring` | `35 18 * * 1-5` | Score latest trading day for all horizons |
+| prod `caifubao-datahub-quote-stock` | `0 18 * * 1-5` | Pull latest quotes + factors only (`DATAHUB_STOCK_HISTORY_SOURCE=tushare`, `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare`); UPD path writes settlement snapshots. Signals/scoring are NOT produced here — they run as the standalone jobs below, gated on this job's persisted data |
+| prod `caifubao-datahub-signal` | `30 18 * * 1-5` | Compute MA-cross signals from fresh factors (incremental, stale-only by default) |
+| prod `caifubao-datahub-scoring` | `35 18 * * 1-5` | Score latest trading day for all horizons (skips already-complete cohorts) |
 | dev `caifubao-datahub-data-sync` | `30 18 * * 1-5` | Sync prod MongoDB → dev (quotes, factors, signals, market, industry) |
 
 The quote, signal, and scoring jobs run in dependency order (quote → signal →
 scoring). Dev's data-sync runs after prod's quote job so it picks up the same
 day's rows.
+
+Dependency gates are data-aware, not just status-aware: a signal run proceeds
+when today's quote job has a SUCCESS record **or** its record (RUNNING or
+FAILED — the run may have been killed by `activeDeadlineSeconds` after writing
+data) shows both the `check_stock_data_integrity` phase (`validated_count > 0`)
+and the `update_ma_factor` phase (`written_count > 0`) completed. Similarly,
+scoring proceeds when today's signal run has a SUCCESS record or a record with
+`written_total > 0` (preserved on partial failures). This keeps the pipeline
+from stalling when a job dies after persisting its data but before recording
+completion.
 
 ### Data pipeline dependency chain
 ```

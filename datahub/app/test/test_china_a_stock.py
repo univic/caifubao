@@ -1270,3 +1270,84 @@ class TestChinaAStockHelpers(TestCase):
         )
 
         self.assertFalse(is_duplicate_only_bulk_write_error(error))
+
+    def test_run_job_invokes_progress_callback_after_each_phase(self):
+        from app.lib.datahub.processors.china_a_stock import ChinaAStock
+
+        calls = []
+        processor = object.__new__(ChinaAStock)
+        processor.market_name = "ChinaAStock"
+        processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
+        processor.run_started_at = datetime.datetime(
+            2026, 8, 24, 15, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+        )
+        processor.today = datetime.date(2026, 8, 24)
+        processor.explicit_as_of_date = False
+        processor.most_recent_trading_day = datetime.datetime(2026, 8, 24)
+        processor.result = {"code": "GOOD", "message": ""}
+        processor.last_job_summary = None
+        processor._partial_phase_result = None
+        processor._progress_callback = lambda job, phase, phase_summary, summary: (
+            calls.append(
+                (job, phase, phase_summary["written_count"], summary["written_total"])
+            )
+        )
+        processor.check_prerequisite = lambda allow_update=False: {
+            "pulled_count": 0,
+            "written_count": 3,
+        }
+        processor.check_stock_data_integrity = lambda allow_update=False: {
+            "pulled_count": 5,
+            "written_count": 7,
+            "validated_count": 7,
+        }
+
+        result = processor._run_job(
+            "stock_quote_sync",
+            [
+                ("check_prerequisite", processor.check_prerequisite),
+                ("check_stock_data_integrity", processor.check_stock_data_integrity),
+            ],
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                ("stock_quote_sync", "check_prerequisite", 3, 3),
+                ("stock_quote_sync", "check_stock_data_integrity", 7, 10),
+            ],
+        )
+        self.assertEqual(result["written_total"], 10)
+
+    def test_run_job_ignores_progress_callback_exception(self):
+        from app.lib.datahub.processors.china_a_stock import ChinaAStock
+
+        processor = object.__new__(ChinaAStock)
+        processor.market_name = "ChinaAStock"
+        processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
+        processor.run_started_at = datetime.datetime(
+            2026, 8, 24, 15, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+        )
+        processor.today = datetime.date(2026, 8, 24)
+        processor.explicit_as_of_date = False
+        processor.most_recent_trading_day = datetime.datetime(2026, 8, 24)
+        processor.result = {"code": "GOOD", "message": ""}
+        processor.last_job_summary = None
+        processor._partial_phase_result = None
+
+        def broken_callback(*args):
+            raise RuntimeError("progress db down")
+
+        processor._progress_callback = broken_callback
+        processor.check_prerequisite = lambda allow_update=False: {
+            "pulled_count": 0,
+            "written_count": 3,
+        }
+
+        # A failing progress callback must never break the data job.
+        result = processor._run_job(
+            "stock_quote_sync", [("check_prerequisite", processor.check_prerequisite)]
+        )
+
+        self.assertEqual(result["status"], "SUCCESS")
+        self.assertEqual(result["written_total"], 3)

@@ -165,6 +165,41 @@ def mark_job_run_skipped(
     return finish_job_run(job_run, status=STATUS_SKIPPED, summary=summary)
 
 
+def update_job_run_progress(
+    job_run: DatahubJobRun,
+    *,
+    failed_phase: str | None = None,
+    pulled_total: int = 0,
+    written_total: int = 0,
+    phase_stats: dict[str, Any] | None = None,
+) -> DatahubJobRun:
+    """Best-effort persistence of a still-running job's partial progress.
+
+    Called after each completed phase so that a process killed mid-run
+    (activeDeadlineSeconds expiry, OOM, node loss) still leaves evidence of
+    which phases completed and how much data was written. Without this, a
+    killed run would otherwise look like it wrote nothing (the 2026-08-28
+    quote-run incident: quotes and factors were persisted, yet the run record
+    stayed at pulled=0/written=0 until the reaper marked it FAILED).
+
+    Never raises: progress persistence must not break the data job itself.
+    """
+    updates = {
+        "set__failed_phase": failed_phase,
+        "set__pulled_total": int(pulled_total or 0),
+        "set__written_total": int(written_total or 0),
+        "set__phase_stats": phase_stats or {},
+    }
+    try:
+        job_run.update(**updates)
+        return job_run.reload()
+    except Exception:
+        logger.exception(
+            "Failed to persist job run progress (job=%s); continuing", job_run.job_name
+        )
+        return job_run
+
+
 def latest_job_run(
     *,
     job_family: str,
@@ -228,21 +263,37 @@ def _reap_stale_running_group(
 ) -> int:
     cutoff = reference - datetime.timedelta(minutes=max_age_minutes)
     marked_at = utc_now_naive()
-    updated = DatahubJobRun.objects(
-        status=STATUS_RUNNING,
-        started_at__lt=cutoff,
-        **filters,
-    ).update(
-        set__status=STATUS_FAILED,
-        set__completed_at=marked_at,
-        set__error_message=(
-            "Marked FAILED by startup cleanup "
-            f"{marked_at.isoformat()}Z: stale RUNNING record with no "
-            f"completion recorded within {max_age_minutes} minutes; the "
-            "original process likely died before finishing the run."
-        ),
+    updated = 0
+
+    def _mark(filters_extra: dict[str, Any], note: str) -> int:
+        return int(
+            DatahubJobRun.objects(
+                status=STATUS_RUNNING,
+                started_at__lt=cutoff,
+                **filters,
+                **filters_extra,
+            ).update(
+                set__status=STATUS_FAILED,
+                set__completed_at=marked_at,
+                set__error_message=(
+                    "Marked FAILED by startup cleanup "
+                    f"{marked_at.isoformat()}Z: stale RUNNING record with no "
+                    f"completion recorded within {max_age_minutes} minutes; the "
+                    "original process likely died before finishing the run "
+                    f"({note})."
+                ),
+            )
+            or 0
+        )
+
+    # Runs that already persisted data before dying deserve a distinct note:
+    # their written/phase stats are the only surviving evidence of a partial
+    # or complete write, and downstream gates may rely on them.
+    updated += _mark(
+        {"written_total__gt": 0},
+        "data was already written before the process died",
     )
-    updated = int(updated or 0)
+    updated += _mark({}, "no data was written")
     if updated:
         logger.info(
             "Startup cleanup marked %s stale RUNNING job run(s) as FAILED "
