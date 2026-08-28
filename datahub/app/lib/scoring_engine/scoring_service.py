@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 
 import datetime
+import hashlib
 import logging
+
+from pymongo import UpdateOne
 
 from app.lib.scoring_engine.components import (
     aggregate_industry_metrics,
@@ -103,7 +106,22 @@ class StockScoringService:
         horizons = [horizon] if horizon else list(SUPPORTED_HORIZONS)
         stocks = list(self.stock_model.objects(active_status=0))
         results = []
+        skipped_complete_horizons = []
+        expected_codes = [stock.code for stock in stocks]
         for current_horizon in horizons:
+            if (
+                not dry_run
+                and not replace
+                and self._is_complete_cohort(
+                    stocks, date, current_horizon, scoring_mode="raw"
+                )
+            ):
+                skipped_complete_horizons.append(current_horizon)
+                self._aggregate_industry_metrics(
+                    date, current_horizon, expected_codes=expected_codes
+                )
+                continue
+            failed_codes = []
             for stock in stocks:
                 try:
                     prediction = self.score_single_stock(
@@ -115,6 +133,7 @@ class StockScoringService:
                     )
                     results.append(prediction)
                 except Exception as exc:
+                    failed_codes.append(getattr(stock, "code", "unknown"))
                     logger.exception(
                         "Failed to score %s horizon=%s date=%s: %s",
                         getattr(stock, "code", None),
@@ -123,50 +142,27 @@ class StockScoringService:
                         exc,
                     )
 
-            if not dry_run:
-                self.assign_ranks(date, current_horizon)
-
-                # Apply hybrid recommendation logic using percentile rankings
-                try:
-                    self._upgrade_recommendations(date, current_horizon)
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to upgrade recommendations for h=%d: %s",
-                        current_horizon,
-                        exc,
-                    )
-
-                # Aggregate industry metrics per horizon
-                horizon_predictions = list(
-                    self.prediction_model.objects(
-                        date=date,
-                        horizon=current_horizon,
-                        model_version=self.model_version,
-                    )
+            if failed_codes:
+                raise RuntimeError(
+                    f"scoring failed for horizon={current_horizon}: "
+                    + ", ".join(failed_codes)
                 )
-                try:
-                    aggregate_industry_metrics(
-                        date=date,
-                        predictions=horizon_predictions,
-                        model_version=self.model_version,
-                    )
-                    logger.info(
-                        "Industry metrics aggregated for date=%s horizon=%d predictions=%d",
-                        date,
-                        current_horizon,
-                        len(horizon_predictions),
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to aggregate industry metrics for horizon=%d: %s",
-                        current_horizon,
-                        exc,
-                    )
+            if not dry_run:
+                self._require_complete_prediction_set(stocks, date, current_horizon)
+                self._repair_blocked_predictions(date, current_horizon, expected_codes)
+                self.assign_ranks(date, current_horizon, expected_codes=expected_codes)
+                self._upgrade_recommendations(
+                    date, current_horizon, expected_codes=expected_codes
+                )
+                self._aggregate_industry_metrics(
+                    date, current_horizon, expected_codes=expected_codes
+                )
 
         return {
             "date": date,
             "horizons": horizons,
             "scored_count": len(results),
+            "skipped_complete_horizons": skipped_complete_horizons,
             "dry_run": dry_run,
         }
 
@@ -221,6 +217,7 @@ class StockScoringService:
             config=config,
             blocked_reason=None,
         )
+        input_snapshot["scoring_mode"] = "raw"
         explanation = self._build_explanation(
             horizon=horizon,
             score=score,
@@ -254,36 +251,68 @@ class StockScoringService:
         }
         return self._persist_prediction(payload, existing, dry_run)
 
-    def assign_ranks(self, date: datetime.datetime, horizon: int) -> None:
+    def assign_ranks(
+        self,
+        date: datetime.datetime,
+        horizon: int,
+        *,
+        expected_codes: list[str] | None = None,
+    ) -> int:
+        filters = {
+            "date": normalize_date(date),
+            "horizon": horizon,
+            "model_version": self.model_version,
+            "status__ne": "BLOCKED",
+        }
+        if expected_codes is not None:
+            filters["stock_code__in"] = expected_codes
         predictions = list(
-            self.prediction_model.objects(
-                date=normalize_date(date),
-                horizon=horizon,
-                model_version=self.model_version,
-                status__ne="BLOCKED",
-            ).order_by("-score")
+            self.prediction_model.objects(**filters).order_by("-score", "+stock_code")
         )
         total = len(predictions)
+        operations = []
         for idx, prediction in enumerate(predictions, start=1):
-            prediction.rank = idx
-            prediction.percentile = round(1 - ((idx - 1) / total), 4) if total else None
-            prediction.save()
+            percentile = round(1 - ((idx - 1) / total), 4) if total else None
+            if (
+                getattr(prediction, "rank", None) == idx
+                and getattr(prediction, "percentile", None) == percentile
+            ):
+                continue
+            operations.append(
+                UpdateOne(
+                    {"_id": prediction.id},
+                    {"$set": {"rank": idx, "percentile": percentile}},
+                )
+            )
+        if not operations:
+            return 0
+        result = self.prediction_model._get_collection().bulk_write(
+            operations, ordered=False
+        )
+        return int(getattr(result, "modified_count", 0) or 0)
 
-    def _upgrade_recommendations(self, date: datetime.datetime, horizon: int) -> None:
+    def _upgrade_recommendations(
+        self,
+        date: datetime.datetime,
+        horizon: int,
+        *,
+        expected_codes: list[str] | None = None,
+    ) -> None:
         """Re-compute recommendations using hybrid logic after ranks are assigned.
 
         Called after assign_ranks() so that percentiles are available.
         Updates the recommendation field in-place for all predictions on this
         date/horizon/model_version.
         """
-        predictions = list(
-            self.prediction_model.objects(
-                date=normalize_date(date),
-                horizon=horizon,
-                model_version=self.model_version,
-                status__ne="BLOCKED",
-            )
-        )
+        filters = {
+            "date": normalize_date(date),
+            "horizon": horizon,
+            "model_version": self.model_version,
+            "status__ne": "BLOCKED",
+        }
+        if expected_codes is not None:
+            filters["stock_code__in"] = expected_codes
+        predictions = list(self.prediction_model.objects(**filters))
         if not predictions:
             return
 
@@ -296,8 +325,6 @@ class StockScoringService:
                 percentile=p.percentile,
             )
             if new_rec != p.recommendation:
-                from pymongo import UpdateOne
-
                 bulk_ops.append(
                     UpdateOne(
                         {"_id": p.id},
@@ -328,6 +355,167 @@ class StockScoringService:
             horizon=horizon,
             model_version=self.model_version,
         ).first()
+
+    @staticmethod
+    def _prediction_matches_mode(prediction, scoring_mode: str) -> bool:
+        snapshot = getattr(prediction, "input_snapshot", None) or {}
+        stored_mode = snapshot.get("scoring_mode")
+        if stored_mode is None:
+            stored_mode = "ranked" if snapshot.get("status") == "RANKED" else "raw"
+        return stored_mode == scoring_mode
+
+    @staticmethod
+    def _cohort_fingerprint(codes) -> str:
+        payload = "\n".join(sorted(codes)).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def _cohort_predictions(self, date, horizon, expected_codes=None):
+        filters = {
+            "date": normalize_date(date),
+            "horizon": horizon,
+            "model_version": self.model_version,
+        }
+        if expected_codes is not None:
+            filters["stock_code__in"] = expected_codes
+        return list(
+            self.prediction_model.objects(**filters)
+            .only(
+                "stock_code",
+                "status",
+                "score",
+                "rank",
+                "percentile",
+                "recommendation",
+                "input_snapshot",
+            )
+            .order_by("-score", "+stock_code")
+        )
+
+    def _require_complete_prediction_set(self, stocks, date, horizon) -> None:
+        expected_codes = {stock.code for stock in stocks}
+        stored_codes = {
+            prediction.stock_code
+            for prediction in self._cohort_predictions(date, horizon, expected_codes)
+        }
+        missing_codes = sorted(expected_codes - stored_codes)
+        if missing_codes:
+            raise RuntimeError(
+                f"scoring cohort incomplete for horizon={horizon}: "
+                + ", ".join(missing_codes)
+            )
+
+    def _is_complete_cohort(
+        self, stocks, date, horizon: int, *, scoring_mode: str
+    ) -> bool:
+        expected_codes = {stock.code for stock in stocks}
+        predictions = self._cohort_predictions(date, horizon, expected_codes)
+        by_code = {prediction.stock_code: prediction for prediction in predictions}
+        incompatible = sorted(
+            code
+            for code in expected_codes.intersection(by_code)
+            if not self._prediction_matches_mode(by_code[code], scoring_mode)
+        )
+        if incompatible:
+            raise RuntimeError(
+                f"scoring mode mismatch for horizon={horizon}; use replace: "
+                + ", ".join(incompatible)
+            )
+        if scoring_mode == "ranked" and predictions:
+            expected_fingerprint = self._cohort_fingerprint(expected_codes)
+            fingerprints = {
+                (getattr(prediction, "input_snapshot", None) or {}).get(
+                    "cohort_fingerprint"
+                )
+                for prediction in predictions
+            }
+            if fingerprints != {expected_fingerprint}:
+                raise RuntimeError(
+                    f"ranked cohort membership changed for horizon={horizon}; "
+                    "use replace"
+                )
+        if not expected_codes.issubset(by_code):
+            return False
+
+        ranked_predictions = [
+            prediction
+            for prediction in predictions
+            if getattr(prediction, "status", None) != "BLOCKED"
+        ]
+        for prediction in predictions:
+            if getattr(prediction, "status", None) == "BLOCKED" and (
+                getattr(prediction, "rank", None) is not None
+                or getattr(prediction, "percentile", None) is not None
+                or getattr(prediction, "recommendation", None) != "NONE"
+            ):
+                return False
+        total = len(ranked_predictions)
+        config = self._get_horizon_config(horizon)
+        for idx, prediction in enumerate(ranked_predictions, start=1):
+            expected_percentile = round(1 - ((idx - 1) / total), 4) if total else None
+            if (
+                getattr(prediction, "rank", None) != idx
+                or getattr(prediction, "percentile", None) != expected_percentile
+                or prediction.recommendation
+                != self._recommendation(prediction.score, config, expected_percentile)
+            ):
+                return False
+        return True
+
+    def _repair_blocked_predictions(self, date, horizon, expected_codes) -> int:
+        blocked = list(
+            self.prediction_model.objects(
+                date=normalize_date(date),
+                horizon=horizon,
+                model_version=self.model_version,
+                stock_code__in=expected_codes,
+                status="BLOCKED",
+            )
+        )
+        operations = []
+        for prediction in blocked:
+            changes = {}
+            if getattr(prediction, "rank", None) is not None:
+                changes["rank"] = None
+            if getattr(prediction, "percentile", None) is not None:
+                changes["percentile"] = None
+            if getattr(prediction, "recommendation", None) != "NONE":
+                changes["recommendation"] = "NONE"
+            if changes:
+                operations.append(UpdateOne({"_id": prediction.id}, {"$set": changes}))
+        if not operations:
+            return 0
+        result = self.prediction_model._get_collection().bulk_write(
+            operations, ordered=False
+        )
+        return int(getattr(result, "modified_count", 0) or 0)
+
+    def _aggregate_industry_metrics(self, date, horizon, *, expected_codes) -> None:
+        horizon_predictions = list(
+            self.prediction_model.objects(
+                date=date,
+                horizon=horizon,
+                model_version=self.model_version,
+                stock_code__in=expected_codes,
+            )
+        )
+        try:
+            aggregate_industry_metrics(
+                date=date,
+                predictions=horizon_predictions,
+                model_version=self.model_version,
+            )
+            logger.info(
+                "Industry metrics aggregated for date=%s horizon=%d predictions=%d",
+                date,
+                horizon,
+                len(horizon_predictions),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to aggregate industry metrics for horizon=%d: %s",
+                horizon,
+                exc,
+            )
 
     def _compute_raw_components(
         self, stock, date: datetime.datetime, horizon: int
@@ -408,11 +596,24 @@ class StockScoringService:
         horizons = [horizon] if horizon else list(SUPPORTED_HORIZONS)
         stocks = list(self.stock_model.objects(active_status=0))
         results = []
+        skipped_complete_horizons = []
+        expected_codes = [stock.code for stock in stocks]
+        cohort_fingerprint = self._cohort_fingerprint(expected_codes)
 
         for current_horizon in horizons:
+            if (
+                not dry_run
+                and not replace
+                and self._is_complete_cohort(
+                    stocks, date, current_horizon, scoring_mode="ranked"
+                )
+            ):
+                skipped_complete_horizons.append(current_horizon)
+                continue
             config = self._get_horizon_config(current_horizon)
             raw_by_code = {}
             blocked_codes = []
+            failed_codes = []
             for stock in stocks:
                 try:
                     raw = self._compute_raw_components(stock, date, current_horizon)
@@ -421,6 +622,7 @@ class StockScoringService:
                         continue
                     raw_by_code[stock.code] = raw
                 except Exception as exc:
+                    failed_codes.append(getattr(stock, "code", "unknown"))
                     logger.exception(
                         "Failed to compute components for %s h=%s date=%s: %s",
                         getattr(stock, "code", None),
@@ -429,7 +631,7 @@ class StockScoringService:
                         exc,
                     )
 
-            if not raw_by_code:
+            if not raw_by_code and not blocked_codes:
                 logger.warning(
                     "No computable components for %s h=%d; skipping",
                     date.strftime("%Y-%m-%d"),
@@ -549,13 +751,18 @@ class StockScoringService:
                         "effective_threshold": config["effective_threshold"],
                         "stop_loss_threshold": config["stop_loss_threshold"],
                     },
-                    "input_snapshot": {"status": "RANKED"},
+                    "input_snapshot": {
+                        "status": "RANKED",
+                        "scoring_mode": "ranked",
+                        "cohort_fingerprint": cohort_fingerprint,
+                    },
                     "model_version": self.model_version,
                 }
                 try:
                     persisted = self._persist_prediction(payload, existing, dry_run)
                     results.append(persisted)
                 except Exception as exc:
+                    failed_codes.append(code)
                     logger.exception(
                         "Failed to persist score for %s h=%d: %s",
                         code,
@@ -577,28 +784,34 @@ class StockScoringService:
                         horizon=current_horizon,
                         target_date=target_date,
                         reason="missing_quote",
+                        scoring_mode="ranked",
+                        cohort_fingerprint=cohort_fingerprint,
                     )
                     self._persist_prediction(payload, existing, dry_run)
                 except Exception as exc:
+                    failed_codes.append(code)
                     logger.warning(
                         "Failed to persist blocked prediction for %s: %s", code, exc
                     )
 
+            if failed_codes:
+                raise RuntimeError(
+                    f"ranked scoring failed for horizon={current_horizon}: "
+                    + ", ".join(sorted(set(failed_codes)))
+                )
             if not dry_run:
-                self.assign_ranks(date, current_horizon)
-                try:
-                    self._upgrade_recommendations(date, current_horizon)
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to upgrade recommendations for h=%d: %s",
-                        current_horizon,
-                        exc,
-                    )
+                self._require_complete_prediction_set(stocks, date, current_horizon)
+                self._repair_blocked_predictions(date, current_horizon, expected_codes)
+                self.assign_ranks(date, current_horizon, expected_codes=expected_codes)
+                self._upgrade_recommendations(
+                    date, current_horizon, expected_codes=expected_codes
+                )
 
         return {
             "date": date,
             "horizons": horizons,
             "scored_count": len(results),
+            "skipped_complete_horizons": skipped_complete_horizons,
             "dry_run": dry_run,
         }
 
@@ -653,10 +866,22 @@ class StockScoringService:
             prediction = existing
             for key, value in payload.items():
                 setattr(prediction, key, value)
+            if payload.get("status") == "BLOCKED":
+                prediction.rank = None
+                prediction.percentile = None
         prediction.save()
         return prediction
 
-    def _build_blocked_prediction(self, stock, date, horizon, target_date, reason):
+    def _build_blocked_prediction(
+        self,
+        stock,
+        date,
+        horizon,
+        target_date,
+        reason,
+        scoring_mode="raw",
+        cohort_fingerprint=None,
+    ):
         config = self._get_horizon_config(horizon)
         return {
             "stock": stock,
@@ -684,6 +909,8 @@ class StockScoringService:
             },
             "input_snapshot": {
                 "status": "BLOCKED",
+                "scoring_mode": scoring_mode,
+                "cohort_fingerprint": cohort_fingerprint,
                 "blocked_reason": reason,
                 "quote": {"status": "missing"},
                 "factor": {"status": "unknown"},

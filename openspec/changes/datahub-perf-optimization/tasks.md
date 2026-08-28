@@ -22,10 +22,10 @@
 
 ### 评分写路径（C5/C6/C2）
 
-- [ ] 2.5 `assign_ranks` 改 `bulk_write($set:{rank,percentile})`，值未变跳过（C5）
+- [x] 2.5 `assign_ranks` 改 `bulk_write($set:{rank,percentile})`，值未变跳过（C5）
 - [ ] 2.6 replay/评分收尾（rank/upgrade/aggregate）消费内存结果，消除 3 次全量重读（C5）
 - [ ] 2.7 验证服务：仅验「到期未验且自上次验证后有新行情」；未来行情按天批量拉；`bulk_write` 更新；`.only()` 投影（C6）
-- [ ] 2.8 消除 prod 评分双跑：18:00 相位链去 `update_scoring` 或 18:35 跳过已评分日（C2，prod overlay 变更）
+- [x] 2.8 消除 prod 评分双跑：服务层按 horizon 验证完整 cohort 后在逐股取数前跳过（C2，无需私有 overlay 变更）
 
 ### 日历与杂项（R4/F4/Q4/G3）
 

@@ -4,10 +4,16 @@
 
 ### Requirement: Batch Score Persistence and Rank Assignment Preserve Results
 
-The scoring engine SHALL fetch per-date market data in batched queries and
-persist predictions and rank/percentile updates via bulk writes, producing
-results identical to the per-stock path. Score computation for a given
-(date, horizon, model_version) SHALL run at most once per environment per day.
+The scoring engine SHALL preserve the existing score, rank, percentile, and
+recommendation results while avoiding repeated work for a complete cohort.
+A cohort is identified by `(date, horizon, model_version, scoring_mode)` and
+its expected stock-code set is frozen from `active_status=0` at run start.
+Rank and recommendation finalization SHALL be restricted to that frozen code
+set; persisted rows outside it SHALL remain untouched and SHALL NOT affect the
+cohort.
+The model version SHALL identify a single scoring configuration; rows whose
+stored input snapshot does not match the requested raw/ranked mode SHALL NOT
+qualify for a fast skip.
 
 #### Scenario: Batch persistence is field-identical
 
@@ -25,13 +31,63 @@ results identical to the per-stock path. Score computation for a given
   save path
 - **AND** the update SHALL be performed with bulk `$set` operations limited to
   rank/percentile fields
+- **AND** only rows whose rank or percentile actually differs SHALL produce an
+  update operation
+- **AND** an empty delta SHALL NOT call `bulk_write`
+- **AND** BLOCKED rows SHALL neither receive nor affect ranks
+- **AND** equal scores SHALL use ascending `stock_code` as a deterministic
+  secondary order while retaining sequential 1-based ranks
 
-#### Scenario: Idempotent re-run does not rewrite unchanged predictions
+#### Scenario: Complete daily cohort is skipped before component reads
 
-- **GIVEN** predictions already persisted for a date/horizon/model_version
-- **WHEN** scoring runs again without `--replace`
-- **THEN** unchanged predictions SHALL NOT be recomputed or rewritten
-- **AND** rank/percentile updates SHALL be skipped when values are unchanged
+- **GIVEN** every frozen active stock code has exactly one prediction for the
+  requested date, horizon, model version, and scoring mode
+- **AND** every non-BLOCKED prediction has non-null rank and percentile values
+  equal to the existing `-score` order and percentile formula
+- **AND** every non-BLOCKED recommendation equals the current hybrid
+  recommendation for its score and percentile
+- **AND** every BLOCKED prediction has null rank/percentile and recommendation
+  `NONE`
+- **WHEN** scoring runs with `replace=False` and `dry_run=False`
+- **THEN** that horizon SHALL return before per-stock quote, factor, signal, or
+  component reads
+- **AND** prediction, rank, and recommendation writes SHALL all be zero
+- **AND** the result SHALL report the completed horizon as skipped
+- **AND** raw-mode industry aggregation SHALL retain its existing retry path
+- **AND** the job SHALL still complete successfully
+
+#### Scenario: Partial cohort is repaired
+
+- **GIVEN** one or more frozen active stock codes lack a prediction, rank,
+  percentile, or finalized recommendation
+- **WHEN** scoring runs with `replace=False`
+- **THEN** missing predictions SHALL be produced without overwriting existing
+  prediction business fields
+- **AND** ranked mode SHALL still compute the complete cross-sectional raw
+  cohort before producing a missing score
+- **AND** ranked rows SHALL carry a fingerprint of the frozen stock-code set;
+  a membership change or legacy row without that fingerprint SHALL require an
+  explicit `replace` instead of mixing scores from different cross sections
+- **AND** ranks and recommendations SHALL be finalized for the complete stored
+  non-BLOCKED cohort
+- **AND** the resulting score/rank/percentile/recommendation values SHALL equal
+  a single complete run over the same frozen inputs
+- **AND** legacy BLOCKED rank/percentile/recommendation values SHALL be repaired
+  with changed-only updates before the cohort can qualify for a fast skip
+
+#### Scenario: Horizons are gated independently
+
+- **GIVEN** one requested horizon is complete and another is partial
+- **WHEN** the daily scoring run executes
+- **THEN** the complete horizon SHALL be skipped
+- **AND** the partial horizon SHALL be repaired and finalized
+
+#### Scenario: Explicit recomputation and preview bypass the gate
+
+- **GIVEN** a complete stored cohort
+- **WHEN** `replace=True` or `dry_run=True` is requested
+- **THEN** the complete-cohort fast skip SHALL NOT change the existing
+  recomputation or preview semantics
 
 #### Scenario: Daily scoring runs at most once per environment
 
@@ -42,6 +98,14 @@ results identical to the per-stock path. Score computation for a given
 - **THEN** the second execution SHALL skip recomputation and rank rewrites
   for already-scored predictions
 - **AND** SHALL still complete job-run tracking with a SUCCESS record
+
+#### Scenario: Finalization failures fail closed
+
+- **GIVEN** a partial cohort requiring rank or recommendation finalization
+- **WHEN** either bulk update fails
+- **THEN** the horizon and job SHALL fail
+- **AND** recommendation finalization SHALL NOT run after a rank failure
+- **AND** a later run SHALL be able to repair any partially committed updates
 
 #### Scenario: Verification processes only due predictions
 

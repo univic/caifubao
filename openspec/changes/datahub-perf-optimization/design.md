@@ -48,6 +48,22 @@
 - `DATAHUB_SCORING_MODE=ranked` 路径共享同一批预取与同一套分量函数，
   仅聚合阶段不同（两阶段 rank 归一化保留）。
 
+### 3.1 完整 cohort 幂等门禁（C2/C5 快赢）
+
+- 日常 `replace=False, dry_run=False` 在逐股取数前，按 horizon 一次读取
+  `(date, horizon, model_version)` predictions，与本次冻结的 active code 集合对账。
+- 完整性同时校验 scoring mode、非 BLOCKED 的 rank/percentile 公式和
+  hybrid recommendation；任一不一致均进入 partial repair，不使用 count-only 短路。
+- rank/recommendation 查询仅限本次冻结 active codes，历史 inactive extra rows
+  不参与且不修改；最终排序用 `-score,+stock_code` 使并列分稳定。
+- ranked rows 写入 active code 集合 SHA-256 指纹；成员变化或旧数据无指纹时
+  fail closed 并要求 `replace`，避免混用两套横截面归一化分数。
+- 完整 horizon 零 prediction/rank/recommendation 写，但 raw 路径保留行业指标
+  聚合的失败重试机会；partial horizon
+  只补缺失 prediction，并对最终落库 cohort 重新收尾。
+- `assign_ranks` 保留既有 `-score`、1-based rank 与 percentile 公式，仅对
+  变化行 bulk `$set(rank, percentile)`；失败向上传播，不继续 recommendation。
+
 ## 4. 信号增量 anchor（G1/G3）
 
 - anchor = 该 `(code, signal_name)` 的 `DataAssetStatus.latest_data_date`，
