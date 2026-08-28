@@ -82,3 +82,14 @@
 3. **观测 1-2 个交易日的拆分后链路**（quote ≤30min、signal/scoring 正常、
    dev 19:15 同步），据实测校准告警阈值与 deadline。
 4. 实盘方向以"验证闭环 + 新鲜度 SLA"优先，评分/信号质量指标次之。
+
+### P2 — Backend 测试 CI 连接修复（2026-08-29 发现）
+- **问题**：backend 测试套件首次在 CI 全量运行（#149 触发 Backend Tests）暴露 60 个
+  预存失败（test_decision_journal_api / test_decisions_dashboard / test_factor_eval_api
+  等 API 测试）：client fixture 路径下 mongoengine 查询报
+  `You have not defined a default connection`，而 conftest 的 lazy connect
+  （`alias=default`）本地验证注册正常（pytest 9.1.1 vs CI 8.3.4）。此前所有 PR 的
+  Backend Tests 均因 Detect Changed Areas 判定未触及 backend 而 skipping。
+- **影响**：任何 backend 改动触发 Backend Tests 即红，阻塞合入（#149 已标注）。
+- **待办**：专项诊断 CI 环境下 conftest 连接初始化时序（可能 pytest 版本/requirements
+  依赖差异），修复后 backend 测试可稳定在 CI 运行。
