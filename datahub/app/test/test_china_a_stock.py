@@ -615,6 +615,61 @@ class TestChinaAStockHelpers(TestCase):
         self.assertEqual([record["code"] for record in records], ["sh600000"])
         self.assertEqual(records[0]["status"], "OK")
 
+    def test_suspended_good_stock_with_stale_refresh_is_tolerated(self):
+        from app.lib.datahub.processors.china_a_stock import ChinaAStock
+
+        processor = object.__new__(ChinaAStock)
+        processor.market = SimpleNamespace(name="ChinaAStock", trade_calendar=[])
+        processor.most_recent_trading_day = pandas.Timestamp("2026-08-21")
+        processor.perform_date_check = lambda: None
+        processor.check_data_freshness = lambda stock, **kwargs: "GOOD"
+        processor.perform_stock_name_check = Mock()
+        processor.update_active_status = Mock()
+        stock = self._stock("sh600000")
+        remote = pandas.DataFrame(
+            [{"code": stock.code, "name": stock.name, "close": 0}]
+        )
+
+        from app.model.stock import StockDailyQuote as _QuoteModel
+
+        with (
+            patch(
+                "app.lib.datahub.processors.china_a_stock.progress_bar",
+                return_value=lambda *args: None,
+            ),
+            patch.object(_QuoteModel, "_get_collection", return_value=Mock()),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.read_quote_status_map",
+                return_value={},
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.aggregate_stats_by_code",
+                return_value={
+                    "sh600000": {
+                        "first_data_date": None,
+                        "latest_data_date": pandas.Timestamp("2026-08-20"),
+                        "data_count": 1,
+                    }
+                },
+            ),
+            patch(
+                "app.lib.datahub.processors.china_a_stock.data_asset_status_helper.bulk_upsert_asset_status",
+                return_value=1,
+            ) as bulk_upsert,
+        ):
+            # 停牌股票批量重算出 STALE 属于停牌豁免场景，不应导致 phase 失败
+            processor.check_data_integrity(
+                obj_type="stock",
+                local_data_list=DummyQuerySet([stock]),
+                remote_data_df=remote,
+                hist_handler="get_hist_stock_quote_data",
+                allow_update=True,
+            )
+
+        bulk_upsert.assert_called_once()
+        records = bulk_upsert.call_args[0][0]
+        self.assertEqual(records[0]["status"], "STALE")
+
     def test_none_history_result_is_reported_as_failure_and_no_data(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
 
