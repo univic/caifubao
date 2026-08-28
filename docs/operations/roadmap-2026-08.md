@@ -33,8 +33,10 @@
   补 `date` 单列索引（mongoengine 模型或运维建索引），校验阶段显著提速。
 
 ### P1 — 服务启动 MongoDB 就绪重试
-- backend/datahub 启动时一次连接失败即 exit（08-28 节点重启时 backend 崩溃循环
-  2 次）。`connect_to_db` 增加重试（如 10×5s），消除节点重启引发的崩溃。
+- **✅ 已实现（#149 backend + #153 datahub）**：backend 与 datahub 的
+  `connect_to_db` 均增加重试（10×5s），耗尽后保持 exit(1) 契约；08-28/29
+  节点重启场景不再崩溃循环（datahub 侧未配 connect/serverSelection 超时，
+  最坏窗口 ~350s，可接受）。
 
 ### P2 — 镜像仓库稳定性
 - 腾讯云 CCR（hkccr.ccs.tencentyun.com）拉取间歇性 `connection reset by peer`
@@ -52,6 +54,17 @@
 - dev data-sync 失败后（如 18:38 的 MongoDB refused）无自动补跑，次日 19:15
   才重试。方案：失败时启动一次性补跑 job（backoffLimit 已有 1，可加
   startingDeadlineSeconds 内的重试），或失败告警后手动 `scripts/caifubao data sync`。
+
+
+### P1 — prod datahub-secret 缺 TUSHARE_TOKEN（2026-08-29 发现）
+- prod datahub 部署（sha-4d288a9）CreateContainerConfigError：`datahub-secret`
+  无 `TUSHARE_TOKEN` key（历史上有，08-23 创建后某次更新丢失/私有 secrets 源缺失）。
+- **临时降级**：datahub deployment 将 TUSHARE_TOKEN 置空 + 修正 configmap 引用
+  （backend-config-7d4gbmm54t），pod 恢复 Running。
+- **影响**：tushare 行情拉取因 token 缺失失败（quote 任务会失败，可由 health-watcher
+  告警发现）。
+- **待办**：运维在私有仓库 caifubao-private 补 TUSHARE_TOKEN（真实 token），
+  重新部署 datahub 恢复 tushare 行情源。
 
 ## 二、实盘指导意义方向
 
