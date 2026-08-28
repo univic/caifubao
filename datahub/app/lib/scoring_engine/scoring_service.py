@@ -478,7 +478,10 @@ class StockScoringService:
                 for c in raw["components"]:
                     score += rank_maps[c["id"]][code] * (c["weight"] / weight_sum)
                 for p in raw["penalties"]:
-                    score += rank_maps[p["id"]][code] * (p["weight"] / weight_sum)
+                    # penalties must SUBTRACT: higher raw penalty (more
+                    # volatile/ST/suspended) must lower the score, mirroring
+                    # the raw path's negative penalty contribution
+                    score -= rank_maps[p["id"]][code] * (p["weight"] / weight_sum)
                 score = round(max(0.0, min(100.0, score * 100.0)), 2)
 
                 existing = self._find_existing_prediction(code, date, current_horizon)
@@ -508,7 +511,7 @@ class StockScoringService:
                         "raw_value": p["raw_value"],
                         "weight": p["weight"],
                         "contribution": round(
-                            rank_maps[p["id"]][code]
+                            -rank_maps[p["id"]][code]
                             * (p["weight"] / weight_sum)
                             * 100.0,
                             4,

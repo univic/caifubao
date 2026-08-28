@@ -714,3 +714,93 @@ class TestScoreAllStocksRankedEndToEnd:
         # second run with replace=False must NOT overwrite (same count)
         scoring_service.score_all_stocks_ranked(date=d, horizon=5, replace=False)
         assert len(scoring_service.prediction_model.records) == first
+
+
+class TestRankedPenaltyDirection:
+    """Ranked-mode penalty must SUBTRACT: risky stocks score lower."""
+
+    def test_high_volatility_does_not_outrank_low_volatility(self, monkeypatch):
+        import datetime
+        from unittest.mock import MagicMock, patch
+
+        from app.lib.scoring_engine.scoring_service import StockScoringService
+        from app.test.test_scoring_service import (
+            FakeFactor,
+            FakePrediction,
+            FakeQuote,
+            FakeSignal,
+            FakeStock,
+        )
+
+        for model in (FakeStock, FakeQuote, FakeFactor, FakeSignal, FakePrediction):
+            model.records = []
+
+        calendar = [
+            datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 4, 15, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 4, 16, tzinfo=datetime.UTC),
+        ]
+
+        # two stocks, identical quotes except volatility proxy in risk_penalty
+        for code, close in (("sh600000", 10.0), ("sh600001", 10.0)):
+            FakeStock.records.append(
+                FakeStock(code=code, name=f"Stock {code}", active_status=0)
+            )
+            for idx in range(60):
+                FakeQuote.records.append(
+                    FakeQuote(
+                        code=code,
+                        date=datetime.datetime(2026, 3, 1, tzinfo=datetime.UTC)
+                        + datetime.timedelta(days=idx),
+                        close=close + idx * 0.01,
+                        high=close + idx * 0.01 + 0.1,
+                        low=close + idx * 0.01 - 0.1,
+                        trade_status=1,
+                        isST=0,
+                    )
+                )
+        # stock A is ST (higher risk penalty); stock B is not
+        st_quote = FakeQuote.records[0]
+        setattr(st_quote, "isST", 1)
+
+        with (
+            patch(
+                "app.lib.scoring_engine.scoring_service.FinanceMarket.objects"
+            ) as mock_market_objs,
+            patch(
+                "app.lib.scoring_engine.scoring_service.industry_momentum_component",
+                return_value={
+                    "id": "industry_momentum",
+                    "group": "industry",
+                    "label": "Industry momentum",
+                    "raw_value": None,
+                    "normalized_value": 0.5,
+                    "weight": 0.0,
+                    "contribution": 0.0,
+                    "direction": "positive",
+                    "evidence": {},
+                },
+            ),
+        ):
+            mock_market = MagicMock()
+            mock_market.trade_calendar = calendar
+            mock_market_objs.return_value.first.return_value = mock_market
+            service = StockScoringService(
+                stock_model=FakeStock,
+                quote_model=FakeQuote,
+                factor_model=FakeFactor,
+                signal_model=FakeSignal,
+                prediction_model=FakePrediction,
+            )
+            service.calendar = calendar
+            monkeypatch.delenv("DATAHUB_SCORING_MODE", raising=False)
+            service.score_all_stocks_ranked(
+                date=datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+                horizon=5,
+            )
+        a = [p for p in FakePrediction.records if p.stock_code == "sh600000"][0]
+        b = [p for p in FakePrediction.records if p.stock_code == "sh600001"][0]
+        # ST stock (risky) must NOT score higher than the clean peer
+        assert a.score <= b.score, f"ST stock {a.score} outranked clean stock {b.score}"
