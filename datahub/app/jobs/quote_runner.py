@@ -61,7 +61,11 @@ def run_quote_job(
     )
     job_run = None
     if job_metadata:
-        from app.lib.utilities.job_run_helper import JobRunContext, create_job_run
+        from app.lib.utilities.job_run_helper import (
+            JobRunContext,
+            create_job_run,
+            update_job_run_progress,
+        )
 
         job_run = create_job_run(
             JobRunContext(
@@ -75,6 +79,20 @@ def run_quote_job(
                 extra=job_metadata.extra,
             )
         )
+
+        # Persist per-phase progress so a run killed mid-way (deadline expiry,
+        # OOM, node loss) still leaves evidence of which phases completed and
+        # how much data was written, instead of a blank RUNNING record.
+        def _on_phase_progress(job_name, phase_name, phase_summary, summary):
+            update_job_run_progress(
+                job_run,
+                failed_phase=None,
+                pulled_total=summary.get("pulled_total", 0),
+                written_total=summary.get("written_total", 0),
+                phase_stats=summary.get("phase_stats", {}),
+            )
+
+        datahub.set_progress_callback(_on_phase_progress)
 
     completed_results = []
     current_result_target = target

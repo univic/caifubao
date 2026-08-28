@@ -26,9 +26,18 @@ SIGNAL_ASSET_TYPE = "signal"
 
 
 class SignalUpdateError(RuntimeError):
-    def __init__(self, message: str, *, failed_codes: list[str]):
+    def __init__(
+        self,
+        message: str,
+        *,
+        failed_codes: list[str],
+        written_count: int = 0,
+    ):
         super().__init__(message)
         self.failed_codes = list(failed_codes)
+        # Signals already persisted before the failure; the job-run record
+        # keeps this so downstream scoring can proceed on the real data.
+        self.written_count = int(written_count or 0)
 
 
 @dataclass
@@ -525,6 +534,7 @@ class MovingAverageSignalService:
             raise SignalUpdateError(
                 "signal market update failed for codes: " + ", ".join(failed_codes),
                 failed_codes=failed_codes,
+                written_count=written_total,
             )
         try:
             self._refresh_market_signal_statuses(status_targets)
@@ -532,6 +542,7 @@ class MovingAverageSignalService:
             raise SignalUpdateError(
                 "signal status update failed",
                 failed_codes=list(status_targets),
+                written_count=written_total,
             ) from exc
         return {
             "pulled_count": len(codes),

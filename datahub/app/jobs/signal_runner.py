@@ -150,16 +150,32 @@ def run_signal(
         raise SignalUpdateError(
             "signal update failed for codes: " + ", ".join(result["failed_codes"]),
             failed_codes=result["failed_codes"],
+            written_count=result["written_count"],
         )
     return result
 
 
 def _check_dependency() -> bool:
-    """Check if the required upstream job family has a SUCCESS record for today.
+    """Check whether the upstream quote job is ready for signal generation.
 
     Always uses the upstream job's schedule time (DEPENDENCY_JOB_HOUR/MINUTE),
     regardless of this job's own scheduled_at, to correctly match the upstream
     job's recorded scheduled_at value.
+
+    Two paths satisfy the dependency:
+
+    1. A SUCCESS record for today (the historical gate).
+    2. A record (RUNNING or FAILED) whose persisted phases cover everything
+       signals need: the stock data-integrity phase (validated_count > 0)
+       **and** the MA factor phase (written_count > 0). This covers runs whose
+       quotes and factors were persisted but whose process died before
+       recording completion (deadline expiry, OOM, node loss) — the record is
+       RUNNING until the reaper marks it FAILED, yet the underlying data is
+       real and signals can safely be computed from it. Accepting RUNNING is
+       safe because the MA-factor evidence proves the upstream phases that
+       signals depend on have all completed. Note the upstream quote job may
+       still be running its own tail phases (signals/scoring) concurrently;
+       signal writes are idempotent upserts, so the overlap is safe.
     """
     upstream_scheduled_at = job_run_helper.compute_daily_schedule_at(
         DEPENDENCY_JOB_HOUR, DEPENDENCY_JOB_MINUTE
@@ -173,7 +189,26 @@ def _check_dependency() -> bool:
         scheduled_at=upstream_scheduled_at,
         statuses=[job_run_helper.STATUS_SUCCESS],
     )
-    return latest is not None
+    if latest is not None:
+        return True
+
+    record = job_run_helper.latest_job_run(
+        job_family=DEPENDENCY_JOB_FAMILY,
+        job_name=DEPENDENCY_JOB_NAME,
+        target="stock",
+        include_factors=True,
+        scheduled_at=upstream_scheduled_at,
+        statuses=[job_run_helper.STATUS_RUNNING, job_run_helper.STATUS_FAILED],
+    )
+    if record is None:
+        return False
+    phase_stats = record.phase_stats or {}
+    quote_phase = phase_stats.get("check_stock_data_integrity", {})
+    ma_phase = phase_stats.get("update_ma_factor", {})
+    return (
+        int(quote_phase.get("validated_count", 0) or 0) > 0
+        and int(ma_phase.get("written_count", 0) or 0) > 0
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -365,12 +400,16 @@ def main(argv: list[str] | None = None) -> None:
         print(json.dumps(result, default=str, ensure_ascii=False, indent=2))
 
     except Exception as exc:
+        # Preserve signals persisted before the failure so the FAILED record
+        # still shows real data was written (downstream scoring gates on
+        # written_total > 0).
         job_run_helper.finish_job_run(
             job_run,
             status="FAILED",
             summary={
                 "signal": args.signal,
                 "mode": args.mode,
+                "written_total": int(getattr(exc, "written_count", 0) or 0),
                 "failed_codes": list(getattr(exc, "failed_codes", [])),
             },
             error_message=str(exc),

@@ -79,7 +79,7 @@ BUY 绝对阈值 70 不可达 → 无买入信号）。
 
 - MongoDB tools 镜像发布（#111）、workload identity 加固（#112）。
 - 每日例行（工作日 18:00 后，Asia/Shanghai）：
-  prod quote(18:00) → signal(18:30) → scoring(18:35)，dev 30 分钟后 data-sync。
+  prod quote(18:00) → signal(18:30) → scoring(18:35)，dev data-sync 19:15（prod signal/scoring 之后，dev 拿到当日信号；评分不同步，dev 需手动 scoring_runner）。
 
 ---
 

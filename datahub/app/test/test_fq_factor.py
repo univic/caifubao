@@ -811,6 +811,22 @@ def test_run_stock_job_includes_fq_factor_phase():
     ) < source.index('"update_fq_factor", self.update_fq_factor')
 
 
+def test_run_stock_job_excludes_signal_and_scoring_phases():
+    """Signals/scoring are produced by standalone CronJobs, not the quote job."""
+    from app.lib.datahub.processors import china_a_stock
+
+    source = Path(china_a_stock.__file__).read_text()
+
+    run_stock_job_section = source.split("def run_stock_job")[1].split(
+        "def run_stock_quote_job"
+    )[0]
+    assert '"update_signals", self.update_signals' not in run_stock_job_section
+    assert '"update_scoring", self.update_scoring' not in run_stock_job_section
+    # The removed methods must not be defined on the class anymore.
+    assert "def update_signals" not in source
+    assert "def update_scoring" not in source
+
+
 def test_run_stock_job_stops_downstream_when_fq_phase_fails():
     from app.lib.datahub.processors.china_a_stock import ChinaAStock
 
@@ -821,6 +837,7 @@ def test_run_stock_job_stops_downstream_when_fq_phase_fails():
             self.most_recent_trading_day = datetime.datetime(2026, 8, 27)
             self._partial_phase_result = None
             self.last_job_summary = None
+            self._progress_callback = None
             self.calls = []
 
         def check_prerequisite(self, allow_update=False):
@@ -838,12 +855,6 @@ def test_run_stock_job_stops_downstream_when_fq_phase_fails():
 
         def update_ma_factor(self, allow_update=False):
             self.calls.append("ma")
-
-        def update_signals(self, allow_update=False):
-            self.calls.append("signal")
-
-        def update_scoring(self, allow_update=False):
-            self.calls.append("scoring")
 
     processor = FakeChinaAStock()
     with pytest.raises(RuntimeError, match="historical repair"):

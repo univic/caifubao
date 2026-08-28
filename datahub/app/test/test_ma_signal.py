@@ -373,10 +373,13 @@ def test_market_update_failure_does_not_advance_any_status():
 
     service = BatchService()
 
-    with pytest.raises(RuntimeError, match="bad-code"):
+    with pytest.raises(RuntimeError, match="bad-code") as error:
         service.update_market()
 
     assert service.refreshed_targets is None
+    # The two good codes were persisted before the failing one aborted the
+    # batch; the exception carries that count for the job-run record.
+    assert getattr(error.value, "written_count", None) == 2
 
 
 def test_market_status_failure_reports_all_retry_codes():
@@ -400,6 +403,9 @@ def test_market_status_failure_reports_all_retry_codes():
         StatusFailService().update_market()
 
     assert error.value.failed_codes == ["sh600000", "sz000001"]
+    # Signals for both codes were persisted before the status refresh failed;
+    # the exception carries that count for the job-run record.
+    assert error.value.written_count == 2
 
 
 def service_signal_names():

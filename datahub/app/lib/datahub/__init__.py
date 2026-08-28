@@ -112,6 +112,16 @@ class Datahub(object):
         self.quote_as_of_date = quote_as_of_date
         self.quote_run_started_at = datetime.now(ZoneInfo("Asia/Shanghai"))
         self.last_job_summary = None
+        self.progress_callback = None
+
+    def set_progress_callback(self, callback):
+        """Register a callback invoked after each completed job phase.
+
+        The callback receives (job_name, phase_name, phase_summary, summary)
+        and is expected to persist partial progress so a run killed mid-way
+        still leaves evidence of what was written. Never blocks the job.
+        """
+        self.progress_callback = callback
 
     def start(self):
         logger.info(f"Starting {self.module_name}")
@@ -131,6 +141,7 @@ class Datahub(object):
         return processor_obj(
             as_of_date=self.quote_as_of_date,
             run_started_at=self.quote_run_started_at,
+            progress_callback=self.progress_callback,
         )
 
     def _run_processor_job(self, runner_name):

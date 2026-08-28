@@ -58,7 +58,7 @@ docs/operations/mongodb-resilience.md 的确定性 quote bootstrap gate：
 
 日期校验 `perform_date_check`：显式 as_of_date 必须在 trade_calendar 且 ≤ 最新完整交易日，否则 `ValueError("Explicit as_of_date must be a completed market trading day")`；无完整交易日 → RuntimeError。时区为 Asia/Shanghai（`job_run_helper.BEIJING_TZ_NAME`、`trading_day_helper.BEIJING_TIMEZONE`、quote_runner `--scheduled-timezone` 默认值）。
 
-空库 bootstrap 顺序：secrets → 部署 → 股票主数据 → 历史行情 → FQ/MA/tech 因子 → 信号 → 评分 → 刷新 data_asset_status 与 freshness → `system bootstrap-check` → 健康/质量/OpenClaw 检查。信号 run 有依赖门：`signal_runner` 要求 `quote_daily` 家族当日 SUCCESS（查 `datahub_job_runs`），否则 SKIPPED/`dependency_failed`；startup quote catch-up（`quote_catchup.py`）用 data_asset_status 滞后判定 + 180 分钟活跃 job 防重入。
+空库 bootstrap 顺序：secrets → 部署 → 股票主数据 → 历史行情 → FQ/MA/tech 因子 → 信号 → 评分 → 刷新 data_asset_status 与 freshness → `system bootstrap-check` → 健康/质量/OpenClaw 检查。信号 run 有依赖门：`signal_runner` 要求 `quote_daily` 家族当日 SUCCESS，或当日记录（RUNNING 或 FAILED——任务可能被 deadline 杀掉）同时满足 `phase_stats.check_stock_data_integrity.validated_count > 0` 且 `phase_stats.update_ma_factor.written_count > 0`（行情与 MA 因子均已落库）；`scoring_runner` 要求 `signal_daily` 当日 SUCCESS 或记录 `written_total > 0`。均不满足则 SKIPPED/`dependency_failed`。startup quote catch-up（`quote_catchup.py`）用 data_asset_status 滞后判定 + 180 分钟活跃 job 防重入。
 
 ## 6. 命令地图
 

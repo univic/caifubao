@@ -1,7 +1,7 @@
 import time
 import logging
 import datetime
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 import pandas
@@ -23,8 +23,6 @@ from app.lib.datahub.data_source.interface.baostock_interface import (
     BaostockInterfaceManager,
 )
 from app.lib.factor_factory import FQFactorService, MovingAverageFactorService
-from app.lib.signal_factory import MovingAverageSignalService
-from app.lib.scoring_engine.scoring_service import StockScoringService
 from app.lib.utilities.progress_bar import progress_bar
 from app.lib.utilities import trading_day_helper
 from app.lib.utilities import data_asset_status_helper
@@ -116,7 +114,12 @@ def _build_snapshot_quote_row(snapshot_row, expected_date, code):
 
 
 class ChinaAStock(object):
-    def __init__(self, as_of_date=None, run_started_at=None):
+    def __init__(
+        self,
+        as_of_date=None,
+        run_started_at=None,
+        progress_callback: Callable[[str, str, dict, dict], None] | None = None,
+    ):
         self.market_name = "ChinaAStock"
         self.market_code = "ZH-A"
         timezone = ZoneInfo(trading_day_helper.BEIJING_TIMEZONE)
@@ -136,6 +139,7 @@ class ChinaAStock(object):
         }
         self.last_job_summary = None
         self._partial_phase_result = None
+        self._progress_callback = progress_callback
 
     def run(self):
         phases = [
@@ -154,14 +158,16 @@ class ChinaAStock(object):
         return self._run_job("index_market_sync", phases)
 
     def run_stock_job(self):
+        # Quote + factors only. Signals and scoring are produced by the
+        # standalone signal_runner / scoring_runner CronJobs (18:30 / 18:35)
+        # which gate on this job's persisted data — keeping the quote job
+        # short so it cannot be killed by activeDeadlineSeconds mid-run.
         phases = [
             ("check_prerequisite", self.check_prerequisite),
             ("check_stock_data_integrity", self.check_stock_data_integrity),
             ("mark_inactive_stocks", self.mark_inactive_stocks),
             ("update_fq_factor", self.update_fq_factor),
             ("update_ma_factor", self.update_ma_factor),
-            ("update_signals", self.update_signals),
-            ("update_scoring", self.update_scoring),
         ]
         return self._run_job("stock_market_sync", phases)
 
@@ -212,6 +218,17 @@ class ChinaAStock(object):
                     phase_summary["pulled_count"],
                     phase_summary["written_count"],
                 )
+                if self._progress_callback is not None:
+                    try:
+                        self._progress_callback(
+                            job_name, phase_name, phase_summary, summary
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Progress callback failed for job=%s phase=%s; continuing",
+                            job_name,
+                            phase_name,
+                        )
             return summary
         except Exception:
             summary["status"] = "FAILED"
@@ -1331,21 +1348,6 @@ class ChinaAStock(object):
         logger.info("Datahub - ChinaAStock - Updating MA factors after FQ factor sync")
         service = MovingAverageFactorService()
         return service.update_market(market=self.market)
-
-    def update_signals(self, allow_update=False):
-        logger.info("Datahub - ChinaAStock - Updating signals after MA factors sync")
-        service = MovingAverageSignalService()
-        return service.update_market(market=self.market)
-
-    def update_scoring(self, allow_update=False):
-        logger.info("Datahub - ChinaAStock - Updating stock scores")
-        service = StockScoringService()
-        # By default score for today/closest trading day
-        result = service.score_all_stocks()
-        return {
-            "pulled_count": result["scored_count"],
-            "written_count": result["scored_count"],
-        }
 
 
 if __name__ == "__main__":
