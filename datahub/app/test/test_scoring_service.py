@@ -761,9 +761,12 @@ class TestRankedPenaltyDirection:
                         isST=0,
                     )
                 )
-        # stock A is ST (higher risk penalty); stock B is not
-        st_quote = FakeQuote.records[0]
-        setattr(st_quote, "isST", 1)
+        # stock A is ST on the SCORING-DATE quote (2026-04-10, idx 40 from
+        # 2026-03-01); risk_penalty reads isST from the scoring-date quote,
+        # so this is what makes A riskier than B
+        for rec in FakeQuote.records:
+            if rec.code == "sh600000":
+                setattr(rec, "isST", 1)
 
         with (
             patch(
@@ -802,5 +805,5 @@ class TestRankedPenaltyDirection:
             )
         a = [p for p in FakePrediction.records if p.stock_code == "sh600000"][0]
         b = [p for p in FakePrediction.records if p.stock_code == "sh600001"][0]
-        # ST stock (risky) must NOT score higher than the clean peer
-        assert a.score <= b.score, f"ST stock {a.score} outranked clean stock {b.score}"
+        # ST stock (risky) must score STRICTLY lower than the clean peer
+        assert a.score < b.score, f"ST stock {a.score} outranked clean stock {b.score}"

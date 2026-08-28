@@ -375,7 +375,10 @@ class StockScoringService:
             "penalties": [
                 {
                     "id": p["id"],
-                    "raw_value": p.get("raw_value"),
+                    # penalties put the scaled value in normalized_value
+                    # (risk_penalty raw_value is plain volatility; the +1.0
+                    # ST/suspended surcharge lives in normalized_value)
+                    "raw_value": p.get("normalized_value", p.get("raw_value")),
                     "weight": p.get("weight", 0.0),
                 }
                 for p in penalties
