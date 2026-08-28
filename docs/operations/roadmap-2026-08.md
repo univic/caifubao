@@ -55,6 +55,17 @@
   才重试。方案：失败时启动一次性补跑 job（backoffLimit 已有 1，可加
   startingDeadlineSeconds 内的重试），或失败告警后手动 `scripts/caifubao data sync`。
 
+
+### P1 — prod datahub-secret 缺 TUSHARE_TOKEN（2026-08-29 发现）
+- prod datahub 部署（sha-4d288a9）CreateContainerConfigError：`datahub-secret`
+  无 `TUSHARE_TOKEN` key（历史上有，08-23 创建后某次更新丢失/私有 secrets 源缺失）。
+- **临时降级**：datahub deployment 将 TUSHARE_TOKEN 置空 + 修正 configmap 引用
+  （backend-config-7d4gbmm54t），pod 恢复 Running。
+- **影响**：tushare 行情拉取因 token 缺失失败（quote 任务会失败，可由 health-watcher
+  告警发现）。
+- **待办**：运维在私有仓库 caifubao-private 补 TUSHARE_TOKEN（真实 token），
+  重新部署 datahub 恢复 tushare 行情源。
+
 ## 二、实盘指导意义方向
 
 ### P0 — 评分验证闭环自动化
