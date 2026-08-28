@@ -126,7 +126,20 @@ def run_startup_quote_catchup() -> dict[str, object]:
         scheduled_at,
         context["latest_trading_day"],
     )
-    result = run_quote_job(TARGET_ALL, job_metadata=metadata)
+    try:
+        result = run_quote_job(TARGET_ALL, job_metadata=metadata)
+    except job_run_helper.JobRunClaimExistsError:
+        # Lost the atomic claim against an overlapping process (e.g. a pod
+        # rollout): the winner is already running the catch-up.
+        logger.info(
+            "Startup quote catch-up already claimed by an active RUNNING "
+            "job run; skipping"
+        )
+        return {
+            "status": "SKIPPED",
+            "reason": "already_claimed_by_active_run",
+            "context": context,
+        }
     result["status"] = result.get("status", "SUCCESS")
     result["reason"] = "catchup_run"
     result["context"] = context

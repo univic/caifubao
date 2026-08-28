@@ -12,9 +12,9 @@ Before planning or editing, load the relevant parts of:
 - `RULES.md` — single authority for safety, boundaries, spec gate, discipline, validation
 - `AGENTS.md` — orchestrator workflow steps and delegation rules
 - `openspec/config.yaml`
-- `openspec/changes/mvp-quant-demo/design.md`
-- `openspec/changes/mvp-quant-demo/tasks.md`
-- Any spec under `openspec/changes/mvp-quant-demo/specs/` that matches the task
+- `openspec/archive/mvp-quant-demo/design.md`
+- `openspec/archive/mvp-quant-demo/tasks.md`
+- Any spec under `openspec/archive/mvp-quant-demo/specs/` that matches the task
 
 Load `DESIGN.md` only for frontend-related tasks. It is not needed for
 backend/datahub/k8s changes.
@@ -22,8 +22,9 @@ backend/datahub/k8s changes.
 For OpenClaw-related work, also load:
 
 - `docs/integrations/openclaw.md`
-- `openspec/changes/mvp-quant-demo/specs/openclaw-data-access/spec.md`
-- `openspec/changes/mvp-quant-demo/specs/openclaw-data-access/implementation.md`
+- `openspec/archive/mvp-quant-demo/specs/openclaw-data-access/spec.md`
+- `openspec/archive/mvp-quant-demo/specs/openclaw-data-access/implementation.md`
+- `skills/openclaw-integration/SKILL.md`
 
 ## Module Boundaries
 

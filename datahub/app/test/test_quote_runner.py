@@ -24,6 +24,10 @@ def _summary(job_name, written_total):
 class FakeDatahub:
     def __init__(self):
         self.calls = []
+        self.progress_callback = None
+
+    def set_progress_callback(self, callback):
+        self.progress_callback = callback
 
     def start_index_job(self):
         self.calls.append("index")
@@ -227,6 +231,85 @@ def test_datahub_clears_previous_summary_before_processor_construction():
     assert datahub.last_job_summary is None
 
 
+def test_run_quote_job_propagates_claim_error_without_finishing(monkeypatch):
+    import pytest
+
+    from app.lib.utilities.job_run_helper import (
+        JobRunClaimExistsError,
+        JobRunContext,
+    )
+
+    datahub = FakeDatahub()
+    finished = []
+
+    def claiming_create_job_run(context):
+        assert isinstance(context, JobRunContext)
+        raise JobRunClaimExistsError("claim held by an active RUNNING run")
+
+    def unexpected_finish(job_run, **kwargs):
+        finished.append(job_run)
+
+    monkeypatch.setattr(
+        "app.jobs.quote_runner.job_run_helper.create_job_run",
+        claiming_create_job_run,
+    )
+    monkeypatch.setattr(
+        "app.jobs.quote_runner.job_run_helper.finish_job_run",
+        unexpected_finish,
+    )
+
+    metadata = QuoteJobMetadata(
+        job_name="datahub_quote_stock_daily",
+        job_family="quote_daily",
+        trigger="cron",
+        source="k8s-cronjob",
+    )
+
+    # The claim is lost before the try block in run_quote_job, so the error
+    # must propagate untouched: no job work, no finish_job_run overwrite.
+    with pytest.raises(JobRunClaimExistsError):
+        run_quote_job(
+            TARGET_STOCK,
+            datahub_factory=lambda: datahub,
+            job_metadata=metadata,
+        )
+
+    assert datahub.calls == []
+    assert finished == []
+
+
+def test_reap_stale_running_job_runs_is_best_effort(monkeypatch):
+    from app.jobs import quote_runner
+
+    calls = []
+
+    class FakeWatcher:
+        @staticmethod
+        def get_db_connection():
+            calls.append("connect")
+
+    monkeypatch.setattr(
+        "app.lib.db_watcher.mongoengine_tool.mongo_watcher", FakeWatcher
+    )
+    monkeypatch.setattr(
+        "app.lib.utilities.job_run_helper.mark_stale_running_job_runs_failed",
+        lambda: calls.append("reap"),
+    )
+
+    quote_runner._reap_stale_running_job_runs()
+    assert calls == ["connect", "reap"]
+
+    def broken_reap():
+        raise RuntimeError("index ensure blew up")
+
+    monkeypatch.setattr(
+        "app.lib.utilities.job_run_helper.mark_stale_running_job_runs_failed",
+        broken_reap,
+    )
+    # A failed cleanup must never block the job.
+    quote_runner._reap_stale_running_job_runs()
+
+
 def test_run_quote_job_records_job_run(monkeypatch):
     from app.lib.utilities.job_run_helper import JobRunContext
 
@@ -273,3 +356,70 @@ def test_run_quote_job_records_job_run(monkeypatch):
     assert captured["start"].job_name == "datahub_quote_daily"
     assert captured["finish"]["status"] == "SUCCESS"
     assert result["target"] == TARGET_STOCK
+
+
+def test_run_quote_job_persists_phase_progress(monkeypatch):
+    class ProgressDatahub(FakeDatahub):
+        def start_stock_job(self):
+            self.calls.append("stock_with_factors")
+            # Simulate the processor invoking the wired callback after the
+            # stock data-integrity phase completes.
+            self.progress_callback(
+                "stock_market_sync",
+                "check_stock_data_integrity",
+                {"pulled_count": 5550, "written_count": 5209, "validated_count": 5209},
+                {
+                    "pulled_total": 5550,
+                    "written_total": 5209,
+                    "phase_stats": {
+                        "check_stock_data_integrity": {
+                            "pulled_count": 5550,
+                            "written_count": 5209,
+                            "validated_count": 5209,
+                        }
+                    },
+                },
+            )
+            return _summary("stock_market_sync", 30)
+
+    progress_calls = []
+
+    class FakeJobRun:
+        job_name = "datahub_quote_daily"
+
+    monkeypatch.setattr(
+        "app.jobs.quote_runner.job_run_helper.create_job_run",
+        lambda context: FakeJobRun(),
+    )
+    monkeypatch.setattr(
+        "app.jobs.quote_runner.job_run_helper.finish_job_run",
+        lambda job_run, **kwargs: job_run,
+    )
+    monkeypatch.setattr(
+        "app.jobs.quote_runner.job_run_helper.update_job_run_progress",
+        lambda job_run, **kwargs: progress_calls.append((job_run, kwargs)),
+    )
+
+    result = run_quote_job(
+        TARGET_STOCK,
+        include_factors=True,
+        datahub_factory=lambda: ProgressDatahub(),
+        job_metadata=QuoteJobMetadata(
+            job_name="datahub_quote_daily",
+            job_family="quote_daily",
+            trigger="cron",
+            source="k8s-cronjob",
+            scheduled_at=None,
+        ),
+    )
+
+    assert result["target"] == TARGET_STOCK
+    assert len(progress_calls) == 1
+    job_run, kwargs = progress_calls[0]
+    assert isinstance(job_run, FakeJobRun)
+    assert kwargs["pulled_total"] == 5550
+    assert kwargs["written_total"] == 5209
+    assert (
+        kwargs["phase_stats"]["check_stock_data_integrity"]["validated_count"] == 5209
+    )
+    assert kwargs["failed_phase"] is None

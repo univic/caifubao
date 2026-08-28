@@ -59,6 +59,14 @@ Collections: `quote` → `stock_daily_quote`, `factor` → `stock_factor_daily`,
 **Important**: This syncs data but does NOT update `data_asset_status`.
 Run `data refresh-status` after syncing.
 
+Daily stock jobs that include factors use one full-market Tushare
+`adj_factor(trade_date)` snapshot per target trading day and join it locally to
+that day's persisted quotes. Only the target-day FQ/HFQ fields are written.
+Initial computation, multi-day gaps, `force`, and backfill retain the per-stock
+historical factor path so incomplete history is not hidden by a latest-day-only
+update. The standalone `factor_runner --factor fq --mode stale` uses the same
+snapshot path; `--mode force` remains historical.
+
 #### `data refresh-status [LIMIT]`
 Refresh the `data_asset_status` freshness collection. Must run after any
 data sync to update the data quality page.
@@ -271,9 +279,38 @@ the entire logical run. Do not resume a Job created from an older image.
 - `datahub/` — produces and stores market data, factors, signals, scores
 - `backend/` — exposes Flask APIs, auth, light aggregation
 - `frontend/` — consumes backend APIs, renders UX
-- Dev CronJobs — suspended by default; use CLI for manual operations
+- Dev quote/factor/signal/scoring CronJobs — suspended by default; dev gets its
+  market data from prod via the daily `data-sync` CronJob instead of pulling
+  sources itself. Use the CLI for manual operations.
+- Prod quote/signal/scoring CronJobs — enabled and run the daily routine (see
+  below).
 - MongoDB backup CronJob — public template is suspended by default; private
   overlays must provide real object-storage config before enabling it
+
+### Daily routine schedules (Asia/Shanghai, weekdays)
+
+| CronJob | Schedule | Purpose |
+|:---|:---|:---|
+| prod `caifubao-datahub-quote-stock` | `0 18 * * 1-5` | Pull latest quotes + factors only (`DATAHUB_STOCK_HISTORY_SOURCE=tushare`, `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare`); UPD path writes settlement snapshots. Signals/scoring are NOT produced here — they run as the standalone jobs below, gated on this job's persisted data |
+| prod `caifubao-datahub-signal` | `30 18 * * 1-5` | Compute MA-cross signals from fresh factors (incremental, stale-only by default) |
+| prod `caifubao-datahub-scoring` | `35 18 * * 1-5` | Score latest trading day for all horizons (skips already-complete cohorts) |
+| dev `caifubao-datahub-data-sync` | `15 19 * * 1-5` | Sync prod MongoDB → dev (quotes, factors, signals, market, industry; runs after prod signal/scoring so dev gets the same day's signals) |
+
+The quote, signal, and scoring jobs run in dependency order (quote → signal →
+scoring). Dev's data-sync runs **after prod's signal and scoring jobs** (19:15)
+so it picks up the same day's rows, including signals. Note prod→dev sync does
+**not** copy `stock_score_predictions`; dev scoring must be produced by running
+`scoring_runner` manually.
+
+Dependency gates are data-aware, not just status-aware: a signal run proceeds
+when today's quote job has a SUCCESS record **or** its record (RUNNING or
+FAILED — the run may have been killed by `activeDeadlineSeconds` after writing
+data) shows both the `check_stock_data_integrity` phase (`validated_count > 0`)
+and the `update_ma_factor` phase (`written_count > 0`) completed. Similarly,
+scoring proceeds when today's signal run has a SUCCESS record or a record with
+`written_total > 0` (preserved on partial failures). This keeps the pipeline
+from stalling when a job dies after persisting its data but before recording
+completion.
 
 ### Data pipeline dependency chain
 ```
@@ -283,13 +320,39 @@ quote → FQ factor → MA factor → signal → scoring → verification
   │        │           │          └── reads factor + quote → writes stock_signal_daily
   │        │           └── reads quote → writes stock_factor_daily
   │        └── reads quote → adds hfq fields to stock_daily_quote
-  └── baostock/akshare → writes stock_daily_quote
+  └── tushare/akshare/baostock → writes stock_daily_quote
 ```
 
-Stock history defaults to AkShare over HTTPS. Set
-`DATAHUB_STOCK_HISTORY_SOURCE=baostock` only where outbound TCP access to
-`www.baostock.com:10030` is known to work. A stock refresh that attempts
-updates but writes zero quote rows fails before factor and scoring phases.
+Stock history defaults to AkShare over HTTPS, but the k8s base deployment and
+the daily quote-stock CronJob pin
+`DATAHUB_STOCK_HISTORY_SOURCE=tushare` +
+`DATAHUB_STOCK_UNIVERSE_SOURCE=tushare` (Tushare `pro.daily`, requires the
+private `TUSHARE_TOKEN` secret; history is fetched in year windows and every
+call is paced to stay under the 300/min rate limit). Keep the tushare source
+pinned for dev deployments and manually triggered full-market runs too:
+akshare/eastmoney history endpoints drop connections under sustained polling
+and previously stalled dev catchup runs for 30+ minutes before failing.
+`DATAHUB_STOCK_HISTORY_SOURCE=baostock` remains available only where outbound
+TCP access to `www.baostock.com:10030` is known to work.
+`DATAHUB_STOCK_UNIVERSE_SOURCE=tushare` sources the stock universe/list from
+tushare (`pro.stock_basic` + the frozen-date daily snapshot) instead of the
+eastmoney/sina spot list.
+
+A circuit breaker protects full-market runs: once 25 consecutive history
+pulls fail (not attributable to suspension), the quote phase aborts early
+with "history source appears unavailable" instead of grinding through the
+whole universe before the final validation failure. Re-run against a healthy
+source; the run stays fail-closed either way.
+
+Daily incremental updates use a snapshot-driven path: when a stock's latest
+quote is exactly one trading day behind, the runner is not suspended, the
+target is a stock, and the universe source is tushare, the settlement snapshot
+(`pro.daily` for the as-of date) is written directly instead of replaying full
+history, and quote freshness is refreshed in one batch (single aggregate +
+bulk upsert) after the snapshot write. INC/FULL refreshes, suspended stocks,
+and spot-sourced universes still replay history. A stock refresh that
+attempts updates but writes zero quote rows fails before factor and scoring
+phases.
 
 ### Data sync (prod → dev)
 The `data sync` command uses the `MONGODB_SRC_*` environment variables

@@ -1,12 +1,13 @@
 import datetime
 import logging
 import os
-import time
+from typing import Any
 
 import pandas
 from requests.exceptions import ConnectionError, RequestException
 
 from app.lib.datahub.data_source import interface
+from app.lib.datahub.data_source import retry as market_data_retry
 from app.lib.datahub.data_source.interface.baostock_interface import (
     BaostockInterfaceManager,
 )
@@ -15,68 +16,25 @@ from app.lib.utilities import trading_day_helper, performance_helper, stock_code
 
 logger = logging.getLogger(__name__)
 
+_call_with_retry = market_data_retry.call_with_retry
+_is_retryable_market_data_error = market_data_retry.is_retryable_market_data_error
+
 
 STOCK_HISTORY_SOURCE_ENV = "DATAHUB_STOCK_HISTORY_SOURCE"
-SUPPORTED_STOCK_HISTORY_SOURCES = {"akshare", "baostock"}
+SUPPORTED_STOCK_HISTORY_SOURCES = {"akshare", "baostock", "tushare"}
+
+STOCK_UNIVERSE_SOURCE_ENV = "DATAHUB_STOCK_UNIVERSE_SOURCE"
+SUPPORTED_STOCK_UNIVERSE_SOURCES = {"spot", "tushare"}
 
 
-TRANSIENT_NETWORK_MARKERS = (
-    "Temporary failure in name resolution",
-    "NameResolutionError",
-    "Max retries exceeded",
-    "Connection aborted",
-    "RemoteDisconnected",
-    "Read timed out",
-    "ConnectTimeout",
-    "Connection reset by peer",
-)
-
-
-def _is_retryable_market_data_error(error: Exception) -> bool:
-    if isinstance(error, (ConnectionError, RequestException)):
-        return True
-
-    error_message = str(error)
-    # Anti-bot HTML responses commonly surface as JSON decode errors (e.g.
-    # akshare's demjson JSONDecodeError: "Can not decode value starting with
-    # character '<'"). Treat them as transient like network errors: retry
-    # before failing the run.
-    if type(error).__name__ == "JSONDecodeError" or "Can not decode" in error_message:
-        return True
-    return any(marker in error_message for marker in TRANSIENT_NETWORK_MARKERS)
-
-
-def _call_with_retry(
-    fetcher, label: str, max_attempts: int = 3, base_delay: float = 1.0
-):
-    last_error = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return fetcher()
-        except Exception as error:  # noqa: BLE001
-            last_error = error
-            if attempt >= max_attempts or not _is_retryable_market_data_error(error):
-                logger.error(
-                    "Market data request failed: source=%s attempt=%s/%s error=%s",
-                    label,
-                    attempt,
-                    max_attempts,
-                    error,
-                )
-                raise
-
-            delay = base_delay * (2 ** (attempt - 1))
-            logger.warning(
-                "Market data request retrying: source=%s attempt=%s/%s delay=%.1fs error=%s",
-                label,
-                attempt,
-                max_attempts,
-                delay,
-                error,
-            )
-            time.sleep(delay)
-
-    raise last_error
+def get_stock_universe_source() -> str:
+    source = os.getenv(STOCK_UNIVERSE_SOURCE_ENV, "spot").strip().lower()
+    if source not in SUPPORTED_STOCK_UNIVERSE_SOURCES:
+        raise ValueError(
+            f"{STOCK_UNIVERSE_SOURCE_ENV} must be one of "
+            f"{sorted(SUPPORTED_STOCK_UNIVERSE_SOURCES)}"
+        )
+    return source
 
 
 def get_stock_history_source() -> str:
@@ -172,6 +130,85 @@ def _normalize_akshare_stock_history(raw_df, code: str):
     return normalized[canonical_columns]
 
 
+def _normalize_tushare_stock_history(raw_df, code: str):
+    if raw_df is None or raw_df.empty:
+        return None
+
+    normalized = raw_df.rename(
+        columns={
+            "trade_date": "date",
+            "pre_close": "previous_close",
+            "pct_chg": "change_rate",
+            "change": "change_amount",
+            "vol": "volume",
+        }
+    ).copy()
+    required_columns = {"date", "open", "close", "high", "low", "volume"}
+    missing_columns = required_columns - set(normalized.columns)
+    if missing_columns:
+        raise ValueError(
+            "Tushare stock history response missing required columns: "
+            f"{sorted(missing_columns)}"
+        )
+
+    normalized["date"] = pandas.to_datetime(normalized["date"], format="%Y%m%d")
+    numeric_columns = [
+        "open",
+        "close",
+        "high",
+        "low",
+        "volume",
+        "previous_close",
+        "trade_amount",
+        "change_rate",
+        "change_amount",
+        "turnover_rate",
+    ]
+    for column in numeric_columns:
+        if column not in normalized:
+            normalized[column] = 0
+        normalized[column] = pandas.to_numeric(
+            normalized[column], errors="coerce"
+        ).fillna(0)
+
+    # tushare amount 单位千元 -> 元（与 akshare/东财成交额一致）
+    normalized["trade_amount"] = (
+        pandas.to_numeric(normalized["amount"], errors="coerce").fillna(0) * 1000
+        if "amount" in normalized
+        else 0
+    )
+    normalized["volume"] = normalized["volume"].astype("int64")
+    normalized["code"] = code
+    normalized["trade_status"] = 1
+    normalized["peTTM"] = 0.0
+    normalized["pbMRQ"] = 0.0
+    normalized["psTTM"] = 0.0
+    normalized["pcfNcfTTM"] = 0.0
+    normalized["isST"] = 0
+
+    canonical_columns = [
+        "date",
+        "code",
+        "open",
+        "high",
+        "low",
+        "close",
+        "previous_close",
+        "volume",
+        "trade_amount",
+        "turnover_rate",
+        "change_rate",
+        "change_amount",
+        "trade_status",
+        "peTTM",
+        "pbMRQ",
+        "psTTM",
+        "pcfNcfTTM",
+        "isST",
+    ]
+    return normalized[canonical_columns].sort_values("date").reset_index(drop=True)
+
+
 def get_a_stock_trade_date_hist():
     remote_data = _call_with_retry(
         interface.akshare_interface.get_trade_date_hist,
@@ -256,6 +293,118 @@ def get_zh_a_stock_spot():
     return df
 
 
+def _build_tushare_universe(as_of_date: str | None = None):
+    """Build the stock universe from tushare (stock_basic + daily snapshot).
+
+    Returns a DataFrame with code/name/close plus the full daily bar fields
+    (open/high/low/volume/trade_amount/previous_close/change_amount/
+    change_rate/turnover_rate); close == 0 means
+    temporarily suspended (absent from the as-of daily snapshot — tushare
+    omits suspended stocks), matching the spot path's suspension semantics.
+    """
+    trade_date = (
+        as_of_date.replace("-", "")
+        if as_of_date
+        else datetime.date.today().strftime("%Y%m%d")
+    )
+    basic = _call_with_retry(
+        lambda: interface.tushare_interface.stock_basic_active(),
+        label="tushare_stock_basic",
+    )
+    daily = _call_with_retry(
+        lambda: interface.tushare_interface.daily_by_trade_date(trade_date),
+        label=f"tushare_daily:{trade_date}",
+    )
+    if basic is None or basic.empty:
+        return pandas.DataFrame(
+            columns=[
+                "code",
+                "name",
+                "close",
+                "open",
+                "high",
+                "low",
+                "volume",
+                "trade_amount",
+                "previous_close",
+                "change_amount",
+                "change_rate",
+                "turnover_rate",
+            ]
+        )
+    if daily is None or daily.empty:
+        # An empty snapshot would flag the whole market as suspended and
+        # silently no-op the quote phase; fail loudly instead.
+        raise RuntimeError(
+            f"Tushare daily snapshot for {trade_date} is empty; "
+            "cannot resolve the stock universe"
+        )
+
+    daily_map: dict[str, Any] = {}
+    for _, row in daily.iterrows():
+        ts_code = row.get("ts_code")
+        if ts_code:
+            daily_map[ts_code] = row
+
+    def _num(daily_row, key):
+        value = pandas.to_numeric(daily_row.get(key), errors="coerce")
+        return 0.0 if pandas.isna(value) else float(value)
+
+    rows = []
+    for _, row in basic.iterrows():
+        ts_code = row.get("ts_code")
+        name = row.get("name", "")
+        if not ts_code:
+            continue
+        code = interface.tushare_interface.from_tushare_ts_code(ts_code)
+        daily_row = daily_map.get(ts_code)
+        if daily_row is None:
+            # tushare omits suspended stocks for the date -> all fields 0
+            out = {
+                "code": code,
+                "name": name,
+                "close": 0.0,
+                "open": 0.0,
+                "high": 0.0,
+                "low": 0.0,
+                "volume": 0.0,
+                "trade_amount": 0.0,
+                "previous_close": 0.0,
+                "change_amount": 0.0,
+                "change_rate": 0.0,
+                "turnover_rate": 0.0,
+            }
+        else:
+            out = {
+                "code": code,
+                "name": name,
+                "close": _num(daily_row, "close"),
+                "open": _num(daily_row, "open"),
+                "high": _num(daily_row, "high"),
+                "low": _num(daily_row, "low"),
+                "volume": _num(daily_row, "vol"),
+                # amount 千元 -> 元
+                "trade_amount": _num(daily_row, "amount") * 1000,
+                "previous_close": _num(daily_row, "pre_close"),
+                "change_amount": _num(daily_row, "change"),
+                "change_rate": _num(daily_row, "pct_chg"),
+                "turnover_rate": 0.0,
+            }
+        rows.append(out)
+    return pandas.DataFrame(rows)
+
+
+def get_zh_a_stock_universe(as_of_date: str | None = None):
+    """Resolve the stock universe per DATAHUB_STOCK_UNIVERSE_SOURCE.
+
+    spot (default) -> eastmoney/sina spot list; tushare -> stock_basic +
+    the as-of-date daily snapshot (full daily bar fields included).
+    """
+    if get_stock_universe_source() == "tushare":
+        return _build_tushare_universe(as_of_date)
+    return get_zh_a_stock_spot()
+
+
 def get_zh_a_index_hist_daily_quote(
     code, start_date=None, end_date=None, incremental=True
 ):
@@ -293,6 +442,24 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None, end_date=None):
             label=f"akshare_stock_zh_a_hist:{code}",
         )
         normalized = _normalize_akshare_stock_history(raw_df, code)
+        if normalized is None:
+            return None
+        return normalized[normalized["date"] <= pandas.to_datetime(normalized_end_date)]
+
+    if get_stock_history_source() == "tushare":
+        ts_code = interface.tushare_interface.to_tushare_ts_code(code)
+        normalized_start_date = start_date.replace("-", "") if start_date else None
+        raw_df = _call_with_retry(
+            lambda: interface.tushare_interface.tushare_daily(
+                ts_code,
+                start_date=normalized_start_date,
+                end_date=normalized_end_date,
+            ),
+            label=f"tushare_daily:{code}",
+        )
+        normalized = _normalize_tushare_stock_history(raw_df, code)
+        if normalized is None:
+            return None
         return normalized[normalized["date"] <= pandas.to_datetime(normalized_end_date)]
 
     name_mapping = {

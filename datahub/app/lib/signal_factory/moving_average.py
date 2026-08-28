@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 from pymongo import UpdateOne
 
+from app.lib.utilities import data_asset_status_helper
 from app.lib.utilities import data_capability_helper
 from app.model.data_asset_status import STATUS_OK, DataAssetStatus
 from app.model.factor import StockFactorDaily
@@ -22,6 +23,21 @@ SIGNAL_MA20_ABOVE_MA60 = "MA20_ABOVE_MA60"
 
 SIGNAL_VERSION = "v1"
 SIGNAL_ASSET_TYPE = "signal"
+
+
+class SignalUpdateError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        failed_codes: list[str],
+        written_count: int = 0,
+    ):
+        super().__init__(message)
+        self.failed_codes = list(failed_codes)
+        # Signals already persisted before the failure; the job-run record
+        # keeps this so downstream scoring can proceed on the real data.
+        self.written_count = int(written_count or 0)
 
 
 @dataclass
@@ -136,19 +152,32 @@ class MovingAverageSignalService:
             .first()
         )
 
-    def _load_factor_df(self, code: str) -> pd.DataFrame:
-        # Fetch all relevant factors and close price
+    def _load_factor_df(
+        self, code: str, anchor_date: datetime.datetime | None = None
+    ) -> pd.DataFrame:
+        start_date = None
+        if anchor_date is not None:
+            previous = (
+                self.factor_model.objects(stock_code=code, date__lt=anchor_date)
+                .only("date")
+                .order_by("-date")
+                .first()
+            )
+            start_date = getattr(previous, "date", anchor_date)
+
+        factor_query = self.factor_model.objects(stock_code=code)
+        quote_query = self.quote_model.objects(code=code)
+        if start_date is not None:
+            factor_query = factor_query.filter(date__gte=start_date)
+            quote_query = quote_query.filter(date__gte=start_date)
+
         factor_rows = list(
-            self.factor_model.objects(stock_code=code)
-            .only("date", "ma_10", "ma_20", "ma_60")
+            factor_query.only("date", "ma_10", "ma_20", "ma_60")
             .order_by("+date")
             .as_pymongo()
         )
         quote_rows = list(
-            self.quote_model.objects(code=code)
-            .only("date", "close")
-            .order_by("+date")
-            .as_pymongo()
+            quote_query.only("date", "close").order_by("+date").as_pymongo()
         )
 
         f_df = pd.DataFrame(factor_rows)
@@ -162,6 +191,20 @@ class MovingAverageSignalService:
             q_df.set_index("date", inplace=True)
             return pd.merge(f_df, q_df, left_index=True, right_index=True, how="left")
         return f_df
+
+    def _load_signal_anchors(self, code: str) -> dict[str, datetime.datetime]:
+        rows = self.status_model.objects(
+            code=code,
+            object_type="individual_stock",
+            asset_type=SIGNAL_ASSET_TYPE,
+            asset_name__in=list(self.configs),
+            status=STATUS_OK,
+        ).only("asset_name", "latest_data_date")
+        return {
+            row.asset_name: row.latest_data_date
+            for row in rows
+            if row.latest_data_date is not None
+        }
 
     def _load_source_freshness(self, code: str) -> dict[str, Any]:
         status_rows = list(
@@ -187,9 +230,11 @@ class MovingAverageSignalService:
         stock_obj,
         signal_df: pd.DataFrame,
         source_freshness: dict[str, Any] | None = None,
+        generated_at: datetime.datetime | None = None,
     ) -> list[UpdateOne]:
         operations: list[UpdateOne] = []
         source_freshness = source_freshness or {}
+        generated_at = generated_at or datetime.datetime.now()
         for signal_date, row in signal_df.iterrows():
             snapshot = {f: float(row[f]) for f in config.required_factors if f in row}
             if "close" in row:
@@ -222,40 +267,100 @@ class MovingAverageSignalService:
                             "strength": float(row.get("strength", 0)),
                             "reason": config.reason_template,
                             "factor_snapshot": snapshot,
+                        },
+                        "$setOnInsert": {
                             "source_freshness": source_freshness,
-                            "generated_at": datetime.datetime.now(),
-                        }
+                            "generated_at": generated_at,
+                        },
                     },
                     upsert=True,
                 )
             )
         return operations
 
-    def _refresh_signal_status(
-        self, config: SignalConfig, stock_obj, factor_df: pd.DataFrame
+    def _refresh_signal_statuses(
+        self,
+        stock_obj,
+        target_date: datetime.datetime,
+        calculated_at: datetime.datetime,
     ) -> None:
-        latest_factor_date = None if factor_df.empty else factor_df.index.max()
-        signal_count = self.signal_model.objects(
-            stock_code=stock_obj.code,
-            signal_name=config.name,
-        ).count()
-        self.status_model.objects(
-            code=stock_obj.code,
-            object_type=getattr(stock_obj, "object_type", "individual_stock"),
-            asset_type=SIGNAL_ASSET_TYPE,
-            asset_name=config.name,
-        ).update_one(
-            set__latest_data_date=latest_factor_date,
-            set__data_count=signal_count,
-            set__status=STATUS_OK,
-            set__status_reason="signal calculation completed",
-            set__last_calculated_at=datetime.datetime.now(),
-            set__last_success_at=datetime.datetime.now(),
-            set__last_job_name="ma_signal_sync",
-            upsert=True,
+        self._refresh_market_signal_statuses(
+            {stock_obj.code: target_date},
+            calculated_at=calculated_at,
+            object_type_by_code={
+                stock_obj.code: getattr(stock_obj, "object_type", "individual_stock")
+            },
         )
 
-    def update_code(self, code: str) -> dict[str, int | str | None]:
+    def _refresh_market_signal_statuses(
+        self,
+        code_targets: dict[str, datetime.datetime],
+        *,
+        calculated_at: datetime.datetime | None = None,
+        object_type_by_code: dict[str, str] | None = None,
+    ) -> None:
+        if not code_targets:
+            return
+        calculated_at = calculated_at or datetime.datetime.now()
+        codes = list(code_targets)
+        if object_type_by_code is None:
+            stocks = self.stock_model.objects(code__in=codes).only(
+                "code", "object_type"
+            )
+            object_type_by_code = {
+                stock.code: getattr(stock, "object_type", "individual_stock")
+                for stock in stocks
+            }
+        rows = self.signal_model._get_collection().aggregate(
+            [
+                {
+                    "$match": {
+                        "stock_code": {"$in": codes},
+                        "signal_name": {"$in": list(self.configs)},
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": {
+                            "stock_code": "$stock_code",
+                            "signal_name": "$signal_name",
+                        },
+                        "data_count": {"$sum": 1},
+                    }
+                },
+            ]
+        )
+        counts = {
+            (row["_id"]["stock_code"], row["_id"]["signal_name"]): int(
+                row["data_count"]
+            )
+            for row in rows
+        }
+        records = [
+            {
+                "code": code,
+                "object_type": object_type_by_code.get(code, "individual_stock"),
+                "asset_type": SIGNAL_ASSET_TYPE,
+                "asset_name": signal_name,
+                "latest_data_date": code_targets[code],
+                "data_count": counts.get((code, signal_name), 0),
+                "status": STATUS_OK,
+                "status_reason": "signal calculation completed",
+                "last_calculated_at": calculated_at,
+                "last_success_at": calculated_at,
+                "last_job_name": "ma_signal_sync",
+                "error_message": None,
+            }
+            for code in codes
+            for signal_name in self.configs
+        ]
+        data_asset_status_helper.bulk_upsert_asset_status(
+            records, collection=self.status_model._get_collection()
+        )
+
+    def update_code(
+        self, code: str, *, force: bool = False, refresh_statuses: bool = True
+    ) -> dict[str, Any]:
         stock_obj = self._load_stock(code)
         if not stock_obj:
             return {"code": "FAIL", "written_count": 0, "message": "stock not found"}
@@ -266,31 +371,66 @@ class MovingAverageSignalService:
                 "message": "ma_factor is not supported for this stock",
             }
 
-        factor_df = self._load_factor_df(code)
+        anchors = {} if force else self._load_signal_anchors(code)
+        incremental_anchor = (
+            min(anchors.values()) if len(anchors) == len(self.configs) else None
+        )
+        factor_df = self._load_factor_df(code, anchor_date=incremental_anchor)
         if factor_df.empty:
+            if force:
+                raise RuntimeError(
+                    f"cannot rebuild signals without factor data: {code}"
+                )
             return {"code": "GOOD", "written_count": 0, "message": "no factor data"}
 
-        total_written = 0
         source_freshness = self._load_source_freshness(code)
+        generated_at = datetime.datetime.now()
+        target_date = factor_df.index.max()
+        operations: list[UpdateOne] = []
+        authoritative_keys: list[dict[str, Any]] = []
 
         for signal_name, config in self.configs.items():
-            try:
-                signal_df = self.build_signal_frame(config, factor_df)
-                if not signal_df.empty:
-                    operations = self._build_bulk_operations(
-                        config, stock_obj, signal_df, source_freshness=source_freshness
-                    )
-                    if operations:
-                        self.signal_model._get_collection().bulk_write(
-                            operations, ordered=False
-                        )
-                        total_written += len(operations)
+            signal_df = self.build_signal_frame(config, factor_df)
+            if not force:
+                anchor = anchors.get(signal_name)
+                if anchor is not None:
+                    signal_df = signal_df[signal_df.index > anchor]
+            if force:
+                authoritative_keys.extend(
+                    {"signal_name": config.name, "date": signal_date}
+                    for signal_date in signal_df.index
+                )
+            operations.extend(
+                self._build_bulk_operations(
+                    config,
+                    stock_obj,
+                    signal_df,
+                    source_freshness=source_freshness,
+                    generated_at=generated_at,
+                )
+            )
 
-                self._refresh_signal_status(config, stock_obj, factor_df)
-            except Exception as exc:
-                logger.warning("Signal %s skipped for %s: %s", signal_name, code, exc)
+        collection = self.signal_model._get_collection()
+        if operations:
+            collection.bulk_write(operations, ordered=force)
+        if force:
+            delete_filter: dict[str, Any] = {
+                "stock_code": code,
+                "signal_name": {"$in": list(self.configs)},
+            }
+            if authoritative_keys:
+                delete_filter["$nor"] = authoritative_keys
+            collection.delete_many(delete_filter)
+        if refresh_statuses:
+            self._refresh_signal_statuses(stock_obj, target_date, generated_at)
 
-        return {"code": "GOOD", "written_count": total_written, "message": None}
+        written_count = len(operations)
+        return {
+            "code": "GOOD",
+            "written_count": written_count,
+            "message": None,
+            "target_date": target_date,
+        }
 
     def get_codes_requiring_update(self, market=None) -> list[str]:
         stock_query = self.stock_model.objects(active_status=0)
@@ -318,21 +458,23 @@ class MovingAverageSignalService:
             ).only("code", "asset_name", "latest_data_date")
         )
 
-        # Check against the primary signal status
         signal_status_rows = list(
             self.status_model.objects(
                 code__in=code_list,
                 object_type="individual_stock",
                 asset_type=SIGNAL_ASSET_TYPE,
-                asset_name=SIGNAL_MA10_CROSS_MA20,
-            ).only("code", "latest_data_date")
+                asset_name__in=list(self.configs),
+            ).only("code", "asset_name", "latest_data_date", "status")
         )
 
         factor_dates: dict[str, dict[str, datetime.datetime]] = {}
         for row in factor_status_rows:
             factor_dates.setdefault(row.code, {})[row.asset_name] = row.latest_data_date
 
-        signal_dates = {row.code: row.latest_data_date for row in signal_status_rows}
+        signal_dates = {
+            (row.code, row.asset_name): (row.latest_data_date, row.status)
+            for row in signal_status_rows
+        }
 
         result: list[str] = []
         for code in code_list:
@@ -349,31 +491,63 @@ class MovingAverageSignalService:
             latest_required_date = min(
                 ma_dates["MA_10"], ma_dates["MA_20"], ma_dates["MA_60"]
             )
-            latest_signal_date = signal_dates.get(code)
-
-            if latest_signal_date != latest_required_date:
+            if any(
+                signal_dates.get((code, signal_name))
+                != (latest_required_date, STATUS_OK)
+                for signal_name in self.configs
+            ):
                 result.append(code)
 
         return result
 
-    def update_market(self, market=None) -> dict[str, int]:
-        codes = self.get_codes_requiring_update(market=market)
+    def update_market(
+        self, market=None, selected_codes: list[str] | None = None
+    ) -> dict[str, Any]:
+        codes = (
+            list(selected_codes)
+            if selected_codes is not None
+            else self.get_codes_requiring_update(market=market)
+        )
         written_total = 0
         skipped_count = 0
         failed_count = 0
+        failed_codes: list[str] = []
+        status_targets: dict[str, datetime.datetime] = {}
         for code in codes:
             try:
-                result = self.update_code(code)
+                result = self.update_code(code, refresh_statuses=False)
             except Exception:
                 failed_count += 1
+                failed_codes.append(code)
                 logger.exception("Signal update failed: code=%s", code)
                 continue
             if result.get("code") == "SKIP":
                 skipped_count += 1
+            elif result.get("code") != "GOOD":
+                failed_count += 1
+                failed_codes.append(code)
+                continue
+            if result.get("code") == "GOOD" and result.get("target_date") is not None:
+                status_targets[code] = result["target_date"]
             written_total += int(result.get("written_count", 0))
+        if failed_codes:
+            raise SignalUpdateError(
+                "signal market update failed for codes: " + ", ".join(failed_codes),
+                failed_codes=failed_codes,
+                written_count=written_total,
+            )
+        try:
+            self._refresh_market_signal_statuses(status_targets)
+        except Exception as exc:
+            raise SignalUpdateError(
+                "signal status update failed",
+                failed_codes=list(status_targets),
+                written_count=written_total,
+            ) from exc
         return {
             "pulled_count": len(codes),
             "written_count": written_total,
             "skipped_count": skipped_count,
             "failed_count": failed_count,
+            "failed_codes": failed_codes,
         }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 from collections.abc import Iterable
 
@@ -173,7 +174,58 @@ class MovingAverageFactorService:
                 last_job_name="ma_factor_sync",
             )
 
-    def update_code(self, code: str) -> dict[str, int | str | None]:
+    def refresh_market_statuses(self, codes: list[str]) -> None:
+        """Refresh MA window statuses for many codes with bulk round trips.
+
+        Replaces one read + (aggregate + upsert) per code and window with one
+        status read, one aggregate per window, and one chunked bulk upsert.
+        Records are built by the same pure builder as the single-code path,
+        so the resulting documents are identical to per-stock
+        refresh_ma_factor_status calls. Must run after the factor writes of
+        the batch have committed: statuses are derived from persisted rows.
+        """
+        if not codes:
+            return
+        stock_list = list(
+            self.stock_model.objects(code__in=codes).only(
+                "code", "name", "object_type", "data_capabilities"
+            )
+        )
+        object_type_by_code = {
+            stock.code: getattr(stock, "object_type", "individual_stock")
+            for stock in stock_list
+        }
+        quote_status_map = data_asset_status_helper.read_quote_status_map(codes)
+        calculated_at = datetime.datetime.now()
+        records = []
+        for window in self.windows:
+            stats_by_code = data_asset_status_helper.aggregate_stats_by_code(
+                self.factor_model._get_collection(),
+                match={
+                    "stock_code": {"$in": codes},
+                    self.factor_field(window): {"$exists": True, "$ne": None},
+                },
+                code_field="stock_code",
+            )
+            for code in codes:
+                if code not in object_type_by_code:
+                    continue
+                records.append(
+                    data_asset_status_helper.build_ma_status_record(
+                        code=code,
+                        object_type=object_type_by_code[code],
+                        stats_row=stats_by_code.get(code),
+                        quote_status=quote_status_map.get(code),
+                        window=window,
+                        last_job_name="ma_factor_sync",
+                        calculated_at=calculated_at,
+                    )
+                )
+        data_asset_status_helper.bulk_upsert_asset_status(records)
+
+    def update_code(
+        self, code: str, *, refresh_statuses: bool = True
+    ) -> dict[str, int | str | None]:
         stock_obj = (
             self.stock_model.objects(code=code)
             .only("code", "name", "object_type", "data_capabilities")
@@ -191,7 +243,8 @@ class MovingAverageFactorService:
         anchor_date = self._get_incremental_anchor_date(code)
         quote_df = self._load_quote_df(code, anchor_date=anchor_date)
         if quote_df.empty:
-            self._refresh_factor_statuses(stock_obj)
+            if refresh_statuses:
+                self._refresh_factor_statuses(stock_obj)
             return {"code": "GOOD", "written_count": 0, "message": None}
 
         try:
@@ -209,7 +262,8 @@ class MovingAverageFactorService:
             self.factor_model._get_collection().bulk_write(
                 bulk_operations, ordered=False
             )
-        self._refresh_factor_statuses(stock_obj)
+        if refresh_statuses:
+            self._refresh_factor_statuses(stock_obj)
 
         logger.info(
             "MA factors updated: code=%s windows=%s written=%s",
@@ -277,26 +331,45 @@ class MovingAverageFactorService:
                 result.append(code)
         return result
 
-    def update_market(self, market=None) -> dict[str, int]:
-        codes = self.get_codes_requiring_update(market=market)
+    def update_market(
+        self, market=None, selected_codes: list[str] | None = None
+    ) -> dict[str, int]:
+        codes = (
+            list(selected_codes)
+            if selected_codes is not None
+            else self.get_codes_requiring_update(market=market)
+        )
         written_total = 0
         skipped_count = 0
         failed_count = 0
+        failed_codes: list[str] = []
+        refreshed_codes: list[str] = []
         for code in codes:
             try:
-                result = self.update_code(code)
+                result = self.update_code(code, refresh_statuses=False)
             except Exception:
                 failed_count += 1
+                failed_codes.append(code)
                 logger.exception("MA factor update failed: code=%s", code)
                 continue
             if result.get("code") == "SKIP":
                 skipped_count += 1
+            elif result.get("code") == "GOOD":
+                refreshed_codes.append(code)
+            else:
+                failed_count += 1
+                failed_codes.append(code)
+                continue
             written_total += int(result.get("written_count", 0))
+        # One batched freshness refresh for every updated code, after all
+        # factor writes of this run have committed (see refresh_market_statuses).
+        self.refresh_market_statuses(refreshed_codes)
         return {
             "pulled_count": len(codes),
             "written_count": written_total,
             "skipped_count": skipped_count,
             "failed_count": failed_count,
+            "failed_codes": failed_codes,
         }
 
     def backfill_code(self, code: str) -> dict[str, int | str | None]:

@@ -205,6 +205,22 @@ the missing target-date row is attributable to temporary suspension. After the
 quote phase, verify persisted freshness against the frozen date before enabling
 or manually running factor, signal, scoring, export, or backup stages.
 
+#### Post-bootstrap re-enable (current cluster state)
+
+The 2026-08 production bootstrap passed the quote gate (full market via
+tushare, frozen `as_of_date`, snapshot-driven daily updates) and the daily
+routine is now enabled in dependency order:
+
+- prod quote-stock (18:00, tushare history + universe) → signal (18:30) →
+  scoring (18:35), weekdays Asia/Shanghai;
+- dev `data-sync` (19:15) syncs prod → dev instead of pulling sources itself
+  (after prod signal/scoring so dev gets the same day's signals; scoring is
+  not synced — run scoring_runner manually in dev).
+
+Factor/signal/scoring one-shot stages are run as separate Jobs with `--mode
+stale` after the quote gate, matching the sequence in
+`docs/operations/agent-cli.md#daily-routine-schedules-asia-shanghai-weekdays`.
+
 ### Image assembly validation
 
 The Datahub publish workflow overlays shared modules from `backend/app/model`
