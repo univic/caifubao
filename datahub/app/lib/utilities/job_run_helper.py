@@ -116,12 +116,13 @@ def create_job_run(context: JobRunContext) -> DatahubJobRun:
         ) from error
     except OperationFailure:
         # mongoengine ensures indexes on the first collection touch of a
-        # process. If that ensure fails (e.g. a pre-existing duplicate RUNNING
-        # document blocks the partial-unique index), the first save raises
-        # before writing anything, while every later touch in the same process
-        # succeeds because the collection is then cached. Retry once so a
-        # failed index creation degrades the race protection instead of
-        # crashing whichever runner happened to touch the model first.
+        # process. If that ensure fails for a NON-duplicate reason, the first
+        # save raises before writing anything, while every later touch in the
+        # same process succeeds because the collection is then cached. Retry
+        # once so a failed index creation degrades the race protection instead
+        # of crashing whichever runner happened to touch the model first.
+        # (A duplicate-blocked index build raises DuplicateKeyError, which is
+        # claimed above and never retried here.)
         logger.warning(
             "First save of job run failed during index ensure; retrying once"
         )
