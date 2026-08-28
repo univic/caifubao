@@ -27,7 +27,7 @@
 - [x] 4.1 spec-guardian + qa-reviewer（均 PASS，P1 已修复并有测试覆盖）
 - [x] 4.2 Branch conflict check + Draft PR + CI green（PR #135，全绿后 merged）
 - [x] 4.3 本轮可靠性修复 spec-guardian + qa-reviewer（P1 清零）
-- [ ] 4.4 Branch conflict check + Draft PR + CI green
+- [x] 4.4 Branch conflict check + Draft PR #139 + CI green
 
 ## 5. Deploy + Recompute (operator)
 
