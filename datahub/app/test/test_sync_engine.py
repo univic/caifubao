@@ -100,6 +100,7 @@ def test_sync_uses_business_key_mapping_for_all_synced_collections():
         "date",
         "signal_name",
     ]
+    assert SYNC_UPSERT_KEYS["stock_industry"] == ["stock_code"]
 
 
 def test_snapshot_collection_falls_back_to_id():
