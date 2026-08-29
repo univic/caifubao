@@ -118,8 +118,8 @@ No percent sign, suffix, prose, or second metric may appear on that line.
 ## Frozen profile fields
 
 - `runtime.manager: local-process`
-- `runtime.env_prep_command: datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner prepare --profile datahub/research/autoresearch/h20_excess_alpha/profile.yaml`
-- `runtime.entry_command: datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner run --profile datahub/research/autoresearch/h20_excess_alpha/profile.yaml --candidate datahub/research/autoresearch/h20_excess_alpha/candidate.yaml`
+- `runtime.env_prep_command: PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner prepare --profile autoresearch/profile.yaml`
+- `runtime.entry_command: PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner run --profile autoresearch/profile.yaml --candidate datahub/research/autoresearch/h20_excess_alpha/candidate.yaml`
 - `runtime.timeout_seconds: 600`
 - `experiment.time_budget_seconds: 600`
 - `experiment.metric_name: research_profitability_score`
@@ -136,7 +136,7 @@ No percent sign, suffix, prose, or second metric may appear on that line.
 - `git_policy.discard_strategy: hard-reset-to-pre-run-commit`
 - `git_policy.crash_strategy: keep-crash-commit-for-inspection`
 - `logging.run_log_path: docs/autoresearch/runs/h20-excess-alpha/results.jsonl`
-- `logging.summary_extract_command: datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner metric --report docs/autoresearch/runs/h20-excess-alpha/latest-report.json`
+- `logging.summary_extract_command: PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner metric --report docs/autoresearch/runs/h20-excess-alpha/latest-report.json`
 - `logging.results_columns: [run_id, git_ref, candidate_config_sha256, candidate_summary, snapshot_sha256, train_range, validation_range, test_range, information_ratio, annualized_net_excess_return, excess_max_drawdown, annual_turnover, profit_concentration, completed_trades, eligible_trading_days, walk_forward_decay, research_profitability_score, decision, reason, elapsed_seconds]`
 
 The bootstrap snapshot may live outside Git. Its absolute local path and SHA-256

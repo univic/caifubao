@@ -1,11 +1,14 @@
-current_stage: planning
-stage_status: completed
+current_stage: autoresearch-bootstrap
+stage_status: blocked
 profile_status: spec-frozen
+bootstrap_status: completed
+baseline_status: pending
+active_profile_path: autoresearch/profile.yaml
 active_spec_path: docs/autoresearch/specs/2026-08-29-h20-excess-alpha-design.md
 active_plan_path: docs/autoresearch/plans/2026-08-29-h20-excess-alpha-plan.md
 baseline_ref: null
 best_ref: null
 rollback_target: null
-blocker_reason: null
+blocker_reason: "approved 2024-01-01..2026-07-31 H20 snapshot is unavailable: dev has raw quote/factor/signal history but H20 predictions begin only on 2026-06-01; building the immutable snapshot requires a separate resource-bounded full-history component reconstruction/export before baseline"
 next_allowed_skills:
   - autoresearch-bootstrap

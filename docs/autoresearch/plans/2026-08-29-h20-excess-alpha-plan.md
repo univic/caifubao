@@ -39,8 +39,8 @@ Write JSON-compatible YAML with these exact objects:
 
     runtime = {
       "manager":"local-process",
-      "env_prep_command":"datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner prepare --profile datahub/research/autoresearch/h20_excess_alpha/profile.yaml",
-      "entry_command":"datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner run --profile datahub/research/autoresearch/h20_excess_alpha/profile.yaml --candidate datahub/research/autoresearch/h20_excess_alpha/candidate.yaml",
+      "env_prep_command":"PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner prepare --profile autoresearch/profile.yaml",
+      "entry_command":"PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner run --profile autoresearch/profile.yaml --candidate datahub/research/autoresearch/h20_excess_alpha/candidate.yaml",
       "timeout_seconds":600
     }
     experiment = {
@@ -102,7 +102,7 @@ Write JSON-compatible YAML with these exact objects:
     }
     logging = {
       "run_log_path":"docs/autoresearch/runs/h20-excess-alpha/results.jsonl",
-      "summary_extract_command":"datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner metric --report docs/autoresearch/runs/h20-excess-alpha/latest-report.json",
+      "summary_extract_command":"PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner metric --report docs/autoresearch/runs/h20-excess-alpha/latest-report.json",
       "results_columns":["run_id","git_ref","candidate_config_sha256","candidate_summary","snapshot_sha256","train_range","validation_range","test_range","information_ratio","annualized_net_excess_return","excess_max_drawdown","annual_turnover","profit_concentration","completed_trades","eligible_trading_days","walk_forward_decay","research_profitability_score","decision","reason","elapsed_seconds"]
     }
     artifacts = {
