@@ -207,14 +207,23 @@ openspec validate --all --strict          # OpenSpec 校验
 
 ## 7. 2026-08-29 凌晨运维事件记录（补充）
 
-### 7.1 生产事件：vm-4-12 节点三次失联（需运维）
+### 7.1 生产事件：vm-4-12 节点多次失联（已处置，见 mongodb-node-migration.md）
 
-- **13:20Z / 17:18Z（1.5h）/ 03:25Z（截至 04:16 未恢复）三次节点级故障**
+- **13:20Z / 17:18Z（1.5h）/ 03:25Z（2.3h）/ 04:42Z（08-29）多次节点级故障**
   ——网络间歇性通断（ping 时通时断）、kubelet 心跳中断、SSH 不可达。
 - 承载 **prod+dev 双环境 MongoDB 与 backend**，单点故障 = 全环境数据/API 不可用。
-- 数据安全：PVC 本地盘，每次恢复后数据完好（前两次已验证）。
-- **需运维/云控制台物理排查**（网络硬件/配置）；恢复后执行
-  `scripts/verify-prod-after-outage.sh` 一键验证。
+- **08-29 04:42Z 确认**：两个环境 mongodb StatefulSet 均通过
+  `nodeSelector: kubernetes.io/hostname=vm-4-12-ubuntu` **硬绑定**到该节点，且
+  local-path PVC（development/production 两个 PV）亦绑定该节点 —— 因此即使其他
+  节点健康，MongoDB 也无法自动迁移；修复方向不是「修好 vm-4-12」而是
+  「把 MongoDB 迁离 vm-4-12」（需先备份/迁移数据，PVC 节点绑定无法直接搬）或
+  副本集 HA。
+- **处置（08-29 18:40 CST，另一会话）**：T0 止血（探针/缓存/内存/swap/驱逐参数）
+  + **dev MongoDB 已迁至 vm-8-15**（流式恢复 44.9M 文档 0 失败）；prod 暂留
+  vm-4-12（3 交易日观察后再定）；详见
+  `docs/operations/mongodb-node-migration.md` 与 agent-progress 18:40 条目。
+- 数据安全：PVC 本地盘，每次恢复后数据完好。
+- 恢复后执行 `scripts/verify-prod-after-outage.sh` 一键验证。
 
 ### 7.2 本次连续工作交付（PR #147-#155，全部合入）
 
@@ -238,9 +247,22 @@ openspec validate --all --strict          # OpenSpec 校验
 
 ### 7.4 待运维介入（无法自主解决）
 
-1. **vm-4-12 节点恢复**（物理排查）→ verify-prod-after-outage.sh
+1. **vm-4-12 节点恢复**（物理排查）→ verify-prod-after-outage.sh（注：dev
+   MongoDB 已迁 vm-8-15，prod 暂留 vm-4-12，见 mongodb-node-migration.md）。
 2. **私有仓库 caifubao-private 补 `TUSHARE_TOKEN`**（datahub-secret 缺失，
-   08-29 临时置空降级，tushare 行情源待恢复）
-3. **私有仓库修 backend 部署 workflow**（deploy-dispatch 对 backend 不生效）
+   08-29 临时置空降级，tushare 行情源待恢复）——已由另一会话补回（已验证有效）。
+3. **私有仓库修 backend 部署 workflow**（deploy-dispatch 对 backend 不生效）。
 4. **周一 09-01 18:00** 自动链路确认（quote → signal 18:30 → scoring 18:35
-   → dev data-sync 19:15）
+   → dev data-sync 19:15）。
+5. **（新）prod CronJob 控制器调度异常（08-29 发现，09-01 前必查）**：
+   - prod `lastScheduleTime`：quote-index=08-24、signal=08-26、scoring=08-26，
+     其后未再调度（08-27/28 的 signal/scoring 均未触发；08-28 的 quote-stock
+     cron 已 FAILED（TUSHARE_TOKEN 缺口），08-27 SUCCESS）。
+   - 08-24 三个 bootstrap 僵尸 Job（`datahub-stock-bootstrap-baostock-20260824*`，
+     无 pod、无完成状态）触发 `UnexpectedJob` 告警，可能干扰 quote-stock 控制器。
+   - 08-28 链路已手工补齐（quote/signal/scoring + dev sync），但 09-01 自动链路
+     前需 SSH 到 vm-16-5 检查 k3s cron controller 日志/状态，必要时清理僵尸 Job
+     或重启 k3s 组件；否则周一可能再次断链。
+6. **（新）dev finance_market 重复文档已修复**：迁移/恢复引入重复 ChinaAStock
+   （6a8db392），导致 `IndividualStock.objects(market=...)` 查空 → 全市场被当新
+   股票重新 bootstrap（14h ETA）；已删重复文档并统一引用（与 prod 一致）。

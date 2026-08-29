@@ -25,6 +25,59 @@
 
 ## 进度记录
 
+### 2026-08-29 20:35 CST — 全链路验证完成 + prod 08-28 断链修复 + 策略结论定稿
+
+- 状态：进行中
+- 已完成：
+  - **10 股全链路验证完成（dev，08-28）**：行情/因子/信号全齐（信号经 prod
+    修复后同步）；10 股评分双口径记录（dev raw + prod score_v2_202605b rank）。
+  - **prod 08-28 断链修复**：08-28 quote CronJob 因 TUSHARE_TOKEN 缺口 FAILED
+    → signal/scoring 依赖门 SKIPPED → 08-28 信号仅 809/5,551。本次按调度时间
+    手工补跑 quote（SUCCESS@10:00Z）→ signal（written 2,456，08-28 信号
+    809→3,265）→ scoring（16,653 条）→ dev sync（upsert 2,456）→ dev 10 股
+    信号补齐。
+  - **策略结论定稿**（`docs/operations/strategy-experiments-2026-08.md`）：
+    全样本（n=186,809）确认 ranked_v1_h20 与 20 日收益**反向**：Spearman
+    IC=-0.1206；D9=-11.50% vs D0=-2.88%（价差 -8.63pp）；6 月价差 -7.64pp、
+    7 月 -9.96pp（稳定）；S1（最低 20%）58% 评分日跑赢市场；该窗口下跌市下
+    无分位绝对为正 → 边际在「回避 D8/D9 死亡区」；A1 反转映射提案（最小改动）
+    已记录待审。
+  - **dev 数据修复**：dev finance_market 重复 ChinaAStock 文档（迁移/恢复引入，
+    `basic_stock` 引用与 `FinanceMarket.objects().first()` 不一致 → 全市场被当
+    新股票重新 bootstrap，14h ETA）→ 已去重（删 6a8db392，6,113 引用统一指向
+    6a8bb027，与 prod 一致）。
+  - **新 ops 发现**：prod CronJob 控制器调度异常 —— quote-index lastSchedule
+    08-24、signal/scoring 08-26（之后未调度）；08-24 bootstrap 僵尸 Job 触发
+    UnexpectedJob 告警；09-01 周一自动链路前需核查 cron controller。
+- 验证：dev 10 股 08-28 quote=1 factor=1 signal≥1；prod 08-28 scores 16,653；
+  全样本 decile 脚本（scripts/decile-analysis.py）在迁移后 dev 重跑结果与迁移前
+  完全一致（数据完好）。
+- 下一步：提交 docs/strategy-experiments-2026-08 PR（含脚本）；09-01 观察自动
+  链路；评估 A1 反转映射实施（Spec Gate）；核查 prod cron controller。
+- 阻塞：无。
+
+---
+
+### 2026-08-29 13:20 CST — 全量样本确认评分反向 + 策略文档就绪
+
+- 状态：进行中
+- 已完成：dev 全量 decile 分析（**186,809 样本**，ranked_v1_h20，06-01~07-21 评分日，
+  20 日前瞻收益）确认评分与 20 日收益**负相关**：D9（最高分位）**-11.50%** vs
+  D0（最低分位）-2.88%，价差 -8.63pp；D8/D9 为「死亡区」（-7.97%/-11.50%），
+  D4 全样本最优（-1.29%）；S1（最低 20% 组合）58% 交易日跑赢市场，累计跑赢
+  市场约 11.5pp，但该窗口（6-7 月下跌市）**无任何分位绝对收益为正** → 边际在
+  「回避高位」而非「绝对盈利」。10 股全链路验证（行情/因子/信号 08-28 完整 +
+  08-28 评分）已记录。
+- 验证：`scripts/decile-analysis.py`（内存安全批处理，base64 管道避开 shell 对
+  `$` 展开的坑——此前「0 行」实为 shell 转义 bug，非 MongoDB 问题）；dev 迁移后
+  数据 9/9 集合与基线一致。
+- 下一步：dev（现 vm-8-15）重跑含 Spearman IC 与分月稳定性的完整分析定稿；
+  评估 A1（percentile 反向映射 → 低分位 BUY/高分位 AVOID，最小改动）是否实施
+  （需 Spec Gate + 记录）；提交 docs/strategy-experiments PR。
+- 阻塞：无（dev MongoDB 已迁至 vm-8-15，节点全 Ready；prod MongoDB 暂留 vm-4-12）。
+
+---
+
 ### 2026-08-29 18:40 CST — vm-4-12 失联处置完成：T0 止血 + dev MongoDB 迁移 + 首次备份
 
 - 状态：已完成
