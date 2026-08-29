@@ -4,7 +4,7 @@
 
 **Goal:** Scaffold an auditable H20 loop that maximizes cost-adjusted out-of-sample excess return versus the same-date tradable-universe equal-weight benchmark without changing production scoring.
 
-**Architecture:** Bootstrap exports and checksums one immutable full-market Parquet snapshot from dev MongoDB. A research-only runner evaluates JSON-compatible YAML candidates against that snapshot, writes a full report and append-only ledger, and emits one scalar metric. Production factor, signal, scoring, API, deployment, and model-default files remain untouched.
+**Architecture:** A resource-bounded, research-only exporter reconstructs H20 component snapshots from dev MongoDB in scoring-date batches, without persisting predictions, and hands one source Parquet to bootstrap. Bootstrap validates and checksums that immutable full-market snapshot, then runs exactly one unchanged baseline. A research-only runner later evaluates JSON-compatible YAML candidates against the frozen snapshot; production factor, signal, scoring, API, deployment, and model-default files remain untouched.
 
 **Tech Stack:** Python 3.12, pandas, NumPy, PyArrow, MongoEngine/PyMongo, pytest, ruff, JSON-compatible YAML, TSV, JSONL.
 
@@ -20,7 +20,9 @@
 - Generate snapshot-manifest.json beside the profile; snapshot.parquet is local and ignored.
 - Create datahub/app/lib/autoresearch/__init__.py and h20_excess_alpha.py for research-only evaluation.
 - Create datahub/app/jobs/autoresearch_h20_runner.py for prepare, run, and metric.
+- Create datahub/app/jobs/autoresearch_h20_snapshot_runner.py for read-only, bounded historical component reconstruction.
 - Create datahub/app/test/test_autoresearch_h20.py.
+- Create datahub/app/test/test_autoresearch_h20_snapshot.py.
 - Create docs/autoresearch/runs/h20-excess-alpha/results.jsonl as a symlink to the ledger.
 - Create docs/autoresearch/runs/h20-excess-alpha/summary.md.
 - Ignore snapshot.parquet and latest-report.json in .gitignore.
@@ -253,7 +255,7 @@ Test main(argv) with temporary files. prepare rejects missing columns and leaves
     run --profile PATH --candidate PATH [--split train|validation|test] [--allow-test]
     metric --report PATH
 
-Real prepare reads dev MongoDB through existing environment configuration and exports:
+Real prepare accepts the source Parquet produced by Task 5 and normalizes it into:
 
     date, stock_code, is_bse, is_st, listing_days, trade_status,
     open_hfq, close_hfq, high_hfq, low_hfq, next_trading_date,
@@ -279,16 +281,57 @@ Expected: all commands exit 0.
     git add datahub/app/jobs/autoresearch_h20_runner.py datahub/app/test/test_autoresearch_h20.py
     git commit -m "feat: add h20 autoresearch runner"
 
-### Task 5: Bootstrap the immutable baseline and controls
+### Task 5: Export the historical H20 source snapshot
+
+**Files:**
+- Create: datahub/app/jobs/autoresearch_h20_snapshot_runner.py
+- Create: datahub/app/test/test_autoresearch_h20_snapshot.py
+- Generate: /private/tmp/caifubao-h20-source.parquet
+- Verify: bounded read-only export, exact date coverage, deterministic checksum
+
+- [ ] **Step 1: Add exporter tests**
+
+Use injected in-memory quote, factor, signal, stock, and industry rows; never connect tests to MongoDB. Test the public functions build_trade_calendar(rows), build_date_batch(start, end, batch_days), reconstruct_component_rows(source, scoring_dates, horizon=20), validate_export(frame, expected_start, expected_end), and main(argv). Assert: scoring dates are completed trading dates only; every component uses records with date less than or equal to the scoring date; entry is the next tradable open; exit is the twentieth subsequent tradable open; BSE, ST, listing age below 60, suspension, missing HFQ, and missing exit rows are retained with eligibility fields but excluded by eligible_mask; batches contain at most 20 scoring dates; duplicate (date, stock_code) rows fail; an interrupted export leaves the destination untouched; and --dry-run performs queries and validation without writing.
+
+- [ ] **Step 2: Implement the read-only exporter**
+
+Implement this exact CLI:
+
+    PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.autoresearch_h20_snapshot_runner export --from-date 2024-01-01 --to-date 2026-07-31 --horizon 20 --batch-trading-days 20 --output /private/tmp/caifubao-h20-source.parquet
+
+The runner initializes the existing datahub MongoEngine connection, reads IndividualStock, StockDailyQuote, StockFactorDaily, StockSignalDaily, industry aggregates, and trade calendars, and never calls save, update, delete, scoring_runner, or a production persistence method. For each scoring-date batch, reuse StockScoringService._build_components with the frozen H20 config and convert explanation components into the eight raw fields signal_strength, momentum, trend_alignment, breakout_or_position, industry_momentum, relative_strength, real_relative_strength, and risk_penalty. Read only information dated at or before the scoring date for component construction. Resolve next_trading_date/next_open_hfq and exit_trading_date/exit_open_hfq from later quotes strictly as execution labels; never pass those columns into component construction.
+
+Write the full schema listed in Task 4 plus is_bse, is_st, listing_days, trade_status, and market_fraction_above_ma60. Use projection and ordered date/code queries, process at most 20 scoring dates per batch, append batches to temporary Parquet row groups, validate the final range and uniqueness, then os.replace the requested output. On failure delete only the temporary file. Print exactly one JSON object containing output_path, row_count, eligible_count, date_min, date_max, and sha256; do not print database connection strings.
+
+- [ ] **Step 3: Verify focused behavior**
+
+Run:
+
+    datahub/.venv/bin/python -m pytest datahub/app/test/test_autoresearch_h20_snapshot.py -q
+    datahub/.venv/bin/ruff check datahub/app/jobs/autoresearch_h20_snapshot_runner.py datahub/app/test/test_autoresearch_h20_snapshot.py
+    datahub/.venv/bin/ruff format --check datahub/app/jobs/autoresearch_h20_snapshot_runner.py datahub/app/test/test_autoresearch_h20_snapshot.py
+
+Expected: tests pass and both ruff commands exit 0.
+
+- [ ] **Step 4: Run resource-bounded real export**
+
+Run the exact export command from Step 2. Expected: exit 0; JSON reports date_min 2024-01-01, date_max 2026-07-31, positive row_count and eligible_count; no credential-like keys; peak resident memory remains below 2 GiB as recorded by `/usr/bin/time -l` on macOS. If required raw component inputs do not cover the frozen range, stop with the first/last covered dates and per-collection missing counts; do not shorten the approved range.
+
+- [ ] **Step 5: Commit**
+
+    git add datahub/app/jobs/autoresearch_h20_snapshot_runner.py datahub/app/test/test_autoresearch_h20_snapshot.py
+    git commit -m "feat: add bounded h20 snapshot exporter"
+
+### Task 6: Bootstrap the immutable baseline
 
 **Files:**
 - Generate: snapshot.parquet and snapshot-manifest.json
 - Modify: autoresearch/results.tsv, autoresearch/ledger.jsonl, summary.md, state.yaml
-- Verify: baseline and controls share one checksum
+- Verify: baseline uses the frozen snapshot checksum
 
 - [ ] **Step 1: Prepare real snapshot**
 
-    datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner prepare --profile datahub/research/autoresearch/h20_excess_alpha/profile.yaml
+    datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner prepare --profile datahub/research/autoresearch/h20_excess_alpha/profile.yaml --source-parquet /private/tmp/caifubao-h20-source.parquet
 
 Expected: range exactly 2024-01-01..2026-07-31; positive row and eligible counts; shasum -a 256 matches manifest; manifest has no credentials or connection strings.
 
@@ -305,20 +348,16 @@ Expected: capture the 40-character SHA as baseline_ref; run ends within 600 seco
 
 Expected: one line matching ^-?[0-9]+\.?[0-9]*$; reject percent, unit, empty, nan, inf, multiline, and prose.
 
-- [ ] **Step 4: Run controls**
+- [ ] **Step 4: Update state and summary**
 
-Repeat run with full_reversal.yaml and exclude_d8_d9.yaml. Expected: each ends within 600 seconds, appends one row/object, and records the same snapshot SHA. Do not select a winner or expose test metrics.
+Populate summary from the baseline report only. Set current_stage bootstrap, stage_status completed, profile_status bootstrapped, baseline_status validated, baseline_ref/rollback_target to the captured baseline SHA, blocker_reason null, and next_allowed_skills to autoresearch-loop. Preserve best_ref exactly as required by the bootstrap state-ownership contract. Full reversal and D8/D9 exclusion remain immutable controls and become the first two bounded runs in autoresearch-loop.
 
-- [ ] **Step 5: Update state and summary**
-
-Populate summary from reports. Set current_stage bootstrap, stage_status completed, profile_status bootstrapped, baseline_ref/best_ref/rollback_target to the captured baseline SHA, blocker_reason null, and next_allowed_skills to autoresearch-loop.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
     git add datahub/research/autoresearch/h20_excess_alpha/snapshot-manifest.json autoresearch/state.yaml autoresearch/results.tsv autoresearch/ledger.jsonl docs/autoresearch/runs/h20-excess-alpha/summary.md
     git commit -m "chore: record h20 autoresearch baseline"
 
-### Task 6: Repository gates and loop readiness
+### Task 7: Repository gates and loop readiness
 
 **Files:**
 - Modify: only mapped files when a check or reviewer requires a fix
@@ -337,10 +376,9 @@ Expected: all exit 0. If full suite exceeds capacity, record the exact failure a
 - [ ] **Step 2: Dry-run loop**
 
     git diff --name-only "$(git merge-base HEAD origin/develop)" HEAD
-    datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner run --profile datahub/research/autoresearch/h20_excess_alpha/profile.yaml --candidate datahub/research/autoresearch/h20_excess_alpha/candidate.yaml --split validation
     datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner metric --report docs/autoresearch/runs/h20-excess-alpha/latest-report.json
 
-Expected: mapped files only, elapsed_seconds at most 600, and one finite extracted decimal.
+Expected: mapped files only; the already-recorded baseline elapsed_seconds is at most 600; extraction returns one finite decimal. Do not execute another candidate or control during bootstrap readiness checks.
 
 - [ ] **Step 3: Reviews**
 
@@ -363,8 +401,8 @@ Use the number printed by create. Expected: keep draft until every required chec
 
 ## Self-review result
 
-- Every frozen spec field maps to Tasks 1-6.
+- Every frozen spec field maps to Tasks 1-7.
 - File map, profile, state/results/ledger, adapter, extraction, synthetic and real readiness are explicit.
-- H5, H60, production promotion, APIs, deployment, auth, frontend, and OpenClaw remain excluded.
+- H5, H60, production promotion, APIs, deployment, auth, frontend, and OpenClaw remain excluded. Control runs are explicitly deferred to autoresearch-loop.
 - Extraction source is latest-report.json and output must match ^-?[0-9]+\.?[0-9]*$.
 - Only runtime git SHA and PR number are unknown; exact producing commands and destinations are specified.
