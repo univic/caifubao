@@ -43,3 +43,5 @@ migration/
 
 # analysis scratch
 /tmp/
+datahub/research/autoresearch/h20_excess_alpha/snapshot.parquet
+docs/autoresearch/runs/h20-excess-alpha/latest-report.json
