@@ -103,16 +103,25 @@ spec:
           timeoutSeconds: 5
           failureThreshold: 3
       affinity:
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 50
+            preference:
               matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - mongodb
-                - mongodb-v2
-            topologyKey: kubernetes.io/hostname
+              - key: node-role.kubernetes.io/control-plane
+                operator: DoesNotExist
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - mongodb
+                  - mongodb-v2
+              topologyKey: kubernetes.io/hostname
       imagePullSecrets:
       - name: ccr-secret
 ---
