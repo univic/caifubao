@@ -40,3 +40,6 @@ backend/app/utilities/__pycache__/*
 *$py.class
 migration/
 .opencode/.current-session-branch
+
+# analysis scratch
+/tmp/

@@ -21,12 +21,18 @@
 - `ubuntu-5700x` 失联超 1 个月（07-25 起 kubelet 停止上报），应**下线清理**
   （保留 NoExecute taint 已驱逐其上 pod，直接删除节点对象）。
 - `racknerd-0ab4159` Ready 但被 cordon（08-23），确认后 **uncordon 或明确下线**。
-- **`vm-4-12-ubuntu` 2026-08-28/29 两次节点级故障**（13:20 快速恢复；17:18Z 起
-  网络失联 40+ 分钟，ping 100% 丢包）——该节点承载 **prod+dev 双环境的
-  MongoDB 与 backend**，单节点故障 = 全环境数据/API 不可用。**这是当前最大
-  单点风险**：① 排查节点硬件/网络（云控制台）；② 评估 MongoDB 副本（≥2 副本
-  + 跨节点）与 PVC 迁移能力；③ 至少保证关键服务跨节点分布。
-- 保证 ≥3 个健康 worker 节点冗余；评估节点内存水位（当前 40-65%）。
+- **`vm-4-12-ubuntu` 2026-08-28/29 多次节点级故障**（13:20 快速恢复；17:18Z 起
+  网络失联 40+ 分钟，ping 100% 丢包；08-29 03:25Z（2.3h）与 04:42Z 再次失联）
+  ——曾承载 **prod+dev 双环境的 MongoDB 与 backend**，单节点故障 = 全环境
+  数据/API 不可用，是当时最大单点风险。
+- **08-29 处置进展（见 mongodb-node-migration.md）**：① 两环境 mongodb STS
+  原均 `nodeSelector` 硬绑定 `vm-4-12`（local-path PVC 亦绑定），其他节点健康
+  也无法自动迁移；② T0 止血（探针/`wiredTigerCacheSizeGB=0.3`/内存 limits/
+  `swappiness=1`/eviction-hard）消除 swap 风暴；③ **dev MongoDB 已迁至
+  vm-8-15**（流式恢复 44.9M 文档 0 失败），**prod 暂留 vm-4-12**（3 交易日
+  观察后按 runbook 迁移）；④ 后续项：prod 迁移、副本集 HA（≥2 副本跨节点）、
+  定时备份启用（首备份已成功）。
+- 保证 ≥3 个健康 worker 节点冗余；评估节点内存水位（当前 28-58%）。
 
 ### P1 — MongoDB 大集合索引
 - `stock_daily_quote`（~18M 文档）按 `date` 的 count/校验查询全扫描超时。
