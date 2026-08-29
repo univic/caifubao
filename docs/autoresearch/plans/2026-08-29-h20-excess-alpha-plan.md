@@ -148,11 +148,11 @@ Expected: exactly profile-and-controls: ok.
 
 - [ ] **Step 1: Write artifacts**
 
-results.tsv has this exact 20-column tab-separated header:
+results.tsv has this exact 5-column tab-separated header required by the autoresearch bootstrap contract:
 
-    run_id git_ref candidate_config_sha256 candidate_summary snapshot_sha256 train_range validation_range test_range information_ratio annualized_net_excess_return excess_max_drawdown annual_turnover profit_concentration completed_trades eligible_trading_days walk_forward_decay research_profitability_score decision reason elapsed_seconds
+    commit metric_value memory_gb status description
 
-Replace spaces between field names with literal tab characters. ledger.jsonl starts empty. summary.md contains the title H20 Excess Alpha Runs, the research-only/non-investment-advice statement, and a table with Configuration, Status, Score, IR, Net excess return, Max excess drawdown, Decision.
+Replace spaces between field names with literal tab characters. The 20 detailed research fields frozen in logging.results_columns belong to each JSONL ledger entry and full JSON report, not this compatibility TSV. ledger.jsonl starts empty. summary.md contains the title H20 Excess Alpha Runs, the research-only/non-investment-advice statement, and a table with Configuration, Status, Score, IR, Net excess return, Max excess drawdown, Decision.
 
 Append exactly:
 
@@ -165,7 +165,7 @@ to .gitignore if absent.
 
     mkdir -p docs/autoresearch/runs/h20-excess-alpha
     ln -s ../../../../autoresearch/ledger.jsonl docs/autoresearch/runs/h20-excess-alpha/results.jsonl
-    datahub/.venv/bin/python -c 'import pathlib; h=pathlib.Path("autoresearch/results.tsv").read_text().splitlines(); assert len(h)==1 and len(h[0].split("\t"))==20; assert pathlib.Path("autoresearch/ledger.jsonl").read_text()==""; assert pathlib.Path("docs/autoresearch/runs/h20-excess-alpha/results.jsonl").resolve()==pathlib.Path("autoresearch/ledger.jsonl").resolve(); print("autoresearch-scaffold: ok")'
+    datahub/.venv/bin/python -c 'import pathlib; h=pathlib.Path("autoresearch/results.tsv").read_text().splitlines(); assert h==["commit\tmetric_value\tmemory_gb\tstatus\tdescription"]; assert pathlib.Path("autoresearch/ledger.jsonl").read_text()==""; assert pathlib.Path("docs/autoresearch/runs/h20-excess-alpha/results.jsonl").resolve()==pathlib.Path("autoresearch/ledger.jsonl").resolve(); print("autoresearch-scaffold: ok")'
 
 Expected: exactly autoresearch-scaffold: ok.
 
@@ -195,7 +195,7 @@ Use an in-memory DataFrame; never connect to MongoDB. Tests assert:
 7. IR equals mean excess divided by sample standard deviation times sqrt(252).
 8. The frozen score equation is exact; each hard gate independently yields -999.0.
 9. allow_test false rejects the final test split.
-10. Report contains all 20 result columns and the metric line matches research_profitability_score: followed by one finite decimal.
+10. Full report and JSONL entry contain all 20 detailed research fields; the compatibility TSV contains exactly 5 fields; the metric line matches research_profitability_score: followed by one finite decimal.
 
 Run:
 
@@ -220,7 +220,7 @@ Expected before implementation: import failure for app.lib.autoresearch.h20_exce
 
 Rules: load JSON with stdlib json; read manifest-declared Parquet columns only; rank component values cross-sectionally per date; multiply percentiles by direction and weight; rank the combined score per date. Freeze eligible cohort before candidate selection. Rebalance every 20 trading days into at most 30 equal-weight names from CNY 1,000,000 using 100-share board lots. Regime none always permits entry; the only additional mode is market_breadth with minimum_fraction_above_ma60 and position_scale, using contemporaneous data only.
 
-Compute daily strategy and benchmark NAV. IR uses daily strategy-minus-benchmark returns. Quarterly walk-forward decay is max(0,(train_ir-validation_ir)/max(abs(train_ir),1e-9)). Write reports atomically with os.replace. Append one JSON object and one TSV row without rewriting history. Never write MongoDB, production predictions, snapshot data, controls, or profile.
+Compute daily strategy and benchmark NAV. IR uses daily strategy-minus-benchmark returns. Quarterly walk-forward decay is max(0,(train_ir-validation_ir)/max(abs(train_ir),1e-9)). Write reports atomically with os.replace. Append one detailed JSON object and one 5-field compatibility TSV row without rewriting history. Never write MongoDB, production predictions, snapshot data, controls, or profile.
 
 - [ ] **Step 3: Verify**
 
