@@ -25,6 +25,25 @@
 
 ## 进度记录
 
+### 2026-08-29 21:00 CST — PR #162 合入 develop（策略实验 + 链路验证 + 08-28 断链修复）
+
+- 状态：已完成（本轮目标闭环）
+- 已完成：PR #162（`docs/operations/strategy-experiments-2026-08.md` +
+  `scripts/decile-analysis.py` + agent-progress/handover/roadmap 更新）已 squash
+  合入 develop（0627afd）；10 股 dev 全链路验证完成（08-28 行情/因子/信号全齐）；
+  prod 08-28 断链（quote CronJob 因 TUSHARE_TOKEN 缺口 FAILED → signal/scoring
+  依赖门 SKIPPED）已按调度时间手工补跑 quote→signal→scoring + dev sync 补齐；
+  策略全样本反向结论定稿（IC=-0.1206、D9=-11.50% vs D0=-2.88%、分月稳定、
+  S1 58% 跑赢市场，窗口下跌市无分位绝对为正 → 边际在回避 D8/D9）。
+- 验证：PR #162 CI 通过、mergeable、已合并；dev/prod 08-28 数据全齐
+  （prod scores 16,653）；全量 decile 脚本在迁移后 dev 重跑结果与迁移前完全一致。
+- 下一步：A1（percentile 反向映射）实施与否待用户决策（实施需 Spec Gate）；
+  09-01 周一自动链路前核查 prod cron controller（quote-index 08-24、signal/scoring
+  08-26 后未调度 + bootstrap 僵尸 Job 触发 UnexpectedJob）。
+- 阻塞：无。
+
+---
+
 ### 2026-08-29 20:35 CST — 全链路验证完成 + prod 08-28 断链修复 + 策略结论定稿
 
 - 状态：进行中
@@ -58,6 +77,21 @@
 
 ---
 
+### 2026-08-29 18:40 CST — vm-4-12 失联处置完成：T0 止血 + dev MongoDB 迁移 + 首次备份
+
+- 状态：已完成
+- 已完成：
+  - **T0 止血**（两环境 MongoDB）：探针 mongosh exec → tcpSocket、`wiredTigerCacheSizeGB=0.3`、内存 limits 收敛（prod 1Gi / dev 2Gi）；三节点 `swappiness=1` 持久化；vm-4-12 kubelet `eviction-hard`（memory<200Mi / nodefs<5% / imagefs<10%）——swap 风暴机制已结构性消除，3h+ 观测 0 OOMKilled、节点稳定 28–58%。
+  - **dev MongoDB 迁移**：从 vm-4-12 迁至 vm-8-15（新挂 50G 盘挂载 /srv/caifubao，fstab UUID 持久化），limit 2Gi；**流式恢复**（`aws s3 cp - | mongorestore --archive=-`）44.9M 文档 0 失败，9/9 集合计数与迁移前基线一致；旧 PVC/PV 留作回滚。
+  - **首次备份**：dev + prod 的 COS 备份均成功（`mongodb-s3-backup` CronJob 此前从未运行过）。
+  - **修复**：备份/恢复 job pod 的 `app: mongodb` 标签会污染 `mongodb-service` 端点（实测间歇 connection refused，含公共模板）——已改集群 CronJob + 公共模板；公共模板 `restore.sh` 改为流式；prod datahub 缺 `TUSHARE_TOKEN` 导致 CreateContainerConfigError，已从 dev secret 补齐。
+  - **文档**：`docs/operations/mongodb-node-migration.md` 迁移 runbook（PR #161，含 qa-reviewer 审查）。
+- 验证：kustomize base + 两示例 overlay 通过；qa-reviewer 通过（P1 已修复复核）；PR #161 的私有 overlay dry-run 需分支基于最新 develop（含 #158 backend 亲和修复）后复验。
+- 下一步：PR #161 CI 绿后合并；私有 overlay 持久化标签修复 + 定时备份启用 + health-watcher `HEALTH_WEBHOOK_URL` 配置；prod 迁移暂缓观察（3 交易日全绿再定）。
+- 阻塞：无。
+
+---
+
 ### 2026-08-29 13:20 CST — 全量样本确认评分反向 + 策略文档就绪
 
 - 状态：进行中
@@ -75,21 +109,6 @@
   评估 A1（percentile 反向映射 → 低分位 BUY/高分位 AVOID，最小改动）是否实施
   （需 Spec Gate + 记录）；提交 docs/strategy-experiments PR。
 - 阻塞：无（dev MongoDB 已迁至 vm-8-15，节点全 Ready；prod MongoDB 暂留 vm-4-12）。
-
----
-
-### 2026-08-29 18:40 CST — vm-4-12 失联处置完成：T0 止血 + dev MongoDB 迁移 + 首次备份
-
-- 状态：已完成
-- 已完成：
-  - **T0 止血**（两环境 MongoDB）：探针 mongosh exec → tcpSocket、`wiredTigerCacheSizeGB=0.3`、内存 limits 收敛（prod 1Gi / dev 2Gi）；三节点 `swappiness=1` 持久化；vm-4-12 kubelet `eviction-hard`（memory<200Mi / nodefs<5% / imagefs<10%）——swap 风暴机制已结构性消除，3h+ 观测 0 OOMKilled、节点稳定 28–58%。
-  - **dev MongoDB 迁移**：从 vm-4-12 迁至 vm-8-15（新挂 50G 盘挂载 /srv/caifubao，fstab UUID 持久化），limit 2Gi；**流式恢复**（`aws s3 cp - | mongorestore --archive=-`）44.9M 文档 0 失败，9/9 集合计数与迁移前基线一致；旧 PVC/PV 留作回滚。
-  - **首次备份**：dev + prod 的 COS 备份均成功（`mongodb-s3-backup` CronJob 此前从未运行过）。
-  - **修复**：备份/恢复 job pod 的 `app: mongodb` 标签会污染 `mongodb-service` 端点（实测间歇 connection refused，含公共模板）——已改集群 CronJob + 公共模板；公共模板 `restore.sh` 改为流式；prod datahub 缺 `TUSHARE_TOKEN` 导致 CreateContainerConfigError，已从 dev secret 补齐。
-  - **文档**：`docs/operations/mongodb-node-migration.md` 迁移 runbook（PR #161，含 qa-reviewer 审查）。
-- 验证：kustomize base + 两示例 overlay 通过；qa-reviewer 通过（P1 已修复复核）；PR #161 的私有 overlay dry-run 需分支基于最新 develop（含 #158 backend 亲和修复）后复验。
-- 下一步：PR #161 CI 绿后合并；私有 overlay 持久化标签修复 + 定时备份启用 + health-watcher `HEALTH_WEBHOOK_URL` 配置；prod 迁移暂缓观察（3 交易日全绿再定）。
-- 阻塞：无。
 
 ---
 
