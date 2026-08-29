@@ -62,15 +62,19 @@ responsible for the inversion.
   2025-06-30; final test 2025-07-01 through 2026-07-31. Quarterly rolling
   walk-forward checks are also required.
 - Execution: a score produced after market close can trade no earlier than the
-  next trading day's open. Buy and sell commission is 0.025% with a CNY 5
-  minimum; sell stamp duty is 0.1%; adverse slippage is 0.1% per side. Suspended
-  and limit-blocked orders roll forward until executable.
+  next trading day's open. A suspended or limit-up buy rolls forward to the
+  first executable open. The H20 holding clock starts on that actual entry
+  session; normal exit is first attempted at the twentieth subsequent trading
+  session's open, and a suspended or limit-down sell rolls forward to the first
+  executable open. Buy and sell commission is 0.025% with a CNY 5 minimum;
+  sell stamp duty is 0.1%; adverse slippage is 0.1% per side.
 - Main benchmark: equal-weight forward return of the same tradable cohort on
   each scoring date. CSI 300 and CSI 500 are diagnostic benchmarks only and
   cannot select candidates.
-- Test isolation: the final test split is evaluated once after train and
-  validation selection is frozen. Candidate selection cannot read test-period
-  metrics.
+- Test isolation: keep/discard decisions use validation or quarterly
+  walk-forward validation metrics only. The final test split is evaluated once
+  after train and validation selection is frozen; its result is final research
+  evidence and cannot feed back into candidate selection.
 - Existing close-to-close 2026 decile results remain diagnostic evidence only;
   they cannot determine experiment keep/discard status.
 - Production promotion is excluded. A winning candidate requires a later

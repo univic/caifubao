@@ -190,10 +190,12 @@ Use an in-memory DataFrame; never connect to MongoDB. Tests assert:
 
 1. Candidate validation rejects weights not summing to 100, unknown components, directions outside {-1,0,1}, portfolio size below 1, and bounds outside [0,1].
 2. Ranking is within scoring date, ties use average percentile, and risk_penalty direction -1 subtracts it.
-3. Positions use next trading-day open, never scoring-date close.
+3. Positions and all returns use actual_entry_open_hfq and
+   actual_exit_open_hfq exclusively, never scoring-date close or a
+   signal-anchored legacy label.
 4. Blocked entry rolls forward to the first tradable open; no later tradable row means no trade.
 5. Friction is max(value*0.00025,5) commission, value*0.001 sell duty, and adverse 0.1% slippage each side.
-6. Benchmark freezes the same eligible date cohort before selection and excludes BSE, ST, listing age below 60, suspended, and missing-price rows.
+6. Benchmark freezes the same eligible date cohort before selection and excludes BSE, ST, listing age below 60, unresolved execution, and missing actual-price rows; eligibility_reason remains auditable.
 7. IR equals mean excess divided by sample standard deviation times sqrt(252).
 8. The frozen score equation is exact; each hard gate independently yields -999.0.
 9. allow_test false rejects the final test split.
@@ -258,8 +260,11 @@ Test main(argv) with temporary files. prepare rejects missing columns and leaves
 Real prepare accepts the source Parquet produced by Task 5 and normalizes it into:
 
     date, stock_code, is_bse, is_st, listing_days, trade_status,
-    open_hfq, close_hfq, high_hfq, low_hfq, next_trading_date,
-    next_open_hfq, exit_trading_date, exit_open_hfq,
+    open_hfq, close_hfq, high_hfq, low_hfq,
+    requested_entry_date, actual_entry_date, actual_entry_open_hfq,
+    entry_blocked_sessions, requested_exit_date, actual_exit_date,
+    actual_exit_open_hfq, exit_blocked_sessions, eligibility,
+    eligibility_reason,
     signal_strength, momentum, trend_alignment, breakout_or_position,
     industry_momentum, relative_strength, real_relative_strength, risk_penalty,
     market_fraction_above_ma60, source_model_version, factor_version, signal_version
@@ -291,7 +296,7 @@ Expected: all commands exit 0.
 
 - [ ] **Step 1: Add exporter tests**
 
-Use injected in-memory quote, factor, signal, stock, and industry rows; never connect tests to MongoDB. Test the public functions build_trade_calendar(rows), build_date_batch(start, end, batch_days), reconstruct_component_rows(source, scoring_dates, horizon=20), validate_export(frame, expected_start, expected_end), and main(argv). Assert: scoring dates are completed trading dates only; every component uses records with date less than or equal to the scoring date; entry is the next tradable open; exit is the twentieth subsequent tradable open; BSE, ST, listing age below 60, suspension, missing HFQ, and missing exit rows are retained with eligibility fields but excluded by eligible_mask; batches contain at most 20 scoring dates; duplicate (date, stock_code) rows fail; an interrupted export leaves the destination untouched; and --dry-run performs queries and validation without writing.
+Use injected in-memory quote, factor, signal, stock, and industry rows; never connect tests to MongoDB. Test the public functions build_trade_calendar(rows), build_date_batch(start, end, batch_days), reconstruct_component_rows(source, scoring_dates, horizon=20), validate_export(frame, expected_start, expected_end), and main(argv). Assert: scoring dates are completed trading dates only; every component uses records with date less than or equal to the scoring date; entry first attempts the next trading-day open and rolls past suspension/limit-up; exit is the twentieth trading session strictly after actual entry and rolls past suspension/limit-down; requested/actual dates and blocked-session counts are retained; unresolved orders are non-eligible rather than dropped and have a deterministic eligibility_reason; BSE, ST, listing age below 60, suspension, missing HFQ, and missing exit rows are retained with eligibility fields but excluded by eligible_mask; no legacy next_open_hfq/exit_open_hfq labels are written; batches contain at most 20 scoring dates; duplicate (date, stock_code) rows fail; an interrupted export leaves the destination untouched; and --dry-run performs queries and validation without writing.
 
 - [ ] **Step 2: Implement the read-only exporter**
 
@@ -299,9 +304,9 @@ Implement this exact CLI:
 
     PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.autoresearch_h20_snapshot_runner export --from-date 2024-01-01 --to-date 2026-07-31 --horizon 20 --batch-trading-days 20 --output /private/tmp/caifubao-h20-source.parquet
 
-The runner initializes the existing datahub MongoEngine connection, reads IndividualStock, StockDailyQuote, StockFactorDaily, StockSignalDaily, industry aggregates, and trade calendars, and never calls save, update, delete, scoring_runner, or a production persistence method. For each scoring-date batch, reuse StockScoringService._build_components with the frozen H20 config and convert explanation components into the eight raw fields signal_strength, momentum, trend_alignment, breakout_or_position, industry_momentum, relative_strength, real_relative_strength, and risk_penalty. Read only information dated at or before the scoring date for component construction. Resolve next_trading_date/next_open_hfq and exit_trading_date/exit_open_hfq from later quotes strictly as execution labels; never pass those columns into component construction.
+The runner initializes the existing datahub MongoEngine connection, reads IndividualStock, StockDailyQuote, StockFactorDaily, StockSignalDaily, industry aggregates, and trade calendars, and never calls save, update, delete, scoring_runner, or a production persistence method. For each scoring-date batch, reuse StockScoringService._build_components with the frozen H20 config and convert explanation components into the eight raw fields signal_strength, momentum, trend_alignment, breakout_or_position, industry_momentum, relative_strength, real_relative_strength, and risk_penalty. Read only information dated at or before the scoring date for component construction. Resolve execution labels using the existing A-share rule: suspended sessions are blocked; BUY is blocked when change_rate >= 9.9; SELL is blocked when change_rate <= -9.9. Start at the next trading session for entry, then count twenty trading sessions strictly after actual entry for requested exit; roll either order until executable. Never pass requested/actual execution labels into component construction.
 
-Write the full schema listed in Task 4 plus is_bse, is_st, listing_days, trade_status, and market_fraction_above_ma60. Use projection and ordered date/code queries, process at most 20 scoring dates per batch, append batches to temporary Parquet row groups, validate the final range and uniqueness, then os.replace the requested output. On failure delete only the temporary file. Print exactly one JSON object containing output_path, row_count, eligible_count, date_min, date_max, and sha256; do not print database connection strings.
+Write the full schema listed in Task 4 plus is_bse, is_st, listing_days, trade_status, market_fraction_above_ma60, eligibility, and eligibility_reason. Use actual_entry_open_hfq and actual_exit_open_hfq as the only execution-price labels; do not emit legacy next_open_hfq or exit_open_hfq aliases. Derive eligibility_reason deterministically with the first applicable value from: bse, st, listing_age_below_60, scoring_session_not_tradable, missing_hfq, unresolved_entry, unresolved_exit, or eligible. Use projection and ordered date/code queries, process at most 20 scoring dates per batch, append batches to temporary Parquet row groups, validate the final range and uniqueness, then os.replace the requested output. On failure delete only the temporary file. Print exactly one JSON object containing output_path, row_count, eligible_count, date_min, date_max, and sha256; do not print database connection strings.
 
 - [ ] **Step 3: Verify focused behavior**
 
