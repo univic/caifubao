@@ -31,6 +31,14 @@ not investment advice, trading advice, or a claim of guaranteed profitability.
   MongoDB records, public APIs, auth, OpenClaw contracts, frontend behavior,
   Kubernetes resources, scheduler behavior, or deployment configuration. It
   must not query mutable MongoDB data during an individual candidate run.
+- Historical reconstruction boundary: bootstrap may add a read-only,
+  vectorized exporter that batch-loads point-in-time quote, factor, signal,
+  CSI300, stock-industry, and prior industry-metric records and calls the
+  existing pure scoring component functions in memory. It must not invoke a
+  per-stock/date database lookup path. Missing prior industry metrics retain
+  the production component's neutral 0.5 behavior; they must not be synthesized
+  from future scores. Before the full export, a deterministic overlap sample
+  must match `StockScoringService._compute_raw_components` component-by-component.
 
 There is one experiment target: H20 cross-sectional excess-alpha research.
 H5, H60, production promotion, and operations stability are separate targets

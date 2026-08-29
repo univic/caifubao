@@ -304,7 +304,11 @@ Implement this exact CLI:
 
     PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.autoresearch_h20_snapshot_runner export --from-date 2024-01-01 --to-date 2026-07-31 --horizon 20 --batch-trading-days 20 --output /private/tmp/caifubao-h20-source.parquet
 
-The runner initializes the existing datahub MongoEngine connection, reads IndividualStock, StockDailyQuote, StockFactorDaily, StockSignalDaily, industry aggregates, and trade calendars, and never calls save, update, delete, scoring_runner, or a production persistence method. For each scoring-date batch, reuse StockScoringService._build_components with the frozen H20 config and convert explanation components into the eight raw fields signal_strength, momentum, trend_alignment, breakout_or_position, industry_momentum, relative_strength, real_relative_strength, and risk_penalty. Read only information dated at or before the scoring date for component construction. Resolve execution labels using the existing A-share rule: suspended sessions are blocked; BUY is blocked when change_rate >= 9.9; SELL is blocked when change_rate <= -9.9. Start at the next trading session for entry, then count twenty trading sessions strictly after actual entry for requested exit; roll either order until executable. Never pass requested/actual execution labels into component construction.
+The runner initializes the existing datahub MongoEngine connection, reads StockDailyQuote, StockFactorDaily, StockSignalDaily, StockIndustryClassification, IndustryDailyMetrics, and trade calendars, and never calls save, update, delete, scoring_runner, or a production persistence method. Historical universe membership comes from quote codes present on each scoring date, not current active status.
+
+For each <=20-scoring-date batch and <=200-code subbatch, project and load all required records once. Build components in memory by calling the existing pure functions signal_strength_component, trend_alignment_component, momentum_component, breakout_or_position_component, relative_strength_component, risk_penalty, and technical_factors.real_relative_strength. Precompute the most recent bullish signal within the frozen signal_decay_max_days for signal persistence; preload CSI300 quotes once per outer batch; preload stock-industry classifications once per code subbatch; and preload the latest IndustryDailyMetrics strictly before each scoring date for horizon 20 and the frozen model version. Reproduce industry_momentum_component output in memory: use avg_score/100 when a prior metric with stock_count >=3 exists, otherwise use neutral 0.5. Never derive missing industry metrics from later scores.
+
+The vectorized builder emits the same raw_value used by production components, except risk_penalty emits normalized_value exactly as `_compute_raw_components` does. Read only information dated at or before the scoring date for component construction. Resolve execution labels using the existing A-share rule: suspended sessions are blocked; BUY is blocked when change_rate >= 9.9; SELL is blocked when change_rate <= -9.9. Start at the next trading session for entry, then count twenty trading sessions strictly after actual entry for requested exit; roll either order until executable. Never pass requested/actual execution labels into component construction.
 
 Write the full schema listed in Task 4 plus is_bse, is_st, listing_days, trade_status, market_fraction_above_ma60, eligibility, and eligibility_reason. Use actual_entry_open_hfq and actual_exit_open_hfq as the only execution-price labels; do not emit legacy next_open_hfq or exit_open_hfq aliases. Derive eligibility_reason deterministically with the first applicable value from: bse, st, listing_age_below_60, scoring_session_not_tradable, missing_hfq, unresolved_entry, unresolved_exit, or eligible. Use projection and ordered date/code queries, process at most 20 scoring dates per batch, append batches to temporary Parquet row groups, validate the final range and uniqueness, then os.replace the requested output. On failure delete only the temporary file. Print exactly one JSON object containing output_path, row_count, eligible_count, date_min, date_max, and sha256; do not print database connection strings.
 
@@ -318,11 +322,19 @@ Run:
 
 Expected: tests pass and both ruff commands exit 0.
 
-- [ ] **Step 4: Run resource-bounded real export**
+- [ ] **Step 4: Verify vectorized parity on an overlap sample**
 
-Run the exact export command from Step 2. Expected: exit 0; JSON reports date_min 2024-01-01, date_max 2026-07-31, positive row_count and eligible_count; no credential-like keys; peak resident memory remains below 2 GiB as recorded by `/usr/bin/time -l` on macOS. If required raw component inputs do not cover the frozen range, stop with the first/last covered dates and per-collection missing counts; do not shorten the approved range.
+Add CLI command:
 
-- [ ] **Step 5: Commit**
+    PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.autoresearch_h20_snapshot_runner parity --from-date 2026-06-01 --to-date 2026-06-05 --horizon 20 --sample-size 50 --tolerance 0.000001
+
+For a deterministic stock-code-sorted sample, compare every vectorized raw component with `StockScoringService._compute_raw_components` using the same scoring date. Treat numeric values as equal within tolerance and require identical null/non-numeric shapes for signal and industry raw evidence. Print exactly one JSON object with compared_rows, compared_components, mismatch_count, maximum_absolute_error, and sample_sha256. Exit non-zero when mismatch_count is non-zero, when any component is missing, or when no overlap rows exist. The parity command is read-only and must not persist predictions.
+
+- [ ] **Step 5: Run resource-bounded real export**
+
+Run the exact export command from Step 2 only after Step 4 parity passes. Expected: exit 0; JSON reports the first and last completed trading sessions within 2024-01-01..2026-07-31, positive row_count and eligible_count; no credential-like keys; total runtime is at most 600 seconds; peak resident memory remains below 2 GiB as recorded by `/usr/bin/time -l` on macOS or container cgroup peak/current sampling when the image lacks time. If required raw component inputs do not cover the frozen range, stop with the first/last covered dates and per-collection missing counts; do not shorten the approved range.
+
+- [ ] **Step 6: Commit**
 
     git add datahub/app/jobs/autoresearch_h20_snapshot_runner.py datahub/app/test/test_autoresearch_h20_snapshot.py
     git commit -m "feat: add bounded h20 snapshot exporter"
@@ -338,7 +350,7 @@ Run the exact export command from Step 2. Expected: exit 0; JSON reports date_mi
 
     datahub/.venv/bin/python -m app.jobs.autoresearch_h20_runner prepare --profile datahub/research/autoresearch/h20_excess_alpha/profile.yaml --source-parquet /private/tmp/caifubao-h20-source.parquet
 
-Expected: range exactly 2024-01-01..2026-07-31; positive row and eligible counts; shasum -a 256 matches manifest; manifest has no credentials or connection strings.
+Expected: range equals the first and last completed trading sessions within the inclusive 2024-01-01..2026-07-31 request; positive row and eligible counts; shasum -a 256 matches manifest; manifest has no credentials or connection strings.
 
 - [ ] **Step 2: Record ref and run baseline first**
 
