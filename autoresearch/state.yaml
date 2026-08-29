@@ -1,0 +1,11 @@
+current_stage: planning
+stage_status: completed
+profile_status: spec-frozen
+active_spec_path: docs/autoresearch/specs/2026-08-29-h20-excess-alpha-design.md
+active_plan_path: docs/autoresearch/plans/2026-08-29-h20-excess-alpha-plan.md
+baseline_ref: null
+best_ref: null
+rollback_target: null
+blocker_reason: null
+next_allowed_skills:
+  - autoresearch-bootstrap
