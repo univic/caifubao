@@ -25,6 +25,21 @@
 
 ## 进度记录
 
+### 2026-08-29 18:40 CST — vm-4-12 失联处置完成：T0 止血 + dev MongoDB 迁移 + 首次备份
+
+- 状态：已完成
+- 已完成：
+  - **T0 止血**（两环境 MongoDB）：探针 mongosh exec → tcpSocket、`wiredTigerCacheSizeGB=0.3`、内存 limits 收敛（prod 1Gi / dev 2Gi）；三节点 `swappiness=1` 持久化；vm-4-12 kubelet `eviction-hard`（memory<200Mi / nodefs<5% / imagefs<10%）——swap 风暴机制已结构性消除，3h+ 观测 0 OOMKilled、节点稳定 28–58%。
+  - **dev MongoDB 迁移**：从 vm-4-12 迁至 vm-8-15（新挂 50G 盘挂载 /srv/caifubao，fstab UUID 持久化），limit 2Gi；**流式恢复**（`aws s3 cp - | mongorestore --archive=-`）44.9M 文档 0 失败，9/9 集合计数与迁移前基线一致；旧 PVC/PV 留作回滚。
+  - **首次备份**：dev + prod 的 COS 备份均成功（`mongodb-s3-backup` CronJob 此前从未运行过）。
+  - **修复**：备份/恢复 job pod 的 `app: mongodb` 标签会污染 `mongodb-service` 端点（实测间歇 connection refused，含公共模板）——已改集群 CronJob + 公共模板；公共模板 `restore.sh` 改为流式；prod datahub 缺 `TUSHARE_TOKEN` 导致 CreateContainerConfigError，已从 dev secret 补齐。
+  - **文档**：`docs/operations/mongodb-node-migration.md` 迁移 runbook（PR #161，含 qa-reviewer 审查）。
+- 验证：kustomize base + 两示例 overlay 通过；qa-reviewer 通过（P1 已修复复核）；PR #161 的私有 overlay dry-run 需分支基于最新 develop（含 #158 backend 亲和修复）后复验。
+- 下一步：PR #161 CI 绿后合并；私有 overlay 持久化标签修复 + 定时备份启用 + health-watcher `HEALTH_WEBHOOK_URL` 配置；prod 迁移暂缓观察（3 交易日全绿再定）。
+- 阻塞：无。
+
+---
+
 ### 2026-08-29 12:15 CST — 节点稳定确认 + #158 发布 main + TUSHARE 验证
 
 - 状态：进行中
