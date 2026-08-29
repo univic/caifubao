@@ -3,7 +3,6 @@ kind: Job
 metadata:
   name: mongodb-s3-restore
   labels:
-    app: mongodb
     job.caifubao.io/type: mongodb-restore
 spec:
   backoffLimit: 0
@@ -11,7 +10,6 @@ spec:
   template:
     metadata:
       labels:
-        app: mongodb
         job.caifubao.io/type: mongodb-restore
     spec:
       restartPolicy: Never

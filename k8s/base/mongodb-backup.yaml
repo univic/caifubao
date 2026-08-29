@@ -91,23 +91,24 @@ data:
     : "${S3_BUCKET:?S3_BUCKET is required}"
     : "${MONGODB_RESTORE_OBJECT_KEY:?MONGODB_RESTORE_OBJECT_KEY is required}"
 
-    archive="/work/restore.archive.gz"
-
     aws_endpoint_arg=""
     if [ -n "${AWS_ENDPOINT_URL:-}" ]; then
       aws_endpoint_arg="--endpoint-url=${AWS_ENDPOINT_URL}"
     fi
 
-    aws $aws_endpoint_arg s3 cp "s3://${S3_BUCKET}/${MONGODB_RESTORE_OBJECT_KEY}" "$archive"
-    mongorestore \
-      --host "$MONGODB_HOST" \
-      --port "$MONGODB_PORT" \
-      --username "$MONGODB_USER" \
-      --password "$MONGODB_PASS" \
-      --authenticationDatabase admin \
-      --archive="$archive" \
-      --gzip \
-      --drop
+    # Stream the archive from object storage straight into mongorestore
+    # (--archive=- reads stdin). Writing the archive to disk first fills
+    # ephemeral storage on small nodes and triggers kubelet eviction.
+    aws $aws_endpoint_arg s3 cp "s3://${S3_BUCKET}/${MONGODB_RESTORE_OBJECT_KEY}" - | \
+      mongorestore \
+        --host "$MONGODB_HOST" \
+        --port "$MONGODB_PORT" \
+        --username "$MONGODB_USER" \
+        --password "$MONGODB_PASS" \
+        --authenticationDatabase admin \
+        --archive=- \
+        --gzip \
+        --drop
   sanity-check.sh: |
     #!/usr/bin/env sh
     set -eu
@@ -154,7 +155,6 @@ kind: CronJob
 metadata:
   name: mongodb-s3-backup
   labels:
-    app: mongodb
     job.caifubao.io/type: mongodb-backup
 spec:
   schedule: "30 2 * * *"
@@ -172,7 +172,6 @@ spec:
       template:
         metadata:
           labels:
-            app: mongodb
             job.caifubao.io/type: mongodb-backup
         spec:
           restartPolicy: Never
