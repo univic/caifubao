@@ -50,11 +50,35 @@ that updates prod data (quote update, factor recompute, etc.).
 make data-sync
 ./scripts/caifubao data sync
 ./scripts/caifubao data sync 2026-05-18 quote,factor,signal
+./scripts/caifubao data sync --full quote,factor,signal
 ```
 
 Collections: `quote` → `stock_daily_quote`, `factor` → `stock_factor_daily`,
 `signal` → `stock_signal_daily`, `market` → `finance_market`,
 `industry` → `stock_industry`.
+
+Without `FROM_DATE`, date-based collections use the latest date already in dev
+from `data_sync_state` as a completed watermark and replay the preceding three
+calendar days before catching up to prod. The overlap makes retries idempotent
+and includes late corrections. A collection only receives a completed
+bootstrap marker after its entire sync finishes; a killed partial bootstrap
+therefore cannot silently become an incremental watermark.
+
+An empty or unmarked destination stays in full bootstrap mode. Run that first
+bootstrap as a controlled one-time Job without the daily CronJob's three-hour
+deadline, then verify the completion markers before enabling the schedule. Use
+`--full` only for explicit reconciliation; it reads every source document and
+can be expensive across a hybrid network. Low-frequency full reconciliation is
+an operator action, not a scheduled daily job. Full runs use a separate job
+family so an overlapping incremental runner cannot reap them as stale. Newest
+business dates are processed first.
+
+Date-based source and destination collections must have an index whose first
+field is `date`. The runner fails before reading data when this precondition is
+missing, rather than falling back to a multi-million-document collection scan
+and in-memory sort. Build large indexes one at a time during a maintenance
+window and verify the query plan before running sync; do not combine an index
+build with full-collection statistics on memory-constrained MongoDB nodes.
 
 **Important**: This syncs data but does NOT update `data_asset_status`.
 Run `data refresh-status` after syncing.
@@ -359,6 +383,14 @@ The `data sync` command uses the `MONGODB_SRC_*` environment variables
 configured in the datahub pod. It reads from prod MongoDB and upserts into
 dev MongoDB. Syncable collections: `stock_daily_quote`, `stock_factor_daily`,
 `stock_signal_daily`, `finance_market`, `stock_industry`.
+The scheduled path is incremental by destination watermark with a three-day
+overlap; snapshot collections without a date field remain full-sync because
+they are small. `--from-date`/`--to-date` override automatic watermarking, and
+`--full` disables it.
+
+`data_sync_state` stores collection-level bootstrap completion and the latest
+fully synchronized source watermark. Do not seed it from a partially restored
+database: first verify the restore baseline or complete a controlled full sync.
 
 ### Key collections in dev MongoDB
 | Collection | Records | Source |
@@ -368,6 +400,7 @@ dev MongoDB. Syncable collections: `stock_daily_quote`, `stock_factor_daily`,
 | `stock_signal_daily` | ~50K | prod sync |
 | `stock_score_predictions` | varies | local compute |
 | `data_asset_status` | ~38K | local compute |
+| `data_sync_state` | one row per dated sync collection | local sync control |
 | `basic_stock` | ~6.4K | prod sync |
 
 ### Secrets lifecycle

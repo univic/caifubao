@@ -48,6 +48,8 @@ COLLECTION_ALIASES = {
 
 # Number of documents per bulk-write batch
 BATCH_SIZE = 500
+DEFAULT_OVERLAP_DAYS = 3
+SYNC_STATE_COLLECTION = "data_sync_state"
 DEV_ENV_VALUES = {"dev", "development", "local", "test"}
 
 # Business keys for idempotent upsert. Syncing merges by these fields instead
@@ -158,9 +160,102 @@ def _iter_docs(
         date_field,
     )
 
-    # Sort by _id for stable paging
-    cursor = col.find(query).sort("_id", 1)
+    # Prioritize the newest business data. If a job reaches its deadline after
+    # partially processing a window, dev still receives the latest trading day
+    # first. Snapshot collections have no business date and fall back to _id.
+    sort = (date_field, -1) if date_field else ("_id", -1)
+    cursor = col.find(query).sort(sort)
     yield from cursor
+
+
+def _resolve_collection_window(
+    *,
+    date_field: str | None,
+    from_date: datetime.datetime | None,
+    to_date: datetime.datetime | None,
+    full_sync: bool,
+    overlap_days: int,
+    sync_state: dict[str, Any] | None,
+) -> tuple[
+    datetime.datetime | None,
+    datetime.datetime | None,
+    datetime.datetime | None,
+]:
+    """Resolve an explicit or destination-watermark sync window."""
+    if from_date or to_date:
+        return from_date, to_date, None
+    if full_sync or not date_field:
+        return None, None, None
+    if overlap_days < 0:
+        raise ValueError("overlap_days must be a non-negative integer")
+
+    state = sync_state or {}
+    if state.get("bootstrap_complete") is not True:
+        # A partially written bootstrap must never become the incremental
+        # watermark. Only a collection-level completion marker can switch
+        # this collection out of full bootstrap mode.
+        return None, None, None
+    watermark = state.get("watermark")
+    if watermark is None:
+        return None, None, None
+    return watermark - datetime.timedelta(days=overlap_days), None, watermark
+
+
+def _latest_collection_date(
+    collection: MongoCollection,
+    date_field: str,
+) -> datetime.datetime | None:
+    latest = collection.find_one(
+        {},
+        {date_field: 1, "_id": 0},
+        sort=[(date_field, -1)],
+    )
+    return latest.get(date_field) if latest else None
+
+
+def _require_date_first_index(
+    collection: MongoCollection,
+    date_field: str,
+    *,
+    role: str,
+) -> None:
+    for index in collection.list_indexes():
+        keys = index.get("key", {})
+        first_key = next(iter(keys.items()), None)
+        if (
+            first_key
+            and first_key[0] == date_field
+            and first_key[1] in (1, -1)
+            and not index.get("sparse")
+            and not index.get("partialFilterExpression")
+        ):
+            return
+    raise RuntimeError(
+        f"{role} collection {collection.name} requires a non-sparse, "
+        f"non-partial ascending or descending index beginning with {date_field} "
+        "before incremental sync"
+    )
+
+
+def _save_sync_state(
+    state_collection: MongoCollection,
+    *,
+    collection_name: str,
+    watermark: datetime.datetime | None,
+    mode: str,
+) -> None:
+    state_collection.update_one(
+        {"_id": collection_name},
+        {
+            "$set": {
+                "bootstrap_complete": True,
+                "watermark": watermark,
+                "last_mode": mode,
+                "updated_at": datetime.datetime.now(datetime.UTC),
+            }
+        },
+        upsert=True,
+    )
 
 
 def _sync_collection(
@@ -170,7 +265,7 @@ def _sync_collection(
     from_date: datetime.datetime | None,
     to_date: datetime.datetime | None,
     dry_run: bool = False,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Sync one collection from source to destination using upsert.
 
     Returns counts of {read, upserted, modified}.
@@ -239,8 +334,10 @@ def run_sync(
     collections: list[str] | None = None,
     from_date: datetime.datetime | None = None,
     to_date: datetime.datetime | None = None,
+    full_sync: bool = False,
+    overlap_days: int = DEFAULT_OVERLAP_DAYS,
 ) -> dict[str, Any]:
-    """Execute a full data sync from the source MongoDB to the local one.
+    """Sync source MongoDB data into the local database.
 
     Args:
         src_client: Optional pre-existing MongoClient for the source.
@@ -248,10 +345,17 @@ def run_sync(
         collections: Subset of SYNCABLE_COLLECTIONS to sync. None = all.
         from_date: Only sync documents with date >= this value.
         to_date: Only sync documents with date <= this value.
+        full_sync: Disable destination-watermark incremental selection.
+        overlap_days: Calendar days before each destination watermark to replay.
 
     Returns:
         Summary dict with per-collection stats.
     """
+    if full_sync and (from_date is not None or to_date is not None):
+        raise ValueError("full_sync cannot be combined with from_date or to_date")
+    if overlap_days < 0:
+        raise ValueError("overlap_days must be a non-negative integer")
+
     close_client = False
     if src_client is None:
         src_client = _build_src_client()
@@ -269,20 +373,59 @@ def run_sync(
         )
 
         results = {}
+        state_collection = dst_db[SYNC_STATE_COLLECTION]
+        # Validate every dated collection before the first write so a missing
+        # index cannot leave a multi-collection run partially applied.
+        for name in resolved:
+            date_field = SYNCABLE_COLLECTIONS[name]["date_field"]
+            if date_field:
+                _require_date_first_index(src_db[name], date_field, role="source")
+                _require_date_first_index(dst_db[name], date_field, role="destination")
+
         start_time = datetime.datetime.now(datetime.UTC)
         for name in resolved:
             config = SYNCABLE_COLLECTIONS[name]
             src_col = src_db[name]
             dst_col = dst_db[name]
+            date_field = config["date_field"]
+            sync_state = None
+            source_watermark = None
+            if date_field:
+                sync_state = state_collection.find_one({"_id": name})
+                source_watermark = _latest_collection_date(src_col, date_field)
+            collection_from, collection_to, watermark = _resolve_collection_window(
+                date_field=date_field,
+                from_date=from_date,
+                to_date=to_date,
+                full_sync=full_sync,
+                overlap_days=overlap_days,
+                sync_state=sync_state,
+            )
             stats = _sync_collection(
                 src_col=src_col,
                 dst_col=dst_col,
-                date_field=config["date_field"],
-                from_date=from_date,
-                to_date=to_date,
+                date_field=date_field,
+                from_date=collection_from,
+                to_date=collection_to,
                 dry_run=dry_run,
             )
+            stats["from_date"] = collection_from
+            stats["to_date"] = collection_to
+            stats["destination_watermark"] = watermark
             results[name] = stats
+            explicit_window = from_date is not None or to_date is not None
+            bootstrap_required = bool(
+                date_field
+                and not explicit_window
+                and (not sync_state or sync_state.get("bootstrap_complete") is not True)
+            )
+            if date_field and not dry_run and (not explicit_window or full_sync):
+                _save_sync_state(
+                    state_collection,
+                    collection_name=name,
+                    watermark=source_watermark,
+                    mode="full" if full_sync or bootstrap_required else "incremental",
+                )
 
         elapsed = (datetime.datetime.now(datetime.UTC) - start_time).total_seconds()
         total_read = sum(s["read"] for s in results.values())
@@ -292,6 +435,8 @@ def run_sync(
         summary = {
             "status": "GOOD" if not dry_run else "DRY_RUN",
             "dry_run": dry_run,
+            "full_sync": full_sync,
+            "overlap_days": overlap_days,
             "elapsed_seconds": round(elapsed, 2),
             "collections_synced": len(resolved),
             "collections": results,
