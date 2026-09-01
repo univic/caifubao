@@ -487,7 +487,6 @@ class _MongoBatchSource:
         self.from_date = _day(from_date)
         self.to_date = _day(to_date)
         self.code_batch_size = code_batch_size
-        self._listing_dates = None
 
     def calendar(self):
         from app.model.stock import FinanceMarket
@@ -510,18 +509,6 @@ class _MongoBatchSource:
         from app.model.stock import IndividualStock, StockDailyQuote
 
         config = get_effective_horizon_config(horizon)
-        if self._listing_dates is None:
-            collection = StockDailyQuote._get_collection()
-            self._listing_dates = {
-                row["_id"]: row["listing_date"]
-                for row in collection.aggregate(
-                    [
-                        {"$group": {"_id": "$code", "listing_date": {"$min": "$date"}}},
-                        {"$project": {"_id": 1, "listing_date": 1}},
-                    ],
-                    allowDiskUse=True,
-                )
-            }
         breadth_counts = {date: [0, 0] for date in scoring_dates}
         for date_batch in build_date_batch(
             scoring_dates, (scoring_dates[0], scoring_dates[-1]), 20
@@ -580,20 +567,6 @@ class _MongoBatchSource:
         ]
         for offset in range(0, len(codes), self.code_batch_size):
             code_batch = codes[offset : offset + self.code_batch_size]
-            metadata = {
-                stock["code"]: stock
-                for stock in _plain_rows(
-                    IndividualStock.objects(code__in=code_batch).only("code", "name")
-                )
-            }
-            stocks = [
-                {
-                    "code": code,
-                    "name": metadata.get(code, {}).get("name"),
-                    "listing_date": self._listing_dates.get(code),
-                }
-                for code in code_batch
-            ]
             quotes = _plain_rows(
                 StockDailyQuote.objects(
                     code__in=code_batch, date__gte=query_start, date__lte=query_end
@@ -614,6 +587,26 @@ class _MongoBatchSource:
                 )
                 .order_by("code", "date")
             )
+            listing_dates = {}
+            for row in quotes:
+                code = row["code"]
+                date = _day(row["date"])
+                if code not in listing_dates or date < listing_dates[code]:
+                    listing_dates[code] = date
+            metadata = {
+                stock["code"]: stock
+                for stock in _plain_rows(
+                    IndividualStock.objects(code__in=code_batch).only("code", "name")
+                )
+            }
+            stocks = [
+                {
+                    "code": code,
+                    "name": metadata.get(code, {}).get("name"),
+                    "listing_date": listing_dates.get(code),
+                }
+                for code in code_batch
+            ]
             factors = {
                 (item["stock_code"], _day(item["date"])): {
                     "ma_10": item.get("ma_10"),
