@@ -64,6 +64,14 @@ def prepare(profile_path: str, source_parquet: str | None = None) -> dict:
         "snapshot_sha256": file_sha256(snapshot),
         **summary,
         "counts_by_date": dates.value_counts().sort_index().to_dict(),
+        "eligible_counts_by_date": (
+            frame.loc[frame["eligibility"].astype(bool), "date"]
+            .pipe(pd.to_datetime, utc=True)
+            .dt.strftime("%Y-%m-%d")
+            .value_counts()
+            .sort_index()
+            .to_dict()
+        ),
         "missingness_by_column": {
             column: int(frame[column].isna().sum()) for column in frame.columns
         },

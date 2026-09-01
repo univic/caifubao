@@ -92,15 +92,15 @@ def validate_candidate(candidate: dict) -> None:
 
 
 def eligible_mask(frame: pd.DataFrame) -> pd.Series:
+    required = {"actual_entry_open_hfq", "actual_exit_open_hfq", "eligibility"}
+    if not required.issubset(frame.columns):
+        return pd.Series(False, index=frame.index, dtype=bool)
     return (
-        ~frame["is_bse"].fillna(False).astype(bool)
-        & ~frame["is_st"].fillna(False).astype(bool)
-        & frame["listing_days"].fillna(0).ge(60)
-        & frame["trade_status"].fillna(0).eq(1)
-        & frame["next_open_hfq"].notna()
-        & frame["exit_open_hfq"].notna()
-        & frame["next_open_hfq"].gt(0)
-        & frame["exit_open_hfq"].gt(0)
+        frame["eligibility"].fillna(False).astype(bool)
+        & frame["actual_entry_open_hfq"].notna()
+        & frame["actual_exit_open_hfq"].notna()
+        & frame["actual_entry_open_hfq"].gt(0)
+        & frame["actual_exit_open_hfq"].gt(0)
     )
 
 
@@ -112,13 +112,27 @@ def validate_snapshot(frame: pd.DataFrame, profile: dict) -> dict:
         "is_st",
         "listing_days",
         "trade_status",
-        "next_open_hfq",
-        "exit_open_hfq",
+        "requested_entry_date",
+        "actual_entry_date",
+        "actual_entry_open_hfq",
+        "requested_exit_date",
+        "actual_exit_date",
+        "actual_exit_open_hfq",
+        "eligibility",
+        "eligibility_reason",
         *COMPONENT_IDS,
     }
     missing = sorted(required - set(frame.columns))
     if missing:
         raise ValueError("snapshot missing columns: " + ", ".join(missing))
+    legacy = {"next_open_hfq", "exit_open_hfq"}.intersection(frame.columns)
+    if legacy:
+        raise ValueError(
+            "snapshot contains legacy execution labels: " + ", ".join(sorted(legacy))
+        )
+    duplicates = frame.duplicated(["date", "stock_code"])
+    if duplicates.any():
+        raise ValueError("snapshot contains duplicate (date, stock_code) rows")
     dates = pd.to_datetime(frame["date"], utc=True)
     if dates.empty:
         raise ValueError("snapshot is empty")
@@ -196,7 +210,7 @@ def apply_friction(
 
 
 def _net_return(frame: pd.DataFrame, profile: dict) -> pd.Series:
-    gross = frame["exit_open_hfq"] / frame["next_open_hfq"] - 1.0
+    gross = frame["actual_exit_open_hfq"] / frame["actual_entry_open_hfq"] - 1.0
     rate_cost = 2 * float(profile["execution"]["commission_rate"])
     rate_cost += float(profile["execution"]["sell_stamp_duty_rate"])
     rate_cost += 2 * float(profile["execution"]["slippage_per_side"])
@@ -208,7 +222,9 @@ def equal_weight_benchmark(
 ) -> pd.Series:
     eligible = frame.loc[eligible_mask(frame)].copy()
     if profile is None:
-        returns = eligible["exit_open_hfq"] / eligible["next_open_hfq"] - 1.0
+        returns = (
+            eligible["actual_exit_open_hfq"] / eligible["actual_entry_open_hfq"] - 1.0
+        )
     else:
         returns = _net_return(eligible, profile)
     return returns.groupby(eligible["date"]).mean().sort_index()

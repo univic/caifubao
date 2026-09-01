@@ -1,4 +1,5 @@
 import json
+import math
 
 import pandas as pd
 import pytest
@@ -6,10 +7,12 @@ import pytest
 from app.jobs.autoresearch_h20_runner import main
 from app.lib.autoresearch.h20_excess_alpha import (
     apply_friction,
+    equal_weight_benchmark,
     information_ratio,
     profitability_score,
     rank_components,
     validate_candidate,
+    validate_snapshot,
 )
 
 COMPONENTS = (
@@ -90,8 +93,14 @@ def snapshot_frame():
                 "is_st": False,
                 "listing_days": 100,
                 "trade_status": 1,
-                "next_open_hfq": 10.0 + index,
-                "exit_open_hfq": 10.5 + index,
+                "requested_entry_date": date + pd.offsets.BDay(1),
+                "actual_entry_date": date + pd.offsets.BDay(1),
+                "actual_entry_open_hfq": 10.0 + index,
+                "requested_exit_date": date + pd.offsets.BDay(21),
+                "actual_exit_date": date + pd.offsets.BDay(21),
+                "actual_exit_open_hfq": 10.5 + index,
+                "eligibility": True,
+                "eligibility_reason": "eligible",
             }
             row.update({name: float(index) for name in COMPONENTS})
             rows.append(row)
@@ -120,7 +129,23 @@ def test_friction_and_information_ratio(tmp_path):
     assert commission == 5.0
     assert duty == pytest.approx(9.99)
     assert slip == pytest.approx(10.0)
-    assert information_ratio(pd.Series([0.01, 0.02, -0.01])) > 0
+    values = pd.Series([0.01, 0.02, -0.01])
+    assert information_ratio(values) == pytest.approx(
+        values.mean() / values.std(ddof=1) * math.sqrt(252 / 20)
+    )
+
+
+def test_returns_exclusively_use_actual_execution_labels(tmp_path):
+    frame = snapshot_frame().head(3)
+    expected = (
+        (frame.actual_exit_open_hfq / frame.actual_entry_open_hfq - 1)
+        .groupby(frame.date)
+        .mean()
+    )
+    pd.testing.assert_series_equal(equal_weight_benchmark(frame), expected)
+    legacy = frame.assign(next_open_hfq=1.0)
+    with pytest.raises(ValueError, match="legacy execution labels"):
+        validate_snapshot(legacy, profile(tmp_path))
 
 
 def test_hard_gate(tmp_path):
