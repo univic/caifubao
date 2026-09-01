@@ -1,14 +1,14 @@
-current_stage: autoresearch-planning
+current_stage: bootstrap
 stage_status: completed
-profile_status: spec-frozen
+profile_status: bootstrapped
 bootstrap_status: completed
-baseline_status: pending
+baseline_status: completed
 active_profile_path: autoresearch/profile.yaml
 active_spec_path: docs/autoresearch/specs/2026-08-29-h20-excess-alpha-design.md
 active_plan_path: docs/autoresearch/plans/2026-08-29-h20-excess-alpha-plan.md
-baseline_ref: null
+baseline_ref: c90586a2031e2f099040179d83e949712d5af7a8
 best_ref: null
 rollback_target: null
 blocker_reason: null
 next_allowed_skills:
-  - autoresearch-bootstrap
+  - autoresearch-loop
