@@ -109,7 +109,12 @@ def _pure_component_values(
         SimpleNamespace(**_normalize_quote_prices(row))
         for row in reversed(recent_history)
     ]
-    signal_objects = [SimpleNamespace(**row) for row in signals]
+    decay_start = scoring_date - pd.Timedelta(days=config["signal_decay_max_days"])
+    signal_objects = [
+        SimpleNamespace(**row)
+        for row in signals
+        if decay_start <= row["date"] <= scoring_date
+    ]
     bullish_today = any(
         item.direction == "BULLISH"
         and item.signal_name
@@ -333,17 +338,20 @@ def reconstruct_component_rows(
         )
     for values in by_code.values():
         values.sort(key=lambda value: value["date"])
+    date_index = {
+        code: {item["date"]: i for i, item in enumerate(values)}
+        for code, values in by_code.items()
+    }
+    sorted_codes = sorted(by_code)
     output = []
     for scoring_date in map(_day, scoring_dates):
         supplied_breadth = source.get("market_breadth_by_date", {}).get(scoring_date)
         if supplied_breadth is None:
             breadth_rows = []
-            for values in by_code.values():
-                current = next(
-                    (item for item in values if item["date"] == scoring_date), None
-                )
-                if current:
-                    breadth_rows.append(current)
+            for code in sorted_codes:
+                current_index = date_index[code].get(scoring_date)
+                if current_index is not None:
+                    breadth_rows.append(by_code[code][current_index])
             above = [
                 row["close_hfq"] > row["ma_60"]
                 for row in breadth_rows
@@ -352,13 +360,11 @@ def reconstruct_component_rows(
             breadth = sum(above) / len(above) if above else 0.0
         else:
             breadth = float(supplied_breadth)
-        for code, values in sorted(by_code.items()):
-            indices = [
-                i for i, item in enumerate(values) if item["date"] == scoring_date
-            ]
-            if not indices:
+        for code in sorted_codes:
+            values = by_code[code]
+            index = date_index[code].get(scoring_date)
+            if index is None:
                 continue
-            index = indices[0]
             quote = values[index]
             history = values[:index]
             components = (
@@ -372,7 +378,7 @@ def reconstruct_component_rows(
             exit_row = None
             exit_blocked = 0
             if entry is not None:
-                entry_index = values.index(entry)
+                entry_index = date_index[code][entry["date"]]
                 requested_index = entry_index + horizon
                 if requested_index < len(values):
                     requested_exit = values[requested_index]
