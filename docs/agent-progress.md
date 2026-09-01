@@ -25,6 +25,46 @@
 
 ## 进度记录
 
+### 2026-09-02 02:40 CST — H20 autoresearch bootstrap 完成（snapshot + baseline）
+
+- 状态：已完成
+- 已完成：`codex/autoresearch-h20-bootstrap` 分支完成 H20 研究管线 bootstrap——只读导出全市场快照（3,525,955 行 / 3,159,736 可交易，2024-01-02～2026-07-31，manifest 记录 sha256 与 source_model_version=score_v2_202605b）；validation 基线 current_h20 已跑，score=-999（discard）。修复评审 P1/P2：权重改为按实际和归一（生产 H20 权重和=110 而非 100）；signal_strength/breakout_or_position/industry_momentum 改发 normalized_value（修复 3/8 组件导出为 NaN 导致 25% 权重失效）；walk_forward_decay 由 train-vs-validation IR 真实计算（不再硬编码 0）；annual_turnover 修正为 252/horizon；parity 改用 _build_components 比对数值。性能：real_relative_strength 每代码预计算、上市日按批次推导、历史/信号按 lookback 截断、date→index 映射，全量导出从不可行降至约 55 分钟。
+- 验证：parity 0 mismatch（50 行 × 8 组件最大误差 0.0）；datahub 388 测试、ruff、`openspec validate --all --strict` 全绿；spec-guardian 与 qa-reviewer 已跑（P1 已修复）。
+- 下一步：`autoresearch-loop` 阶段按需评估 full_reversal / exclude_d8_d9 两个不可变对照（需先决策是否继续，因 validation IR=-0.80 与既有反向结论一致）。
+- 阻塞：基线被硬门挡回（117 个可交易日 < 120；walk_forward_decay 5.80 > 0.20），不是管线故障而是样本/过拟合门按设计触发。
+
+---
+
+### 2026-08-31 22:38 CST — Spegel 混合节点镜像分发上线
+
+- 状态：已完成
+- 已完成：5 个 K3s 节点已启用内置分布式镜像；dev 发布链路已改为由可访问上游仓库的云端节点预热不可变镜像，再通过 Spegel 向隔离的 5700X 节点分发；backend、datahub、frontend 均已接入，生产发布行为不变，COS 离线包保留为应急回退。相关私有部署仓库变更已合入 main。
+- 验证：所有节点 Ready，原 cordon 节点保持禁调度；节点间 Spegel 所需端口双向可达；真实冷拉取在 5700X 上成功（首次 7 分 29 秒、缓存命中 0.08 秒），真实预热 Job 5 秒完成；prod/dev 核心服务与 MongoDB 均 Running 且重启数为 0；GitHub Deploy Dry Run 完整通过。
+- 下一步：观察下一次 dev 三服务发版的端到端层复用与 rollout 时长；另行处理 dev data-sync 超过 3 小时 deadline，以及既有 prod 指数行情/评分更新问题。
+- 阻塞：镜像发布链路无阻塞；跨节点首次缺失大层仍受链路带宽限制，稳定基础层可由缓存复用。
+
+---
+
+### 2026-08-31 21:52 CST — prod 08-31 数据更新核查
+
+- 状态：阻塞
+- 已完成：只读核查本轮生产定时任务与数据状态；股票行情任务成功（写入 25,705 条），信号任务成功（写入 3,741 条），行情/因子/信号资产最新日期均为 08-31。
+- 验证：生产服务与 MongoDB 均正常；信号集合有 3,741 条 08-31 记录。指数行情任务失败（562 个拉取、197 条写入，连续 25 个历史行情拉取失败触发保护）；评分任务记录为 SKIPPED，08-31 新评分为 0，评分集合最新日期仍为 08-28。
+- 下一步：修复评分任务对信号任务成功记录的依赖匹配后补跑 08-31 评分；复核并视需要重跑失败的指数行情任务。
+- 阻塞：评分任务在 18:35 检查不到 18:30 已成功的 signal_daily 记录而跳过；需修复后才可恢复当日评分更新。
+
+---
+
+### 2026-08-31 21:49 CST — dev 工作面迁移至已恢复节点
+
+- 状态：已完成
+- 已完成：dev MongoDB、backend、datahub、frontend 与 dev CronJob 调度已统一迁至已恢复节点；为无公网镜像仓库环境预加载运行镜像并保留离线缓存；新本地存储完成持久挂载；对象存储备份的网络解析兼容已补齐。
+- 验证：最终备份恢复 44,909,820 文档、0 失败；10 个集合与迁移前基线一致；应用用户认证、MongoDB/三项应用就绪探针与 Service Endpoint 均正常；普通 Pod 对对象存储的只读检查通过。
+- 下一步：按既有运维策略决定是否解除 dev MongoDB 备份 CronJob 暂停；观察下一轮 data-sync 与 health-watcher 在新节点的运行结果。
+- 阻塞：无；旧 dev MongoDB PV/PVC 已保留，用于回滚。
+
+---
+
 ### 2026-08-29 21:00 CST — PR #162 合入 develop（策略实验 + 链路验证 + 08-28 断链修复）
 
 - 状态：已完成（本轮目标闭环）
