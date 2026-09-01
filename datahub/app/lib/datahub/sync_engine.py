@@ -164,7 +164,7 @@ def _iter_docs(
     # partially processing a window, dev still receives the latest trading day
     # first. Snapshot collections have no business date and fall back to _id.
     sort = (date_field, -1) if date_field else ("_id", -1)
-    cursor = col.find(query).sort(sort)
+    cursor = col.find(query).sort([sort])
     yield from cursor
 
 
