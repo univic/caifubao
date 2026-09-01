@@ -65,7 +65,7 @@ def prepare(profile_path: str, source_parquet: str | None = None) -> dict:
         **summary,
         "counts_by_date": dates.value_counts().sort_index().to_dict(),
         "eligible_counts_by_date": (
-            frame.loc[frame["eligibility"].astype(bool), "date"]
+            frame.loc[frame["eligibility"].fillna(False).astype(bool), "date"]
             .pipe(pd.to_datetime, utc=True)
             .dt.strftime("%Y-%m-%d")
             .value_counts()

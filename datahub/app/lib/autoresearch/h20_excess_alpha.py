@@ -74,8 +74,8 @@ def validate_candidate(candidate: dict) -> None:
         not isinstance(value, (int, float)) or value < 0 for value in weights.values()
     ):
         raise ValueError("component weights must be non-negative numbers")
-    if not math.isclose(sum(weights.values()), 100.0, abs_tol=1e-9):
-        raise ValueError("component weights must sum to 100")
+    if sum(weights.values()) <= 0:
+        raise ValueError("component weights must have a positive sum")
     selection = candidate.get("selection", {})
     if selection.get("mode") not in {"top_percentile", "exclude_percentile"}:
         raise ValueError("unsupported selection mode")
@@ -89,6 +89,13 @@ def validate_candidate(candidate: dict) -> None:
     regime = candidate.get("regime_filter", {})
     if regime.get("mode") not in {"none", "market_breadth"}:
         raise ValueError("unsupported regime filter")
+    if regime.get("mode") == "market_breadth":
+        if not isinstance(regime.get("minimum_fraction_above_ma60"), (int, float)):
+            raise ValueError(
+                "market_breadth requires numeric minimum_fraction_above_ma60"
+            )
+        if not isinstance(regime.get("position_scale"), (int, float)):
+            raise ValueError("market_breadth requires numeric position_scale")
 
 
 def eligible_mask(frame: pd.DataFrame) -> pd.Series:
@@ -148,6 +155,9 @@ def rank_components(frame: pd.DataFrame, candidate: dict) -> pd.DataFrame:
     validate_candidate(candidate)
     result = frame.copy()
     score = pd.Series(0.0, index=result.index)
+    total_weight = sum(
+        float(candidate["weights"][component]) for component in COMPONENT_IDS
+    )
     for component in COMPONENT_IDS:
         ranked = result.groupby("date", sort=False)[component].rank(
             method="average", pct=True, na_option="bottom"
@@ -156,7 +166,7 @@ def rank_components(frame: pd.DataFrame, candidate: dict) -> pd.DataFrame:
             ranked
             * float(candidate["component_directions"][component])
             * float(candidate["weights"][component])
-            / 100.0
+            / total_weight
         )
         result[f"{component}_percentile"] = ranked
     result["candidate_score"] = score
@@ -232,9 +242,12 @@ def equal_weight_benchmark(
 
 def information_ratio(excess: pd.Series) -> float:
     clean = pd.Series(excess, dtype=float).replace([np.inf, -np.inf], np.nan).dropna()
-    if len(clean) < 2 or clean.std(ddof=1) == 0:
+    if len(clean) < 2:
         return float("nan")
-    return float(clean.mean() / clean.std(ddof=1) * math.sqrt(252 / 20))
+    std = clean.std(ddof=1)
+    if not math.isfinite(std) or std < 1e-12:
+        return float("nan")
+    return float(clean.mean() / std * math.sqrt(252 / 20))
 
 
 def profitability_score(metrics: dict, profile: dict) -> tuple[float, list[str]]:
@@ -282,7 +295,63 @@ def profitability_score(metrics: dict, profile: dict) -> tuple[float, list[str]]
 
 
 def _git_ref() -> str:
-    return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+def _evaluate_range(
+    frame: pd.DataFrame, candidate: dict, profile: dict, bounds
+) -> dict:
+    dates = pd.to_datetime(frame["date"], utc=True)
+    start = pd.Timestamp(bounds[0], tz="UTC")
+    end = pd.Timestamp(bounds[1], tz="UTC")
+    subset = frame.loc[dates.between(start, end)].copy()
+    if subset.empty:
+        raise ValueError(f"snapshot has no rows for {bounds} range")
+    scored = rank_components(subset, candidate)
+    positions = build_positions(scored, candidate, profile)
+    benchmark = equal_weight_benchmark(subset, profile)
+    position_returns = _net_return(positions, profile)
+    strategy = position_returns.groupby(positions["date"]).mean().sort_index()
+    excess = strategy.subtract(benchmark, fill_value=np.nan).dropna()
+    wealth = (1 + excess).cumprod()
+    drawdown = wealth / wealth.cummax() - 1
+    positive = position_returns[position_returns > 0]
+    concentration = (
+        float(positive.max() / positive.sum()) if positive.sum() > 0 else 0.0
+    )
+    horizon = int(profile["experiment"]["horizon"])
+    return {
+        "information_ratio": information_ratio(excess),
+        "annualized_net_excess_return": float(
+            (1 + excess.mean()) ** (252 / horizon) - 1
+        ),
+        "excess_max_drawdown": float(drawdown.min()) if not drawdown.empty else 0.0,
+        "annual_turnover": float(252 / horizon),
+        "profit_concentration": concentration,
+        "completed_trades": len(positions),
+        "eligible_trading_days": int(subset["date"].nunique()),
+    }
+
+
+def _walk_forward_decay(frame: pd.DataFrame, candidate: dict, profile: dict) -> float:
+    train_ir = float(
+        _evaluate_range(
+            frame, candidate, profile, profile["experiment"]["train_range"]
+        )["information_ratio"]
+    )
+    validation_ir = float(
+        _evaluate_range(
+            frame, candidate, profile, profile["experiment"]["validation_range"]
+        )["information_ratio"]
+    )
+    if not math.isfinite(train_ir) or not math.isfinite(validation_ir):
+        return 0.0
+    if abs(train_ir) < 1e-9:
+        return 0.0
+    return max(0.0, (train_ir - validation_ir) / abs(train_ir))
 
 
 def evaluate_candidate(
@@ -303,36 +372,12 @@ def evaluate_candidate(
     validate_candidate(candidate)
     frame = pd.read_parquet(snapshot_path)
     validate_snapshot(frame, profile)
-    bounds = profile["experiment"][f"{split}_range"]
-    dates = pd.to_datetime(frame["date"], utc=True)
-    start = pd.Timestamp(bounds[0], tz="UTC")
-    end = pd.Timestamp(bounds[1], tz="UTC")
-    frame = frame.loc[dates.between(start, end)].copy()
-    if frame.empty:
-        raise ValueError(f"snapshot has no rows for {split} range")
-    scored = rank_components(frame, candidate)
-    positions = build_positions(scored, candidate, profile)
-    benchmark = equal_weight_benchmark(frame, profile)
-    position_returns = _net_return(positions, profile)
-    strategy = position_returns.groupby(positions["date"]).mean().sort_index()
-    excess = strategy.subtract(benchmark, fill_value=np.nan).dropna()
-    wealth = (1 + excess).cumprod()
-    drawdown = wealth / wealth.cummax() - 1
-    positive = position_returns[position_returns > 0]
-    concentration = (
-        float(positive.max() / positive.sum()) if positive.sum() > 0 else 1.0
+    metrics = _evaluate_range(
+        frame, candidate, profile, profile["experiment"][f"{split}_range"]
     )
-    periods = max(len(excess), 1)
-    metrics = {
-        "information_ratio": information_ratio(excess),
-        "annualized_net_excess_return": float((1 + excess.mean()) ** (252 / 20) - 1),
-        "excess_max_drawdown": float(drawdown.min()) if not drawdown.empty else 0.0,
-        "annual_turnover": float(periods * 2 * 30 / max(30, len(positions)) * 252 / 20),
-        "profit_concentration": concentration,
-        "completed_trades": len(positions),
-        "eligible_trading_days": int(frame["date"].nunique()),
-        "walk_forward_decay": 0.0,
-    }
+    metrics["walk_forward_decay"] = (
+        _walk_forward_decay(frame, candidate, profile) if split != "train" else 0.0
+    )
     score, flags = profitability_score(metrics, profile)
     report = {
         "schema_version": "1.0",

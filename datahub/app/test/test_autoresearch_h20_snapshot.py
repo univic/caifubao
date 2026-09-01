@@ -78,7 +78,25 @@ def test_raw_component_values_do_not_reverse_engineer_contribution():
                 "normalized_value": 0.1,
                 "weight": 15,
                 "contribution": 1.5,
-            }
+            },
+            {
+                "id": "signal_strength",
+                "raw_value": ["cross"],
+                "normalized_value": 0.8,
+                "weight": 15,
+            },
+            {
+                "id": "breakout_or_position",
+                "raw_value": {"close": 10.0, "range_high": 12.0, "range_low": 8.0},
+                "normalized_value": 0.6,
+                "weight": 5,
+            },
+            {
+                "id": "industry_momentum",
+                "raw_value": None,
+                "normalized_value": 0.5,
+                "weight": 5,
+            },
         ],
         [
             {
@@ -90,7 +108,13 @@ def test_raw_component_values_do_not_reverse_engineer_contribution():
             }
         ],
     )
-    assert values == {"momentum": -0.25, "risk_penalty": 0.4}
+    assert values == {
+        "momentum": -0.25,
+        "signal_strength": 0.8,
+        "breakout_or_position": 0.6,
+        "industry_momentum": 0.5,
+        "risk_penalty": 0.4,
+    }
 
 
 def test_pure_components_use_preloaded_signal_index_and_industry_data():
@@ -155,13 +179,10 @@ def test_pure_components_use_preloaded_signal_index_and_industry_data():
         {"industry_name": "Bank", "avg_score": 60, "stock_count": 5},
         config,
     )
-    assert values["signal_strength"] == ["cross"]
+    assert isinstance(values["signal_strength"], float)
+    assert 0.0 <= values["signal_strength"] <= 1.0
     assert values["real_relative_strength"] is not None
-    assert values["industry_momentum"] == {
-        "industry": "Bank",
-        "avg_score": 60,
-        "stock_count": 5,
-    }
+    assert values["industry_momentum"] == pytest.approx(0.6)
 
 
 @pytest.mark.parametrize(

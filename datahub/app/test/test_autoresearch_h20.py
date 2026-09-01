@@ -47,6 +47,7 @@ def candidate():
 def profile(tmp_path):
     return {
         "experiment": {
+            "horizon": 20,
             "train_range": ["2024-01-01", "2024-12-31"],
             "validation_range": ["2025-01-01", "2025-06-30"],
             "test_range": ["2025-07-01", "2026-07-31"],
@@ -111,8 +112,9 @@ def test_candidate_validation_and_ranking():
     config = candidate()
     validate_candidate(config)
     bad = candidate()
-    bad["weights"]["momentum"] = 50
-    with pytest.raises(ValueError, match="sum to 100"):
+    for name in COMPONENTS:
+        bad["weights"][name] = 0
+    with pytest.raises(ValueError, match="positive sum"):
         validate_candidate(bad)
     ranked = rank_components(snapshot_frame().head(3), config)
     assert (

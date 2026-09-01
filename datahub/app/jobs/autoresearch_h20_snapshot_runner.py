@@ -6,6 +6,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import tempfile
 from collections.abc import Iterable, Mapping
@@ -18,6 +19,7 @@ import pyarrow.parquet as pq
 
 from app.lib.scoring_engine.components import (
     breakout_or_position_component,
+    clamp,
     momentum_component,
     relative_strength_component,
     risk_penalty,
@@ -42,13 +44,27 @@ COMPONENT_IDS = (
     "risk_penalty",
 )
 
+# These production components store their numeric signal in normalized_value;
+# their raw_value is a list/dict used only as audit evidence.
+NON_NUMERIC_RAW_COMPONENTS = {
+    "signal_strength",
+    "breakout_or_position",
+    "industry_momentum",
+}
+
 
 def _raw_component_values(components, penalties):
-    values = {
-        item["id"]: item.get("raw_value", 0.0)
-        for item in components
-        if item.get("id") in COMPONENT_IDS
-    }
+    values = {}
+    for item in components:
+        component_id = item.get("id")
+        if component_id not in COMPONENT_IDS:
+            continue
+        if component_id in NON_NUMERIC_RAW_COMPONENTS:
+            values[component_id] = item.get(
+                "normalized_value", item.get("raw_value", 0.0)
+            )
+        else:
+            values[component_id] = item.get("raw_value", 0.0)
     for item in penalties:
         if item.get("id") == "risk_penalty":
             values["risk_penalty"] = item.get(
@@ -178,11 +194,15 @@ def _pure_component_values(
             "avg_score": industry_metric["avg_score"],
             "stock_count": industry_metric["stock_count"],
         }
+    industry_normalized = (
+        clamp(float(industry_raw["avg_score"]) / 100.0) if industry_raw else 0.5
+    )
     components.extend(
         [
             {
                 "id": "industry_momentum",
                 "raw_value": industry_raw,
+                "normalized_value": industry_normalized,
                 "weight": config["weights"]["industry_momentum"],
             },
             real_rs,
@@ -825,6 +845,9 @@ def _compare_component_maps(vectorized, production, tolerance):
         numeric_left = isinstance(left, (int, float)) and not isinstance(left, bool)
         numeric_right = isinstance(right, (int, float)) and not isinstance(right, bool)
         if numeric_left and numeric_right:
+            if not math.isfinite(float(left)) or not math.isfinite(float(right)):
+                mismatches += 1
+                continue
             error = abs(float(left) - float(right))
             maximum_error = max(maximum_error, error)
             mismatches += int(error > tolerance)
@@ -863,12 +886,32 @@ def parity_check(source, from_date, to_date, horizon, sample_size, tolerance):
                 vectorized = batch_source["component_builder"](
                     code, date, current, history
                 )
-                raw = service._compute_raw_components(
-                    stock, date.to_pydatetime(), horizon
-                )
-                if raw is None:
+                config = service._get_horizon_config(horizon)
+                quote = service._get_quote_on_date(stock.code, date.to_pydatetime())
+                if quote is None:
                     continue
-                production = _raw_component_values(raw["components"], raw["penalties"])
+                factors = service._get_factor_on_date(stock.code, date.to_pydatetime())
+                signals = service._get_signals_on_date(stock.code, date.to_pydatetime())
+                history_quotes = service._get_previous_quotes(
+                    stock.code,
+                    date.to_pydatetime(),
+                    max(
+                        config["minimum_quote_count"],
+                        config["breakout_lookback"],
+                        config["risk_lookback"],
+                    ),
+                )
+                components, penalties = service._build_components(
+                    quote,
+                    factors,
+                    signals,
+                    history_quotes,
+                    date.to_pydatetime(),
+                    horizon,
+                    config,
+                    stock.code,
+                )
+                production = _raw_component_values(components, penalties)
                 mismatches, error = _compare_component_maps(
                     vectorized, production, tolerance
                 )
