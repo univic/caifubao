@@ -25,6 +25,35 @@
 
 ## 进度记录
 
+### 2026-09-01 13:55 CST — 5700X dev 迁移收口 + 增量 data-sync 上线
+
+- 状态：已完成（prod 08-31 评分补跑待授权）
+- 已完成：
+  - dev 工作负载已整体运行在 5700X；镜像通过 K3s Spegel 从云内节点分发，
+    5700X 无需直连 TCR。首次大层冷传约 0.3–0.5 MB/s，缓存命中后的发布可复用层。
+  - PR #164（增量 data-sync）与 #165（PyMongo `Cursor.sort` 热修复）已 squash
+    合入 develop（`91b8b85`、`211a781`）；日常同步使用 3 天重叠窗口、每集合
+    bootstrap marker/watermark、日期索引预检、最新日期优先读取及 3 小时截止线。
+  - dev 三个 dated collection 从已验证的 08-28 恢复基线播种 marker；热修复镜像
+    上线后真实增量 Job 92.4 秒完成：read 70,203、upsert 14,348、modified 2,961，
+    三个 watermark 均推进到 08-31；`data_asset_status` 已刷新 39,419 条。
+  - prod 只读检查：08-31 quote/factor/signal 分别为 5,403/5,203/3,741 条，
+    与 dev 完全一致；prod score predictions 仍停在 08-28（16,653 条）。08-31
+    scoring 于 10:35:01 启动时 signal 尚在 RUNNING，signal 于 10:35:24 成功，
+    形成 23 秒竞态，scoring 因 `dependency_failed` 被 SKIPPED。
+- 验证：datahub 全量 389 tests passed；两次公共 PR CI 全绿；qa-reviewer 无
+  P1/P2；热修复部署与 CronJob 镜像一致且 Pod `1/1 Running`；真实 Job 状态
+  SUCCESS；dev/prod 三集合最新日期与当日条数逐项一致；dev 状态分布为
+  OK=36,968、NOT_APPLICABLE=2,451。prod 状态为 OK=52,547、STALE=6、
+  NOT_APPLICABLE=63，6 个 STALE 均为个股 quote 落后预期日期。
+- 下一步：获明确授权后补跑 prod 08-31 scoring；另行修复 signal/scoring 仅隔
+  5 分钟导致的依赖门竞态，并观察下一个交易日日常增量 Cron。构建日期索引期间
+  曾因并发大集合精确全量 count 触发 prod Mongo OOM restart 1 次，现已稳定；
+  后续禁止在索引压力期间对数千万文档执行无必要的精确全量 count。
+- 阻塞：prod 08-31 scoring 补跑会写生产数据，待用户明确授权；其余无。
+
+---
+
 ### 2026-08-29 21:00 CST — PR #162 合入 develop（策略实验 + 链路验证 + 08-28 断链修复）
 
 - 状态：已完成（本轮目标闭环）
