@@ -99,8 +99,15 @@ def _pure_component_values(
 ):
     """Build production-equivalent raw components without database queries."""
     quote_obj = SimpleNamespace(**_normalize_quote_prices(quote))
+    max_lookback = max(
+        config["momentum_lookback"],
+        config["breakout_lookback"],
+        config["risk_lookback"],
+    )
+    recent_history = history[-max_lookback:] if len(history) > max_lookback else history
     history_objects = [
-        SimpleNamespace(**_normalize_quote_prices(row)) for row in reversed(history)
+        SimpleNamespace(**_normalize_quote_prices(row))
+        for row in reversed(recent_history)
     ]
     signal_objects = [SimpleNamespace(**row) for row in signals]
     bullish_today = any(
