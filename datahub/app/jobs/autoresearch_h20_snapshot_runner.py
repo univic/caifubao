@@ -95,6 +95,7 @@ def _pure_component_values(
     index_quotes,
     industry_metric,
     config,
+    real_rs_alpha=None,
 ):
     """Build production-equivalent raw components without database queries."""
     quote_obj = SimpleNamespace(**_normalize_quote_prices(quote))
@@ -160,20 +161,23 @@ def _pure_component_values(
             config["weights"]["relative_strength"],
         ),
     ]
-    stock_quotes = sorted([*history_objects, quote_obj], key=lambda item: item.date)
-    index_objects = [
-        SimpleNamespace(
-            **{
-                **row,
-                "close_hfq": row.get("close_hfq"),
-                "close": row.get("close"),
-            }
-        )
-        for row in index_quotes
-    ]
-    alpha = real_relative_strength(
-        stock_quotes, index_objects, config["momentum_lookback"]
-    ).get(quote_obj.date.isoformat())
+    if real_rs_alpha is None:
+        stock_quotes = sorted([*history_objects, quote_obj], key=lambda item: item.date)
+        index_objects = [
+            SimpleNamespace(
+                **{
+                    **row,
+                    "close_hfq": row.get("close_hfq"),
+                    "close": row.get("close"),
+                }
+            )
+            for row in index_quotes
+        ]
+        alpha = real_relative_strength(
+            stock_quotes, index_objects, config["momentum_lookback"]
+        ).get(quote_obj.date.isoformat())
+    else:
+        alpha = real_rs_alpha
     if alpha is None:
         real_rs = relative_strength_component(
             quote_obj,
@@ -703,8 +707,43 @@ class _MongoBatchSource:
                     "stock_count": latest.get("stock_count"),
                 }
 
+            index_objects = [
+                SimpleNamespace(
+                    **{
+                        **row,
+                        "close_hfq": row.get("close_hfq"),
+                        "close": row.get("close"),
+                    }
+                )
+                for row in index_quotes
+            ]
+            alpha_cache = {}
+            for code in {row["code"] for row in quotes}:
+                code_rows = sorted(
+                    (row for row in quotes if row["code"] == code),
+                    key=lambda row: _day(row["date"]),
+                )
+                stock_objects = [
+                    SimpleNamespace(
+                        **{
+                            **_normalize_quote_prices(row),
+                            "date": _day(row["date"]),
+                        }
+                    )
+                    for row in code_rows
+                ]
+                alpha_cache[code] = real_relative_strength(
+                    stock_objects, index_objects, config["momentum_lookback"]
+                )
+
             def component_builder(
-                code, date, quote, history, factor_map=factors, signal_map=signals
+                code,
+                date,
+                quote,
+                history,
+                factor_map=factors,
+                signal_map=signals,
+                _alpha_cache=alpha_cache,
             ):
                 return _pure_component_values(
                     code,
@@ -716,6 +755,7 @@ class _MongoBatchSource:
                     index_quotes,
                     prior_industry_metric(code, date),
                     config,
+                    real_rs_alpha=_alpha_cache[code].get(date.isoformat()),
                 )
 
             yield {
