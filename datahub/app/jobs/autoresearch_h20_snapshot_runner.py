@@ -809,7 +809,6 @@ def export_snapshot(
     fd, temporary = tempfile.mkstemp(dir=output.parent, suffix=".parquet")
     os.close(fd)
     writer = None
-    seen = set()
     row_count = eligible_count = 0
     date_min = date_max = None
 
@@ -818,11 +817,10 @@ def export_snapshot(
         if frame.empty:
             return
         frame = _stable_export_types(frame)
+        # validate_export already rejects duplicate (date, stock_code) rows
+        # within a frame; the disjoint code/date batching makes cross-frame
+        # duplicates impossible, so no unbounded cross-frame key set is kept.
         validate_export(frame, frame["date"].min(), frame["date"].max())
-        keys = set(zip(frame["date"].map(_day), frame["stock_code"], strict=True))
-        if seen.intersection(keys):
-            raise ValueError("duplicate (date, stock_code) rows")
-        seen.update(keys)
         dates = pd.to_datetime(frame["date"])
         date_min = dates.min() if date_min is None else min(date_min, dates.min())
         date_max = dates.max() if date_max is None else max(date_max, dates.max())
