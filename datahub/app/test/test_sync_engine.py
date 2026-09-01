@@ -263,7 +263,7 @@ def test_date_collection_reads_newest_business_date_first():
         dry_run=True,
     )
 
-    assert src.cursor.sort_args == ((("date", -1),), {})
+    assert src.cursor.sort_args == (([("date", -1)],), {})
 
 
 def test_run_sync_resolves_each_collection_from_its_own_watermark(monkeypatch):
