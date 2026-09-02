@@ -15,11 +15,13 @@ from mongoengine import (
 
 class StockIndustryClassification(Document):
     """
-    Shenwan (申万) industry classification for each stock.
+    Industry classification for each stock.
 
-    Updated monthly via the data pipeline. The industry_code_sw_l1/l2 fields
-    store the numeric codes assigned by the Shenwan industry system (e.g. 480000
-    for 银行). Change history is preserved in industry_change_log.
+    Updated monthly via the data pipeline from baostock's CSRC (证监会)
+    industry API. The industry_code_sw_l1/industry_name_sw_l1 fields store the
+    CSRC L1 code and name (e.g. ``J66`` / ``货币金融服务``); the field names
+    retain the legacy ``sw`` suffix even though the data is CSRC, not Shenwan.
+    Change history is preserved in industry_change_log.
     """
 
     stock_code = StringField(required=True, unique=True)
