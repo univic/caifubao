@@ -67,8 +67,9 @@ responsible for the inversion.
 - Historical range: 2024-01-01 through 2026-07-31, full eligible A-share
   universe.
 - Split: train 2024-01-01 through 2024-12-31; validation 2025-01-01 through
-  2025-06-30; final test 2025-07-01 through 2026-07-31. Quarterly rolling
-  walk-forward checks are also required.
+  2025-12-31 (adjusted 2026-09 from 2025H1-only so the validation window has
+  243 eligible trading days, above the 120-day gate); final test 2026-01-01
+  through 2026-07-31. Quarterly rolling walk-forward checks are also required.
 - Execution: a score produced after market close can trade no earlier than the
   next trading day's open. A suspended or limit-up buy rolls forward to the
   first executable open. The H20 holding clock starts on that actual entry
