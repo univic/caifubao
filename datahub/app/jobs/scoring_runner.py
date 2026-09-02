@@ -4,6 +4,7 @@ import argparse
 import datetime
 import json
 import logging
+import time
 
 from app.lib.utilities import job_run_helper
 
@@ -21,6 +22,12 @@ DEPENDENCY_JOB_FAMILY = "signal_daily"
 DEPENDENCY_JOB_NAME = "datahub_signal_daily"
 DEPENDENCY_JOB_HOUR = 18
 DEPENDENCY_JOB_MINUTE = 30
+DEPENDENCY_WAIT_TIMEOUT_SECONDS = 600
+DEPENDENCY_POLL_INTERVAL_SECONDS = 10
+
+_DEPENDENCY_READY = "ready"
+_DEPENDENCY_WAITING = "waiting"
+_DEPENDENCY_FAILED = "failed"
 
 # All scoring horizons to run when none is specified
 DEFAULT_HORIZONS = [5, 20, 60]
@@ -177,8 +184,8 @@ def run_grid_search(args):
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
-def _check_dependency() -> bool:
-    """Check whether the upstream signal job is ready for scoring.
+def _dependency_state() -> str:
+    """Return whether the upstream signal job is ready, running, or failed.
 
     Always uses the upstream job's schedule time (DEPENDENCY_JOB_HOUR/MINUTE),
     regardless of this job's own scheduled_at, to correctly match the upstream
@@ -206,7 +213,7 @@ def _check_dependency() -> bool:
         statuses=[job_run_helper.STATUS_SUCCESS],
     )
     if latest is not None:
-        return True
+        return _DEPENDENCY_READY
 
     record = job_run_helper.latest_job_run(
         job_family=DEPENDENCY_JOB_FAMILY,
@@ -215,8 +222,62 @@ def _check_dependency() -> bool:
         statuses=[job_run_helper.STATUS_RUNNING, job_run_helper.STATUS_FAILED],
     )
     if record is None:
-        return False
-    return int(record.written_total or 0) > 0
+        # Close the transition race where the upstream record changes from
+        # RUNNING to SUCCESS between the two queries above.
+        latest = job_run_helper.latest_job_run(
+            job_family=DEPENDENCY_JOB_FAMILY,
+            job_name=DEPENDENCY_JOB_NAME,
+            scheduled_at=upstream_scheduled_at,
+            statuses=[job_run_helper.STATUS_SUCCESS],
+        )
+        return _DEPENDENCY_READY if latest is not None else _DEPENDENCY_FAILED
+    if int(record.written_total or 0) > 0:
+        return _DEPENDENCY_READY
+    if record.status == job_run_helper.STATUS_RUNNING:
+        return _DEPENDENCY_WAITING
+    return _DEPENDENCY_FAILED
+
+
+def _check_dependency() -> bool:
+    """Check whether the upstream signal job is ready for scoring."""
+    return _dependency_state() == _DEPENDENCY_READY
+
+
+def _wait_for_dependency(
+    *,
+    timeout_seconds: int = DEPENDENCY_WAIT_TIMEOUT_SECONDS,
+    poll_interval_seconds: int = DEPENDENCY_POLL_INTERVAL_SECONDS,
+) -> bool:
+    """Wait for a running signal job to finish, bounded by ``timeout_seconds``."""
+    if timeout_seconds < 0:
+        raise ValueError("timeout_seconds must not be negative")
+    if poll_interval_seconds <= 0:
+        raise ValueError("poll_interval_seconds must be greater than zero")
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        state = _dependency_state()
+        if state == _DEPENDENCY_READY:
+            return True
+        if state != _DEPENDENCY_WAITING:
+            return False
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.warning(
+                "Timed out after %d seconds waiting for job_family=%s",
+                timeout_seconds,
+                DEPENDENCY_JOB_FAMILY,
+            )
+            return False
+
+        sleep_seconds = min(poll_interval_seconds, remaining)
+        logger.info(
+            "Dependency job_family=%s is still RUNNING; retrying in %.1f seconds",
+            DEPENDENCY_JOB_FAMILY,
+            sleep_seconds,
+        )
+        time.sleep(sleep_seconds)
 
 
 def add_common_options(
@@ -398,10 +459,10 @@ def _run_with_tracking(args) -> None:
         scheduled_at = job_run_helper.utc_now_naive()
 
     # Check upstream dependency
-    if not _check_dependency():
+    if not _wait_for_dependency():
         logger.warning(
-            "Dependency check failed: no SUCCESS record found for job_family=%s "
-            "at scheduled_at=%s. Skipping scoring run.",
+            "Dependency check failed after bounded wait: no ready record found "
+            "for job_family=%s at scheduled_at=%s. Skipping scoring run.",
             DEPENDENCY_JOB_FAMILY,
             scheduled_at,
         )

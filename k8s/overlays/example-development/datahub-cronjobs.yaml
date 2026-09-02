@@ -252,6 +252,8 @@ spec:
             - cron
             - --source
             - k8s-cronjob
+            - --overlap-days
+            - "3"
             - --scheduled-hour
             - "18"
             - --scheduled-minute

@@ -104,3 +104,74 @@ def test_scoring_dependency_rejects_missing_record(monkeypatch):
     )
 
     assert scoring_runner._check_dependency() is False
+
+
+def test_scoring_dependency_rechecks_success_during_status_transition(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+
+    records = iter([None, None, _FakeRunRecord(status="SUCCESS")])
+
+    monkeypatch.setattr(
+        "app.jobs.scoring_runner.job_run_helper.latest_job_run",
+        lambda **kwargs: next(records),
+    )
+
+    assert scoring_runner._check_dependency() is True
+
+
+def test_scoring_dependency_waits_for_running_upstream_then_succeeds(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+
+    records = iter(
+        [
+            None,
+            _FakeRunRecord(status="RUNNING", written_total=0),
+            _FakeRunRecord(status="SUCCESS"),
+        ]
+    )
+    sleeps = []
+
+    monkeypatch.setattr(
+        "app.jobs.scoring_runner.job_run_helper.latest_job_run",
+        lambda **kwargs: next(records),
+    )
+    monkeypatch.setattr(scoring_runner.time, "monotonic", lambda: 0)
+    monkeypatch.setattr(scoring_runner.time, "sleep", sleeps.append)
+
+    assert (
+        scoring_runner._wait_for_dependency(
+            timeout_seconds=60,
+            poll_interval_seconds=5,
+        )
+        is True
+    )
+    assert sleeps == [5]
+
+
+def test_scoring_dependency_wait_is_bounded(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+
+    records = iter(
+        [
+            None,
+            _FakeRunRecord(status="RUNNING", written_total=0),
+        ]
+    )
+    clock = iter([0, 60])
+    sleeps = []
+
+    monkeypatch.setattr(
+        "app.jobs.scoring_runner.job_run_helper.latest_job_run",
+        lambda **kwargs: next(records),
+    )
+    monkeypatch.setattr(scoring_runner.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(scoring_runner.time, "sleep", sleeps.append)
+
+    assert (
+        scoring_runner._wait_for_dependency(
+            timeout_seconds=60,
+            poll_interval_seconds=5,
+        )
+        is False
+    )
+    assert sleeps == []

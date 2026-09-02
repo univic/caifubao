@@ -36,6 +36,7 @@
 #
 # Examples:
 #   scripts/caifubao data sync
+#   scripts/caifubao data sync --full quote,factor,signal
 #   scripts/caifubao score score-one sz000977 --date 2026-05-18 --horizon 5
 #   scripts/caifubao data status sz000977
 #   scripts/caifubao system health
@@ -85,7 +86,12 @@ cmd_data_sync() {
   local from_date="${1:-}"
   local collections="${2:-quote,factor,signal,market,industry}"
   local args=()
-  [[ -n "$from_date" ]] && args+=(--from-date "$from_date")
+  if [[ "$from_date" == "--full" ]]; then
+    args+=(--full)
+    from_date=""
+  elif [[ -n "$from_date" ]]; then
+    args+=(--from-date "$from_date")
+  fi
   args+=(--collections "$collections")
   info "Syncing $collections from prod to dev..."
   if [[ -n "$from_date" ]]; then
@@ -434,7 +440,8 @@ Usage:
   scripts/caifubao <domain> <command> [options]
 
 Data:
-  data sync [FROM_DATE] [COLLECTIONS]  Sync data from prod to dev
+  data sync [FROM_DATE|--full] [COLLECTIONS]
+                                      Sync data from prod to dev
   data refresh-status [LIMIT]          Refresh data_asset_status freshness
   data status <STOCK>                  Check data completeness for a stock
 
