@@ -81,6 +81,7 @@ class BacktestResult(Document):
     # Strategy config (for score-driven strategies)
     score_config = DictField()  # scoring config snapshot
     horizon = IntField()  # scoring horizon used
+    model_version = StringField()  # scoring model version (score-driven strategies)
     data_coverage = DictField()  # HFQ gaps, factor/score alignment warnings
 
     # Multi-stock / portfolio fields
@@ -99,6 +100,7 @@ class BacktestResult(Document):
         "indexes": [
             "stock_code",
             "strategy",
+            "model_version",
             "-created_at",
             ("stock_code", "-created_at"),
         ],

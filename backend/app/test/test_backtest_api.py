@@ -629,6 +629,7 @@ class TestBacktestOptimizeAPI:
             json={
                 "stock_code": "sz000977",
                 "strategy": "SCORE_THRESHOLD",
+                "model_version": "test-v1",
                 "start_date": "2025-01-01",
                 "end_date": "2025-12-31",
                 "horizon": 5,
@@ -681,6 +682,7 @@ class TestBacktestOptimizeAPI:
             json={
                 "stock_code": "sz000977",
                 "strategy": "SCORE_THRESHOLD",
+                "model_version": "test-v1",
                 "start_date": "2025-01-01",
                 "end_date": "2025-12-31",
                 "horizon": 5,
@@ -749,6 +751,7 @@ class TestConsensusThresholdValidation:
             json={
                 "stock_code": "sz000977",
                 "strategy": "MULTI_HORIZON_CONSENSUS",
+                "model_version": "test-v1",
                 "start_date": "2025-01-01",
                 "end_date": "2025-06-30",
                 "consensus_entry_thresholds": {"wrong_key": 50},
@@ -794,6 +797,7 @@ class TestConsensusThresholdValidation:
             json={
                 "stock_code": "sz000977",
                 "strategy": "MULTI_HORIZON_CONSENSUS",
+                "model_version": "test-v1",
                 "start_date": "2025-01-01",
                 "end_date": "2025-06-30",
                 "consensus_entry_thresholds": {"5": 45},
@@ -981,6 +985,7 @@ class TestDecayAnalysisAPI:
             json={
                 "stock_code": "sz000977",
                 "strategy": "SCORE_MOMENTUM",
+                "model_version": "test-v1",
                 "start_date": "2025-01-02",
                 "end_date": "2026-05-18",
                 "window_days": 120,
@@ -1138,6 +1143,7 @@ class TestLandscapeAPI:
             json={
                 "stock_code": "sz000977",
                 "strategy": "SCORE_THRESHOLD",
+                "model_version": "test-v1",
                 "start_date": "2025-01-01",
                 "end_date": "2026-05-18",
                 "param_x": "entry_threshold",
@@ -1206,6 +1212,7 @@ class TestLandscapeAPI:
             json={
                 "stock_code": "sz000977",
                 "strategy": "SCORE_THRESHOLD",
+                "model_version": "test-v1",
                 "start_date": "2025-01-01",
                 "end_date": "2026-05-18",
                 "param_x": "unknown_param",
@@ -1227,6 +1234,7 @@ class TestLandscapeAPI:
             json={
                 "stock_code": "sz000977",
                 "strategy": "SCORE_THRESHOLD",
+                "model_version": "test-v1",
                 "start_date": "2025-01-01",
                 "end_date": "2026-05-18",
                 "param_x": "entry_threshold",
@@ -1248,6 +1256,7 @@ class TestLandscapeAPI:
             json={
                 "stock_code": "sz000977",
                 "strategy": "SCORE_THRESHOLD",
+                "model_version": "test-v1",
                 "start_date": "2025-01-01",
                 "end_date": "2026-05-18",
                 "param_x": "entry_threshold",
@@ -1283,6 +1292,7 @@ class TestLandscapeAPI:
             json={
                 "stock_code": "sz000977",
                 "strategy": "SCORE_THRESHOLD",
+                "model_version": "test-v1",
                 "start_date": "2025-01-01",
                 "end_date": "2026-05-18",
                 "param_x": "entry_threshold",
@@ -1380,6 +1390,7 @@ class TestRecommendationAPI:
                 "end_date": "2026-05-18",
                 "horizons": [5, 20, 60],
                 "strategies": ["SCORE_MOMENTUM", "MA_CROSS", "BUY_HOLD"],
+                "model_version": "test-v1",
                 "initial_cash": 100000,
             },
         )

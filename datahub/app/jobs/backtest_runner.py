@@ -26,6 +26,22 @@ SUPPORTED_STRATEGIES = [
     "MULTI_HORIZON_CONSENSUS",
 ]
 
+SCORE_DRIVEN_STRATEGIES = {
+    "SCORE_THRESHOLD",
+    "SCORE_MOMENTUM",
+    "TOP_N_ROTATION",
+    "MULTI_HORIZON_CONSENSUS",
+}
+
+
+def _require_score_model_version(args, *strategies: str) -> str | None:
+    model_version = (getattr(args, "model_version", None) or "").strip()
+    if any(strategy in SCORE_DRIVEN_STRATEGIES for strategy in strategies):
+        if not model_version:
+            raise ValueError("model_version is required for score-driven strategies")
+        return model_version
+    return None
+
 
 def _init_db() -> None:
     """Connect to MongoDB."""
@@ -44,6 +60,7 @@ def parse_date(value: str) -> datetime.datetime:
 
 def run_single(args) -> dict:
     """Run a single-stock backtest."""
+    model_version = _require_score_model_version(args, args.strategy)
     _init_db()
     from backend.app.services.backtest_service import run_backtest
 
@@ -69,8 +86,8 @@ def run_single(args) -> dict:
         params["stop_loss_pct"] = float(args.stop_loss)
     if args.score_delta is not None:
         params["score_delta"] = float(args.score_delta)
-    if args.model_version:
-        params["model_version"] = args.model_version
+    if model_version:
+        params["model_version"] = model_version
     if args.consensus_entry:
         params["consensus_entry_thresholds"] = json.loads(args.consensus_entry)
     if args.consensus_exit:
@@ -90,6 +107,7 @@ def run_single(args) -> dict:
 
 def run_multi(args) -> dict:
     """Run a multi-stock backtest."""
+    model_version = _require_score_model_version(args, args.strategy)
     _init_db()
     from backend.app.services.backtest_service import run_multi_stock_backtest
 
@@ -115,7 +133,7 @@ def run_multi(args) -> dict:
         if args.max_position_pct
         else 0.20,
         stop_loss_pct=float(args.stop_loss) if args.stop_loss else -5.0,
-        model_version=args.model_version or None,
+        model_version=model_version,
     )
 
     if result.get("error"):
@@ -133,6 +151,7 @@ def run_multi(args) -> dict:
 
 def run_compare(args) -> dict:
     """Compare two strategies on the same stock."""
+    model_version = _require_score_model_version(args, args.strategy, args.vs_strategy)
     _init_db()
     from backend.app.services.backtest_service import run_backtest
 
@@ -166,6 +185,8 @@ def run_compare(args) -> dict:
             params["exit_threshold"] = float(args.exit)
         if args.stop_loss is not None:
             params["stop_loss_pct"] = float(args.stop_loss)
+        if strat_name in SCORE_DRIVEN_STRATEGIES:
+            params["model_version"] = model_version
 
         r = run_backtest(**params)
         if r.get("error"):
@@ -201,6 +222,7 @@ def run_compare(args) -> dict:
 
 def run_optimize(args) -> dict:
     """Run parameter optimization sweep."""
+    model_version = _require_score_model_version(args, args.strategy)
     _init_db()
     from flask import Flask
 
@@ -241,6 +263,7 @@ def run_optimize(args) -> dict:
             "param_grid": param_grid,
             "initial_cash": float(args.initial_cash),
             "use_split": not args.no_split,
+            "model_version": model_version,
         },
     ):
         response = opt_handler()
@@ -255,6 +278,7 @@ def run_optimize(args) -> dict:
 
 def run_compare_all(args) -> dict:
     """Compare all eligible strategies on one stock via API."""
+    model_version = _require_score_model_version(args, "SCORE_THRESHOLD")
     _init_db()
     from flask import Flask
 
@@ -271,6 +295,7 @@ def run_compare_all(args) -> dict:
             "end_date": args.end_date,
             "initial_cash": float(args.initial_cash),
             "benchmark_code": args.benchmark_code,
+            "model_version": model_version,
         },
     ):
         response = cmp_handler()
@@ -285,6 +310,7 @@ def run_compare_all(args) -> dict:
 
 def run_scan(args) -> dict:
     """Scan one strategy across all active stocks via API."""
+    model_version = _require_score_model_version(args, args.strategy)
     _init_db()
     from flask import Flask
 
@@ -305,6 +331,8 @@ def run_scan(args) -> dict:
         json_payload["horizon"] = int(args.horizon)
     if args.min_trades:
         json_payload["min_trades"] = args.min_trades
+    if model_version:
+        json_payload["model_version"] = model_version
 
     with app.test_request_context(method="POST", json=json_payload):
         response = scan_handler()
@@ -337,6 +365,7 @@ def run_scan(args) -> dict:
 
 def run_walk_forward(args) -> dict:
     """Run walk-forward validation via API."""
+    model_version = _require_score_model_version(args, args.strategy)
     _init_db()
     from flask import Flask
 
@@ -356,6 +385,8 @@ def run_walk_forward(args) -> dict:
     }
     if args.horizon:
         json_payload["horizon"] = int(args.horizon)
+    if model_version:
+        json_payload["model_version"] = model_version
 
     with app.test_request_context(method="POST", json=json_payload):
         response = wf_handler()
@@ -457,6 +488,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_compare.add_argument("--entry", type=float)
     p_compare.add_argument("--exit", type=float)
     p_compare.add_argument("--stop-loss", type=float)
+    p_compare.add_argument("--model-version")
 
     # --- optimize ---
     p_optimize = subparsers.add_parser("optimize", help="Parameter sweep optimization")
@@ -472,6 +504,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_optimize.add_argument("--stop-loss-range", help="Comma-separated: -3,-5,-8")
     p_optimize.add_argument("--initial-cash", default=100000)
+    p_optimize.add_argument("--model-version")
     p_optimize.add_argument(
         "--no-split", action="store_true", help="Don't use train/val/test split"
     )
@@ -485,6 +518,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_cmp_all.add_argument("end_date", help="YYYY-MM-DD")
     p_cmp_all.add_argument("--initial-cash", default=100000)
     p_cmp_all.add_argument("--benchmark-code", default="sh000300")
+    p_cmp_all.add_argument("--model-version")
 
     # --- scan ---
     p_scan = subparsers.add_parser("scan", help="Scan one strategy across market")
@@ -496,6 +530,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--page", type=int, default=1)
     p_scan.add_argument("--per-page", type=int, default=20)
     p_scan.add_argument("--min-trades", type=int, help="Minimum trade count filter")
+    p_scan.add_argument("--model-version")
 
     # --- walk-forward ---
     p_walk_forward = subparsers.add_parser(
@@ -509,6 +544,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_walk_forward.add_argument("--step-days", type=int, default=60)
     p_walk_forward.add_argument("--horizon", type=int, help="Score horizon (5/20/60)")
     p_walk_forward.add_argument("--initial-cash", default=100000)
+    p_walk_forward.add_argument("--model-version")
 
     return parser
 
@@ -517,22 +553,25 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command == "single":
-        run_single(args)
-    elif args.command == "multi":
-        run_multi(args)
-    elif args.command == "compare":
-        run_compare(args)
-    elif args.command == "optimize":
-        run_optimize(args)
-    elif args.command == "compare-all":
-        run_compare_all(args)
-    elif args.command == "scan":
-        run_scan(args)
-    elif args.command == "walk-forward":
-        run_walk_forward(args)
-    else:
-        parser.print_help()
+    try:
+        if args.command == "single":
+            run_single(args)
+        elif args.command == "multi":
+            run_multi(args)
+        elif args.command == "compare":
+            run_compare(args)
+        elif args.command == "optimize":
+            run_optimize(args)
+        elif args.command == "compare-all":
+            run_compare_all(args)
+        elif args.command == "scan":
+            run_scan(args)
+        elif args.command == "walk-forward":
+            run_walk_forward(args)
+        else:
+            parser.print_help()
+    except ValueError as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":
