@@ -6,9 +6,10 @@ baseline_status: completed
 active_profile_path: autoresearch/profile.yaml
 active_spec_path: docs/autoresearch/specs/2026-08-29-h20-excess-alpha-design.md
 active_plan_path: docs/autoresearch/plans/2026-08-29-h20-excess-alpha-plan.md
-baseline_ref: c90586a2031e2f099040179d83e949712d5af7a8
+baseline_ref: 16dd095a23bc3f88e5afd03d569b9e1f2b8f9867
 best_ref: null
 rollback_target: null
 blocker_reason: null
 next_allowed_skills:
   - autoresearch-loop
+split_note: "validation extended 2025-01-01..2025-12-31 (243 eligible days); test 2026-01-01..2026-07-31 locked"
