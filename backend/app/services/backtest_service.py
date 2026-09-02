@@ -33,6 +33,16 @@ VALID_STRATEGIES = (
     "TOP_N_ROTATION",
     "MULTI_HORIZON_CONSENSUS",
 )
+SCORE_DRIVEN_STRATEGIES = frozenset(
+    {
+        "SCORE_THRESHOLD",
+        "SCORE_MOMENTUM",
+        "TOP_N_ROTATION",
+        "MULTI_HORIZON_CONSENSUS",
+    }
+)
+UNUSABLE_SCORE_STATUSES = ("BLOCKED", "FAILED")
+SCORE_EXECUTION_TIMING = "next_trading_day_open"
 
 # Friction model
 COMMISSION_RATE = 0.00025  # 0.025%
@@ -585,6 +595,10 @@ def run_backtest(
     strategy_norm = (strategy or "").strip().upper()
     if strategy_norm not in VALID_STRATEGIES:
         return _error("Unsupported strategy", f"strategy={strategy_norm}")
+    if strategy_norm in SCORE_DRIVEN_STRATEGIES:
+        model_version = (model_version or "").strip()
+        if not model_version:
+            return _error("model_version is required for score-driven strategies")
 
     # Normalize dates to day-resolution
     start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -687,17 +701,18 @@ def run_backtest(
             horizon=horizon,
             date__gte=start_date,
             date__lte=end_date,
+            model_version=model_version,
+            status__nin=UNUSABLE_SCORE_STATUSES,
         )
-        if model_version:
-            score_q = score_q.filter(model_version=model_version)
         scores = list(score_q.order_by("date"))
         for s in scores:
             d = s.date.replace(hour=0, minute=0, second=0, microsecond=0)
             score_map[d] = s
         if not score_map:
             return _error(
-                "No score data",
-                f"No StockScorePrediction for {stock_code} horizon={horizon} in range",
+                "No usable score data",
+                f"No eligible StockScorePrediction for {stock_code} "
+                f"horizon={horizon} model_version={model_version} in range",
             )
     elif strategy_norm == "MULTI_HORIZON_CONSENSUS":
         for h in (5, 20, 60):
@@ -706,15 +721,21 @@ def run_backtest(
                 horizon=h,
                 date__gte=start_date,
                 date__lte=end_date,
+                model_version=model_version,
+                status__nin=UNUSABLE_SCORE_STATUSES,
             )
-            if model_version:
-                score_q = score_q.filter(model_version=model_version)
             h_map: Dict[datetime, Any] = {}
             for s in score_q.order_by("date"):
                 d = s.date.replace(hour=0, minute=0, second=0, microsecond=0)
                 h_map[d] = s
             if h_map:
                 score_maps[h] = h_map
+        if not score_maps:
+            return _error(
+                "No usable score data",
+                f"No eligible StockScorePrediction for {stock_code} "
+                f"model_version={model_version} in range",
+            )
 
     # Set default consensus thresholds
     if consensus_entry_thresholds is None:
@@ -792,6 +813,28 @@ def run_backtest(
         sim_result["information_ratio"] = 0.0
 
     sim_result["data_coverage"] = coverage
+    score_config = None
+    if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
+        score_config = {
+            "horizon": horizon,
+            "entry_threshold": entry_threshold,
+            "exit_threshold": exit_threshold,
+            "stop_loss_pct": stop_loss_pct,
+            "score_delta": score_delta,
+            "model_version": model_version,
+            "execution_timing": SCORE_EXECUTION_TIMING,
+        }
+    elif strategy_norm == "MULTI_HORIZON_CONSENSUS":
+        score_config = {
+            "strategy": strategy_norm,
+            "consensus_entry_thresholds": consensus_entry_thresholds,
+            "consensus_exit_thresholds": consensus_exit_thresholds,
+            "stop_loss_pct": stop_loss_pct,
+            "model_version": model_version,
+            "execution_timing": SCORE_EXECUTION_TIMING,
+        }
+    if score_config is not None:
+        sim_result["score_config"] = score_config
     # Persist
     if save_result:
         ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -838,25 +881,13 @@ def run_backtest(
             excess_return=sim_result.get("excess_return", 0.0),
             excess_return_pct=sim_result.get("excess_return_pct", 0.0),
             information_ratio=sim_result.get("information_ratio", 0.0),
-            score_config={
-                "horizon": horizon,
-                "entry_threshold": entry_threshold,
-                "exit_threshold": exit_threshold,
-                "stop_loss_pct": stop_loss_pct,
-                "score_delta": score_delta,
-                "model_version": model_version,
-            }
-            if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM")
-            else {
-                "strategy": strategy_norm,
-                "consensus_entry_thresholds": consensus_entry_thresholds,
-                "consensus_exit_thresholds": consensus_exit_thresholds,
-                "stop_loss_pct": stop_loss_pct,
-            }
-            if strategy_norm == "MULTI_HORIZON_CONSENSUS"
-            else None,
+            score_config=score_config,
             horizon=horizon
             if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM")
+            else None,
+            model_version=model_version
+            if strategy_norm
+            in ("SCORE_THRESHOLD", "SCORE_MOMENTUM", "MULTI_HORIZON_CONSENSUS")
             else None,
             data_coverage=coverage,
             completed_at=datetime.now(timezone.utc),
@@ -941,6 +972,10 @@ def run_multi_stock_backtest(
     strategy_norm = (strategy or "").strip().upper()
     if strategy_norm not in VALID_STRATEGIES:
         return _error("Unsupported strategy", f"strategy={strategy_norm}")
+    if strategy_norm in SCORE_DRIVEN_STRATEGIES:
+        model_version = (model_version or "").strip()
+        if not model_version:
+            return _error("model_version is required for score-driven strategies")
     if not isinstance(stock_codes, list) or len(stock_codes) < 2:
         return _error("Invalid stock_codes", "Must be a list with at least 2 codes")
     if len(stock_codes) > 100:
@@ -1014,17 +1049,18 @@ def run_multi_stock_backtest(
             horizon=horizon,
             date__gte=start_date,
             date__lte=end_date,
+            model_version=model_version,
+            status__nin=UNUSABLE_SCORE_STATUSES,
         )
-        if model_version:
-            score_q = score_q.filter(model_version=model_version)
         scores = list(score_q.order_by("date"))
         for s in scores:
             d = s.date.replace(hour=0, minute=0, second=0, microsecond=0)
             score_maps.setdefault(s.stock_code, {})[d] = s
         if not score_maps:
             return _error(
-                "No score data",
-                f"No StockScorePrediction for horizon={horizon} in range",
+                "No usable score data",
+                f"No eligible StockScorePrediction for horizon={horizon} "
+                f"model_version={model_version} in range",
             )
 
     # Run the multi-stock simulation (or fall back to single-stock)
@@ -1099,6 +1135,20 @@ def run_multi_stock_backtest(
         sim_result["excess_return_pct"] = 0.0
         sim_result["information_ratio"] = 0.0
 
+    score_config = None
+    if strategy_norm == "TOP_N_ROTATION":
+        score_config = {
+            "horizon": horizon,
+            "top_n": top_n,
+            "rebalance_interval": rebalance_interval,
+            "allocation": allocation,
+            "max_position_pct": max_position_pct,
+            "stop_loss_pct": stop_loss_pct,
+            "model_version": model_version,
+            "execution_timing": SCORE_EXECUTION_TIMING,
+        }
+        sim_result["score_config"] = score_config
+
     # Persist
     stocks_str = ",".join(stock_codes)
     stocks_name = ", ".join(stock_names.get(sc, sc) for sc in stock_codes)
@@ -1154,19 +1204,9 @@ def run_multi_stock_backtest(
             excess_return=sim_result.get("excess_return", 0.0),
             excess_return_pct=sim_result.get("excess_return_pct", 0.0),
             information_ratio=sim_result.get("information_ratio", 0.0),
-            score_config={
-                "horizon": horizon,
-                "entry_threshold": entry_threshold,
-                "exit_threshold": exit_threshold,
-                "stop_loss_pct": stop_loss_pct,
-                "score_delta": score_delta,
-                "model_version": model_version,
-                "top_n": top_n,
-                "rebalance_interval": rebalance_interval,
-                "allocation": allocation,
-                "max_position_pct": max_position_pct,
-            },
+            score_config=score_config,
             horizon=horizon,
+            model_version=model_version,
             # Multi-stock fields
             per_stock_contributions=per_stock_contributions,
             top_n=top_n,
@@ -1564,7 +1604,9 @@ def _simulate(
         for i, day in enumerate(trading_days):
             quote = quote_map[day]
             price = _closing_price(quote)
-            score_doc = score_map.get(day) if score_map else None
+            execution_price = _adjusted_open_price(quote)
+            score_day = trading_days[i - 1] if i > 0 else None
+            score_doc = score_map.get(score_day) if score_map and score_day else None
 
             # Get today's score (only use data from this day or earlier — look-ahead guard)
             curr_score = score_doc.score if score_doc else None
@@ -1622,12 +1664,12 @@ def _simulate(
 
             # Try to execute pending signal
             action_taken = False
-            if pending_signal == "BUY" and shares == 0 and price > 0:
-                if _can_trade(quote, "BUY"):
-                    shares = _max_buy_shares(price, cash)
+            if pending_signal == "BUY" and shares == 0:
+                if execution_price is not None and _can_trade(quote, "BUY"):
+                    shares = _max_buy_shares(execution_price, cash)
                     if shares > 0:
                         exec_price, comm, duty, slip = _apply_friction(
-                            price, shares, "BUY"
+                            execution_price, shares, "BUY"
                         )
                         cost = shares * exec_price
                         cash -= cost + comm
@@ -1635,7 +1677,7 @@ def _simulate(
                         total_stamp_duty += duty  # 0 for BUY
                         total_slippage += slip
                     else:
-                        exec_price = price
+                        exec_price = execution_price
                         cost = 0.0
                         comm = 0.0
                         slip = 0.0
@@ -1649,7 +1691,7 @@ def _simulate(
                         {
                             "date": day.isoformat(),
                             "side": "BUY",
-                            "price": round(price, 4),
+                            "price": round(execution_price, 4),
                             "exec_price": round(exec_price, 4),
                             "quantity": shares,
                             "amount": round(cost, 4),
@@ -1659,11 +1701,15 @@ def _simulate(
                             "reason": reason,
                         }
                     )
-                    stop_loss_price = price * (1 + stop_loss_pct / 100)
+                    stop_loss_price = execution_price * (1 + stop_loss_pct / 100)
                     pending_signal = None
                     action_taken = True
                 else:
-                    reason = _blocked_reason(quote, "BUY")
+                    reason = (
+                        "missing_open_hfq"
+                        if execution_price is None
+                        else _blocked_reason(quote, "BUY")
+                    )
                     skipped_trades.append(
                         {
                             "date": day.isoformat(),
@@ -1675,9 +1721,9 @@ def _simulate(
                     action_taken = True
 
             if not action_taken and pending_signal == "SELL" and shares > 0:
-                if _can_trade(quote, "SELL"):
+                if execution_price is not None and _can_trade(quote, "SELL"):
                     exec_price, comm, duty, slip = _apply_friction(
-                        price, shares, "SELL"
+                        execution_price, shares, "SELL"
                     )
                     proceeds = exec_price * shares - comm - duty
                     cash += proceeds
@@ -1708,7 +1754,7 @@ def _simulate(
                         {
                             "date": day.isoformat(),
                             "side": "SELL",
-                            "price": round(price, 4),
+                            "price": round(execution_price, 4),
                             "exec_price": round(exec_price, 4),
                             "quantity": shares,
                             "amount": round(proceeds, 4),
@@ -1723,7 +1769,11 @@ def _simulate(
                     stop_loss_price = None
                     pending_signal = None
                 else:
-                    reason = _blocked_reason(quote, "SELL")
+                    reason = (
+                        "missing_open_hfq"
+                        if execution_price is None
+                        else _blocked_reason(quote, "SELL")
+                    )
                     skipped_trades.append(
                         {
                             "date": day.isoformat(),
@@ -1804,7 +1854,9 @@ def _simulate(
         for i, day in enumerate(trading_days):
             quote = quote_map[day]
             price = _closing_price(quote)
-            score_doc = score_map.get(day) if score_map else None
+            execution_price = _adjusted_open_price(quote)
+            score_day = trading_days[i - 1] if i > 0 else None
+            score_doc = score_map.get(score_day) if score_map and score_day else None
 
             # Get today's score (only use data from this day or earlier — look-ahead guard)
             curr_score = score_doc.score if score_doc else None
@@ -1863,12 +1915,12 @@ def _simulate(
 
             # Try to execute pending signal
             action_taken = False
-            if pending_signal == "BUY" and shares == 0 and price > 0:
-                if _can_trade(quote, "BUY"):
-                    shares = _max_buy_shares(price, cash)
+            if pending_signal == "BUY" and shares == 0:
+                if execution_price is not None and _can_trade(quote, "BUY"):
+                    shares = _max_buy_shares(execution_price, cash)
                     if shares > 0:
                         exec_price, comm, duty, slip = _apply_friction(
-                            price, shares, "BUY"
+                            execution_price, shares, "BUY"
                         )
                         cost = shares * exec_price
                         cash -= cost + comm
@@ -1876,7 +1928,7 @@ def _simulate(
                         total_stamp_duty += duty  # 0 for BUY
                         total_slippage += slip
                     else:
-                        exec_price = price
+                        exec_price = execution_price
                         cost = 0.0
                         comm = 0.0
                         slip = 0.0
@@ -1890,7 +1942,7 @@ def _simulate(
                         {
                             "date": day.isoformat(),
                             "side": "BUY",
-                            "price": round(price, 4),
+                            "price": round(execution_price, 4),
                             "exec_price": round(exec_price, 4),
                             "quantity": shares,
                             "amount": round(cost, 4),
@@ -1900,11 +1952,15 @@ def _simulate(
                             "reason": reason,
                         }
                     )
-                    stop_loss_price = price * (1 + stop_loss_pct / 100)
+                    stop_loss_price = execution_price * (1 + stop_loss_pct / 100)
                     pending_signal = None
                     action_taken = True
                 else:
-                    reason = _blocked_reason(quote, "BUY")
+                    reason = (
+                        "missing_open_hfq"
+                        if execution_price is None
+                        else _blocked_reason(quote, "BUY")
+                    )
                     skipped_trades.append(
                         {
                             "date": day.isoformat(),
@@ -1916,9 +1972,9 @@ def _simulate(
                     action_taken = True
 
             if not action_taken and pending_signal == "SELL" and shares > 0:
-                if _can_trade(quote, "SELL"):
+                if execution_price is not None and _can_trade(quote, "SELL"):
                     exec_price, comm, duty, slip = _apply_friction(
-                        price, shares, "SELL"
+                        execution_price, shares, "SELL"
                     )
                     proceeds = exec_price * shares - comm - duty
                     cash += proceeds
@@ -1949,7 +2005,7 @@ def _simulate(
                         {
                             "date": day.isoformat(),
                             "side": "SELL",
-                            "price": round(price, 4),
+                            "price": round(execution_price, 4),
                             "exec_price": round(exec_price, 4),
                             "quantity": shares,
                             "amount": round(proceeds, 4),
@@ -1964,7 +2020,11 @@ def _simulate(
                     stop_loss_price = None
                     pending_signal = None
                 else:
-                    reason = _blocked_reason(quote, "SELL")
+                    reason = (
+                        "missing_open_hfq"
+                        if execution_price is None
+                        else _blocked_reason(quote, "SELL")
+                    )
                     skipped_trades.append(
                         {
                             "date": day.isoformat(),
@@ -2053,12 +2113,14 @@ def _simulate(
         for i, day in enumerate(trading_days):
             quote = quote_map[day]
             price = _closing_price(quote)
+            execution_price = _adjusted_open_price(quote)
+            score_day = trading_days[i - 1] if i > 0 else None
 
             # Gather scores across available horizons
             horizon_scores: Dict[int, Optional[float]] = {}
             for h in (5, 20, 60):
                 h_map = sc_maps.get(h, {})
-                sd = h_map.get(day)
+                sd = h_map.get(score_day) if score_day else None
                 horizon_scores[h] = sd.score if sd else None
 
             available_horizons = [h for h, s in horizon_scores.items() if s is not None]
@@ -2094,12 +2156,12 @@ def _simulate(
 
             # Execute pending signal (reuse pattern from SCORE_THRESHOLD)
             action_taken = False
-            if pending_signal == "BUY" and shares == 0 and price > 0:
-                if _can_trade(quote, "BUY"):
-                    shares = _max_buy_shares(price, cash)
+            if pending_signal == "BUY" and shares == 0:
+                if execution_price is not None and _can_trade(quote, "BUY"):
+                    shares = _max_buy_shares(execution_price, cash)
                     if shares > 0:
                         exec_price, comm, duty, slip = _apply_friction(
-                            price, shares, "BUY"
+                            execution_price, shares, "BUY"
                         )
                         cost = shares * exec_price
                         cash -= cost + comm
@@ -2107,12 +2169,12 @@ def _simulate(
                         total_stamp_duty += duty
                         total_slippage += slip
                     else:
-                        exec_price = price
+                        exec_price = execution_price
                         cost = 0.0
                         comm = 0.0
                         slip = 0.0
                     # Set stop-loss
-                    stop_loss_price = price * (1 + stop_loss_pct / 100)
+                    stop_loss_price = execution_price * (1 + stop_loss_pct / 100)
                     score_strs = ", ".join(
                         f"Score{h}={horizon_scores.get(h, '?')}"
                         for h in available_horizons
@@ -2122,7 +2184,7 @@ def _simulate(
                         {
                             "date": day.isoformat(),
                             "side": "BUY",
-                            "price": round(price, 4),
+                            "price": round(execution_price, 4),
                             "exec_price": round(exec_price, 4),
                             "quantity": shares,
                             "amount": round(cost, 4),
@@ -2135,7 +2197,11 @@ def _simulate(
                     pending_signal = None
                     action_taken = True
                 else:
-                    reason = _blocked_reason(quote, "BUY")
+                    reason = (
+                        "missing_open_hfq"
+                        if execution_price is None
+                        else _blocked_reason(quote, "BUY")
+                    )
                     skipped_trades.append(
                         {
                             "date": day.isoformat(),
@@ -2147,9 +2213,9 @@ def _simulate(
                     action_taken = True
 
             if not action_taken and pending_signal == "SELL" and shares > 0:
-                if _can_trade(quote, "SELL"):
+                if execution_price is not None and _can_trade(quote, "SELL"):
                     exec_price, comm, duty, slip = _apply_friction(
-                        price, shares, "SELL"
+                        execution_price, shares, "SELL"
                     )
                     proceeds = exec_price * shares - comm - duty
                     cash += proceeds
@@ -2183,7 +2249,7 @@ def _simulate(
                         {
                             "date": day.isoformat(),
                             "side": "SELL",
-                            "price": round(price, 4),
+                            "price": round(execution_price, 4),
                             "exec_price": round(exec_price, 4),
                             "quantity": shares,
                             "amount": round(proceeds, 4),
@@ -2198,7 +2264,11 @@ def _simulate(
                     stop_loss_price = None
                     pending_signal = None
                 else:
-                    reason = _blocked_reason(quote, "SELL")
+                    reason = (
+                        "missing_open_hfq"
+                        if execution_price is None
+                        else _blocked_reason(quote, "SELL")
+                    )
                     skipped_trades.append(
                         {
                             "date": day.isoformat(),
@@ -2316,6 +2386,7 @@ def _simulate_multi(
         stock_code: str,
         pos: Dict[str, Any],
         day: datetime,
+        execution_at_open: bool = False,
     ) -> Dict[str, Any] | None:
         """Sell a held position on *day* and return a trade record (or None
         when blocked).  Updates *cash*, the friction accumulators, and
@@ -2324,7 +2395,11 @@ def _simulate_multi(
         quote = quote_maps.get(stock_code, {}).get(day)
         if not quote or not _can_trade(quote, "SELL"):
             return None
-        price = _closing_price(quote)
+        price = (
+            _adjusted_open_price(quote) if execution_at_open else _closing_price(quote)
+        )
+        if price is None:
+            return None
         exec_price, comm, stamp, slip = _apply_friction(price, pos["shares"], "SELL")
         proceeds = exec_price * pos["shares"] - comm - stamp
         cash += proceeds
@@ -2409,6 +2484,8 @@ def _simulate_multi(
     total_commission = 0.0
     total_stamp_duty = 0.0
     total_slippage = 0.0
+    pending_target_stocks: List[str] | None = None
+    pending_scores: Dict[str, float] = {}
 
     # --------------------------------------------------------------------
     # TOP_N_ROTATION
@@ -2460,39 +2537,35 @@ def _simulate_multi(
                             )
                             del positions[stock_code]
 
-            # -- Rebalance ------------------------------------------------------
-            if i % rebalance_interval == 0 or i == 0:
-                # Collect today's scores for all stocks with data
-                today_scores: Dict[str, float] = {}
-                for stock_code in quote_maps:
-                    score_doc = score_maps.get(stock_code, {}).get(day)
-                    if score_doc and score_doc.score is not None:
-                        today_scores[stock_code] = score_doc.score
-
-                # Rank and select top N
-                ranked = sorted(today_scores.items(), key=lambda x: x[1], reverse=True)
-                top_n_stocks = [s for s, _ in ranked[:top_n]]
-
-                # Sell positions NOT in top N
+            # Execute the prior ranking at today's adjusted open.
+            if pending_target_stocks is not None:
+                blocked_pending = False
                 for stock_code in list(positions.keys()):
-                    if stock_code not in top_n_stocks:
-                        pos = positions.pop(stock_code)
-                        trade = _liquidate_position(stock_code, pos, day)
+                    if stock_code not in pending_target_stocks:
+                        pos = positions[stock_code]
+                        trade = _liquidate_position(
+                            stock_code, pos, day, execution_at_open=True
+                        )
                         if trade is not None:
                             trades.append(trade)
+                            del positions[stock_code]
+                        else:
+                            blocked_pending = True
 
-                # Buy new stocks in top N (that we don't already hold)
-                new_stocks = [s for s in top_n_stocks if s not in positions]
+                new_stocks = [s for s in pending_target_stocks if s not in positions]
                 if new_stocks and cash > 0:
                     prices: Dict[str, float] = {}
                     for s in new_stocks:
                         q = quote_maps.get(s, {}).get(day)
-                        if q:
-                            prices[s] = _closing_price(q)
+                        open_price = _adjusted_open_price(q) if q else None
+                        if q and open_price is not None and _can_trade(q, "BUY"):
+                            prices[s] = open_price
+                        else:
+                            blocked_pending = True
 
                     alloc_shares = _allocate_positions(
-                        new_stocks,
-                        today_scores,
+                        list(prices),
+                        pending_scores,
                         cash,
                         prices,
                         allocation,
@@ -2509,8 +2582,22 @@ def _simulate_multi(
                             shares,
                             day,
                             price,
-                            f"TOP_N_ROTATION entry – Score={round(today_scores.get(stock_code, 0), 1)}",
+                            f"TOP_N_ROTATION entry – Score={round(pending_scores.get(stock_code, 0), 1)}",
                         )
+                if not blocked_pending:
+                    pending_target_stocks = None
+                    pending_scores = {}
+
+            # Form a new ranking after today's close for next-day execution.
+            if i % rebalance_interval == 0:
+                today_scores: Dict[str, float] = {}
+                for stock_code in quote_maps:
+                    score_doc = score_maps.get(stock_code, {}).get(day)
+                    if score_doc and score_doc.score is not None:
+                        today_scores[stock_code] = score_doc.score
+                ranked = sorted(today_scores.items(), key=lambda x: x[1], reverse=True)
+                pending_target_stocks = [s for s, _ in ranked[:top_n]]
+                pending_scores = today_scores
 
             # -- Compute daily equity -------------------------------------------
             positions_value = 0.0
@@ -2546,11 +2633,12 @@ def _simulate_multi(
         # -- Liquidate all remaining positions on the last day ------------------
         final_day = trading_days[-1]
         for stock_code in list(positions.keys()):
-            pos = positions.pop(stock_code)
+            pos = positions[stock_code]
             trade = _liquidate_position(stock_code, pos, final_day)
             if trade is not None:
                 trade["reason"] = "Liquidation at end of backtest"
                 trades.append(trade)
+                del positions[stock_code]
 
         # Refresh the last daily value entry with final cash
         if daily_values:
@@ -2804,6 +2892,17 @@ def _closing_price(quote: StockDailyQuote) -> float:
         raw,
     )
     return float(raw)
+
+
+def _adjusted_open_price(quote: StockDailyQuote) -> float | None:
+    """Return a valid HFQ-adjusted open without a raw-price fallback."""
+    value = getattr(quote, "open_hfq", None)
+    if value is None:
+        return None
+    value = float(value)
+    if value <= 0 or not math.isfinite(value):
+        return None
+    return value
 
 
 def _data_coverage_report(

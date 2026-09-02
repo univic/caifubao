@@ -613,6 +613,7 @@ class TestMultiHorizonConsensus:
             change_rate=1.0,
             close=price,
             close_hfq=price,
+            open_hfq=price,
         )
 
     @staticmethod

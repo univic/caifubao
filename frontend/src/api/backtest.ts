@@ -1,5 +1,19 @@
 import api from './index'
 
+export const SCORE_DRIVEN_STRATEGIES = [
+  'SCORE_THRESHOLD',
+  'SCORE_MOMENTUM',
+  'MULTI_HORIZON_CONSENSUS',
+  'TOP_N_ROTATION',
+] as const
+
+export type ScoreDrivenStrategy = (typeof SCORE_DRIVEN_STRATEGIES)[number]
+export type NonScoreStrategy = 'MA_CROSS' | 'BUY_HOLD'
+
+export function isScoreDrivenStrategy(strategy: string): strategy is ScoreDrivenStrategy {
+  return SCORE_DRIVEN_STRATEGIES.some((item) => item === strategy)
+}
+
 export interface BacktestTrade {
   date: string
   side: string // BUY or SELL
@@ -69,6 +83,7 @@ export interface BacktestResult {
     stop_loss_pct?: number
     score_delta?: number
     model_version?: string
+    execution_timing?: 'next_trading_day_open'
   }
   // Multi-stock
   per_stock_contributions?: Array<{
@@ -82,24 +97,38 @@ export interface BacktestResult {
   allocation?: string
 }
 
-export interface RunBacktestPayload {
+interface RunBacktestPayloadBase {
   stock_code: string
-  strategy: string
   start_date: string
   end_date: string
   initial_cash?: number
   benchmark_code?: string
-  horizon?: number
   entry_threshold?: number
   exit_threshold?: number
   stop_loss_pct?: number
   score_delta?: number
-  model_version?: string
 }
+
+export type RunBacktestPayload =
+  | (RunBacktestPayloadBase & {
+      strategy: 'SCORE_THRESHOLD' | 'SCORE_MOMENTUM'
+      horizon: number
+      model_version: string
+    })
+  | (RunBacktestPayloadBase & {
+      strategy: 'MULTI_HORIZON_CONSENSUS'
+      model_version: string
+      horizon?: never
+    })
+  | (RunBacktestPayloadBase & {
+      strategy: NonScoreStrategy
+      model_version?: never
+      horizon?: never
+    })
 
 export interface RunMultiBacktestPayload {
   stock_codes: string[]
-  strategy: string
+  strategy: 'TOP_N_ROTATION'
   start_date: string
   end_date: string
   initial_cash?: number
@@ -110,7 +139,7 @@ export interface RunMultiBacktestPayload {
   allocation?: string
   max_position_pct?: number
   stop_loss_pct?: number
-  model_version?: string
+  model_version: string
 }
 
 // Strategy Discovery types
@@ -153,18 +182,34 @@ export interface ComparePayload {
   end_date: string
   initial_cash?: number
   benchmark_code?: string
+  model_version: string
 }
 
-export interface ScanPayload {
-  strategy: string
+interface ScanPayloadBase {
   start_date: string
   end_date: string
-  horizon?: number
   initial_cash?: number
   page?: number
   per_page?: number
   min_trades?: number
 }
+
+export type ScanPayload =
+  | (ScanPayloadBase & {
+      strategy: 'SCORE_THRESHOLD' | 'SCORE_MOMENTUM'
+      horizon: number
+      model_version: string
+    })
+  | (ScanPayloadBase & {
+      strategy: 'MULTI_HORIZON_CONSENSUS'
+      model_version: string
+      horizon?: never
+    })
+  | (ScanPayloadBase & {
+      strategy: NonScoreStrategy
+      model_version?: never
+      horizon?: never
+    })
 
 export const backtestApi = {
   list() {

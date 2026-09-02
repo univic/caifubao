@@ -16,6 +16,7 @@ from mongoengine import ValidationError
 
 from app.model.compute_task import ComputeTask, VALID_TASK_TYPES
 from app.lib.auth_decorators import block_service_tokens
+from app.services.backtest_service import SCORE_DRIVEN_STRATEGIES
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,11 @@ def create_task():
     valid_types = list(VALID_TASK_TYPES)
     if task_type not in valid_types:
         return _fail(f"Invalid task_type. Must be one of: {', '.join(valid_types)}")
+    if task_type in ("BACKTEST_SINGLE", "BACKTEST_MULTI", "BACKTEST_SCAN"):
+        strategy = str(params.get("strategy") or "").strip().upper()
+        model_version = str(params.get("model_version") or "").strip()
+        if strategy in SCORE_DRIVEN_STRATEGIES and not model_version:
+            return _fail("model_version is required for score-driven strategies")
 
     try:
         task = ComputeTask(

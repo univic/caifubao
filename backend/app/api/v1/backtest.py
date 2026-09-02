@@ -18,6 +18,8 @@ from app.services.backtest_service import (
     run_multi_stock_backtest,
     composite_score,
     bonferroni_correction,
+    SCORE_DRIVEN_STRATEGIES,
+    UNUSABLE_SCORE_STATUSES,
 )
 from app.lib.auth_decorators import block_service_tokens
 
@@ -127,6 +129,16 @@ def _parse_int(
         return default
 
 
+def _model_version(payload: dict) -> str | None:
+    return (payload.get("model_version") or "").strip() or None
+
+
+def _model_version_error(strategy: str, model_version: str | None):
+    if strategy.strip().upper() in SCORE_DRIVEN_STRATEGIES and not model_version:
+        return _fail("model_version is required for score-driven strategies")
+    return None
+
+
 def _format_dt(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -177,6 +189,7 @@ def _serialize_result(
         "excess_return_pct": row.excess_return_pct,
         "information_ratio": row.information_ratio,
         "horizon": row.horizon,
+        "model_version": getattr(row, "model_version", None),
         "score_config": row.score_config,
         "data_coverage": getattr(row, "data_coverage", None) or {},
         "created_at": _format_dt(row.created_at),
@@ -277,7 +290,7 @@ def run():
     exit_threshold = _parse_float(payload.get("exit_threshold"), 50.0)
     stop_loss_pct = _parse_float(payload.get("stop_loss_pct"), -5.0)
     score_delta = _parse_float(payload.get("score_delta"), 10.0)
-    model_version = (payload.get("model_version") or "").strip() or None
+    model_version = _model_version(payload)
 
     # Validate required fields
     if not stock_code:
@@ -286,6 +299,9 @@ def run():
         return _fail("strategy is required")
 
     strategy_norm = strategy.strip().upper()
+    version_error = _model_version_error(strategy_norm, model_version)
+    if version_error:
+        return version_error
     if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
         if horizon is None or horizon not in (5, 20, 60):
             return _fail(
@@ -415,7 +431,7 @@ def run_multi():
     entry_threshold = _parse_float(payload.get("entry_threshold"), 70.0)
     exit_threshold = _parse_float(payload.get("exit_threshold"), 50.0)
     score_delta = _parse_float(payload.get("score_delta"), 10.0)
-    model_version = (payload.get("model_version") or "").strip() or None
+    model_version = _model_version(payload)
 
     # Validate required fields
     if not isinstance(stock_codes, list) or len(stock_codes) < 2:
@@ -426,6 +442,9 @@ def run_multi():
         return _fail("strategy is required")
 
     strategy_norm = strategy.strip().upper()
+    version_error = _model_version_error(strategy_norm, model_version)
+    if version_error:
+        return version_error
     if strategy_norm != "TOP_N_ROTATION":
         return _fail("strategy must be TOP_N_ROTATION for multi-stock backtests")
     if horizon is None or horizon not in (5, 20, 60):
@@ -504,6 +523,7 @@ def optimize():
     initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
     param_grid = payload.get("param_grid") or {}
     use_split = payload.get("use_split", True)
+    model_version = _model_version(payload)
 
     if not stock_code or not strategy:
         return _fail("stock_code and strategy are required")
@@ -521,6 +541,9 @@ def optimize():
     strategy_norm = strategy.strip().upper()
     if strategy_norm not in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
         return _fail("optimize supports SCORE_THRESHOLD and SCORE_MOMENTUM only")
+    version_error = _model_version_error(strategy_norm, model_version)
+    if version_error:
+        return version_error
 
     # --- Train/val/test split ---
     if use_split:
@@ -597,6 +620,7 @@ def optimize():
             exit_threshold=exit_t,
             stop_loss_pct=stop,
             score_delta=delta,
+            model_version=model_version,
         )
         if "error" in r:
             results.append({"params": combo, "error": r["error"]})
@@ -626,6 +650,7 @@ def optimize():
                 exit_threshold=exit_t,
                 stop_loss_pct=stop,
                 score_delta=delta,
+                model_version=model_version,
             )
             if "error" not in test_r:
                 result_entry["test_sharpe_ratio"] = test_r.get("sharpe_ratio", 0)
@@ -686,6 +711,7 @@ def compare():
     end_date = _parse_date(payload.get("end_date"))
     initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
     benchmark_code = (payload.get("benchmark_code") or "sh000300").strip()
+    model_version = _model_version(payload)
 
     if not stock_code:
         return _fail("stock_code is required")
@@ -693,6 +719,8 @@ def compare():
         return _fail("start_date and end_date are required")
     if start_date > end_date:
         return _fail("start_date must be <= end_date")
+    if not model_version:
+        return _fail("model_version is required for score-driven strategies")
 
     # Determine which strategies are eligible based on data availability
     # Always eligible: BUY_HOLD, MA_CROSS
@@ -702,7 +730,9 @@ def compare():
     ]
 
     # Score-driven strategies require score data
-    has_scores = _check_score_data_available(stock_code, start_date, end_date)
+    has_scores = _check_score_data_available(
+        stock_code, start_date, end_date, model_version
+    )
     if has_scores:
         for horizon in (5, 20, 60):
             strategies.append(
@@ -736,6 +766,9 @@ def compare():
                 save_result=False,
                 benchmark_code=benchmark_code,
                 horizon=opts.get("horizon"),
+                model_version=model_version
+                if strategy in SCORE_DRIVEN_STRATEGIES
+                else None,
             )
         except Exception as exc:
             results.append(
@@ -823,7 +856,9 @@ def compare():
     ), 200
 
 
-def _check_score_data_available(stock_code, start_date, end_date) -> bool:
+def _check_score_data_available(
+    stock_code, start_date, end_date, model_version: str
+) -> bool:
     """Check if any StockScorePrediction exists for the stock in range."""
     try:
         from app.model.scoring import StockScorePrediction
@@ -833,6 +868,8 @@ def _check_score_data_available(stock_code, start_date, end_date) -> bool:
                 stock_code=stock_code,
                 date__gte=start_date,
                 date__lte=end_date,
+                model_version=model_version,
+                status__nin=UNUSABLE_SCORE_STATUSES,
             ).count()
             > 0
         )
@@ -864,6 +901,7 @@ def scan():
     page = _parse_int(payload.get("page"), 1, minimum=1)
     per_page = _parse_int(payload.get("per_page"), 20, minimum=1, maximum=200)
     min_trades = _parse_int(payload.get("min_trades"), 0, minimum=0)
+    model_version = _model_version(payload)
 
     if not strategy:
         return _fail("strategy is required")
@@ -882,6 +920,9 @@ def scan():
     if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
         if horizon is None or horizon not in (5, 20, 60):
             return _fail("horizon is required for score-driven strategies")
+    version_error = _model_version_error(strategy_norm, model_version)
+    if version_error:
+        return version_error
 
     # Get active stocks
     try:
@@ -921,6 +962,7 @@ def scan():
                 "min_trades": min_trades,
                 "page": page,
                 "per_page": per_page,
+                "model_version": model_version,
             },
         )
         task.save()
@@ -956,6 +998,7 @@ def scan():
                 initial_cash=initial_cash,
                 save_result=False,
                 horizon=horizon,
+                model_version=model_version,
             )
         except Exception:
             errors += 1
@@ -1062,11 +1105,15 @@ def walk_forward():
     window_days = _parse_int(payload.get("window_days"), 120, minimum=40)
     step_days = _parse_int(payload.get("step_days"), 60, minimum=10)
     initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+    model_version = _model_version(payload)
 
     if not stock_code or not strategy:
         return _fail("stock_code and strategy are required")
     if not start_date or not end_date:
         return _fail("start_date and end_date are required")
+    version_error = _model_version_error(strategy, model_version)
+    if version_error:
+        return version_error
 
     # Load trading days
     quotes = _load_quotes_helper(stock_code, start_date, end_date)
@@ -1097,6 +1144,7 @@ def walk_forward():
                 initial_cash=initial_cash,
                 save_result=False,
                 horizon=horizon,
+                model_version=model_version,
             )
         except Exception:
             start_idx += max(1, step_days)
@@ -1164,6 +1212,7 @@ def export_compare_csv():
     end_date = _parse_date(payload.get("end_date"))
     initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
     benchmark_code = (payload.get("benchmark_code") or "sh000300").strip()
+    model_version = _model_version(payload)
 
     if not stock_code:
         return _fail("stock_code is required")
@@ -1171,11 +1220,15 @@ def export_compare_csv():
         return _fail("start_date and end_date are required")
     if start_date > end_date:
         return _fail("start_date must be <= end_date")
+    if not model_version:
+        return _fail("model_version is required for score-driven strategies")
 
     from app.services.backtest_service import anti_overfitting_flags
 
     strategies = [("BUY_HOLD", {}), ("MA_CROSS", {})]
-    has_scores = _check_score_data_available(stock_code, start_date, end_date)
+    has_scores = _check_score_data_available(
+        stock_code, start_date, end_date, model_version
+    )
     if has_scores:
         for horizon in (5, 20, 60):
             strategies.append(
@@ -1206,6 +1259,9 @@ def export_compare_csv():
                 save_result=False,
                 benchmark_code=benchmark_code,
                 horizon=opts.get("horizon"),
+                model_version=model_version
+                if strategy in SCORE_DRIVEN_STRATEGIES
+                else None,
             )
         except Exception:
             continue
@@ -1281,6 +1337,7 @@ def export_scan_csv():
     horizon = _parse_int(payload.get("horizon"), None)
     initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
     min_trades = _parse_int(payload.get("min_trades"), 0)
+    model_version = _model_version(payload)
 
     strategy_norm = strategy.upper()
     if strategy_norm not in (
@@ -1294,6 +1351,9 @@ def export_scan_csv():
     if strategy_norm in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
         if horizon is None or horizon not in (5, 20, 60):
             return _fail("horizon is required for score-driven strategies")
+    version_error = _model_version_error(strategy_norm, model_version)
+    if version_error:
+        return version_error
 
     from app.model.stock import IndividualStock
     from app.services.backtest_service import anti_overfitting_flags
@@ -1317,6 +1377,7 @@ def export_scan_csv():
                 initial_cash=initial_cash,
                 save_result=False,
                 horizon=horizon,
+                model_version=model_version,
             )
         except Exception:
             continue
@@ -1407,11 +1468,15 @@ def export_walk_forward_csv():
     window_days = _parse_int(payload.get("window_days"), 120, minimum=40)
     step_days = _parse_int(payload.get("step_days"), 60, minimum=10)
     initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+    model_version = _model_version(payload)
 
     if not stock_code or not strategy:
         return _fail("stock_code and strategy are required")
     if not start_date or not end_date:
         return _fail("start_date and end_date are required")
+    version_error = _model_version_error(strategy, model_version)
+    if version_error:
+        return version_error
 
     quotes = _load_quotes_helper(stock_code, start_date, end_date)
     if not quotes:
@@ -1441,6 +1506,7 @@ def export_walk_forward_csv():
                 initial_cash=initial_cash,
                 save_result=False,
                 horizon=horizon,
+                model_version=model_version,
             )
         except Exception:
             start_idx += max(1, step_days)
@@ -1975,11 +2041,15 @@ def decay_analysis():
     window_days = _parse_int(payload.get("window_days"), 120, minimum=40)
     step_days = _parse_int(payload.get("step_days"), 60, minimum=10)
     initial_cash = _parse_float(payload.get("initial_cash"), 100_000.0)
+    model_version = _model_version(payload)
 
     if not stock_code or not strategy:
         return _fail("stock_code and strategy are required")
     if not start_date or not end_date:
         return _fail("start_date and end_date are required")
+    version_error = _model_version_error(strategy, model_version)
+    if version_error:
+        return version_error
 
     # Load trading days
     quotes = _load_quotes_helper(stock_code, start_date, end_date)
@@ -2026,6 +2096,7 @@ def decay_analysis():
                 initial_cash=initial_cash,
                 save_result=False,
                 horizon=horizon,
+                model_version=model_version,
             )
         except Exception as exc:
             logger.warning(
@@ -2050,6 +2121,7 @@ def decay_analysis():
                 initial_cash=initial_cash,
                 save_result=False,
                 horizon=horizon,
+                model_version=model_version,
             )
         except Exception as exc:
             logger.warning(
@@ -2151,6 +2223,7 @@ def landscape():
     param_y = (payload.get("param_y") or "").strip()
     x_values = payload.get("x_values")
     y_values = payload.get("y_values")
+    model_version = _model_version(payload)
 
     if not stock_code or not strategy:
         return _fail("stock_code and strategy are required")
@@ -2168,6 +2241,9 @@ def landscape():
     strategy_norm = strategy.strip().upper()
     if strategy_norm not in ("SCORE_THRESHOLD", "SCORE_MOMENTUM"):
         return _fail("landscape supports SCORE_THRESHOLD and SCORE_MOMENTUM only")
+    version_error = _model_version_error(strategy_norm, model_version)
+    if version_error:
+        return version_error
 
     # Validate param names against strategy whitelist
     VALID_PARAM_KEYS = {
@@ -2212,6 +2288,7 @@ def landscape():
                 "initial_cash": initial_cash,
                 "save_result": False,
                 "horizon": horizon,
+                "model_version": model_version,
             }
             # Map param_x/param_y to run_backtest kwargs
             kw[param_x] = x_val
@@ -2318,6 +2395,7 @@ def recommendation():
         "MA_CROSS",
         "BUY_HOLD",
     ]
+    model_version = _model_version(payload)
 
     if not stock_code:
         return _fail("stock_code is required")
@@ -2360,6 +2438,9 @@ def recommendation():
             "strategies must contain at least one valid strategy from: "
             + ", ".join(sorted(ALLOWED_STRATEGIES))
         )
+    if any(strategy in SCORE_DRIVEN_STRATEGIES for strategy in strategies):
+        if not model_version:
+            return _fail("model_version is required for score-driven strategies")
 
     # Combination cap: prevent excessive backtest workload
     MAX_COMBINATIONS = 15  # 3 horizons × 5 strategies
@@ -2403,6 +2484,7 @@ def recommendation():
             # Only pass horizon for score-driven and multi-horizon strategies
             if s in ("SCORE_THRESHOLD", "SCORE_MOMENTUM", "MULTI_HORIZON_CONSENSUS"):
                 score_kw["horizon"] = h
+                score_kw["model_version"] = model_version
 
             try:
                 r = run_backtest(**score_kw)

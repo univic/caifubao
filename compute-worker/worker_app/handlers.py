@@ -219,6 +219,7 @@ def _handle_backtest_scan(task: Any) -> None:
                     initial_cash=initial_cash,
                     save_result=False,
                     horizon=horizon,
+                    model_version=params.get("model_version"),
                 )
             except Exception:
                 errors += 1
