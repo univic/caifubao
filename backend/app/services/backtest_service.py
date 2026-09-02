@@ -578,7 +578,8 @@ def run_backtest(
     score_delta : float
         Score change required to trigger a trade (SCORE_MOMENTUM only, default 10).
     model_version : str | None
-        Scoring model version filter. When None, all versions are used.
+        Scoring model version filter. Required for score-driven strategies;
+        omitted only for non-score strategies.
     consensus_entry_thresholds : dict | None
         Per-horizon entry thresholds for MULTI_HORIZON_CONSENSUS.
         Default: {5: 60, 20: 55, 60: 50}.
@@ -2492,51 +2493,6 @@ def _simulate_multi(
     # --------------------------------------------------------------------
     if strategy == "TOP_N_ROTATION":
         for i, day in enumerate(trading_days):
-            # -- Check stop-loss for all held positions ------------------------
-            for stock_code in list(positions.keys()):
-                pos = positions[stock_code]
-                quote = quote_maps.get(stock_code, {}).get(day)
-                if quote:
-                    price = _closing_price(quote)
-                    if price <= pos["stop_loss_price"]:
-                        # Stop-loss triggered – override trade reason
-                        exec_price, comm, stamp, slip = _apply_friction(
-                            price, pos["shares"], "SELL"
-                        )
-                        if _can_trade(quote, "SELL"):
-                            proceeds = exec_price * pos["shares"] - comm - stamp
-                            cash += proceeds
-                            total_commission += comm
-                            total_stamp_duty += stamp
-                            total_slippage += slip
-                            realized_pnl = proceeds - (pos["avg_cost"] * pos["shares"])
-                            if stock_code not in per_stock_contributions:
-                                per_stock_contributions[stock_code] = {
-                                    "realized_pnl": 0.0,
-                                    "trades": 0,
-                                }
-                            per_stock_contributions[stock_code]["realized_pnl"] += (
-                                realized_pnl
-                            )
-                            per_stock_contributions[stock_code]["trades"] += 1
-                            trades.append(
-                                {
-                                    "date": day.isoformat(),
-                                    "side": "SELL",
-                                    "stock_code": stock_code,
-                                    "price": round(price, 4),
-                                    "exec_price": round(exec_price, 4),
-                                    "quantity": pos["shares"],
-                                    "amount": round(exec_price * pos["shares"], 4),
-                                    "commission": round(comm, 4),
-                                    "stamp_duty": round(stamp, 4),
-                                    "slippage": round(slip, 4),
-                                    "pnl": round(realized_pnl, 4),
-                                    "reason": f"Stop loss triggered at {round(price, 4)}",
-                                }
-                            )
-                            del positions[stock_code]
-
             # Execute the prior ranking at today's adjusted open.
             if pending_target_stocks is not None:
                 blocked_pending = False
@@ -2587,6 +2543,51 @@ def _simulate_multi(
                 if not blocked_pending:
                     pending_target_stocks = None
                     pending_scores = {}
+
+            # -- Check stop-loss for all held positions ------------------------
+            for stock_code in list(positions.keys()):
+                pos = positions[stock_code]
+                quote = quote_maps.get(stock_code, {}).get(day)
+                if quote:
+                    price = _closing_price(quote)
+                    if price <= pos["stop_loss_price"]:
+                        # Stop-loss triggered – override trade reason
+                        exec_price, comm, stamp, slip = _apply_friction(
+                            price, pos["shares"], "SELL"
+                        )
+                        if _can_trade(quote, "SELL"):
+                            proceeds = exec_price * pos["shares"] - comm - stamp
+                            cash += proceeds
+                            total_commission += comm
+                            total_stamp_duty += stamp
+                            total_slippage += slip
+                            realized_pnl = proceeds - (pos["avg_cost"] * pos["shares"])
+                            if stock_code not in per_stock_contributions:
+                                per_stock_contributions[stock_code] = {
+                                    "realized_pnl": 0.0,
+                                    "trades": 0,
+                                }
+                            per_stock_contributions[stock_code]["realized_pnl"] += (
+                                realized_pnl
+                            )
+                            per_stock_contributions[stock_code]["trades"] += 1
+                            trades.append(
+                                {
+                                    "date": day.isoformat(),
+                                    "side": "SELL",
+                                    "stock_code": stock_code,
+                                    "price": round(price, 4),
+                                    "exec_price": round(exec_price, 4),
+                                    "quantity": pos["shares"],
+                                    "amount": round(exec_price * pos["shares"], 4),
+                                    "commission": round(comm, 4),
+                                    "stamp_duty": round(stamp, 4),
+                                    "slippage": round(slip, 4),
+                                    "pnl": round(realized_pnl, 4),
+                                    "reason": f"Stop loss triggered at {round(price, 4)}",
+                                }
+                            )
+                            del positions[stock_code]
 
             # Form a new ranking after today's close for next-day execution.
             if i % rebalance_interval == 0:

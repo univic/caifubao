@@ -76,6 +76,7 @@ export interface BacktestResult {
   information_ratio?: number
   // Score-driven
   horizon?: number
+  model_version?: string
   score_config?: {
     horizon?: number
     entry_threshold?: number

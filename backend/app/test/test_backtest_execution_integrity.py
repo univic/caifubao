@@ -533,14 +533,6 @@ class TestScoreModelVersionAPI:
                 },
             ),
             (
-                "/api/backtest/compare",
-                {
-                    "stock_code": "sh600000",
-                    "start_date": "2026-01-01",
-                    "end_date": "2026-08-28",
-                },
-            ),
-            (
                 "/api/backtest/scan",
                 {
                     "strategy": "SCORE_THRESHOLD",
@@ -591,14 +583,6 @@ class TestScoreModelVersionAPI:
                     "end_date": "2026-08-28",
                     "horizons": [5],
                     "strategies": ["SCORE_THRESHOLD"],
-                },
-            ),
-            (
-                "/api/backtest/export/compare",
-                {
-                    "stock_code": "sh600000",
-                    "start_date": "2026-01-01",
-                    "end_date": "2026-08-28",
                 },
             ),
             (

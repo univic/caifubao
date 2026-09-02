@@ -719,8 +719,6 @@ def compare():
         return _fail("start_date and end_date are required")
     if start_date > end_date:
         return _fail("start_date must be <= end_date")
-    if not model_version:
-        return _fail("model_version is required for score-driven strategies")
 
     # Determine which strategies are eligible based on data availability
     # Always eligible: BUY_HOLD, MA_CROSS
@@ -729,8 +727,8 @@ def compare():
         ("MA_CROSS", {}),
     ]
 
-    # Score-driven strategies require score data
-    has_scores = _check_score_data_available(
+    # Score-driven strategies require score data and an explicit model version.
+    has_scores = bool(model_version) and _check_score_data_available(
         stock_code, start_date, end_date, model_version
     )
     if has_scores:
@@ -1220,13 +1218,11 @@ def export_compare_csv():
         return _fail("start_date and end_date are required")
     if start_date > end_date:
         return _fail("start_date must be <= end_date")
-    if not model_version:
-        return _fail("model_version is required for score-driven strategies")
 
     from app.services.backtest_service import anti_overfitting_flags
 
     strategies = [("BUY_HOLD", {}), ("MA_CROSS", {})]
-    has_scores = _check_score_data_available(
+    has_scores = bool(model_version) and _check_score_data_available(
         stock_code, start_date, end_date, model_version
     )
     if has_scores:

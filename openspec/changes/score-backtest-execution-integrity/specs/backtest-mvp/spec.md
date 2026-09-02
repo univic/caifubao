@@ -65,6 +65,13 @@ Every score-driven backtest SHALL consume one explicit scoring model version.
 - **WHEN** a user runs a non-score-driven strategy without `model_version`
 - **THEN** the request SHALL continue to use the existing validation and execution behavior.
 
+#### Scenario: Result records the scoring model version
+
+- **GIVEN** a score-driven backtest completes with an explicit model version V
+- **WHEN** the result is persisted
+- **THEN** it SHALL store V in a top-level `model_version` field indexed for lookups
+- **AND** the persisted-result list and detail responses SHALL expose `model_version` as a top-level field.
+
 ### Requirement: Usable Score Status
 
 Score-driven backtests SHALL exclude predictions that were not valid scoring
