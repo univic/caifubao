@@ -25,6 +25,16 @@
 
 ## 进度记录
 
+### 2026-09-02 12:20 CST — PR #169/#170 合并 + prod 08-31 评分补跑完成
+
+- 状态：已完成
+- 已完成：#169（h20 autoresearch bootstrap）与 #170（score-driven 回测执行安全 T+1）均已 squash 合入 develop（GitHub CI 全绿）；prod 08-31 scoring 补跑成功——用一次性 Job 跑 `scoring_runner backfill --from/to 2026-08-31 --model-version score_v2_202605b`，写入 16,659 条（h=5/20/60，status PENDING 15,618 / BLOCKED 1,041），prod 评分日期现覆盖 08-26/27/28/31（共 61,062 条）。
+- 验证：#170 评审 contract/qa 无 P1（P2 已修复：compare 改条件化、TOP_N 止损/调仓时序、top-level model_version 字段补入 OpenSpec）；#169 CI 全绿；补跑后按 status/horizon/model_version 核验 08-31 数据。
+- 下一步：观察 09-02 正常评分链路（#167 依赖门修复已部署）；dev 08-31 评分由日常 data-sync 自动同步；h20 autoresearch-loop 是否继续待用户决策（建议等生产评分积累 ≥120 交易日）。
+- 阻塞：无（研究侧对 dev industry 数据缺失保持已知限制，结论方向不变）。
+
+---
+
 ### 2026-09-02 02:40 CST — H20 autoresearch bootstrap 完成（snapshot + baseline）
 
 - 状态：已完成
