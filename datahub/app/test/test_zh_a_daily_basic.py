@@ -128,6 +128,18 @@ class TestDailyBasicNormalize(TestCase):
         ]:
             self.assertIsNone(row[column], f"{column} should be None when absent")
 
+    def test_normalize_missing_ts_code_column_raises(self):
+        raw = pandas.DataFrame(
+            [
+                {
+                    "trade_date": "20260827",
+                    "pe_ttm": 8.5,
+                }
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "ts_code"):
+            zh_a_daily_basic.normalize_daily_basic(raw, "20260827")
+
     def test_normalize_empty_frame_returns_empty_list(self):
         self.assertEqual(
             zh_a_daily_basic.normalize_daily_basic(pandas.DataFrame(), "20260827"), []

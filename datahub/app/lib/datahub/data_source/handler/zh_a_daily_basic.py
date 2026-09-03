@@ -35,6 +35,9 @@ def normalize_daily_basic(raw_df, trade_date: str):
     if raw_df is None or raw_df.empty:
         return []
 
+    if "ts_code" not in raw_df.columns:
+        raise ValueError("tushare daily_basic response missing ts_code column")
+
     frame = raw_df.copy()
     frame["code"] = frame["ts_code"].map(tushare_interface.from_tushare_ts_code)
     frame["date"] = datetime.datetime.strptime(trade_date, "%Y%m%d")
