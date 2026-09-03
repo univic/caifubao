@@ -60,13 +60,28 @@ def backfill(from_date: datetime.date, to_date: datetime.date) -> dict:
     collection.create_index([("code", 1), ("date", 1)], unique=True)
 
     trade_dates = _quote_dates(from_date, to_date)
+    existing_dates = set(
+        collection.distinct(
+            "date",
+            {
+                "date": {
+                    "$gte": datetime.datetime.combine(from_date, datetime.time.min),
+                    "$lte": datetime.datetime.combine(to_date, datetime.time.max),
+                }
+            },
+        )
+    )
     stats = {
         "trade_dates_found": len(trade_dates),
+        "dates_skipped_existing": 0,
         "dates_fetched": 0,
         "rows_upserted": 0,
     }
 
     for trade_date in trade_dates:
+        if trade_date in existing_dates:
+            stats["dates_skipped_existing"] += 1
+            continue
         compact = trade_date.strftime("%Y%m%d")
         rows = zh_a_daily_basic.fetch_and_normalize(compact)
         if not rows:
@@ -88,8 +103,9 @@ def backfill(from_date: datetime.date, to_date: datetime.date) -> dict:
         stats["dates_fetched"] += 1
         if stats["dates_fetched"] % 50 == 0:
             logger.info(
-                "backfill progress: %s/%s dates, %s rows upserted",
+                "backfill progress: %s fetched / %s skipped / %s total, %s rows upserted",
                 stats["dates_fetched"],
+                stats["dates_skipped_existing"],
                 stats["trade_dates_found"],
                 stats["rows_upserted"],
             )
