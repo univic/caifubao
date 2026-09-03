@@ -19,6 +19,7 @@ from app.lib.datahub.sync_engine import (
 def test_resolve_sync_collections_keeps_signal_in_dev():
     assert _resolve_sync_collections(None, is_dev_environment=True) == [
         "stock_daily_quote",
+        "stock_daily_basic",
         "stock_factor_daily",
         "stock_signal_daily",
         "finance_market",
@@ -29,6 +30,7 @@ def test_resolve_sync_collections_keeps_signal_in_dev():
 def test_resolve_sync_collections_skips_signal_outside_dev():
     assert _resolve_sync_collections(None, is_dev_environment=False) == [
         "stock_daily_quote",
+        "stock_daily_basic",
         "stock_factor_daily",
         "finance_market",
         "stock_industry",

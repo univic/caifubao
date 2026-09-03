@@ -29,8 +29,11 @@ logger = logging.getLogger(__name__)
 # Collections that are safe to sync (upstream data for scoring pipeline).
 # signal data is included for dev environments to avoid re-running the full
 # quote→factor→signal pipeline locally; in prod, signals are computed locally.
+# stock_daily_basic is tushare valuation snapshots (dev-first research data;
+# once prod backfills it, dev keeps in sync here like the other collections).
 SYNCABLE_COLLECTIONS = {
     "stock_daily_quote": {"date_field": "date"},
+    "stock_daily_basic": {"date_field": "date"},
     "stock_factor_daily": {"date_field": "date"},
     "stock_signal_daily": {"date_field": "date", "dev_only": True},
     "finance_market": {"date_field": None},  # small, always full sync
@@ -40,6 +43,7 @@ SYNCABLE_COLLECTIONS = {
 # User-friendly aliases for --collections argument
 COLLECTION_ALIASES = {
     "quote": "stock_daily_quote",
+    "daily_basic": "stock_daily_basic",
     "factor": "stock_factor_daily",
     "signal": "stock_signal_daily",
     "market": "finance_market",
@@ -59,6 +63,7 @@ DEV_ENV_VALUES = {"dev", "development", "local", "test"}
 # business key (snapshots) keep the _id-based upsert.
 SYNC_UPSERT_KEYS = {
     "stock_daily_quote": ["code", "date"],
+    "stock_daily_basic": ["code", "date"],
     "stock_factor_daily": ["stock_code", "date"],
     "stock_signal_daily": ["stock_code", "date", "signal_name"],
     # stock_industry has a unique stock_code (model/industry.py) — a dev-side

@@ -9,11 +9,12 @@ Usage:
                                             [--dry-run]
 
 Collection aliases (resolved against SYNCABLE_COLLECTIONS):
-    quote    -> stock_daily_quote
-    factor   -> stock_factor_daily
-    signal   -> stock_signal_daily
-    market   -> finance_market
-    industry -> stock_industry
+    quote       -> stock_daily_quote
+    daily_basic -> stock_daily_basic
+    factor      -> stock_factor_daily
+    signal      -> stock_signal_daily
+    market      -> finance_market
+    industry    -> stock_industry
 
 Designed for deployment as a K8s CronJob (optional). In dev environments,
 this can be triggered on-demand or scheduled (e.g. nightly) to keep
