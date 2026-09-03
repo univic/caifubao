@@ -1,5 +1,10 @@
 # H20 分量级隔离审计 —— 2024-2026 阶段结论（多 regime 扩展进行中）
 
+> ⚠️ 已由完整跨 regime 版本取代：见
+> [`component-audit-2019-2026.md`](./component-audit-2019-2026.md)
+> （2019-2023 导出完成后，结论升级为「恒反向、非 regime 依赖」）。本文保留 2024-2026
+> 阶段的原始记录。
+
 > Research-only。数据：冻结快照（T+1 实际入场/出场开盘价，20 交易日持有，无前视）。
 > 指标：dailyIC=分量值对前向 20 日收益的日均截面 Spearman 秩相关；
 > LSspreadIR=五分位多空价差超额 IR；buyTop20/buyBot20IR=买 top/bottom 五分位 vs 当日
