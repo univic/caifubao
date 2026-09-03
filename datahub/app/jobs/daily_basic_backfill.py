@@ -119,6 +119,9 @@ def backfill(from_date: datetime.date, to_date: datetime.date) -> dict:
 
     collection = _daily_basic_collection()
     collection.create_index([("code", 1), ("date", 1)], unique=True)
+    # data-sync (sync_engine) requires a date-first index on source and
+    # destination before incremental sync of this collection.
+    collection.create_index([("date", -1)])
 
     trade_dates = _quote_dates(from_date, to_date)
     done = _done_marker_dates(from_date, to_date)
