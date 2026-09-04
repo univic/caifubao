@@ -185,6 +185,7 @@ def _serialize_result(
         "benchmark_return": row.benchmark_return,
         "benchmark_return_pct": row.benchmark_return_pct,
         "benchmark_annualized_return": row.benchmark_annualized_return,
+        "benchmark_daily_values": getattr(row, "benchmark_daily_values", None) or [],
         "excess_return": row.excess_return,
         "excess_return_pct": row.excess_return_pct,
         "information_ratio": row.information_ratio,
