@@ -700,7 +700,16 @@ class StockScoringService:
                         * (p["weight"] / weight_sum)
                         * direction
                     )
-                score = round(max(0.0, min(100.0, score * 100.0)), 2)
+                # Clamp only the upper bound. The lower bound is left open so
+                # construction-layer flipped models (all components direction
+                # -1) keep a *sortable* negative cross-sectional score: a
+                # flipped full market must not collapse to a 0.0 tie, which
+                # would make rank/percentile assignment meaningless. Default
+                # (all-positive) models are unaffected because their score is
+                # always >= 0. Semantics mirror the research evaluator
+                # (h20_excess_alpha): raw weighted sum is kept signed, and the
+                # cohort percentile is derived from ranking that sum.
+                score = round(min(100.0, score * 100.0), 2)
 
                 existing = self._find_existing_prediction(code, date, current_horizon)
                 if existing is not None and not replace and not dry_run:

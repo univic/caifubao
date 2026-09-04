@@ -1,0 +1,37 @@
+# Scoring Direction Versioning Tasks
+
+## 1. Config resolution
+
+- [x] 1.1 `get_effective_horizon_config` resolves optional per-horizon `directions`
+  into a full per-component map with defaults (components +1, risk_penalty -1).
+- [x] 1.2 Validate keys are scored components and values in {-1, 0, 1}; invalid raises.
+- [x] 1.3 Absent override => no `directions` key => current math unchanged (locked by tests).
+
+## 2. Ranked application + score semantics
+
+- [x] 2.1 `score_all_stocks_ranked` multiplies each component/penalty rank contribution
+  by its resolved direction (defaults identical to develop).
+- [x] 2.2 Persisted explanation contribution signs match the score sign.
+- [x] 2.3 Score clamps upper bound only (<= 100); lower bound open so a full-flip model
+  keeps signed, strictly-sortable scores (no all-zero tie). Mirrors research evaluator:
+  signed weighted sum, percentile from ranking that sum.
+- [x] 2.4 Ranked e2e direction flip: high-momentum stock outranks by default, inverts
+  when flipped; full-flip parity test (8 components -1) keeps strict order and inverts
+  ranking exactly.
+
+## 3. Flipped-version semantics + operator validation
+
+- [ ] 3.1 Define flipped-version score/percentile meaning (higher score <-> lower raw
+  bullishness) and confirm percentile-driven BUY/WATCH/AVOID stays well-defined for a
+  full-flip model (no tie degeneracy).
+- [ ] 3.2 Operator validation of one flipped experiment model version: full-market replay
+  + calibration comparison vs baseline before any promotion.
+- [ ] 3.3 Document that comparisons (replay/calibration/backtest) must stay within
+  same-direction model versions.
+
+## 4. Gates
+
+- [x] 4.1 spec-guardian: triggered (scoring semantics) — this change entry.
+- [ ] 4.2 qa-reviewer on the diff (flag full-flip degeneracy finding — resolved by 2.3/2.4).
+- [ ] 4.3 branch-conflict check against develop before merge.
+- [ ] 4.4 CI green; merge.
