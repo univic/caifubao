@@ -122,4 +122,32 @@ def get_effective_horizon_config(
 
     if isinstance(weights_override, dict):
         config["weights"].update(weights_override)
+
+    # Component direction override. Each horizon's components default to
+    # positive (higher raw value -> higher score) and penalties to negative
+    # (higher raw penalty -> lower score). An override can flip any component
+    # or penalty to -1/0/+1 (e.g. construction-layer reversal for candidates
+    # whose cross-sectional IC is negative, like the research flip_wide).
+    # The resolved per-component direction map is stored under "directions":
+    # {"component_id": +1|-1|0, ...}. Values missing from the override keep
+    # their default polarity (component +1, penalty -1).
+    directions_override = horizon_override.get("directions")
+    if isinstance(directions_override, dict):
+        directions_override = {
+            str(key): int(value) for key, value in directions_override.items()
+        }
+        allowed = set(config.get("weights", {}).keys())
+        if not set(directions_override) <= allowed:
+            raise ValueError(
+                "direction override keys must be scored components/penalties; "
+                f"got {sorted(set(directions_override) - allowed)}"
+            )
+        if any(value not in (-1, 0, 1) for value in directions_override.values()):
+            raise ValueError("component directions must be -1, 0, or 1")
+        resolved = {}
+        for key in allowed:
+            default = -1 if key == "risk_penalty" else 1
+            resolved[key] = directions_override.get(key, default)
+        config["directions"] = resolved
+
     return config

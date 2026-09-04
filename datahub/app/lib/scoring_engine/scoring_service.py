@@ -678,15 +678,28 @@ class StockScoringService:
             weight_sum = sum(weights.values()) or 1.0
 
             # --- build and persist scored predictions ---
+            directions = config.get("directions") or {}
             for code, raw in raw_by_code.items():
                 score = 0.0
                 for c in raw["components"]:
-                    score += rank_maps[c["id"]][code] * (c["weight"] / weight_sum)
+                    direction = float(directions.get(c["id"], 1.0))
+                    score += (
+                        rank_maps[c["id"]][code]
+                        * (c["weight"] / weight_sum)
+                        * direction
+                    )
                 for p in raw["penalties"]:
-                    # penalties must SUBTRACT: higher raw penalty (more
-                    # volatile/ST/suspended) must lower the score, mirroring
-                    # the raw path's negative penalty contribution
-                    score -= rank_maps[p["id"]][code] * (p["weight"] / weight_sum)
+                    # penalties default to SUBTRACT: higher raw penalty (more
+                    # volatile/ST/suspended) lowers the score, mirroring the
+                    # raw path's negative penalty contribution. A direction
+                    # override (e.g. construction-layer flip in research
+                    # candidates) may flip this sign.
+                    direction = float(directions.get(p["id"], -1.0))
+                    score += (
+                        rank_maps[p["id"]][code]
+                        * (p["weight"] / weight_sum)
+                        * direction
+                    )
                 score = round(max(0.0, min(100.0, score * 100.0)), 2)
 
                 existing = self._find_existing_prediction(code, date, current_horizon)
@@ -704,6 +717,7 @@ class StockScoringService:
                         "contribution": round(
                             rank_maps[c["id"]][code]
                             * (c["weight"] / weight_sum)
+                            * float(directions.get(c["id"], 1.0))
                             * 100.0,
                             4,
                         ),
@@ -716,8 +730,9 @@ class StockScoringService:
                         "raw_value": p["raw_value"],
                         "weight": p["weight"],
                         "contribution": round(
-                            -rank_maps[p["id"]][code]
+                            rank_maps[p["id"]][code]
                             * (p["weight"] / weight_sum)
+                            * float(directions.get(p["id"], -1.0))
                             * 100.0,
                             4,
                         ),
