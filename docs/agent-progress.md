@@ -25,6 +25,38 @@
 
 ## 进度记录
 
+### 2026-09-05 00:40 CST — H20 研究链闭环：多 regime 审计 + 基本面因子 + flip_wide 候选与可执行化
+
+- 状态：已完成（#180 单股执行示例 + 收益率曲线；候选生产化待评分构造层版本化）
+- 已完成：
+  - **数据基建**：#175 tushare daily_basic 接入（stock_daily_basic：pe_ttm/pb/ps_ttm/dv_ttm/
+    市值/换手，dev+prod 各 8,695,127 行 / 1,838 交易日 2019-2026，#176 注册进 prod→dev
+    data-sync，端到端验证通过）。
+  - **#174 多 regime 组件审计**（2019-2026 合并快照 9,203,459 行）：8 个技术分量在全部 8 段
+    regime dailyIC 显著为负（含牛市）——反向是结构性、非 regime 依赖；COMPOSITE 买 top
+    全 regime 亏（IR −0.11~−2.38）；momentum/relative/real_relative 三合一冗余（40% 权重
+    同一押注）。
+  - **#177 基本面因子审计 + 构造层翻转 walk-forward**：估值因子（EP/BP/SP/DV）2019-2026
+    全程弱到中等正 IC 且 size 中性后不消失（非 size 代理）；turnover 恒负 IC。评估器口径
+    发现 selection 宽度决定性——**flip_wide**（8 分量构造层全翻转 + 宽书 800 只）是唯一全
+    窗口正候选（train +0.485 / val2024 +0.975 / val2025 +0.385 / test2026H1 +0.426，
+    decay 0.00）；baseline current_h20 扩展 walk-forward decay 2.11 硬失败。
+  - **#178 估值融合实验**：估值块（EP/BP+低换手）混入 flip_wide 破坏 2025 稳健性
+    （+0.385→−0.742 @w=0.5）→ 不加；估值作 regime 条件块或独立组件。
+  - **#180 flip_wide 可执行化**：单股反转择时（flip_pct≥0.90 买入 / ≤0.30 卖出，T+1 开盘、
+    摩擦、停牌跳过）+ 收益率曲线脚本 `scripts/h20_flipwide_single_stock.py`。示例
+    sh600519（2024-2026）：+15.33% vs buy&hold −11.78%（超额 +27.11%，18 笔）。
+  - **架构文档**：architecture-layers-strategy-design.md（五层单向压缩流水线 + 策略层
+    缺口/实现建议）、research-progress-2026-09-04.md（阶段总结，修正 summary.md 旧结论）。
+- 验证：#177/#178/#179 全 CI 绿；flip_wide 单股模拟 T+1 无前视已校验（买入 flip_pct 为
+  T-1 信号日值）；快照与 daily_basic 行数核对一致；ruff 0.15.15 通过。
+- 下一步：候选生产化的桥=生产 scoring 构造层版本化（方向/权重按 model_version 声明，
+  让 flip_wide 语义可跑生产评分）；策略层 strategy_runner（paper-first ≥120 天）；
+  2025 异常年归因；估值因子作 regime 条件块再验证。
+- 阻塞：无（评分生产数据停更 08-28 待恢复）。
+
+---
+
 ### 2026-09-02 12:20 CST — PR #169/#170 合并 + prod 08-31 评分补跑完成
 
 - 状态：已完成
