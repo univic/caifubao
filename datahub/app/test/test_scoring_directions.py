@@ -65,6 +65,18 @@ class TestDirectionOverrideResolution:
         )
         assert config["directions"]["signal_strength"] == -1
 
+    def test_float_direction_value_rejected_not_truncated(self):
+        with pytest.raises(ValueError, match="must be -1, 0, or 1"):
+            get_effective_horizon_config(20, {20: {"directions": {"momentum": 0.5}}})
+
+    def test_bool_direction_value_rejected(self):
+        with pytest.raises(ValueError, match="must be -1, 0, or 1"):
+            get_effective_horizon_config(20, {20: {"directions": {"momentum": True}}})
+
+    def test_non_dict_directions_rejected(self):
+        with pytest.raises(ValueError, match="must be a dict"):
+            get_effective_horizon_config(20, {20: {"directions": ["momentum"]}})
+
 
 class TestRankedDirectionFlip:
     """Construction-layer flip inverts which stock scores higher.
@@ -72,9 +84,17 @@ class TestRankedDirectionFlip:
     With a positive direction, the stock whose momentum component is higher
     scores higher. With momentum flipped to -1 (flip_wide semantics), the same
     raw components must invert the ranking: high momentum now LOWERS the score.
+    A FULL flip (every component -1) must keep scores signed and sortable -
+    never collapse to an all-zero tie.
     """
 
-    def _ranked_scores(self, monkeypatch, direction: int) -> dict[str, float]:
+    def _ranked_scores(
+        self,
+        monkeypatch,
+        directions: dict[str, int] | None = None,
+        *,
+        risky_penalty: bool = False,
+    ) -> dict[str, float]:
         import datetime
         from unittest.mock import MagicMock, patch
 
@@ -117,6 +137,18 @@ class TestRankedDirectionFlip:
             def comp(component_id, raw_value, weight):
                 return {"id": component_id, "raw_value": raw_value, "weight": weight}
 
+            penalties = []
+            if risky_penalty:
+                # A owns no penalty, B carries a high risk penalty whose raw
+                # value is 0.9 (top of the cohort) - under DEFAULT directions
+                # B's score would be negative before the floor clamp.
+                penalties = [
+                    {
+                        "id": "risk_penalty",
+                        "raw_value": 0.9 if stock.code == "sh600001" else 0.1,
+                        "weight": 15.0,
+                    }
+                ]
             return {
                 "stock_code": stock.code,
                 "stock_name": stock.name,
@@ -130,7 +162,7 @@ class TestRankedDirectionFlip:
                     comp("relative_strength", momentum, 15.0),
                     comp("real_relative_strength", momentum, 10.0),
                 ],
-                "penalties": [],
+                "penalties": penalties,
             }
 
         with (
@@ -160,16 +192,8 @@ class TestRankedDirectionFlip:
             mock_market.trade_calendar = calendar
             mock_market_objs.return_value.first.return_value = mock_market
             scoring_config = {}
-            if direction != 1:
-                scoring_config = {
-                    20: {
-                        "directions": {
-                            "momentum": direction,
-                            "relative_strength": direction,
-                            "real_relative_strength": direction,
-                        }
-                    }
-                }
+            if directions:
+                scoring_config = {20: {"directions": dict(directions)}}
             service = StockScoringService(
                 stock_model=FakeStock,
                 quote_model=FakeQuote,
@@ -193,13 +217,81 @@ class TestRankedDirectionFlip:
         return scores
 
     def test_default_direction_high_momentum_scores_higher(self, monkeypatch):
-        scores = self._ranked_scores(monkeypatch, direction=1)
+        scores = self._ranked_scores(monkeypatch)
         assert scores["sh600000"] > scores["sh600001"], (
             f"A(momentum 0.9) should outrank B(0.2): {scores}"
         )
 
     def test_flipped_direction_inverts_ranking(self, monkeypatch):
-        scores = self._ranked_scores(monkeypatch, direction=-1)
+        scores = self._ranked_scores(
+            monkeypatch,
+            directions={
+                "momentum": -1,
+                "relative_strength": -1,
+                "real_relative_strength": -1,
+            },
+        )
         assert scores["sh600000"] < scores["sh600001"], (
             f"flip should invert ranking: A high momentum scores lower: {scores}"
+        )
+
+    def test_full_flip_keeps_scores_sortable_and_inverts_ranking(self, monkeypatch):
+        """flip_wide full flip (every component -1) must NOT collapse scores to
+        a 0.0 tie: scores stay signed (negative) and strictly ordered, and the
+        ranking is the exact inverse of the default-direction ranking.
+        """
+        flip_all = {
+            "signal_strength": -1,
+            "momentum": -1,
+            "trend_alignment": -1,
+            "breakout_or_position": -1,
+            "relative_strength": -1,
+            "real_relative_strength": -1,
+            "risk_penalty": -1,
+        }
+        scores = self._ranked_scores(monkeypatch, directions=flip_all)
+        assert scores["sh600000"] != scores["sh600001"], (
+            f"full flip must not collapse to a tie (rank needs strict order): {scores}"
+        )
+        assert scores["sh600000"] < scores["sh600001"], (
+            f"full flip should invert ranking: {scores}"
+        )
+        assert scores["sh600000"] < 0, (
+            f"flipped score should stay signed (negative), got {scores}"
+        )
+
+    def test_default_direction_with_penalty_keeps_floor_zero(self, monkeypatch):
+        """Default (no flip) model with a heavy risk penalty must keep the
+        develop floor clamp: B's pre-clamp score is negative (component ranks
+        below its penalty rank), but its stored score must be 0.0, not a
+        negative value - default models are bit-identical to develop.
+        """
+        scores = self._ranked_scores(monkeypatch, risky_penalty=True)
+        assert scores["sh600001"] == 0.0, (
+            f"default model must floor risky stock to 0.0, got {scores}"
+        )
+        assert scores["sh600000"] >= 0.0
+
+    def test_flip_with_penalty_keeps_signed_scores(self, monkeypatch):
+        """A real component flip must open the floor even when a penalty is
+        present: scores stay signed (possibly negative for penalized names)
+        but strictly sortable, never clamped to a 0.0 tie.
+        """
+        flip_all = {
+            "signal_strength": -1,
+            "momentum": -1,
+            "trend_alignment": -1,
+            "breakout_or_position": -1,
+            "relative_strength": -1,
+            "real_relative_strength": -1,
+            "risk_penalty": -1,
+        }
+        scores = self._ranked_scores(
+            monkeypatch, directions=flip_all, risky_penalty=True
+        )
+        assert scores["sh600000"] != scores["sh600001"], (
+            f"flip must keep strict order with penalties present: {scores}"
+        )
+        assert scores["sh600001"] <= 0.0, (
+            f"penalized flipped name should stay non-positive: {scores}"
         )
