@@ -243,8 +243,8 @@ def generate_scores():
     Accepts optional filters: date, horizon, stock_code, model_version.
     Checks that quote data exists for the target date before scoring.
 
-    The datahub scoring engine is imported inside the function body using
-    the same sys.path pattern already established in score_experiments.py.
+    The datahub scoring engine is imported inside the function body by
+    temporarily prepending the datahub app directory to sys.path.
     This guards against import-time failures in CI environments where only
     the backend package is installed.
     """

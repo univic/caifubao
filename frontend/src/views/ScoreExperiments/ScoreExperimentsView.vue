@@ -137,7 +137,7 @@
 
             <div class="report-grid">
               <div class="report-section">
-                <h3>Score 分桶</h3>
+                <h3>{{ bucketHeading(horizonReport(String(horizon))!.bucket_basis) }}</h3>
                 <el-table :data="horizonReport(String(horizon))!.score_buckets" size="small" empty-text="暂无已验证样本">
                   <el-table-column prop="bucket" label="区间" width="90" />
                   <el-table-column label="样本" width="80" prop="count" />
@@ -197,6 +197,9 @@
 
     <el-dialog v-model="compareVisible" title="实验对比" width="80%" destroy-on-close>
       <div v-if="compareResult" class="compare-report">
+        <el-tag style="margin-bottom: 12px">
+          对比分桶基准：{{ basisLabel(compareResult.comparison_basis) }}
+        </el-tag>
         <el-alert
           :title="compareResult.verdict"
           :type="compareResult.verdict?.includes('wins') || compareResult.verdict?.includes('improvement') ? 'success' : 'warning'"
@@ -419,6 +422,7 @@ import {
   type HeatmapResponse,
   type RankingsResponse,
   type ScoreExperiment,
+  type ScoreBasis,
   type ScoreExperimentHorizonReport,
   type ScoreMetricSummary
 } from '@/api/scoreExperiments'
@@ -469,6 +473,14 @@ watch(selectedExperiment, (experiment) => {
 
 function horizonReport(horizon: string) {
   return selectedReport.value?.horizons?.[horizon]
+}
+
+function basisLabel(basis?: ScoreBasis) {
+  return basis === 'percentile' ? 'Percentile（百分位）' : 'Score（原始分）'
+}
+
+function bucketHeading(basis?: ScoreBasis) {
+  return `${basisLabel(basis)}分桶`
 }
 
 async function fetchExperiments() {
@@ -561,7 +573,8 @@ async function handleCompare() {
     }
     compareVisible.value = true
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : '对比失败'
+    const error = e as { response?: { data?: { message?: string } }; message?: string }
+    const message = error.response?.data?.message || error.message || '对比失败'
     ElMessage.error(message)
   } finally {
     comparing.value = false

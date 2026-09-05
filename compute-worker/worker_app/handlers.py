@@ -385,7 +385,10 @@ def _handle_calibration_report(task: Any) -> None:
         params = task.params or {}
         _update_progress(task, 0.1, "Generating calibration report...")
 
-        report = ScoreCalibrationReport(model_version=params.get("model_version"))
+        report = ScoreCalibrationReport(
+            model_version=params.get("model_version"),
+            scoring_config=params.get("scoring_config"),
+        )
         result = report.generate(
             start_date=datetime.fromisoformat(params["start_date"]),
             end_date=datetime.fromisoformat(params["end_date"]),
@@ -393,6 +396,8 @@ def _handle_calibration_report(task: Any) -> None:
         )
 
         _mark_completed(task, result)
+    except ValueError as exc:
+        _mark_failed(task, str(exc))
     except Exception:
         _mark_failed(task, traceback.format_exc())
 
@@ -507,7 +512,10 @@ def _handle_grid_search(task: Any) -> None:
                     horizon=exp["horizon"],
                 )
 
-                report = ScoreCalibrationReport(model_version=model_version)
+                report = ScoreCalibrationReport(
+                    model_version=model_version,
+                    scoring_config={str(exp["horizon"]): exp["config"]},
+                )
                 cal = report.generate(
                     start_date=datetime.fromisoformat(date_range["start"]),
                     end_date=datetime.fromisoformat(date_range["end"]),
@@ -597,9 +605,9 @@ def _handle_factor_eval(task: Any) -> None:
         from app.model.factor import StockFactorDaily
 
         factor_docs = list(
-            StockFactorDaily.objects(
-                date__gte=start_date, date__lte=end_date
-            ).only("stock_code", "date", factor_name)
+            StockFactorDaily.objects(date__gte=start_date, date__lte=end_date).only(
+                "stock_code", "date", factor_name
+            )
         )
         if not factor_docs:
             _mark_completed(task, {"error": f"No factor data for {factor_name}"})
@@ -610,12 +618,16 @@ def _handle_factor_eval(task: Any) -> None:
             val = getattr(doc, factor_name, None)
             if val is not None:
                 code = doc.stock_code
-                dstr = doc.date.isoformat() if hasattr(doc.date, "isoformat") else str(
-                    doc.date
+                dstr = (
+                    doc.date.isoformat()
+                    if hasattr(doc.date, "isoformat")
+                    else str(doc.date)
                 )
                 factor_values.setdefault(code, {})[dstr] = float(val)
 
-        _update_progress(task, 0.3, f"Running factor evaluation on {len(factor_values)} stocks...")
+        _update_progress(
+            task, 0.3, f"Running factor evaluation on {len(factor_values)} stocks..."
+        )
 
         result = svc.evaluate(
             factor_values,

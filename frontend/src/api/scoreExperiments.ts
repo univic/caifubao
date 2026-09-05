@@ -15,7 +15,11 @@ export interface ScoreBucketSummary extends ScoreMetricSummary {
   bucket: string
 }
 
+export type ScoreBasis = 'score' | 'percentile'
+
 export interface ScoreExperimentHorizonReport {
+  bucket_basis: ScoreBasis
+  comparison_basis?: ScoreBasis
   overall: ScoreMetricSummary
   score_buckets: ScoreBucketSummary[]
   top_n: Record<string, ScoreMetricSummary>
@@ -118,6 +122,7 @@ function buildMockMetric(count: number, avgReturn: number): ScoreMetricSummary {
 function buildMockHorizonReport(horizon: number, avgReturn: number): ScoreExperimentHorizonReport {
   const overall = buildMockMetric(240, avgReturn)
   return {
+    bucket_basis: 'score',
     overall,
     score_buckets: [
       { bucket: '0-20', ...buildMockMetric(18, -0.018) },
@@ -140,6 +145,7 @@ function buildMockHorizonReport(horizon: number, avgReturn: number): ScoreExperi
     false_positives: [],
     false_negatives: [],
     baseline: {
+      bucket_basis: 'score',
       overall: buildMockMetric(240, avgReturn - 0.012),
       score_buckets: [],
       top_n: {},
@@ -163,15 +169,19 @@ export interface CompareResult {
   horizon: number
   start_date: string
   end_date: string
+  comparison_basis: ScoreBasis
+  comparison_status: 'ok' | 'insufficient_data'
   verdict: string
   candidate: {
     model_version: string
+    bucket_basis: ScoreBasis
     overall: ScoreMetricSummary
     score_buckets: ScoreBucketSummary[]
     top_n: Record<string, ScoreMetricSummary>
   }
   baseline: {
     model_version: string
+    bucket_basis: ScoreBasis
     overall: ScoreMetricSummary
     score_buckets: ScoreBucketSummary[]
     top_n: Record<string, ScoreMetricSummary>

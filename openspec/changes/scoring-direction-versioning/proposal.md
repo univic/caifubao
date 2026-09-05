@@ -19,15 +19,23 @@ scoring 的方向是硬编码的（components 加分、penalties 减分），研
   分数保持带符号负值，横截面可严格排序；默认全正模型分数恒 ≥0 不受影响。语义对齐研究
   评估器（h20_excess_alpha）：原始加权和保留符号，cohort percentile 由该和的排名导出。
 - **语义契约（scoring 层）**：flipped-direction model version 是**独立模型**，其分数/
-  percentile 含义相对默认版本反转（高分 ↔ 原 bullishness 低）；replay/calibration/
-  backtest 对比必须限制在同方向 model version 内。翻转版本经全市场 replay + calibration
-  与 baseline 对比后方可 promote（沿用 archived stock-scoring 要求）。`DEFAULT_MODEL_VERSION`
-  不变。
+  percentile 含义相对默认版本反转（高分 ↔ 原 bullishness 低）。同一 score basis 的模型
+  可以比较原始分；不同 direction/basis 的 promotion comparison 必须统一使用 percentile。
+  翻转版本经全市场 replay + calibration 与 baseline 对比后方可 promote（沿用 archived
+  stock-scoring 要求）。`DEFAULT_MODEL_VERSION` 不变。
+- **校准与实验报告支持 signed score**：分桶基准由版本化 config 决定；存在非惩罚分量翻转
+  时使用持久化 percentile（0-100），而不是依赖本次窗口是否恰好出现负分。跨 basis 比较
+  两侧统一为 percentile，并禁止报告无意义的 raw-score delta。
+- **同步 API 与前端显式呈现 basis**：实验运行报告返回 `bucket_basis`，比较接口返回
+  `comparison_basis` / `comparison_status`；缺失、非有限或越界 percentile 以稳定 422
+  响应拒绝，前端按返回 basis 标注“原始分/百分位分桶”。异步校准任务以清理后的领域错误
+  标记失败，不暴露 traceback。
 
 ## Non-goals
 
-- 不改变 API 契约、鉴权、新鲜度、数据所有权、公开文档、前端/OpenClaw/调度器行为。
-- 不改变 raw（非 ranked）评分路径；不改变 recommendation 阈值/calibration 度量口径。
+- 不改变鉴权、新鲜度、数据所有权、OpenClaw 或调度器行为。
+- 不改变 raw（非 ranked）评分路径；不改变 recommendation 阈值，校准仅把 signed model
+  的 scale-dependent 度量切换到已有 percentile 口径。
 - 不自动 promote 任何新版本；不引入模型注册表（model_version → config 的自动绑定，
   后续单独 change）。
 - 不改变「选高买入」usage 语义——翻转发生在构造层，usage 层仍按分数从高到低买。

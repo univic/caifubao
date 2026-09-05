@@ -25,6 +25,75 @@
 
 ## 进度记录
 
+### 2026-09-05 22:59 CST — 复核 PR #188：补齐 backend compare 空配置注册表回退
+
+- 状态：已完成（PR #188 ready，最新补丁与全套 CI 均通过；待用户决定是否合并）
+- 已完成：复核 DSH 在 `518eb48` 后的最终 diff，确认 DataHub calibration/comparison
+  已将空 `{}` 解释为“无显式 override”并回退 `ScoreModelVersion`；同时发现 backend
+  `/api/score-experiments/compare` 以实验 ID 解析目标时仍直接返回空 config，导致指向已注册
+  flipped model 的空配置实验在正分窗口退回 raw-score basis。现已让该分支同样调用
+  `_registered_model_config`，并新增实验 ID + 空配置的回归测试。
+- 验证：补丁 `7dc780f` 的 backend score-experiment 聚焦测试 **8 passed**；相关 Ruff
+  check/format 与 `git diff --check` 通过。PR #188 新一轮 CI run `33973464841` 全绿：
+  Backend Tests/Lint、DataHub Tests/Lint、Frontend、OpenSpec、Private Deploy Dry Run、
+  Required Checks 全部 success；与最新 `origin/develop` merge-tree 无冲突。此前三类 gate
+  结果继续有效。
+- 下一步：用户批准后 squash merge PR #188；之后独立执行 task 3.3 的全市场 replay +
+  flipped candidate / baseline 校准比较。
+- 阻塞：仅等待用户合并决定；未 promote 模型、未改变线上默认评分。
+
+---
+
+### 2026-09-05 15:10 CST — 3.2 全链路完成 + 三门禁 GATE_OK + PR #188 CI 绿
+
+- 状态：进行中（PR #188 draft 就绪；待用户合并批准后完成 task 3.2/4.4）
+- 已完成：承接 codex 14:15 条目，将 config 化 percentile 基座全链路落地并提交
+  `822c6ba`（datahub calibration/comparison/experiment_service、compute-worker、
+  backend score_experiments、frontend、openspec spec/tasks，12 文件 +826/-94）：
+  配置解析 basis（`config_bucket_basis` 读 registered/experiment config 的
+  directions，翻转即 percentile），正分窗口不再靠运行时负分探测；无效 percentile
+  显式失败（datahub ValueError / backend 稳定 422）；跨方向比较统一 basis 并抑制
+  raw avg_score 差值；创建 Draft PR **#188**（CI 全绿：Backend/Datahub
+  Tests+Lint、Frontend、OpenSpec 10/10、Private Deploy Dry Run 均 pass）。
+- 验证：三门禁全部 **GATE_OK 无 P1**：spec-guardian（沿用既有 change 正确、
+  spec 场景与实现一致、10/10 validate、60 tests）；contract-reviewer（basis
+  字段/类型/422 信封一致、additive 向后兼容、7/7 backend + 13/13 datahub）；
+  qa-reviewer（472 passed、vue-tsc clean、默认配置下与 develop 数值一致、
+  负尾不丢失）。P2 收敛于同一缺陷：datahub report 把空 `{}` config 当权威值，
+  压掉注册表回退（operator CLI 路径仍会按 raw score 误分桶正分窗口），已修
+  `518eb48`（calibration/comparison `_resolved_scoring_config` 空 config 回退
+  注册表 + 2 个回归测试 + tasks.md/spec.md 补回 threshold 消费者
+  default-direction-only 子项 + scores.py 过期注释）；474 passed、ruff CI 级
+  规则 clean、openspec 10/10。
+- 下一步：用户批准后 merge #188（squash）→ develop，勾选 tasks 3.2/4.4；
+  task 3.3（一个翻转 model_version 全市场 replay + 校准对比 vs baseline）为
+  独立后续任务，需 operator 执行。
+- 阻塞：PR #188 已 ready 且三门禁/CI/冲突检查全绿，**等待用户显式合并批准**
+  （用户 15:10 选择暂不合并；未 promote 任何模型版本，线上默认评分不变）。
+
+---
+
+### 2026-09-05 14:15 CST — 接手推进：翻转评分校准改用 percentile，负尾不再丢失
+
+- 状态：进行中（`codex/fix/flipped-score-calibration` 本地实现与验证完成；review/PR 门禁待完成）
+- 已完成：接手复核 #182-#187 后，先完成 scoring-direction-versioning 3.2：
+  `ScoreCalibrationReport` 遇到负分 cohort 时强制使用 percentile×100 做分布、分桶及
+  false-positive/false-negative 取样，缺 percentile 则显式失败；
+  `ExperimentComparisonReport` 在任一侧为 signed score 时让候选/基线统一使用 percentile，
+  标注 `bucket_basis`/`comparison_basis`，并禁止输出跨方向的 raw `avg_score` 差值；默认正分
+  模型继续使用原 0-100 score 口径。同步补充 OpenSpec 场景并勾选 task 3.2。
+- 验证：先新增失败测试（4 failed）再实现；聚焦 5 tests passed；datahub 全量
+  **464 passed**；相关 ruff/format 通过；`openspec validate --all --strict` **10/10 passed**；
+  `git diff --check` 通过；与最新 `origin/develop` 的 branch-conflict 检查 clean。
+- 下一步：执行 spec-guardian + contract-reviewer + qa-reviewer，完成 Draft PR CI；随后进行
+  task 3.3（一个翻转 model_version 的全市场 replay + 新旧校准对比），再独立处理模型注册表
+  真不可变、`scoring_mode` 绑定和 fail-closed。
+- 阻塞：强制 reviewer 门禁（含新增 basis 响应字段的 contract review）尚未执行，因此当前
+  分支不得标记 ready/merge；未 promote 任何
+  模型版本，也未改变线上默认评分。
+
+---
+
 ### 2026-09-05 13:30 CST — codex 第一阶段完成：方向缺陷修复 + 模型注册表 + 版本约束 + 记录同步
 
 - 状态：已完成（#182-#187 合并/就绪；codex 三阶段第一阶段 #1-#5 全闭环）

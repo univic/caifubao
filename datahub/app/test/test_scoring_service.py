@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 
-import datetime
 import copy
+import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.lib.scoring_engine.calibration_report import ScoreCalibrationReport
+from app.lib.scoring_engine.comparison_report import ExperimentComparisonReport
 from app.lib.scoring_engine.replay_service import ScoreReplayService
 from app.lib.scoring_engine.scoring_service import StockScoringService
 from app.lib.scoring_engine.verification_service import ScoreVerificationService
@@ -805,9 +806,363 @@ def test_calibration_report_summarizes_verified_predictions():
     )
 
     assert report["prediction_count"] == 2
+    assert report["bucket_basis"] == "score"
     assert report["top_n"]["top_10"]["count"] == 2
     assert report["component_summary"]["signal_strength"]["count"] == 1
     assert report["false_negatives"][0]["stock_code"] == "sh600001"
+
+
+def test_calibration_report_uses_percentiles_for_signed_scores():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            stock_name="浦发银行",
+            date=date,
+            horizon=20,
+            model_version="flip_v1",
+            status="VERIFIED",
+            score=-10.0,
+            percentile=0.9,
+            rank=1,
+            recommendation="BUY",
+            verification={"return_at_target": -0.01, "max_return": 0.02},
+            explanation={"components": []},
+        ),
+        FakePrediction(
+            stock_code="sh600001",
+            stock_name="测试股票",
+            date=date,
+            horizon=20,
+            model_version="flip_v1",
+            status="VERIFIED",
+            score=-90.0,
+            percentile=0.1,
+            rank=2,
+            recommendation="AVOID",
+            verification={"return_at_target": 0.01, "max_return": 0.09},
+            explanation={"components": []},
+        ),
+    ]
+
+    report = ScoreCalibrationReport(
+        prediction_model=FakePrediction,
+        model_version="flip_v1",
+    ).generate(date, date, 20)
+
+    assert report["bucket_basis"] == "percentile"
+    assert report["distribution"]["count"] == 2
+    assert report["distribution"]["min"] == 10.0
+    assert report["distribution"]["max"] == 90.0
+    assert report["score_buckets"][0]["count"] == 1
+    assert report["score_buckets"][-1]["count"] == 1
+    assert report["false_positives"][0]["stock_code"] == "sh600000"
+    assert report["false_negatives"][0]["stock_code"] == "sh600001"
+    assert "percentile" in report["negative_score_warning"]
+
+
+def test_calibration_report_rejects_signed_scores_without_percentiles():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            stock_name="浦发银行",
+            date=date,
+            horizon=20,
+            model_version="flip_v1",
+            status="VERIFIED",
+            score=-10.0,
+            rank=1,
+            recommendation="BUY",
+            verification={},
+            explanation={"components": []},
+        )
+    ]
+
+    with pytest.raises(ValueError, match="percentile"):
+        ScoreCalibrationReport(
+            prediction_model=FakePrediction,
+            model_version="flip_v1",
+        ).generate(date, date, 20)
+
+
+@pytest.mark.parametrize("percentile", [float("nan"), float("inf"), -0.1, 1.1, True])
+def test_calibration_report_rejects_invalid_percentiles(percentile):
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            stock_name="浦发银行",
+            date=date,
+            horizon=20,
+            model_version="flip_v1",
+            status="VERIFIED",
+            score=-10.0,
+            percentile=percentile,
+            rank=1,
+            recommendation="BUY",
+            verification={},
+            explanation={"components": []},
+        )
+    ]
+
+    with pytest.raises(ValueError, match=r"finite number in \[0, 1\]"):
+        ScoreCalibrationReport(
+            prediction_model=FakePrediction,
+            model_version="flip_v1",
+        ).generate(date, date, 20)
+
+
+def test_calibration_report_uses_config_for_positive_only_flipped_window():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            stock_name="浦发银行",
+            date=date,
+            horizon=20,
+            model_version="partial_flip_v1",
+            status="VERIFIED",
+            score=10.0,
+            percentile=0.9,
+            rank=1,
+            recommendation="BUY",
+            verification={},
+            explanation={"components": []},
+        )
+    ]
+
+    report = ScoreCalibrationReport(
+        prediction_model=FakePrediction,
+        model_version="partial_flip_v1",
+        scoring_config={"20": {"directions": {"momentum": -1}}},
+    ).generate(date, date, 20)
+
+    assert report["bucket_basis"] == "percentile"
+    assert report["score_buckets"][-1]["count"] == 1
+
+
+def test_calibration_report_empty_config_falls_back_to_registry(monkeypatch):
+    """An experiment row with empty config must resolve the registered flipped
+    config (mirrors StockScoringService + backend), so a positive-only window of
+    a registered flipped version is not silently mis-bucketed by raw score."""
+    import app.lib.scoring_engine.calibration_report as calibration_module
+
+    class RegisteredVersion:
+        config = {"20": {"directions": {"momentum": -1}}}
+
+    class FakeRegistryModel:
+        @classmethod
+        def objects(cls, **query):
+            return FakeQuerySet([RegisteredVersion()])
+
+    # Reports only consult the registry when prediction_model is the real
+    # StockScorePrediction; pin module-level identity to the fake for this test.
+    monkeypatch.setattr(calibration_module, "StockScorePrediction", FakePrediction)
+    monkeypatch.setattr(calibration_module, "ScoreModelVersion", FakeRegistryModel)
+
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            stock_name="浦发银行",
+            date=date,
+            horizon=20,
+            model_version="registered_flip_v1",
+            status="VERIFIED",
+            score=10.0,
+            percentile=0.9,
+            rank=1,
+            recommendation="BUY",
+            verification={},
+            explanation={"components": []},
+        )
+    ]
+
+    report = ScoreCalibrationReport(
+        prediction_model=FakePrediction,
+        model_version="registered_flip_v1",
+        scoring_config={},  # empty -> must fall back to the registered config
+    ).generate(date, date, 20)
+
+    assert report["bucket_basis"] == "percentile"
+    assert report["score_buckets"][-1]["count"] == 1
+
+
+def test_comparison_report_aligns_signed_and_default_models_by_percentile():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    common = {
+        "stock_name": "测试股票",
+        "date": date,
+        "horizon": 20,
+        "status": "VERIFIED",
+        "rank": 1,
+        "recommendation": "BUY",
+        "verification": {"return_at_target": 0.01, "max_return": 0.02},
+    }
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            model_version="flip_v1",
+            score=-10.0,
+            percentile=0.9,
+            **common,
+        ),
+        FakePrediction(
+            stock_code="sh600000",
+            model_version="baseline_v1",
+            score=80.0,
+            percentile=0.9,
+            **common,
+        ),
+    ]
+
+    report = ExperimentComparisonReport(prediction_model=FakePrediction).compare(
+        "flip_v1", "baseline_v1", date, date, 20
+    )
+
+    assert report["comparison_basis"] == "percentile"
+    assert report["candidate"]["bucket_basis"] == "percentile"
+    assert report["baseline"]["bucket_basis"] == "percentile"
+    assert report["candidate"]["score_buckets"][-1]["count"] == 1
+    assert report["baseline"]["score_buckets"][-1]["count"] == 1
+    assert report["deltas"]["avg_score"] is None
+
+
+def test_comparison_report_preserves_score_basis_for_default_models():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    common = {
+        "stock_code": "sh600000",
+        "stock_name": "测试股票",
+        "date": date,
+        "horizon": 20,
+        "status": "VERIFIED",
+        "rank": 1,
+        "recommendation": "BUY",
+        "verification": {"return_at_target": 0.01, "max_return": 0.02},
+    }
+    FakePrediction.records = [
+        FakePrediction(model_version="candidate_v1", score=80.0, **common),
+        FakePrediction(model_version="baseline_v1", score=70.0, **common),
+    ]
+
+    report = ExperimentComparisonReport(prediction_model=FakePrediction).compare(
+        "candidate_v1", "baseline_v1", date, date, 20
+    )
+
+    assert report["comparison_basis"] == "score"
+    assert report["candidate"]["bucket_basis"] == "score"
+    assert report["deltas"]["avg_score"] == 10.0
+
+
+def test_comparison_report_uses_config_for_positive_only_flipped_window():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    common = {
+        "stock_code": "sh600000",
+        "stock_name": "测试股票",
+        "date": date,
+        "horizon": 20,
+        "status": "VERIFIED",
+        "rank": 1,
+        "recommendation": "BUY",
+        "verification": {"return_at_target": 0.01, "max_return": 0.02},
+    }
+    FakePrediction.records = [
+        FakePrediction(
+            model_version="partial_flip_v1",
+            score=10.0,
+            percentile=0.9,
+            **common,
+        ),
+        FakePrediction(
+            model_version="baseline_v1",
+            score=80.0,
+            percentile=0.9,
+            **common,
+        ),
+    ]
+
+    report = ExperimentComparisonReport(prediction_model=FakePrediction).compare(
+        "partial_flip_v1",
+        "baseline_v1",
+        date,
+        date,
+        20,
+        candidate_config={"20": {"directions": {"momentum": -1}}},
+        baseline_config={},
+    )
+
+    assert report["comparison_basis"] == "percentile"
+    assert report["deltas"]["avg_score"] is None
+
+
+def test_comparison_report_marks_empty_cohort_insufficient():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = []
+
+    report = ExperimentComparisonReport(prediction_model=FakePrediction).compare(
+        "candidate_v1", "baseline_v1", date, date, 20
+    )
+
+    assert report["comparison_status"] == "insufficient_data"
+    assert report["verdict"] == "Insufficient verified data for comparison."
+
+
+def test_comparison_report_empty_config_falls_back_to_registry(monkeypatch):
+    """Candidate with empty config must resolve the registered flipped config so
+    a positive-only flipped window is still compared on the percentile basis."""
+    import app.lib.scoring_engine.comparison_report as comparison_module
+
+    class RegisteredVersion:
+        config = {"20": {"directions": {"momentum": -1}}}
+
+    class FakeRegistryModel:
+        @classmethod
+        def objects(cls, **query):
+            return FakeQuerySet([RegisteredVersion()])
+
+    monkeypatch.setattr(comparison_module, "StockScorePrediction", FakePrediction)
+    monkeypatch.setattr(comparison_module, "ScoreModelVersion", FakeRegistryModel)
+
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    common = {
+        "stock_code": "sh600000",
+        "stock_name": "测试股票",
+        "date": date,
+        "horizon": 20,
+        "status": "VERIFIED",
+        "rank": 1,
+        "recommendation": "BUY",
+        "verification": {"return_at_target": 0.01, "max_return": 0.02},
+    }
+    FakePrediction.records = [
+        FakePrediction(
+            model_version="registered_flip_v1",
+            score=10.0,
+            percentile=0.9,
+            **common,
+        ),
+        FakePrediction(
+            model_version="baseline_v1",
+            score=80.0,
+            percentile=0.9,
+            **common,
+        ),
+    ]
+
+    report = ExperimentComparisonReport(prediction_model=FakePrediction).compare(
+        "registered_flip_v1",
+        "baseline_v1",
+        date,
+        date,
+        20,
+        candidate_config={},  # empty -> falls back to the registered config
+        baseline_config={},
+    )
+
+    assert report["comparison_basis"] == "percentile"
+    assert report["candidate"]["bucket_basis"] == "percentile"
+    assert report["deltas"]["avg_score"] is None
 
 
 # ---------------------------------------------------------------------------

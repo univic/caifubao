@@ -28,22 +28,24 @@
 - [x] 3.1 Flipped-version score/percentile meaning defined (higher score <-> lower raw
   bullishness); percentile-driven BUY/WATCH/AVOID stays well-defined for a full-flip
   model (no tie degeneracy) - locked by tests (flip-with-penalty signed order).
-- [ ] 3.2 Consumer tooling for flipped (non-positive) scores: calibration_report
-  (filters score >= 0) and comparison_report (0-100 absolute buckets) must bucket by
-  rank/percentile or accept a per-model-version scale BEFORE any flipped-direction
-  experiment is validated via reports (experiment_service.run_experiment auto-runs
-  ScoreCalibrationReport) and before any flipped version is promoted; a full-flip
-  experiment currently makes the report crash on an empty sample and a partial flip
-  silently drops the negative tail from calibration stats; SCORE_THRESHOLD/consensus/
-  openclaw absolute thresholds documented as default-direction-only.
+- [x] 3.2 Consumer tooling for flipped (non-positive) scores: calibration_report
+  and comparison_report bucket by config-resolved percentile before any
+  flipped-direction experiment is validated or promoted; positive-only partial windows
+  retain flipped semantics, invalid percentiles fail explicitly, backend run/compare
+  paths use the same basis, and frontend labels the returned basis. Absolute-score
+  threshold consumers (SCORE_THRESHOLD backtest entry/exit, consensus/openclaw
+  thresholds) remain default-direction-only (raw-score semantics); they are out of
+  scope for flipped percentile scores.
 - [ ] 3.3 Operator validation of one flipped experiment model version: full-market replay
   + calibration comparison vs baseline before any promotion.
-- [x] 3.4 Comparisons (replay/calibration/backtest) must stay within same-direction
-  model versions - stated in spec.md and proposal non-goals.
+- [x] 3.4 Raw-score comparisons stay within same-direction model versions;
+  cross-direction promotion comparisons align scale-dependent metrics by percentile.
 
 ## 4. Gates
 
 - [x] 4.1 spec-guardian: triggered (scoring semantics) — this change entry.
-- [ ] 4.2 qa-reviewer on the diff (flag full-flip degeneracy finding — resolved by 2.3/2.4).
-- [ ] 4.3 branch-conflict check against develop before merge.
+- [x] 4.2 qa-reviewer on the diff (flag full-flip degeneracy finding — resolved by 2.3/2.4);
+  spec-guardian/qa-reviewer/contract-reviewer all GATE_OK on the 3.2 full-chain
+  (config-resolved percentile basis), P2 empty-config registry fallback fixed in 518eb48.
+- [x] 4.3 branch-conflict check against develop before merge.
 - [ ] 4.4 CI green; merge.

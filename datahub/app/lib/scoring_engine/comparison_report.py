@@ -4,9 +4,14 @@
 from collections import defaultdict
 from typing import Any
 
-from app.lib.scoring_engine.calibration_report import SCORE_BUCKETS
+from app.lib.scoring_engine.calibration_report import (
+    SCORE_BUCKETS,
+    bucket_value,
+    config_bucket_basis,
+    resolve_bucket_basis,
+)
 from app.lib.scoring_engine.scoring_service import normalize_date
-from app.model.scoring import StockScorePrediction
+from app.model.scoring import ScoreModelVersion, StockScorePrediction
 
 
 def _avg(values):
@@ -70,13 +75,14 @@ def _top_n_summary(predictions):
     return result
 
 
-def _bucket_summary(predictions):
+def _bucket_summary(predictions, basis="score"):
     result = []
     for low, high in SCORE_BUCKETS:
         bucket_items = [
             p
             for p in predictions
-            if low <= (p.score or 0) < high or (high == 100 and (p.score or 0) == 100)
+            if low <= bucket_value(p, basis) < high
+            or (high == 100 and bucket_value(p, basis) == 100)
         ]
         result.append({"bucket": f"{low}-{high}", **_metric_summary(bucket_items)})
     return result
@@ -88,6 +94,16 @@ class ExperimentComparisonReport:
     def __init__(self, prediction_model=StockScorePrediction):
         self.prediction_model = prediction_model
 
+    def _resolved_scoring_config(self, model_version, config):
+        # Empty/absent config means "no explicit override" -> registered model
+        # version config (mirrors StockScoringService + backend _build_report).
+        if config:
+            return config
+        if self.prediction_model is not StockScorePrediction:
+            return None
+        registered = ScoreModelVersion.objects(model_version=model_version).first()
+        return registered.config if registered is not None else None
+
     def compare(
         self,
         candidate_model_version: str,
@@ -95,6 +111,9 @@ class ExperimentComparisonReport:
         start_date,
         end_date,
         horizon: int,
+        *,
+        candidate_config: dict | None = None,
+        baseline_config: dict | None = None,
     ) -> dict[str, Any]:
         """Return a comparison dict with candidate/baseline summaries, deltas, and verdict."""
 
@@ -117,26 +136,58 @@ class ExperimentComparisonReport:
             ).order_by("date", "-score")
         )
 
+        candidate_basis = resolve_bucket_basis(
+            candidate_preds,
+            configured_basis=config_bucket_basis(
+                self._resolved_scoring_config(
+                    candidate_model_version, candidate_config
+                ),
+                horizon,
+            ),
+        )
+        baseline_basis = resolve_bucket_basis(
+            baseline_preds,
+            configured_basis=config_bucket_basis(
+                self._resolved_scoring_config(baseline_model_version, baseline_config),
+                horizon,
+            ),
+        )
+        comparison_basis = (
+            "percentile"
+            if "percentile" in {candidate_basis, baseline_basis}
+            else "score"
+        )
+        if comparison_basis == "percentile":
+            resolve_bucket_basis(candidate_preds, force_percentile=True)
+            resolve_bucket_basis(baseline_preds, force_percentile=True)
+
         candidate_summary = {
             "model_version": candidate_model_version,
+            "bucket_basis": comparison_basis,
             "overall": _metric_summary(candidate_preds),
-            "score_buckets": _bucket_summary(candidate_preds),
+            "score_buckets": _bucket_summary(candidate_preds, comparison_basis),
             "top_n": _top_n_summary(candidate_preds),
         }
         baseline_summary = {
             "model_version": baseline_model_version,
+            "bucket_basis": comparison_basis,
             "overall": _metric_summary(baseline_preds),
-            "score_buckets": _bucket_summary(baseline_preds),
+            "score_buckets": _bucket_summary(baseline_preds, comparison_basis),
             "top_n": _top_n_summary(baseline_preds),
         }
 
         deltas = self._compute_deltas(candidate_summary, baseline_summary)
-        verdict = self._verdict(deltas)
+        comparison_status = (
+            "ok" if candidate_preds and baseline_preds else "insufficient_data"
+        )
+        verdict = self._verdict(deltas, comparison_status)
 
         return {
             "horizon": horizon,
             "start_date": normalize_date(start_date).isoformat(),
             "end_date": normalize_date(end_date).isoformat(),
+            "comparison_basis": comparison_basis,
+            "comparison_status": comparison_status,
             "candidate": candidate_summary,
             "baseline": baseline_summary,
             "deltas": deltas,
@@ -157,7 +208,11 @@ class ExperimentComparisonReport:
 
         result = {
             "count": delta("count"),
-            "avg_score": delta("avg_score"),
+            "avg_score": (
+                None
+                if candidate.get("bucket_basis") == "percentile"
+                else delta("avg_score")
+            ),
             "avg_return_at_target": delta("avg_return_at_target"),
             "avg_max_return": delta("avg_max_return"),
             "avg_min_return": delta("avg_min_return"),
@@ -183,7 +238,9 @@ class ExperimentComparisonReport:
         return result
 
     @staticmethod
-    def _verdict(deltas: dict) -> str:
+    def _verdict(deltas: dict, comparison_status: str = "ok") -> str:
+        if comparison_status != "ok":
+            return "Insufficient verified data for comparison."
         hit_delta = deltas.get("hit_rate") or 0
         ret_delta = deltas.get("avg_return_at_target") or 0
 
