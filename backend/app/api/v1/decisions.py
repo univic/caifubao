@@ -27,6 +27,21 @@ decisions_bp = Blueprint("decisions", __name__, url_prefix="/api/decisions")
 decisions_bp.before_request(block_service_tokens)
 
 
+class _ModelVersionError(Exception):
+    """Raised when an explicit ?model_version= override is not usable."""
+
+
+def _resolve_model_version():
+    """Return (model_version, None) or (None, jsonify(400)) on bad override."""
+    try:
+        return _requested_model_version(), None
+    except _ModelVersionError as exc:
+        return None, (
+            jsonify({"success": False, "message": str(exc), "data": None}),
+            400,
+        )
+
+
 def _requested_model_version() -> str:
     """Resolve the model version for a production-view query.
 
@@ -34,12 +49,17 @@ def _requested_model_version() -> str:
     views never mix predictions across scoring model versions (a flipped
     construction-layer version would otherwise interleave with the default
     and invert rankings silently). An explicit ?model_version= override is
-    allowed for inspection, but it must match a known version name.
+    allowed for inspection, but it must match a known version name; unknown
+    labels raise _ModelVersionError so the view can respond JSON 400 (not an
+    unhandled 500).
     """
-    override = (request.args.get("model_version") or "").strip()
+    return _validate_model_version(request.args.get("model_version") or "")
+
+
+def _validate_model_version(raw_value: str) -> str:
+    """Validate an explicit model_version override ('' means default)."""
+    override = raw_value.strip()
     if override and override != DEFAULT_MODEL_VERSION:
-        # Only permit versions that are actually registered; unknown labels
-        # would silently query an empty set (safer to reject loudly).
         try:
             from app.model.scoring import ScoreModelVersion
 
@@ -47,7 +67,7 @@ def _requested_model_version() -> str:
         except Exception:  # noqa: BLE001 - registry best-effort
             known = None
         if known is None:
-            raise ValueError(
+            raise _ModelVersionError(
                 f"unknown model_version {override!r} (not registered); "
                 f"omit the parameter to use {DEFAULT_MODEL_VERSION!r}"
             )
@@ -187,7 +207,9 @@ def daily_dashboard():
     """
     horizon = int(request.args.get("horizon", 5))
     n_limit = min(int(request.args.get("limit", 20)), 100)
-    model_version = _requested_model_version()
+    model_version, version_error = _resolve_model_version()
+    if version_error is not None:
+        return version_error
 
     def _load_for(h: int) -> dict:
         score_date = _latest_score_date(h, model_version)
@@ -305,7 +327,9 @@ def score_alerts():
     jump_threshold = float(request.args.get("jump_threshold", 15))
     strong_threshold = float(request.args.get("strong_threshold", 80))
     limit = min(int(request.args.get("limit", 20)), 100)
-    model_version = _requested_model_version()
+    model_version, version_error = _resolve_model_version()
+    if version_error is not None:
+        return version_error
 
     today = _now_utc()
 
@@ -400,7 +424,9 @@ def score_quality():
     horizon = int(request.args.get("horizon", 20))
     window_days = int(request.args.get("window_days", 30))
     lookback_days = int(request.args.get("lookback_days", 90))
-    model_version = _requested_model_version()
+    model_version, version_error = _resolve_model_version()
+    if version_error is not None:
+        return version_error
 
     today = _now_utc()
     start_date = today - datetime.timedelta(days=lookback_days * 2)
@@ -541,13 +567,19 @@ def rebalance_preview():
     Request body (JSON):
         portfolio_stocks : list[str] — current holdings (stock codes)
         cash             : float     — available cash (default 100000)
+        model_version    : str       — scoring model version (default: the
+                                       production default; must be registered
+                                       if provided)
     """
     payload = request.get_json(silent=True) or {}
     portfolio_stocks = payload.get("portfolio_stocks", [])
     cash = float(payload.get("cash", 100_000.0))
-    model_version = (payload.get("model_version") or "").strip() or (
-        DEFAULT_MODEL_VERSION
-    )
+    try:
+        model_version = _validate_model_version(
+            (payload.get("model_version") or "").strip()
+        )
+    except _ModelVersionError as exc:
+        return jsonify({"success": False, "message": str(exc), "data": None}), 400
 
     if not portfolio_stocks:
         return jsonify(
@@ -1063,7 +1095,9 @@ def list_watchlists():
 @decisions_bp.route("/watchlists/<wl_id>", methods=["GET"])
 def get_watchlist(wl_id: str):
     """Get a watchlist with current scores for each stock."""
-    model_version = _requested_model_version()
+    model_version, version_error = _resolve_model_version()
+    if version_error is not None:
+        return version_error
     try:
         wl = Watchlist.objects(id=wl_id).first()
     except Exception:
