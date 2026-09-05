@@ -679,6 +679,21 @@ class StockScoringService:
 
             # --- build and persist scored predictions ---
             directions = config.get("directions") or {}
+            # A real construction-layer flip exists only when a NON-penalty
+            # component direction is negative (penalties are -1 by default, so
+            # they do not indicate a flip). Flipped models keep a signed,
+            # strictly sortable score: the lower clamp is removed so a full
+            # flip does not collapse the whole market to a 0.0 tie. Default
+            # (no flip) models MUST keep the develop floor clamp - with only
+            # risk_penalty negative, stocks whose weighted component ranks sit
+            # below their penalty rank (ST/fallen names) would otherwise
+            # silently go negative and break bit-identical default re-runs.
+            penalty_ids = set(penalty_ids)
+            has_flip = any(
+                float(directions.get(cid, 1.0)) < 0
+                for cid in component_ids
+                if cid not in penalty_ids
+            )
             for code, raw in raw_by_code.items():
                 score = 0.0
                 for c in raw["components"]:
@@ -700,16 +715,15 @@ class StockScoringService:
                         * (p["weight"] / weight_sum)
                         * direction
                     )
-                # Clamp only the upper bound. The lower bound is left open so
-                # construction-layer flipped models (all components direction
-                # -1) keep a *sortable* negative cross-sectional score: a
-                # flipped full market must not collapse to a 0.0 tie, which
-                # would make rank/percentile assignment meaningless. Default
-                # (all-positive) models are unaffected because their score is
-                # always >= 0. Semantics mirror the research evaluator
-                # (h20_excess_alpha): raw weighted sum is kept signed, and the
+                # Upper clamp always applies. Lower clamp applies unless a real
+                # component flip is present (see has_flip above). Semantics for
+                # flipped models mirror the research evaluator
+                # (h20_excess_alpha): raw weighted sum is kept signed and the
                 # cohort percentile is derived from ranking that sum.
-                score = round(min(100.0, score * 100.0), 2)
+                if has_flip:
+                    score = round(min(100.0, score * 100.0), 2)
+                else:
+                    score = round(max(0.0, min(100.0, score * 100.0)), 2)
 
                 existing = self._find_existing_prediction(code, date, current_horizon)
                 if existing is not None and not replace and not dry_run:

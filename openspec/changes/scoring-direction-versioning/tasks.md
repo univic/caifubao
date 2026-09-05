@@ -12,12 +12,16 @@
 - [x] 2.1 `score_all_stocks_ranked` multiplies each component/penalty rank contribution
   by its resolved direction (defaults identical to develop).
 - [x] 2.2 Persisted explanation contribution signs match the score sign.
-- [x] 2.3 Score clamps upper bound only (<= 100); lower bound open so a full-flip model
-  keeps signed, strictly-sortable scores (no all-zero tie). Mirrors research evaluator:
-  signed weighted sum, percentile from ranking that sum.
+- [x] 2.3 Floor clamp is polarity-aware: default (no component flip) models keep the
+  develop max(0, .) floor so penalized bottom stocks stay at 0.0 (bit-identical
+  re-runs); a real component flip (any non-penalty direction -1) opens the floor so
+  the model keeps signed, strictly-sortable scores (no all-zero tie). Mirrors research
+  evaluator: signed weighted sum, percentile from ranking that sum.
 - [x] 2.4 Ranked e2e direction flip: high-momentum stock outranks by default, inverts
   when flipped; full-flip parity test (8 components -1) keeps strict order and inverts
-  ranking exactly.
+  ranking exactly; default-with-penalty floor test; flip-with-penalty signed test.
+- [x] 2.5 Direction override validation: raw values validated in {-1,0,1} BEFORE int
+  coercion (floats/bools rejected); non-dict directions rejected at resolution time.
 
 ## 3. Flipped-version semantics + operator validation
 
