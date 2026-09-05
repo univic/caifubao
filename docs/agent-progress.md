@@ -49,7 +49,8 @@
 - 下一步：用户批准后 merge #188（squash）→ develop，勾选 tasks 3.2/4.4；
   task 3.3（一个翻转 model_version 全市场 replay + 校准对比 vs baseline）为
   独立后续任务，需 operator 执行。
-- 阻塞：PR #188 合并需用户显式批准（未 promote 任何模型版本，线上默认评分不变）。
+- 阻塞：PR #188 已 ready 且三门禁/CI/冲突检查全绿，**等待用户显式合并批准**
+  （用户 15:10 选择暂不合并；未 promote 任何模型版本，线上默认评分不变）。
 
 ---
 
