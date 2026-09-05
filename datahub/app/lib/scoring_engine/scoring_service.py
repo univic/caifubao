@@ -55,9 +55,36 @@ class StockScoringService:
         self.signal_model = signal_model
         self.prediction_model = prediction_model
         self.model_version = model_version
-        self.scoring_config = scoring_config or {}
+        # Config precedence: explicit scoring_config (experiment/backfill) >
+        # registered ScoreModelVersion config > built-in SCORING_CONFIG.
+        # A registered version makes the run reproducible from the registry
+        # alone (scoring_runner passes only model_version today).
+        if scoring_config:
+            self.scoring_config = scoring_config
+        else:
+            self.scoring_config = self._registered_config(model_version)
         self.market = FinanceMarket.objects(name="ChinaAStock").first()
         self.calendar = self.market.trade_calendar if self.market else []
+
+    @staticmethod
+    def _registered_config(model_version: str) -> dict:
+        """Look up an ACTIVE registered model version's per-horizon config.
+
+        Returns {} when the version is not registered (falls back to built-in
+        SCORING_CONFIG) or is retired. No DB access is attempted when the
+        model module is unavailable in the current runtime.
+        """
+        try:
+            from app.model.scoring import ScoreModelVersion
+
+            registered = ScoreModelVersion.objects(
+                model_version=model_version, status="ACTIVE"
+            ).first()
+        except Exception:  # noqa: BLE001 - registry is best-effort
+            return {}
+        if registered is None:
+            return {}
+        return dict(registered.config or {})
 
     def get_t_plus_n_day(
         self, start_date: datetime.datetime, n: int
