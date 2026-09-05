@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 
 from collections import Counter, defaultdict
+import math
 
 from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
 from app.lib.scoring_engine.scoring_service import normalize_date
-from app.model.scoring import StockScorePrediction
+from app.model.scoring import ScoreModelVersion, StockScorePrediction
 
 SCORE_BUCKETS = (
     (0, 20),
@@ -18,28 +19,60 @@ MISCALIBRATION_BUY_RATE_MIN = 0.03  # flag when BUY percentage < 3%
 MISCALIBRATION_AVOID_RATE_MAX = 0.50  # flag when AVOID percentage > 50%
 
 
-def resolve_bucket_basis(predictions, *, force_percentile: bool = False) -> str:
+def config_bucket_basis(config: dict | None, horizon: int) -> str | None:
+    """Resolve stable score semantics from a versioned scoring config."""
+    if config is None:
+        return None
+    horizon_config = config.get(str(horizon)) or config.get(horizon) or {}
+    if not isinstance(horizon_config, dict):
+        return "score"
+    directions = horizon_config.get("directions") or {}
+    if not isinstance(directions, dict):
+        return "score"
+    has_component_flip = any(
+        component != "risk_penalty" and value == -1
+        for component, value in directions.items()
+    )
+    return "percentile" if has_component_flip else "score"
+
+
+def _validated_percentile(item) -> float:
+    value = getattr(item, "percentile", None)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0 <= value <= 1
+    ):
+        stock_code = getattr(item, "stock_code", "unknown")
+        raise ValueError(
+            "percentile must be a finite number in [0, 1] for signed-score "
+            f"calibration; invalid for {stock_code}"
+        )
+    return float(value)
+
+
+def resolve_bucket_basis(
+    predictions,
+    *,
+    configured_basis: str | None = None,
+    force_percentile: bool = False,
+) -> str:
     """Choose a comparable 0-100 basis for distribution and bucket metrics."""
     signed_scores = any((item.score or 0) < 0 for item in predictions)
-    if not force_percentile and not signed_scores:
-        return "score"
-
-    missing = [
-        item.stock_code
-        for item in predictions
-        if getattr(item, "percentile", None) is None
-    ]
-    if missing:
-        raise ValueError(
-            "percentile is required for signed-score calibration; missing for "
-            + ", ".join(missing[:5])
-        )
-    return "percentile"
+    basis = "percentile" if force_percentile or signed_scores else configured_basis
+    basis = basis or "score"
+    if basis not in {"score", "percentile"}:
+        raise ValueError(f"unsupported bucket basis: {basis}")
+    if basis == "percentile":
+        for item in predictions:
+            _validated_percentile(item)
+    return basis
 
 
 def bucket_value(item, basis: str) -> float:
     if basis == "percentile":
-        return float(item.percentile) * 100.0
+        return _validated_percentile(item) * 100.0
     return float(item.score or 0)
 
 
@@ -50,9 +83,19 @@ class ScoreCalibrationReport:
         self,
         prediction_model=StockScorePrediction,
         model_version: str = DEFAULT_MODEL_VERSION,
+        scoring_config: dict | None = None,
     ):
         self.prediction_model = prediction_model
         self.model_version = model_version
+        self.scoring_config = scoring_config
+
+    def _resolved_scoring_config(self):
+        if self.scoring_config is not None:
+            return self.scoring_config
+        if self.prediction_model is not StockScorePrediction:
+            return None
+        registered = ScoreModelVersion.objects(model_version=self.model_version).first()
+        return registered.config if registered is not None else None
 
     def generate(self, start_date, end_date, horizon: int) -> dict:
         predictions = list(
@@ -65,7 +108,12 @@ class ScoreCalibrationReport:
             ).order_by("date", "-score")
         )
         negative_count = sum(1 for p in predictions if (p.score or 0) < 0)
-        basis = resolve_bucket_basis(predictions)
+        basis = resolve_bucket_basis(
+            predictions,
+            configured_basis=config_bucket_basis(
+                self._resolved_scoring_config(), horizon
+            ),
+        )
         return {
             "horizon": horizon,
             "model_version": self.model_version,
@@ -158,7 +206,8 @@ class ScoreCalibrationReport:
             flags.append(f"AVOID_rate_too_high:{avoid_pct:.1f}% > {threshold_pct:.1f}%")
         if median_val := percentiles.get("p50", 0):
             if median_val <= 25:
-                flags.append(f"median_score_low:{median_val}")
+                label = "percentile" if basis == "percentile" else "score"
+                flags.append(f"median_{label}_low:{median_val}")
 
         return {
             "count": n,

@@ -68,7 +68,8 @@ class ScoreExperimentService:
             if not dry_run:
                 for horizon in experiment.horizons or []:
                     report = ScoreCalibrationReport(
-                        model_version=experiment.model_version
+                        model_version=experiment.model_version,
+                        scoring_config=experiment.config or {},
                     ).generate(
                         start_date=experiment.start_date,
                         end_date=experiment.end_date,

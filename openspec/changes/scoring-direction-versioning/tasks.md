@@ -29,13 +29,10 @@
   bullishness); percentile-driven BUY/WATCH/AVOID stays well-defined for a full-flip
   model (no tie degeneracy) - locked by tests (flip-with-penalty signed order).
 - [x] 3.2 Consumer tooling for flipped (non-positive) scores: calibration_report
-  (filters score >= 0) and comparison_report (0-100 absolute buckets) must bucket by
-  rank/percentile or accept a per-model-version scale BEFORE any flipped-direction
-  experiment is validated via reports (experiment_service.run_experiment auto-runs
-  ScoreCalibrationReport) and before any flipped version is promoted; a full-flip
-  now selects percentile basis for signed cohorts, requires complete persisted
-  percentiles, and comparison_report aligns both sides to percentile before bucketing;
-  SCORE_THRESHOLD/consensus/openclaw absolute thresholds remain default-direction-only.
+  and comparison_report bucket by config-resolved percentile before any
+  flipped-direction experiment is validated or promoted; positive-only partial windows
+  retain flipped semantics, invalid percentiles fail explicitly, backend run/compare
+  paths use the same basis, and frontend labels the returned basis.
 - [ ] 3.3 Operator validation of one flipped experiment model version: full-market replay
   + calibration comparison vs baseline before any promotion.
 - [x] 3.4 Raw-score comparisons stay within same-direction model versions;

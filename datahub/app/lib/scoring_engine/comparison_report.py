@@ -7,10 +7,11 @@ from typing import Any
 from app.lib.scoring_engine.calibration_report import (
     SCORE_BUCKETS,
     bucket_value,
+    config_bucket_basis,
     resolve_bucket_basis,
 )
 from app.lib.scoring_engine.scoring_service import normalize_date
-from app.model.scoring import StockScorePrediction
+from app.model.scoring import ScoreModelVersion, StockScorePrediction
 
 
 def _avg(values):
@@ -93,6 +94,14 @@ class ExperimentComparisonReport:
     def __init__(self, prediction_model=StockScorePrediction):
         self.prediction_model = prediction_model
 
+    def _resolved_scoring_config(self, model_version, config):
+        if config is not None:
+            return config
+        if self.prediction_model is not StockScorePrediction:
+            return None
+        registered = ScoreModelVersion.objects(model_version=model_version).first()
+        return registered.config if registered is not None else None
+
     def compare(
         self,
         candidate_model_version: str,
@@ -100,6 +109,9 @@ class ExperimentComparisonReport:
         start_date,
         end_date,
         horizon: int,
+        *,
+        candidate_config: dict | None = None,
+        baseline_config: dict | None = None,
     ) -> dict[str, Any]:
         """Return a comparison dict with candidate/baseline summaries, deltas, and verdict."""
 
@@ -122,8 +134,22 @@ class ExperimentComparisonReport:
             ).order_by("date", "-score")
         )
 
-        candidate_basis = resolve_bucket_basis(candidate_preds)
-        baseline_basis = resolve_bucket_basis(baseline_preds)
+        candidate_basis = resolve_bucket_basis(
+            candidate_preds,
+            configured_basis=config_bucket_basis(
+                self._resolved_scoring_config(
+                    candidate_model_version, candidate_config
+                ),
+                horizon,
+            ),
+        )
+        baseline_basis = resolve_bucket_basis(
+            baseline_preds,
+            configured_basis=config_bucket_basis(
+                self._resolved_scoring_config(baseline_model_version, baseline_config),
+                horizon,
+            ),
+        )
         comparison_basis = (
             "percentile"
             if "percentile" in {candidate_basis, baseline_basis}
@@ -149,13 +175,17 @@ class ExperimentComparisonReport:
         }
 
         deltas = self._compute_deltas(candidate_summary, baseline_summary)
-        verdict = self._verdict(deltas)
+        comparison_status = (
+            "ok" if candidate_preds and baseline_preds else "insufficient_data"
+        )
+        verdict = self._verdict(deltas, comparison_status)
 
         return {
             "horizon": horizon,
             "start_date": normalize_date(start_date).isoformat(),
             "end_date": normalize_date(end_date).isoformat(),
             "comparison_basis": comparison_basis,
+            "comparison_status": comparison_status,
             "candidate": candidate_summary,
             "baseline": baseline_summary,
             "deltas": deltas,
@@ -206,7 +236,9 @@ class ExperimentComparisonReport:
         return result
 
     @staticmethod
-    def _verdict(deltas: dict) -> str:
+    def _verdict(deltas: dict, comparison_status: str = "ok") -> str:
+        if comparison_status != "ok":
+            return "Insufficient verified data for comparison."
         hit_delta = deltas.get("hit_rate") or 0
         ret_delta = deltas.get("avg_return_at_target") or 0
 

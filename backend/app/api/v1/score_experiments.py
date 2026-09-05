@@ -2,8 +2,7 @@
 # Score experiment APIs for research calibration and model-version comparison.
 
 import datetime
-import os
-import sys
+import math
 from collections import defaultdict
 from statistics import mean
 from typing import Any
@@ -11,14 +10,8 @@ from typing import Any
 from flask import Blueprint, jsonify, request
 from mongoengine import ValidationError
 
-from app.model.scoring import ScoreExperiment, StockScorePrediction
 from app.lib.auth_decorators import block_service_tokens
-
-# Allow backend to import datahub scoring-engine utilities
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "datahub", "app"),
-)
+from app.model.scoring import ScoreExperiment, ScoreModelVersion, StockScorePrediction
 
 score_experiments_bp = Blueprint(
     "score_experiments", __name__, url_prefix="/api/score-experiments"
@@ -27,6 +20,12 @@ score_experiments_bp.before_request(block_service_tokens)
 
 SUPPORTED_HORIZONS = {5, 20, 60}
 SCORE_BUCKETS = ((0, 20), (20, 40), (40, 60), (60, 80), (80, 100))
+DEFAULT_MODEL_VERSION = "score_v2_202605b"
+
+
+class ScoreReportInputError(ValueError):
+    """Raised when persisted predictions cannot produce a valid report."""
+
 
 # ---------------------------------------------------------------------------
 # Composite scoring constants (mirror backtest_service.py)
@@ -152,7 +151,72 @@ def _query_predictions(model_version, start_date, end_date, horizon):
     )
 
 
+def _config_bucket_basis(config, horizon):
+    if config is None:
+        return None
+    horizon_config = config.get(str(horizon)) or config.get(horizon) or {}
+    if not isinstance(horizon_config, dict):
+        return "score"
+    directions = horizon_config.get("directions") or {}
+    if not isinstance(directions, dict):
+        return "score"
+    has_component_flip = any(
+        component != "risk_penalty" and value == -1
+        for component, value in directions.items()
+    )
+    return "percentile" if has_component_flip else "score"
+
+
+def _validated_percentile(item):
+    value = getattr(item, "percentile", None)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0 <= value <= 1
+    ):
+        stock_code = getattr(item, "stock_code", "unknown")
+        raise ScoreReportInputError(
+            "percentile must be a finite number in [0, 1] for signed-score "
+            f"calibration; invalid for {stock_code}"
+        )
+    return float(value)
+
+
+def _resolve_bucket_basis(
+    predictions, *, configured_basis=None, force_percentile=False
+):
+    signed_scores = any((item.score or 0) < 0 for item in predictions)
+    basis = "percentile" if force_percentile or signed_scores else configured_basis
+    basis = basis or "score"
+    if basis == "percentile":
+        for item in predictions:
+            _validated_percentile(item)
+    return basis
+
+
+def _bucket_value(item, basis):
+    if basis == "percentile":
+        return _validated_percentile(item) * 100.0
+    return float(item.score or 0)
+
+
+def _registered_model_config(model_version):
+    registered = ScoreModelVersion.objects(model_version=model_version).first()
+    return registered.config if registered is not None else {}
+
+
 def _build_report(experiment):
+    experiment_config = getattr(experiment, "config", None) or {}
+    candidate_config = experiment_config
+    baseline_config = {}
+    if isinstance(experiment, ScoreExperiment):
+        if not candidate_config:
+            candidate_config = _registered_model_config(experiment.model_version)
+        if experiment.baseline_model_version:
+            baseline_config = _registered_model_config(
+                experiment.baseline_model_version
+            )
     result = {
         "model_version": experiment.model_version,
         "baseline_model_version": experiment.baseline_model_version,
@@ -167,7 +231,12 @@ def _build_report(experiment):
             experiment.end_date,
             horizon,
         )
-        horizon_report = _summarize_predictions(predictions)
+        candidate_basis = _resolve_bucket_basis(
+            predictions,
+            configured_basis=_config_bucket_basis(candidate_config, horizon),
+        )
+        baseline = []
+        baseline_basis = "score"
         if experiment.baseline_model_version:
             baseline = _query_predictions(
                 experiment.baseline_model_version,
@@ -175,8 +244,25 @@ def _build_report(experiment):
                 experiment.end_date,
                 horizon,
             )
-            baseline_report = _summarize_predictions(baseline)
+            baseline_basis = _resolve_bucket_basis(
+                baseline,
+                configured_basis=_config_bucket_basis(baseline_config, horizon),
+            )
+
+        comparison_basis = (
+            "percentile"
+            if "percentile" in {candidate_basis, baseline_basis}
+            else "score"
+        )
+        if comparison_basis == "percentile":
+            _resolve_bucket_basis(predictions, force_percentile=True)
+            _resolve_bucket_basis(baseline, force_percentile=True)
+
+        horizon_report = _summarize_predictions(predictions, comparison_basis)
+        if experiment.baseline_model_version:
+            baseline_report = _summarize_predictions(baseline, comparison_basis)
             horizon_report["baseline"] = baseline_report
+            horizon_report["comparison_basis"] = comparison_basis
             horizon_report["comparison"] = _compare_summary(
                 horizon_report["overall"],
                 baseline_report["overall"],
@@ -185,17 +271,18 @@ def _build_report(experiment):
     return result
 
 
-def _summarize_predictions(predictions):
+def _summarize_predictions(predictions, basis="score"):
     return {
+        "bucket_basis": basis,
         "overall": _metric_summary(predictions),
-        "score_buckets": _bucket_summary(predictions),
-        "top_n": _top_n_summary(predictions),
+        "score_buckets": _bucket_summary(predictions, basis),
+        "top_n": _top_n_summary(predictions, basis),
         "component_summary": _component_summary(predictions),
         "false_positives": _sample(
             [
                 item
                 for item in predictions
-                if (item.score or 0) >= 70
+                if _bucket_value(item, basis) >= 70
                 and (item.verification or {}).get("return_at_target", 0) < 0
             ]
         ),
@@ -203,27 +290,27 @@ def _summarize_predictions(predictions):
             [
                 item
                 for item in predictions
-                if (item.score or 0) < 40
+                if _bucket_value(item, basis) < 40
                 and (item.verification or {}).get("max_return", 0) >= 0.08
             ]
         ),
     }
 
 
-def _bucket_summary(predictions):
+def _bucket_summary(predictions, basis="score"):
     result = []
     for low, high in SCORE_BUCKETS:
         bucket_items = [
             item
             for item in predictions
-            if low <= (item.score or 0) < high
-            or (high == 100 and (item.score or 0) == 100)
+            if low <= _bucket_value(item, basis) < high
+            or (high == 100 and _bucket_value(item, basis) == 100)
         ]
         result.append({"bucket": f"{low}-{high}", **_metric_summary(bucket_items)})
     return result
 
 
-def _top_n_summary(predictions):
+def _top_n_summary(predictions, basis="score"):
     by_date = defaultdict(list)
     for prediction in predictions:
         by_date[prediction.date].append(prediction)
@@ -233,7 +320,11 @@ def _top_n_summary(predictions):
         selected = []
         for items in by_date.values():
             selected.extend(
-                sorted(items, key=lambda item: item.score or 0, reverse=True)[:top_n]
+                sorted(
+                    items,
+                    key=lambda item: _bucket_value(item, basis),
+                    reverse=True,
+                )[:top_n]
             )
         result[f"top_{top_n}"] = _metric_summary(selected)
     return result
@@ -300,6 +391,124 @@ def _compare_summary(current, baseline):
             else None
         )
     return comparison
+
+
+def _build_comparison_report(
+    candidate_model_version,
+    baseline_model_version,
+    start_date,
+    end_date,
+    horizon,
+    *,
+    candidate_config=None,
+    baseline_config=None,
+):
+    candidate_predictions = _query_predictions(
+        candidate_model_version, start_date, end_date, horizon
+    )
+    baseline_predictions = _query_predictions(
+        baseline_model_version, start_date, end_date, horizon
+    )
+    if not candidate_predictions or not baseline_predictions:
+        raise ScoreReportInputError(
+            "comparison requires verified predictions for both model versions"
+        )
+
+    candidate_basis = _resolve_bucket_basis(
+        candidate_predictions,
+        configured_basis=_config_bucket_basis(candidate_config, horizon),
+    )
+    baseline_basis = _resolve_bucket_basis(
+        baseline_predictions,
+        configured_basis=_config_bucket_basis(baseline_config, horizon),
+    )
+    comparison_basis = (
+        "percentile" if "percentile" in {candidate_basis, baseline_basis} else "score"
+    )
+    if comparison_basis == "percentile":
+        _resolve_bucket_basis(candidate_predictions, force_percentile=True)
+        _resolve_bucket_basis(baseline_predictions, force_percentile=True)
+
+    candidate = {
+        "model_version": candidate_model_version,
+        **_summarize_predictions(candidate_predictions, comparison_basis),
+    }
+    baseline = {
+        "model_version": baseline_model_version,
+        **_summarize_predictions(baseline_predictions, comparison_basis),
+    }
+    deltas = _comparison_deltas(candidate, baseline)
+    return {
+        "horizon": horizon,
+        "start_date": _format_datetime(start_date),
+        "end_date": _format_datetime(end_date),
+        "comparison_basis": comparison_basis,
+        "comparison_status": "ok",
+        "candidate": candidate,
+        "baseline": baseline,
+        "deltas": deltas,
+        "verdict": _comparison_verdict(deltas),
+    }
+
+
+def _comparison_deltas(candidate, baseline):
+    current = candidate["overall"]
+    previous = baseline["overall"]
+
+    def delta(key):
+        current_value = current.get(key)
+        baseline_value = previous.get(key)
+        if current_value is None or baseline_value is None:
+            return None
+        return round(current_value - baseline_value, 6)
+
+    result = {
+        "count": delta("count"),
+        "avg_score": (
+            None if candidate["bucket_basis"] == "percentile" else delta("avg_score")
+        ),
+        "avg_return_at_target": delta("avg_return_at_target"),
+        "avg_max_return": delta("avg_max_return"),
+        "avg_min_return": delta("avg_min_return"),
+        "avg_max_drawdown": delta("avg_max_drawdown"),
+        "hit_rate": delta("hit_rate"),
+        "hit_rate_intra": delta("hit_rate_intra"),
+        "stop_loss_hit_rate": delta("stop_loss_hit_rate"),
+    }
+    top_deltas = {}
+    for key, current_top in candidate.get("top_n", {}).items():
+        baseline_top = baseline.get("top_n", {}).get(key, {})
+        top_deltas[key] = {}
+        for metric in ("hit_rate", "avg_return_at_target", "avg_max_return"):
+            current_value = current_top.get(metric)
+            baseline_value = baseline_top.get(metric)
+            top_deltas[key][f"{metric}_delta"] = (
+                round(current_value - baseline_value, 6)
+                if current_value is not None and baseline_value is not None
+                else None
+            )
+    result["top_n"] = top_deltas
+    return result
+
+
+def _comparison_verdict(deltas):
+    hit_delta = deltas.get("hit_rate") or 0
+    return_delta = deltas.get("avg_return_at_target") or 0
+    if hit_delta > 0.02 and return_delta > 0.002:
+        return "Candidate clearly wins on both hit rate and return."
+    if hit_delta > 0.02 and return_delta >= -0.002:
+        return "Candidate wins on hit rate, return is comparable."
+    if hit_delta >= -0.02 and return_delta > 0.005:
+        return "Candidate wins on return, hit rate is comparable."
+    if hit_delta < -0.05 or return_delta < -0.01:
+        return "Baseline wins."
+    if abs(hit_delta) <= 0.01 and abs(return_delta) <= 0.003:
+        return "The two versions are not significantly different."
+    if hit_delta > 0:
+        return "Candidate shows modest improvement in hit rate."
+    if return_delta > 0:
+        return "Candidate shows modest improvement in return."
+    return "Candidate shows mixed results — review in detail."
 
 
 def _sample(predictions, limit=10):
@@ -379,7 +588,16 @@ def create_experiment():
     experiment.save()
 
     if payload.get("run_now", True):
-        _run_experiment(experiment)
+        try:
+            _run_experiment(experiment)
+        except ScoreReportInputError as exc:
+            return jsonify(
+                {
+                    "success": False,
+                    "message": str(exc),
+                    "data": _serialize_experiment(experiment),
+                }
+            ), 422
 
     return jsonify(_serialize_experiment(experiment)), 201
 
@@ -398,7 +616,16 @@ def run_experiment(experiment_id):
     if error_response:
         return error_response
 
-    _run_experiment(experiment)
+    try:
+        _run_experiment(experiment)
+    except ScoreReportInputError as exc:
+        return jsonify(
+            {
+                "success": False,
+                "message": str(exc),
+                "data": _serialize_experiment(experiment),
+            }
+        ), 422
     return jsonify(_serialize_experiment(experiment)), 200
 
 
@@ -442,33 +669,40 @@ def compare_experiments():
         ), 400
 
     # Resolve id_a: try as experiment ID first, fall back to model_version
-    model_version_a = _resolve_to_model_version(id_a)
-    if model_version_a is None:
+    target_a = _resolve_comparison_target(id_a)
+    if target_a is None:
         return jsonify(
             {"success": False, "message": f"Cannot resolve id_a: {id_a}"}
         ), 404
 
     # Resolve id_b
-    model_version_b = _resolve_to_model_version(id_b)
-    if model_version_b is None:
+    target_b = _resolve_comparison_target(id_b)
+    if target_b is None:
         return jsonify(
             {"success": False, "message": f"Cannot resolve id_b: {id_b}"}
         ), 404
 
     try:
-        from app.lib.scoring_engine.comparison_report import ExperimentComparisonReport
-
-        report = ExperimentComparisonReport()
-        result = report.compare(
-            candidate_model_version=model_version_a,
-            baseline_model_version=model_version_b,
-            start_date=start_date,
-            end_date=end_date,
-            horizon=horizon,
+        result = _build_comparison_report(
+            target_a["model_version"],
+            target_b["model_version"],
+            start_date,
+            end_date,
+            horizon,
+            candidate_config=target_a["config"],
+            baseline_config=target_b["config"],
         )
         return jsonify({"success": True, "data": result}), 200
-    except Exception as exc:
-        return jsonify({"success": False, "message": f"Comparison failed: {exc}"}), 500
+    except ScoreReportInputError as exc:
+        return jsonify({"success": False, "message": str(exc), "data": None}), 422
+    except Exception:
+        return jsonify(
+            {
+                "success": False,
+                "message": "Comparison failed due to an internal error",
+                "data": None,
+            }
+        ), 500
 
 
 def _resolve_to_model_version(identifier: str) -> str | None:
@@ -497,6 +731,28 @@ def _resolve_to_model_version(identifier: str) -> str | None:
 
     # Fallback: treat the identifier as a model_version directly.
     return identifier or None
+
+
+def _resolve_comparison_target(identifier):
+    """Resolve an experiment/model version together with stable score semantics."""
+    try:
+        experiment = ScoreExperiment.objects(id=identifier).first()
+    except ValidationError:
+        experiment = None
+    if experiment is not None:
+        return {
+            "model_version": experiment.model_version or identifier,
+            "config": experiment.config or {},
+        }
+
+    model_version = _resolve_to_model_version(identifier)
+    if model_version is None:
+        return None
+    registered = ScoreModelVersion.objects(model_version=model_version).first()
+    return {
+        "model_version": model_version,
+        "config": registered.config if registered is not None else {},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +915,10 @@ def _run_experiment(experiment):
     except Exception as exc:  # pragma: no cover - defensive for live Mongo/report data
         experiment.status = "FAILED"
         experiment.error_msg = str(exc)
+        experiment.save()
+        if isinstance(exc, ScoreReportInputError):
+            raise
+        return experiment
     experiment.save()
     return experiment
 
@@ -676,11 +936,11 @@ def multi_horizon_consensus():
         date       : str (required)  YYYY-MM-DD
         model_version : str (optional) defaults from scoring config
     """
-    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION as _DEF_MV
-
     stock_code = (request.args.get("stock_code") or "").strip()
     date = _parse_datetime(request.args.get("date"))
-    model_version = (request.args.get("model_version") or "").strip() or _DEF_MV
+    model_version = (
+        request.args.get("model_version") or ""
+    ).strip() or DEFAULT_MODEL_VERSION
 
     if not stock_code or not date:
         return jsonify(

@@ -68,17 +68,19 @@ and calibration comparison against the baseline default model.
 
 - GIVEN two model versions with the same component directions
 - WHEN a comparison report is generated
-- THEN both sides use the same resolved direction set
+- THEN both sides resolve to the `score` basis
 - AND raw score values may be compared directly
 
 ### Requirement: Signed-score calibration uses percentile semantics
 
 Calibration and comparison reports MUST preserve the legacy 0-100 score basis
-for cohorts without negative scores. When either cohort contains a negative
-score, distribution and bucket metrics MUST instead use the persisted
-cross-sectional percentile normalized to 0-100, and the report MUST label that
-basis. A signed-score report MUST fail rather than silently omit observations
-when a required percentile is missing.
+for default-direction model configurations. A model configuration with any
+non-penalty component direction set to -1 MUST use the persisted cross-sectional
+percentile normalized to 0-100, including windows that happen to contain only
+positive scores. Observed negative scores remain a defensive signal to select
+percentile when configuration metadata is unavailable. Reports MUST label the
+basis. A percentile-basis report MUST fail rather than silently omit observations
+when a required percentile is missing, non-finite, boolean, or outside [0, 1].
 
 #### Scenario: Signed cohort retains its negative tail
 
@@ -87,6 +89,13 @@ when a required percentile is missing.
 - THEN `bucket_basis` is `percentile`
 - AND every verified observation is included in the distribution and buckets
 - AND false-positive and false-negative samples use percentile thresholds
+
+#### Scenario: Positive-only partial window keeps configured semantics
+
+- GIVEN a flipped model configuration and a requested window whose scores are all positive
+- WHEN a calibration report is generated
+- THEN `bucket_basis` is still `percentile`
+- AND basis selection does not depend on the observed score range
 
 #### Scenario: Cross-direction comparison has one common basis
 
@@ -102,3 +111,28 @@ when a required percentile is missing.
 - WHEN calibration or comparison is requested
 - THEN the report fails with an explicit percentile requirement
 - AND it does not return a partial or score-filtered result
+
+### Requirement: Experiment APIs expose report basis and stable validation failures
+
+The score-experiment run report MUST expose `bucket_basis` for each horizon.
+The `/api/score-experiments/compare` response MUST expose `comparison_basis` and
+`comparison_status`. A synchronous request that requires invalid percentile data
+or lacks verified predictions on either side MUST return HTTP 422 with a stable
+`success`, `message`, and `data` error envelope. It MUST NOT expose internal
+tracebacks. The frontend MUST label score and percentile buckets according to
+this metadata.
+
+#### Scenario: Cross-basis API comparison
+
+- GIVEN a flipped candidate and default-direction baseline with valid verified data
+- WHEN `/api/score-experiments/compare` succeeds
+- THEN both summaries declare `bucket_basis: percentile`
+- AND the response declares `comparison_basis: percentile`
+- AND the frontend labels the buckets as percentile-based
+
+#### Scenario: Comparison cannot be evaluated
+
+- GIVEN either side has no verified predictions or has invalid required percentiles
+- WHEN `/api/score-experiments/compare` is requested
+- THEN the response status is 422
+- AND the response contains a sanitized domain message and `data: null`
