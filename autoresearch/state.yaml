@@ -1,5 +1,5 @@
-current_stage: bootstrap
-stage_status: completed
+current_stage: candidate_research_manual
+stage_status: in_progress
 profile_status: bootstrapped
 bootstrap_status: completed
 baseline_status: completed
@@ -13,3 +13,24 @@ blocker_reason: null
 next_allowed_skills:
   - autoresearch-loop
 split_note: "validation extended 2025-01-01..2025-12-31 (243 eligible days); test 2026-01-01..2026-07-31 locked"
+# Research-status reconciliation (2026-09-05, codex phase-1 #5):
+# Official runner (profile train 2024 / validation 2025, single-year window)
+# has recorded: current_h20 / full_reversal -> discard (negative IR + decay);
+# flip_wide -> validation IR +0.385 (POSITIVE) but discarded by decay 0.605
+# (train 2024 was stronger at +0.975); exclude_d8_d9 -> keep (score negative).
+# best_ref stays null: no official-profile candidate clears decay with a
+# positive score.
+# Manual research outside the official runner (documented in
+# docs/autoresearch/runs/h20-excess-alpha/):
+# - Multi-regime component audit 2019-2026 (#174): all 8 components
+#   anti-predictive in every regime; flip_wide construction-layer reversal is
+#   the only candidate positive across an EXTENDED walk-forward (train
+#   2019-2023 -> val 2024/2025 -> test 2026H1): +0.485/+0.975/+0.385/+0.426,
+#   decay 0.00 (flip-walkforward-2019-2026.md). Official single-year window
+#   also yields +0.385 validation IR but is decay-gated - consistent.
+# - 2025 anomaly attributed to extreme small-cap rotation, not signal failure
+#   (attrib-2025-anomaly.md).
+# - Manual-experiment ledger: docs/autoresearch/runs/h20-excess-alpha/manual-experiments-ledger.md
+# Implication: productionizing flip_wide requires the extended walk-forward
+# protocol (>=120 T+1 days, style-aware) + scoring direction versioning
+# (#183) + model registry (#185) - all research-side, not promoted.
