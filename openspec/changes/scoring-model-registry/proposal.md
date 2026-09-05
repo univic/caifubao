@@ -9,9 +9,11 @@
 ## What Changes
 
 - **ScoreModelVersion 注册表文档**（collection score_model_versions）：model_version
-  唯一、per-horizon 配置覆盖（weights / thresholds / directions）、canonical
-  config_hash、scoring_mode、ACTIVE/RETIRED 生命周期。版本不可变：改动 = 注册新版本名 +
-  retire 旧版，使已存预测可追溯到唯一配置。
+  唯一、per-horizon 配置覆盖 override（weights / thresholds / directions，解析于内置
+  SCORING_CONFIG 之上）、canonical config_hash（钉住 override）、scoring_mode、
+  ACTIVE/RETIRED 生命周期。版本不可变：改动 = 注册新版本名 + retire 旧版；预测记录
+  model_version 标签供审计（override 可复现；内置 base 变更仍可能影响解析结果，已知
+  边界——predictions 记录 config_hash 属后续 #4 候选）。
 - **ScoringService 配置解析优先级**：显式 scoring_config（experiment/backfill）> ACTIVE
   注册配置（查询层按 model_version + status='ACTIVE' 过滤）> 内置 SCORING_CONFIG。
   未注册版本（含 DEFAULT_MODEL_VERSION）行为与现状完全一致（向后兼容）。

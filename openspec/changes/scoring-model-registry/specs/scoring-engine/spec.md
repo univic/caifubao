@@ -4,10 +4,12 @@
 
 ### Requirement: Registered model versions bind configuration
 
-A registered model version MUST fully determine its per-horizon scoring
-configuration (weights, thresholds, component directions). Scoring runs that
-name a registered ACTIVE version MUST resolve their config from the registry,
-so stored predictions are traceable to one exact configuration.
+A registered model version MUST bind a per-horizon scoring override
+(weights, thresholds, component directions) that is resolved over the
+built-in SCORING_CONFIG base. Scoring runs that name a registered ACTIVE
+version MUST apply that registered override. The registry pins the override
+with a canonical config_hash, so a registered version's override is
+reproducible; predictions store the model_version label for audit.
 
 #### Scenario: Registered version config is loaded automatically
 

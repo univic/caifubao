@@ -68,17 +68,22 @@ class StockScoringService:
 
     @staticmethod
     def _registered_config(model_version: str) -> dict:
-        """Look up an ACTIVE registered model version's per-horizon config.
+        """Look up an ACTIVE registered model version's per-horizon override.
 
         Returns {} when the version is not registered (falls back to built-in
         SCORING_CONFIG) or is retired. Registry lookup is best-effort: a DB
-        error must never break scoring.
+        error must never break scoring, but it is logged for observability.
         """
         try:
             registered = ScoreModelVersion.objects(
                 model_version=model_version, status="ACTIVE"
             ).first()
         except Exception:  # noqa: BLE001 - registry is best-effort
+            logger.warning(
+                "model registry lookup failed for %r; falling back to built-in config",
+                model_version,
+                exc_info=True,
+            )
             return {}
         if registered is None:
             return {}

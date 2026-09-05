@@ -50,8 +50,39 @@ def _validate_config(config: dict) -> None:
         if not isinstance(override, dict):
             raise ValueError(f"horizon {raw_horizon} override must be a dict")
         horizon = int(raw_horizon)
-        # Resolve to force directions/weights validation errors to surface
-        # at registration time rather than at scoring time.
+        known_weights = set(SCORING_CONFIG[horizon]["weights"])
+        # Explicit weights override must be a dict with keys that are REAL
+        # scored components. Without this, a typo'd weight key (e.g.
+        # "momemtum") would be absorbed into the resolved weights by
+        # get_effective_horizon_config and pinned immutably - the override
+        # would silently do nothing at scoring time. Directions keys are
+        # validated against the same known set by the resolution path.
+        weights_override = override.get("weights")
+        if weights_override is not None:
+            if not isinstance(weights_override, dict):
+                raise ValueError(
+                    f"horizon {raw_horizon} weights override must be a dict"
+                )
+            unknown_weights = set(map(str, weights_override)) - known_weights
+            if unknown_weights:
+                raise ValueError(
+                    "weights override keys must be real scored components; "
+                    f"got {sorted(unknown_weights)}"
+                )
+        directions_override = override.get("directions")
+        if directions_override is not None:
+            if not isinstance(directions_override, dict):
+                raise ValueError(
+                    f"horizon {raw_horizon} directions override must be a dict"
+                )
+            unknown_directions = set(map(str, directions_override)) - known_weights
+            if unknown_directions:
+                raise ValueError(
+                    "direction override keys must be real scored components; "
+                    f"got {sorted(unknown_directions)}"
+                )
+        # Resolve to force remaining directions value errors to surface at
+        # registration time rather than at scoring time.
         get_effective_horizon_config(horizon, {horizon: override})
 
 
