@@ -25,13 +25,18 @@
 
 ## 3. Flipped-version semantics + operator validation
 
-- [ ] 3.1 Define flipped-version score/percentile meaning (higher score <-> lower raw
-  bullishness) and confirm percentile-driven BUY/WATCH/AVOID stays well-defined for a
-  full-flip model (no tie degeneracy).
-- [ ] 3.2 Operator validation of one flipped experiment model version: full-market replay
+- [x] 3.1 Flipped-version score/percentile meaning defined (higher score <-> lower raw
+  bullishness); percentile-driven BUY/WATCH/AVOID stays well-defined for a full-flip
+  model (no tie degeneracy) - locked by tests (flip-with-penalty signed order).
+- [ ] 3.2 Consumer tooling for flipped (non-positive) scores: calibration_report
+  (filters score >= 0) and comparison_report (0-100 absolute buckets) must bucket by
+  rank/percentile or accept a per-model-version scale before any flipped version is
+  promoted; SCORE_THRESHOLD/consensus/openclaw absolute thresholds documented as
+  default-direction-only.
+- [ ] 3.3 Operator validation of one flipped experiment model version: full-market replay
   + calibration comparison vs baseline before any promotion.
-- [ ] 3.3 Document that comparisons (replay/calibration/backtest) must stay within
-  same-direction model versions.
+- [x] 3.4 Comparisons (replay/calibration/backtest) must stay within same-direction
+  model versions - stated in spec.md and proposal non-goals.
 
 ## 4. Gates
 
