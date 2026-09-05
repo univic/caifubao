@@ -175,3 +175,75 @@ def test_scoring_dependency_wait_is_bounded(monkeypatch):
         is False
     )
     assert sleeps == []
+
+
+def test_main_compare_parser_wires_arguments(monkeypatch):
+    """compare subcommand must require both versions + window + horizon and
+    pass them straight to run_compare (task 3.3 operator tool)."""
+    import app.jobs.scoring_runner as scoring_runner
+
+    captured = {}
+
+    def fake_run_compare(args):
+        captured.update(
+            candidate=args.candidate_model_version,
+            baseline=args.baseline_model_version,
+            from_date=args.from_date,
+            to_date=args.to_date,
+            horizon=args.horizon,
+            fmt=args.format,
+        )
+
+    monkeypatch.setattr(scoring_runner, "run_compare", fake_run_compare)
+    scoring_runner.main(
+        [
+            "compare",
+            "--candidate-model-version",
+            "flip_wide_v1",
+            "--baseline-model-version",
+            "score_v2_202605b",
+            "--from",
+            "2026-01-01",
+            "--to",
+            "2026-06-30",
+            "--horizon",
+            "20",
+            "--format",
+            "json",
+        ]
+    )
+    assert captured == {
+        "candidate": "flip_wide_v1",
+        "baseline": "score_v2_202605b",
+        "from_date": "2026-01-01",
+        "to_date": "2026-06-30",
+        "horizon": 20,
+        "fmt": "json",
+    }
+
+
+def test_main_compare_requires_both_versions(monkeypatch):
+    import pytest
+
+    import app.jobs.scoring_runner as scoring_runner
+
+    monkeypatch.setattr(
+        scoring_runner,
+        "run_compare",
+        lambda args: (_ for _ in ()).throw(AssertionError("must not run")),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        scoring_runner.main(
+            [
+                "compare",
+                "--candidate-model-version",
+                "flip_wide_v1",
+                "--from",
+                "2026-01-01",
+                "--to",
+                "2026-06-30",
+                "--horizon",
+                "20",
+            ]
+        )
+    assert excinfo.value.code == 2  # argparse usage error

@@ -140,6 +140,30 @@ def run_report(args):
         print(f"Calibration report: {result}")
 
 
+def run_compare(args):
+    """Compare two model versions' VERIFIED predictions over a shared window.
+
+    Operator tool for flipped-model validation (openspec task 3.3): replay the
+    flipped version, then compare its calibration against the baseline default
+    before any promotion. Config-less versions resolve their registered config
+    from the ScoreModelVersion registry (same basis rules as the reports).
+    """
+    _init_db_connection()
+    from app.lib.scoring_engine.comparison_report import ExperimentComparisonReport
+
+    report = ExperimentComparisonReport().compare(
+        candidate_model_version=args.candidate_model_version,
+        baseline_model_version=args.baseline_model_version,
+        start_date=parse_date(args.from_date),
+        end_date=parse_date(args.to_date),
+        horizon=args.horizon,
+    )
+    if args.format == "json":
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    else:
+        print(f"Comparison: {report}")
+
+
 def run_experiment(args):
     _init_db_connection()
     from app.lib.scoring_engine.experiment_service import ScoreExperimentService
@@ -338,6 +362,17 @@ def main(argv: list[str] | None = None) -> None:
     p_report.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
     p_report.add_argument("--format", choices=["json", "text"], default="json")
 
+    # compare command - flipped-model validation (openspec task 3.3)
+    p_compare = subparsers.add_parser(
+        "compare", help="Compare two model versions over a shared window"
+    )
+    p_compare.add_argument("--from", dest="from_date", required=True)
+    p_compare.add_argument("--to", dest="to_date", required=True)
+    p_compare.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
+    p_compare.add_argument("--candidate-model-version", required=True)
+    p_compare.add_argument("--baseline-model-version", required=True)
+    p_compare.add_argument("--format", choices=["json", "text"], default="json")
+
     # experiment command
     p_experiment = subparsers.add_parser(
         "experiment", help="Run a stored score experiment"
@@ -436,6 +471,8 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "grid-search":
         _init_db_connection()
         run_grid_search(args)
+    elif args.command == "compare":
+        run_compare(args)
     else:
         parser.print_help()
 
