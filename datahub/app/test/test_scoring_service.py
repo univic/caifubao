@@ -942,6 +942,53 @@ def test_calibration_report_uses_config_for_positive_only_flipped_window():
     assert report["score_buckets"][-1]["count"] == 1
 
 
+def test_calibration_report_empty_config_falls_back_to_registry(monkeypatch):
+    """An experiment row with empty config must resolve the registered flipped
+    config (mirrors StockScoringService + backend), so a positive-only window of
+    a registered flipped version is not silently mis-bucketed by raw score."""
+    import app.lib.scoring_engine.calibration_report as calibration_module
+
+    class RegisteredVersion:
+        config = {"20": {"directions": {"momentum": -1}}}
+
+    class FakeRegistryModel:
+        @classmethod
+        def objects(cls, **query):
+            return FakeQuerySet([RegisteredVersion()])
+
+    # Reports only consult the registry when prediction_model is the real
+    # StockScorePrediction; pin module-level identity to the fake for this test.
+    monkeypatch.setattr(calibration_module, "StockScorePrediction", FakePrediction)
+    monkeypatch.setattr(calibration_module, "ScoreModelVersion", FakeRegistryModel)
+
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            stock_name="浦发银行",
+            date=date,
+            horizon=20,
+            model_version="registered_flip_v1",
+            status="VERIFIED",
+            score=10.0,
+            percentile=0.9,
+            rank=1,
+            recommendation="BUY",
+            verification={},
+            explanation={"components": []},
+        )
+    ]
+
+    report = ScoreCalibrationReport(
+        prediction_model=FakePrediction,
+        model_version="registered_flip_v1",
+        scoring_config={},  # empty -> must fall back to the registered config
+    ).generate(date, date, 20)
+
+    assert report["bucket_basis"] == "percentile"
+    assert report["score_buckets"][-1]["count"] == 1
+
+
 def test_comparison_report_aligns_signed_and_default_models_by_percentile():
     date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
     common = {
@@ -1059,6 +1106,63 @@ def test_comparison_report_marks_empty_cohort_insufficient():
 
     assert report["comparison_status"] == "insufficient_data"
     assert report["verdict"] == "Insufficient verified data for comparison."
+
+
+def test_comparison_report_empty_config_falls_back_to_registry(monkeypatch):
+    """Candidate with empty config must resolve the registered flipped config so
+    a positive-only flipped window is still compared on the percentile basis."""
+    import app.lib.scoring_engine.comparison_report as comparison_module
+
+    class RegisteredVersion:
+        config = {"20": {"directions": {"momentum": -1}}}
+
+    class FakeRegistryModel:
+        @classmethod
+        def objects(cls, **query):
+            return FakeQuerySet([RegisteredVersion()])
+
+    monkeypatch.setattr(comparison_module, "StockScorePrediction", FakePrediction)
+    monkeypatch.setattr(comparison_module, "ScoreModelVersion", FakeRegistryModel)
+
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    common = {
+        "stock_code": "sh600000",
+        "stock_name": "测试股票",
+        "date": date,
+        "horizon": 20,
+        "status": "VERIFIED",
+        "rank": 1,
+        "recommendation": "BUY",
+        "verification": {"return_at_target": 0.01, "max_return": 0.02},
+    }
+    FakePrediction.records = [
+        FakePrediction(
+            model_version="registered_flip_v1",
+            score=10.0,
+            percentile=0.9,
+            **common,
+        ),
+        FakePrediction(
+            model_version="baseline_v1",
+            score=80.0,
+            percentile=0.9,
+            **common,
+        ),
+    ]
+
+    report = ExperimentComparisonReport(prediction_model=FakePrediction).compare(
+        "registered_flip_v1",
+        "baseline_v1",
+        date,
+        date,
+        20,
+        candidate_config={},  # empty -> falls back to the registered config
+        baseline_config={},
+    )
+
+    assert report["comparison_basis"] == "percentile"
+    assert report["candidate"]["bucket_basis"] == "percentile"
+    assert report["deltas"]["avg_score"] is None
 
 
 # ---------------------------------------------------------------------------

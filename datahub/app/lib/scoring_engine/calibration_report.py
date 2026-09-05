@@ -90,7 +90,12 @@ class ScoreCalibrationReport:
         self.scoring_config = scoring_config
 
     def _resolved_scoring_config(self):
-        if self.scoring_config is not None:
+        # An empty/absent config means "no explicit override": fall through to
+        # the registered model-version config (mirrors StockScoringService and
+        # the backend _build_report fallback). Treating an empty dict as
+        # authoritative would silently re-introduce raw-score bucketing for a
+        # registered flipped version on the operator CLI path.
+        if self.scoring_config:
             return self.scoring_config
         if self.prediction_model is not StockScorePrediction:
             return None

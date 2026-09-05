@@ -95,7 +95,9 @@ class ExperimentComparisonReport:
         self.prediction_model = prediction_model
 
     def _resolved_scoring_config(self, model_version, config):
-        if config is not None:
+        # Empty/absent config means "no explicit override" -> registered model
+        # version config (mirrors StockScoringService + backend _build_report).
+        if config:
             return config
         if self.prediction_model is not StockScorePrediction:
             return None

@@ -62,7 +62,9 @@ default direction (higher score means lower raw bullishness). Raw-score
 comparisons MUST restrict to same-direction model versions. A promotion
 comparison between flipped and default directions MUST align scale-dependent
 metrics by percentile. Promotion of a flipped model requires full-market replay
-and calibration comparison against the baseline default model.
+and calibration comparison against the baseline default model. Absolute-score
+threshold consumers (SCORE_THRESHOLD backtests, consensus/openclaw thresholds)
+remain default-direction-only and are undefined for flipped percentile scores.
 
 #### Scenario: Raw-score comparison stays within same direction
 

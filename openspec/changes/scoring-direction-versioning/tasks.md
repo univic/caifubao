@@ -32,7 +32,10 @@
   and comparison_report bucket by config-resolved percentile before any
   flipped-direction experiment is validated or promoted; positive-only partial windows
   retain flipped semantics, invalid percentiles fail explicitly, backend run/compare
-  paths use the same basis, and frontend labels the returned basis.
+  paths use the same basis, and frontend labels the returned basis. Absolute-score
+  threshold consumers (SCORE_THRESHOLD backtest entry/exit, consensus/openclaw
+  thresholds) remain default-direction-only (raw-score semantics); they are out of
+  scope for flipped percentile scores.
 - [ ] 3.3 Operator validation of one flipped experiment model version: full-market replay
   + calibration comparison vs baseline before any promotion.
 - [x] 3.4 Raw-score comparisons stay within same-direction model versions;
