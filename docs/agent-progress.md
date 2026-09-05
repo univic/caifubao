@@ -25,6 +25,38 @@
 
 ## 进度记录
 
+### 2026-09-05 13:30 CST — codex 第一阶段完成：方向缺陷修复 + 模型注册表 + 版本约束 + 记录同步
+
+- 状态：已完成（#182-#187 合并/就绪；codex 三阶段第一阶段 #1-#5 全闭环）
+- 已完成：
+  - **codex 5 点分析评估**：全部核实——#1 方向版本化 full-flip 塌缩缺陷（qa+spec-guardian
+    独立发现：全分量 -1 时分数钳到 0 平局）已修（polarity-aware floor：默认模型保留
+    max(0,·) 位一致、真实翻转才开放下界保序）；#2 模型未绑配置、#3 收益非资本约束、
+    #4 决策接口混版本、#5 记录未同步均成立。
+  - **#183 方向版本化**（merged）：config 支持 per-horizon directions + ranked 应用 +
+    openspec change；P1（极性钳制）/P2（消费端前置）/P3 全处理，spec-guardian GATE_OK、
+    qa APPROVE。
+  - **#185 模型注册表**（merged）：ScoreModelVersion（config_hash/ACTIVE-RETIRED 不可变）
+    + ScoringService 配置优先级（显式>注册>内置）+ 注册 CLI + openspec；CI 覆盖 datahub
+    model 的坑（backend 为权威源）已修。
+  - **#186 决策版本约束**（merged）：decisions.py 5 个生产视图绑定单一 model_version（默认
+    DEFAULT、非法 override JSON 400）；backend 不能依赖 datahub lib 的工程约束已解。
+  - **#184 2025 归因**（merged）：极端小盘风格轮动（2025H1 全样本最强小盘溢价），非信号
+    失效/数据伪影——反转信号活着，压缩的是尾部价差与组合 size 分层。
+  - **#182 回测曲线**（merged）：BacktestResultView 加 ECharts 收益率曲线（策略 vs 基准 +
+    买卖点）+ benchmark_daily_values。
+  - **#187 记录同步**（本 PR）：state.yaml 阶段更新 + ledger 补录 flip_wide 官方 run +
+    人工实验总账 manual-experiments-ledger.md。关键发现：flip_wide 官方窗口 validation IR
+    **+0.385（正）**，仅因 decay 0.605（train 2024 +0.975 更强）超门 discard——非 IR 负；
+    与扩展 walk-forward（decay 0.00）两协议一致支持 flip_wide。
+- 验证：#183/#185/#186 CI 全绿（qa+spec-guardian 双审通过）；#184/#182/#187 全绿；
+  datahub 460 + backend tests 过；openspec 10 changes 全过。
+- 下一步：codex 第二阶段（paper-only strategy_runner、真实资本 NAV、flip_wide 宽基过滤器、
+  废弃旧统计接口）；第三阶段前置（shadow 双版本、120 天 paper）待第二/三阶段启动。
+- 阻塞：无。
+
+---
+
 ### 2026-09-05 00:40 CST — H20 研究链闭环：多 regime 审计 + 基本面因子 + flip_wide 候选与可执行化
 
 - 状态：已完成（#180 单股执行示例 + 收益率曲线；候选生产化待评分构造层版本化）
