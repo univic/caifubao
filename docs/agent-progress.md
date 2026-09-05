@@ -27,17 +27,20 @@
 
 ### 2026-09-05 22:59 CST — 复核 PR #188：补齐 backend compare 空配置注册表回退
 
-- 状态：进行中（PR #188 原全链路实现已 ready；新增漏口修复待 CI）
+- 状态：已完成（PR #188 ready，最新补丁与全套 CI 均通过；待用户决定是否合并）
 - 已完成：复核 DSH 在 `518eb48` 后的最终 diff，确认 DataHub calibration/comparison
   已将空 `{}` 解释为“无显式 override”并回退 `ScoreModelVersion`；同时发现 backend
   `/api/score-experiments/compare` 以实验 ID 解析目标时仍直接返回空 config，导致指向已注册
   flipped model 的空配置实验在正分窗口退回 raw-score basis。现已让该分支同样调用
   `_registered_model_config`，并新增实验 ID + 空配置的回归测试。
-- 验证：backend score-experiment 聚焦测试 **8 passed**；相关 Ruff check/format 与
-  `git diff --check` 通过。此前同一 PR 的 DataHub **474 passed**、Frontend 43 passed +
-  build、OpenSpec 10/10 及三类 gate 结果继续有效。
-- 下一步：提交并推送本次补丁，等待 PR #188 新一轮 CI 全绿；随后给出是否可合并结论。
-- 阻塞：无；CI 全绿前不建议合并，未 promote 模型、未改变线上默认评分。
+- 验证：补丁 `7dc780f` 的 backend score-experiment 聚焦测试 **8 passed**；相关 Ruff
+  check/format 与 `git diff --check` 通过。PR #188 新一轮 CI run `33973464841` 全绿：
+  Backend Tests/Lint、DataHub Tests/Lint、Frontend、OpenSpec、Private Deploy Dry Run、
+  Required Checks 全部 success；与最新 `origin/develop` merge-tree 无冲突。此前三类 gate
+  结果继续有效。
+- 下一步：用户批准后 squash merge PR #188；之后独立执行 task 3.3 的全市场 replay +
+  flipped candidate / baseline 校准比较。
+- 阻塞：仅等待用户合并决定；未 promote 模型、未改变线上默认评分。
 
 ---
 
