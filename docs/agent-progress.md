@@ -25,6 +25,26 @@
 
 ## 进度记录
 
+### 2026-09-05 14:15 CST — 接手推进：翻转评分校准改用 percentile，负尾不再丢失
+
+- 状态：进行中（`codex/fix/flipped-score-calibration` 本地实现与验证完成；review/PR 门禁待完成）
+- 已完成：接手复核 #182-#187 后，先完成 scoring-direction-versioning 3.2：
+  `ScoreCalibrationReport` 遇到负分 cohort 时强制使用 percentile×100 做分布、分桶及
+  false-positive/false-negative 取样，缺 percentile 则显式失败；
+  `ExperimentComparisonReport` 在任一侧为 signed score 时让候选/基线统一使用 percentile，
+  标注 `bucket_basis`/`comparison_basis`，并禁止输出跨方向的 raw `avg_score` 差值；默认正分
+  模型继续使用原 0-100 score 口径。同步补充 OpenSpec 场景并勾选 task 3.2。
+- 验证：先新增失败测试（4 failed）再实现；聚焦 5 tests passed；datahub 全量
+  **464 passed**；相关 ruff/format 通过；`openspec validate --all --strict` **10/10 passed**；
+  `git diff --check` 通过。
+- 下一步：执行 spec-guardian + qa-reviewer，完成 branch-conflict 与 Draft PR CI；随后进行
+  task 3.3（一个翻转 model_version 的全市场 replay + 新旧校准对比），再独立处理模型注册表
+  真不可变、`scoring_mode` 绑定和 fail-closed。
+- 阻塞：强制 reviewer 门禁尚未执行，因此当前分支不得标记 ready/merge；未 promote 任何
+  模型版本，也未改变线上默认评分。
+
+---
+
 ### 2026-09-05 13:30 CST — codex 第一阶段完成：方向缺陷修复 + 模型注册表 + 版本约束 + 记录同步
 
 - 状态：已完成（#182-#187 合并/就绪；codex 三阶段第一阶段 #1-#5 全闭环）

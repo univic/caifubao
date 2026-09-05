@@ -6,7 +6,6 @@ from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
 from app.lib.scoring_engine.scoring_service import normalize_date
 from app.model.scoring import StockScorePrediction
 
-
 SCORE_BUCKETS = (
     (0, 20),
     (20, 40),
@@ -17,6 +16,31 @@ SCORE_BUCKETS = (
 
 MISCALIBRATION_BUY_RATE_MIN = 0.03  # flag when BUY percentage < 3%
 MISCALIBRATION_AVOID_RATE_MAX = 0.50  # flag when AVOID percentage > 50%
+
+
+def resolve_bucket_basis(predictions, *, force_percentile: bool = False) -> str:
+    """Choose a comparable 0-100 basis for distribution and bucket metrics."""
+    signed_scores = any((item.score or 0) < 0 for item in predictions)
+    if not force_percentile and not signed_scores:
+        return "score"
+
+    missing = [
+        item.stock_code
+        for item in predictions
+        if getattr(item, "percentile", None) is None
+    ]
+    if missing:
+        raise ValueError(
+            "percentile is required for signed-score calibration; missing for "
+            + ", ".join(missing[:5])
+        )
+    return "percentile"
+
+
+def bucket_value(item, basis: str) -> float:
+    if basis == "percentile":
+        return float(item.percentile) * 100.0
+    return float(item.score or 0)
 
 
 class ScoreCalibrationReport:
@@ -40,45 +64,40 @@ class ScoreCalibrationReport:
                 status="VERIFIED",
             ).order_by("date", "-score")
         )
-        # Construction-layer flipped model versions (component directions
-        # include -1) legitimately produce non-positive scores. The 0-100
-        # buckets and the >= 0 distribution filter below are default-direction
-        # semantics: for a flipped cohort this report would silently drop the
-        # negative tail. Surface it loudly instead of returning empty/biased
-        # stats (partial flips would otherwise bias calibration silently).
         negative_count = sum(1 for p in predictions if (p.score or 0) < 0)
+        basis = resolve_bucket_basis(predictions)
         return {
             "horizon": horizon,
             "model_version": self.model_version,
             "from": normalize_date(start_date).isoformat(),
             "to": normalize_date(end_date).isoformat(),
             "prediction_count": len(predictions),
+            "bucket_basis": basis,
             "negative_score_count": negative_count,
             "negative_score_warning": (
-                "flipped-direction model version: scores are non-positive; "
-                "0-100 distribution/bucket stats are not meaningful - use "
-                "rank/percentile-based evaluation"
+                "signed-score model version: distribution and buckets use "
+                "percentile normalized to 0-100"
                 if negative_count and negative_count == len(predictions)
                 else (
-                    "cohort mixes positive and negative scores (direction "
-                    "mismatch?); negative tail is excluded from 0-100 stats"
+                    "cohort mixes positive and negative scores; distribution "
+                    "and buckets use percentile normalized to 0-100"
                     if negative_count
                     else None
                 )
             ),
-            "distribution": self._distribution_stats(predictions),
-            "score_buckets": self._bucket_summary(predictions),
+            "distribution": self._distribution_stats(predictions, basis),
+            "score_buckets": self._bucket_summary(predictions, basis),
             "top_n": self._top_n_summary(predictions),
             "component_summary": self._component_summary(predictions),
-            "false_positives": self._false_positives(predictions),
-            "false_negatives": self._false_negatives(predictions),
+            "false_positives": self._false_positives(predictions, basis),
+            "false_negatives": self._false_negatives(predictions, basis),
         }
 
-    def _distribution_stats(self, predictions):
+    def _distribution_stats(self, predictions, basis="score"):
         """Compute score distribution, recommendation counts, and miscalibration
         flags.
         """
-        scores = sorted([item.score for item in predictions if (item.score or 0) >= 0])
+        scores = sorted(bucket_value(item, basis) for item in predictions)
         if not scores:
             return {
                 "count": 0,
@@ -152,14 +171,14 @@ class ScoreCalibrationReport:
             "miscalibration_flags": flags,
         }
 
-    def _bucket_summary(self, predictions):
+    def _bucket_summary(self, predictions, basis="score"):
         result = []
         for low, high in SCORE_BUCKETS:
             bucket_items = [
                 item
                 for item in predictions
-                if low <= (item.score or 0) < high
-                or (high == 100 and (item.score or 0) == 100)
+                if low <= bucket_value(item, basis) < high
+                or (high == 100 and bucket_value(item, basis) == 100)
             ]
             result.append(
                 {
@@ -197,23 +216,23 @@ class ScoreCalibrationReport:
             if component_id
         }
 
-    def _false_positives(self, predictions):
+    def _false_positives(self, predictions, basis="score"):
         items = [
             item
             for item in predictions
-            if (item.score or 0) >= 70
+            if bucket_value(item, basis) >= 70
             and (item.verification or {}).get("return_at_target", 0) < 0
         ]
         return self._sample(items)
 
-    def _false_negatives(self, predictions):
+    def _false_negatives(self, predictions, basis="score"):
         # Use max_return (aggressive/intra metric) intentionally:
         # a false negative is a stock we scored low that had ANY opportunity
         # (even if only intraday), so we use the aggressive threshold.
         items = [
             item
             for item in predictions
-            if (item.score or 0) < 40
+            if bucket_value(item, basis) < 40
             and (item.verification or {}).get("max_return", 0) >= 0.08
         ]
         return self._sample(items)

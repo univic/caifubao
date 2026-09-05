@@ -28,18 +28,18 @@
 - [x] 3.1 Flipped-version score/percentile meaning defined (higher score <-> lower raw
   bullishness); percentile-driven BUY/WATCH/AVOID stays well-defined for a full-flip
   model (no tie degeneracy) - locked by tests (flip-with-penalty signed order).
-- [ ] 3.2 Consumer tooling for flipped (non-positive) scores: calibration_report
+- [x] 3.2 Consumer tooling for flipped (non-positive) scores: calibration_report
   (filters score >= 0) and comparison_report (0-100 absolute buckets) must bucket by
   rank/percentile or accept a per-model-version scale BEFORE any flipped-direction
   experiment is validated via reports (experiment_service.run_experiment auto-runs
   ScoreCalibrationReport) and before any flipped version is promoted; a full-flip
-  experiment currently makes the report crash on an empty sample and a partial flip
-  silently drops the negative tail from calibration stats; SCORE_THRESHOLD/consensus/
-  openclaw absolute thresholds documented as default-direction-only.
+  now selects percentile basis for signed cohorts, requires complete persisted
+  percentiles, and comparison_report aligns both sides to percentile before bucketing;
+  SCORE_THRESHOLD/consensus/openclaw absolute thresholds remain default-direction-only.
 - [ ] 3.3 Operator validation of one flipped experiment model version: full-market replay
   + calibration comparison vs baseline before any promotion.
-- [x] 3.4 Comparisons (replay/calibration/backtest) must stay within same-direction
-  model versions - stated in spec.md and proposal non-goals.
+- [x] 3.4 Raw-score comparisons stay within same-direction model versions;
+  cross-direction promotion comparisons align scale-dependent metrics by percentile.
 
 ## 4. Gates
 

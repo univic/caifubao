@@ -4,7 +4,11 @@
 from collections import defaultdict
 from typing import Any
 
-from app.lib.scoring_engine.calibration_report import SCORE_BUCKETS
+from app.lib.scoring_engine.calibration_report import (
+    SCORE_BUCKETS,
+    bucket_value,
+    resolve_bucket_basis,
+)
 from app.lib.scoring_engine.scoring_service import normalize_date
 from app.model.scoring import StockScorePrediction
 
@@ -70,13 +74,14 @@ def _top_n_summary(predictions):
     return result
 
 
-def _bucket_summary(predictions):
+def _bucket_summary(predictions, basis="score"):
     result = []
     for low, high in SCORE_BUCKETS:
         bucket_items = [
             p
             for p in predictions
-            if low <= (p.score or 0) < high or (high == 100 and (p.score or 0) == 100)
+            if low <= bucket_value(p, basis) < high
+            or (high == 100 and bucket_value(p, basis) == 100)
         ]
         result.append({"bucket": f"{low}-{high}", **_metric_summary(bucket_items)})
     return result
@@ -117,16 +122,29 @@ class ExperimentComparisonReport:
             ).order_by("date", "-score")
         )
 
+        candidate_basis = resolve_bucket_basis(candidate_preds)
+        baseline_basis = resolve_bucket_basis(baseline_preds)
+        comparison_basis = (
+            "percentile"
+            if "percentile" in {candidate_basis, baseline_basis}
+            else "score"
+        )
+        if comparison_basis == "percentile":
+            resolve_bucket_basis(candidate_preds, force_percentile=True)
+            resolve_bucket_basis(baseline_preds, force_percentile=True)
+
         candidate_summary = {
             "model_version": candidate_model_version,
+            "bucket_basis": comparison_basis,
             "overall": _metric_summary(candidate_preds),
-            "score_buckets": _bucket_summary(candidate_preds),
+            "score_buckets": _bucket_summary(candidate_preds, comparison_basis),
             "top_n": _top_n_summary(candidate_preds),
         }
         baseline_summary = {
             "model_version": baseline_model_version,
+            "bucket_basis": comparison_basis,
             "overall": _metric_summary(baseline_preds),
-            "score_buckets": _bucket_summary(baseline_preds),
+            "score_buckets": _bucket_summary(baseline_preds, comparison_basis),
             "top_n": _top_n_summary(baseline_preds),
         }
 
@@ -137,6 +155,7 @@ class ExperimentComparisonReport:
             "horizon": horizon,
             "start_date": normalize_date(start_date).isoformat(),
             "end_date": normalize_date(end_date).isoformat(),
+            "comparison_basis": comparison_basis,
             "candidate": candidate_summary,
             "baseline": baseline_summary,
             "deltas": deltas,
@@ -157,7 +176,11 @@ class ExperimentComparisonReport:
 
         result = {
             "count": delta("count"),
-            "avg_score": delta("avg_score"),
+            "avg_score": (
+                None
+                if candidate.get("bucket_basis") == "percentile"
+                else delta("avg_score")
+            ),
             "avg_return_at_target": delta("avg_return_at_target"),
             "avg_max_return": delta("avg_max_return"),
             "avg_min_return": delta("avg_min_return"),

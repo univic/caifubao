@@ -58,15 +58,47 @@ explanation contributions to match the score.
 
 A model version configured with flipped component directions MUST be treated
 as a distinct model whose score/percentile meaning is inverted relative to the
-default direction (higher score means lower raw bullishness). Replay,
-calibration, and backtest comparisons MUST restrict to same-direction model
-versions. Promotion of a flipped model requires full-market replay and
-calibration comparison against the baseline default model.
+default direction (higher score means lower raw bullishness). Raw-score
+comparisons MUST restrict to same-direction model versions. A promotion
+comparison between flipped and default directions MUST align scale-dependent
+metrics by percentile. Promotion of a flipped model requires full-market replay
+and calibration comparison against the baseline default model.
 
-#### Scenario: Comparison stays within same direction
+#### Scenario: Raw-score comparison stays within same direction
 
-- GIVEN a default-direction model version and a flipped model version
+- GIVEN two model versions with the same component directions
 - WHEN a comparison report is generated
 - THEN both sides use the same resolved direction set
-- AND raw score/percentile values are not mixed across directions without
-  labeling the direction difference
+- AND raw score values may be compared directly
+
+### Requirement: Signed-score calibration uses percentile semantics
+
+Calibration and comparison reports MUST preserve the legacy 0-100 score basis
+for cohorts without negative scores. When either cohort contains a negative
+score, distribution and bucket metrics MUST instead use the persisted
+cross-sectional percentile normalized to 0-100, and the report MUST label that
+basis. A signed-score report MUST fail rather than silently omit observations
+when a required percentile is missing.
+
+#### Scenario: Signed cohort retains its negative tail
+
+- GIVEN a flipped model cohort with negative scores and complete percentiles
+- WHEN a calibration report is generated
+- THEN `bucket_basis` is `percentile`
+- AND every verified observation is included in the distribution and buckets
+- AND false-positive and false-negative samples use percentile thresholds
+
+#### Scenario: Cross-direction comparison has one common basis
+
+- GIVEN a signed candidate cohort and a default-direction baseline cohort
+- WHEN a comparison report is generated
+- THEN both sides are bucketed by percentile on the same 0-100 scale
+- AND `comparison_basis` is `percentile`
+- AND no raw average-score delta is reported across the two directions
+
+#### Scenario: Signed cohort is missing percentile data
+
+- GIVEN a signed-score prediction without a persisted percentile
+- WHEN calibration or comparison is requested
+- THEN the report fails with an explicit percentile requirement
+- AND it does not return a partial or score-filtered result
