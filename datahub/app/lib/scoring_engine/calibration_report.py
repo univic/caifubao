@@ -40,12 +40,32 @@ class ScoreCalibrationReport:
                 status="VERIFIED",
             ).order_by("date", "-score")
         )
+        # Construction-layer flipped model versions (component directions
+        # include -1) legitimately produce non-positive scores. The 0-100
+        # buckets and the >= 0 distribution filter below are default-direction
+        # semantics: for a flipped cohort this report would silently drop the
+        # negative tail. Surface it loudly instead of returning empty/biased
+        # stats (partial flips would otherwise bias calibration silently).
+        negative_count = sum(1 for p in predictions if (p.score or 0) < 0)
         return {
             "horizon": horizon,
             "model_version": self.model_version,
             "from": normalize_date(start_date).isoformat(),
             "to": normalize_date(end_date).isoformat(),
             "prediction_count": len(predictions),
+            "negative_score_count": negative_count,
+            "negative_score_warning": (
+                "flipped-direction model version: scores are non-positive; "
+                "0-100 distribution/bucket stats are not meaningful - use "
+                "rank/percentile-based evaluation"
+                if negative_count and negative_count == len(predictions)
+                else (
+                    "cohort mixes positive and negative scores (direction "
+                    "mismatch?); negative tail is excluded from 0-100 stats"
+                    if negative_count
+                    else None
+                )
+            ),
             "distribution": self._distribution_stats(predictions),
             "score_buckets": self._bucket_summary(predictions),
             "top_n": self._top_n_summary(predictions),
