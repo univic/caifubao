@@ -127,6 +127,10 @@ class StockScorePrediction(db.Document):
 class ScoreExperiment(db.Document):
     """
     Research experiment for comparing scoring model versions and factor weights.
+
+    The first MVP stores experiment metadata and aggregates already-generated
+    StockScorePrediction records. Datahub replay workers can later use the same
+    config to regenerate predictions under a new model_version.
     """
 
     name = StringField(required=True)
