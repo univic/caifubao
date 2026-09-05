@@ -9,6 +9,7 @@ SCORING_CONFIG (backward compatible).
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -268,21 +269,22 @@ class TestFlipWideShadowArtifact:
     110). It must validate, resolve to flipped directions, pin a stable hash,
     and register as a non-default shadow version (DEFAULT_MODEL_VERSION
     unchanged). No DB: _validate_config is pure and register() is exercised
-    through the same fake-model harness as the other registry tests.
+    through a fake-model harness (CI runs pytest from datahub/, so the artifact
+    path is anchored to this file, never to the CWD).
     """
 
+    # datahub/app/test/test_model_registry.py -> parents[3] = repo root
     _ARTIFACT = (
-        "datahub/research/autoresearch/h20_excess_alpha/flip_wide_registry_config.json"
+        Path(__file__).resolve().parents[3]
+        / "datahub/research/autoresearch/h20_excess_alpha/flip_wide_registry_config.json"
     )
 
-    @staticmethod
-    def _load():
+    @classmethod
+    def _load(cls):
         import json
-        from pathlib import Path
 
-        path = Path(TestFlipWideShadowArtifact._ARTIFACT)
-        assert path.exists(), f"artifact missing: {path}"
-        return json.loads(path.read_text(encoding="utf-8"))
+        assert cls._ARTIFACT.exists(), f"artifact missing: {cls._ARTIFACT}"
+        return json.loads(cls._ARTIFACT.read_text(encoding="utf-8"))
 
     def test_artifact_validates(self):
         from app.jobs.model_registry_runner import _validate_config
