@@ -24,7 +24,7 @@ from app.lib.scoring_engine.config import (
     get_effective_horizon_config,
 )
 from app.model.factor import StockFactorDaily
-from app.model.scoring import StockScorePrediction
+from app.model.scoring import ScoreModelVersion, StockScorePrediction
 from app.model.signal import StockSignalDaily
 from app.model.stock import FinanceMarket, IndividualStock, StockDailyQuote
 from app.lib.utilities import trading_day_helper
@@ -71,12 +71,10 @@ class StockScoringService:
         """Look up an ACTIVE registered model version's per-horizon config.
 
         Returns {} when the version is not registered (falls back to built-in
-        SCORING_CONFIG) or is retired. No DB access is attempted when the
-        model module is unavailable in the current runtime.
+        SCORING_CONFIG) or is retired. Registry lookup is best-effort: a DB
+        error must never break scoring.
         """
         try:
-            from app.model.scoring import ScoreModelVersion
-
             registered = ScoreModelVersion.objects(
                 model_version=model_version, status="ACTIVE"
             ).first()
