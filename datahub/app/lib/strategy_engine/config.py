@@ -72,8 +72,30 @@ _KNOWN_TOP_LEVEL = {
     "weighting",
     "cash_reserve_pct",
 }
+_KNOWN_SELECTION_KEYS = {"mode", "lower", "upper", "portfolio_size"}
+_KNOWN_CONSTRAINT_KEYS = {
+    "exclude_st",
+    "exclude_bse",
+    "exclude_suspended",
+    "max_single_stock_pct",
+    "min_trade_amount_cny",
+}
+_KNOWN_REBALANCE_KEYS = {"cadence_days"}
 _SELECTION_MODES = {"top_percentile", "top_n"}
 _WEIGHTINGS = {"equal"}
+
+
+def _reject_unknown_nested(parent: str, block, known: set) -> None:
+    """Reject unknown keys inside a nested block (mirrors the scoring registry
+    so a typo cannot be silently absorbed into the default and hashed into a
+    reproducible but wrong configuration)."""
+    if not isinstance(block, dict):
+        return
+    unknown = set(block) - known
+    if unknown:
+        raise ValueError(
+            f"unknown {parent} keys: {sorted(unknown)}; known: {sorted(known)}"
+        )
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
@@ -91,8 +113,9 @@ def validate_strategy_config(config: dict) -> dict:
     """Validate a strategy config, returning a normalized deep copy.
 
     Missing optional blocks (constraints/rebalance/cash_reserve_pct) are filled
-    from DEFAULT_STRATEGY_CONFIG so minimal configs stay valid. Raises
-    ValueError with a specific message on the first problem found.
+    from DEFAULT_STRATEGY_CONFIG so minimal configs stay valid. Unknown keys at
+    every nesting level are rejected (typos fail loudly, never silently adopt a
+    default). Raises ValueError with a specific message on the first problem.
     """
     if not isinstance(config, dict):
         raise ValueError("strategy config must be a dict")
@@ -102,6 +125,11 @@ def validate_strategy_config(config: dict) -> dict:
             f"unknown strategy config keys: {sorted(unknown)}; "
             f"known: {sorted(_KNOWN_TOP_LEVEL)}"
         )
+    _reject_unknown_nested("selection", config.get("selection"), _KNOWN_SELECTION_KEYS)
+    _reject_unknown_nested(
+        "constraints", config.get("constraints"), _KNOWN_CONSTRAINT_KEYS
+    )
+    _reject_unknown_nested("rebalance", config.get("rebalance"), _KNOWN_REBALANCE_KEYS)
 
     normalized = _deep_merge(DEFAULT_STRATEGY_CONFIG, config)
     if "score_model_version" not in config:

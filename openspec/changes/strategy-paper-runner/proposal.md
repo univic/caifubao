@@ -15,8 +15,10 @@
 
 - **策略配置（versioned，生产链可复现）**：model_version（分数源，默认指向 flip_wide
   影子分数 `flip_wide_shadow_v1`，可配置任意已注册版本）、selection（top_percentile
-  宽书：lower/upper/portfolio_size）、约束（单票 max pct、行业上限、流动性下限、
-  ST/BSE/停牌排除）、再平衡（默认每周）、排序语义固定"选高买入"（方向只在构造层）。
+  宽书：lower/upper/portfolio_size，或 top_n）、约束（单票 max pct、流动性下限、
+  ST/BSE/停牌排除；行业上限为后续切片，schema 暂不包含）、再平衡（默认每周）、排序
+  语义固定"选高买入"（方向只在构造层）。未知配置键（含嵌套）一律拒绝，防 typo 静默
+  落入默认值。分数源必须显式声明，绝不静默默认。
 - **strategy_runner（datahub 每日 job）**：读某日某 model_version 的 VERIFIED 评分 →
   应用选择与约束 → 输出目标组合与调仓清单；写策略新鲜度记录（沿用 datahub_job_runs
   模式）。paper 模式只记录，不下任何真实订单。

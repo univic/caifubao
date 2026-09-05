@@ -22,6 +22,23 @@ construction layer, never re-implemented in the strategy layer.
   size
 - AND every selected stock satisfies the eligibility constraints
 
+#### Scenario: Score source must be explicit
+
+- GIVEN a strategy config without a `score_model_version`
+- WHEN the config is validated
+- THEN validation raises
+- AND no strategy run silently defaults to any score source (a typo can never
+  run the wrong version)
+
+#### Scenario: Unknown config keys are rejected at every level
+
+- GIVEN a strategy config with an unknown key inside `selection`,
+  `constraints`, or `rebalance`
+- WHEN the config is validated
+- THEN validation raises with the offending block named
+- AND the typo is never absorbed into a default and hashed into a reproducible
+  but wrong configuration
+
 #### Scenario: Any registered model version can be the score source
 
 - GIVEN a strategy config naming a different registered model version
@@ -68,6 +85,13 @@ roll-forward, using the same execution parameters as the autoresearch profile
 computed per rebalance cycle; the baseline is the same-date tradable-universe
 equal-weight return.
 
+#### Scenario: Suspended names hold last observed valuation
+
+- GIVEN a held name that suspends after a trading day with a known close
+- WHEN paper NAV is computed for the suspension day (no quote available)
+- THEN the name is valued at its last observed close, not its entry price
+- AND no forced mark or valuation failure occurs
+
 #### Scenario: NAV marks to market with costs
 
 - GIVEN a target portfolio and a subsequent price series
@@ -75,6 +99,7 @@ equal-weight return.
 - THEN realized trades deduct commission/slippage/stamp duty
 - AND suspended names roll forward to the next executable open instead of
   failing the valuation
+- AND per-cycle turnover (buy + sell notional / pre-cycle NAV) is reported
 
 #### Scenario: Equity curve is comparable to equal-weight baseline
 

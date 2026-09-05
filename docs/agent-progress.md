@@ -25,6 +25,32 @@
 
 ## 进度记录
 
+### 2026-09-05 23:55 CST — 实盘就绪评估 + #189 合并 + Stage C 切片 1（PR #190）
+
+- 状态：进行中（#188/#189 已合并；Stage C 切片 1 三门禁评审中）
+- 已完成：
+  - **实盘就绪度评估**（用户问"能否指导实盘"）：结论=暂不能——生产默认方向实证反预测
+    （#174 全 regime IC 负），flip_wide 是唯一正候选但仅研究层证据（官方门 117<120 天
+    未到、decay 0.605 被挡），无策略/执行层产物。
+  - **#188 已合并**（070e3aa，3.2 percentile 全链路）；**#189 已合并**（cc2137f，Stage A：
+    task 3.3 工具——`scoring_runner compare` CLI + flip_wide 影子注册工件
+    `flip_wide_registry_config.json` + runbook + openspec spec 场景/tasks 注解；三门禁
+    GATE_OK、CI 全绿、P1 修复 e664236）。
+  - **Stage C 启动**（用户批准：flip_wide 影子分数为默认源 + 宽书语义）：切片 1 已提交
+    PR **#190**（draft）——openspec change `strategy-paper-runner` + 纯逻辑核心
+    `strategy_engine/{config,selection,nav}.py`（版本化策略配置/校验/config_hash、
+    equal-weight 选高、top_percentile/top_n、再平衡 diff、paper NAV 真实 T+1 成本与
+    停牌 roll-forward）；19 个新测试，datahub 500 passed，openspec 11/11。
+- 验证：三门禁（spec-guardian/qa/contract）对 #189 全部 GATE_OK；#190 CI 全绿
+  （Datahub Tests/Lint、OpenSpec 11/11、Private Deploy Dry Run）。
+- 下一步：#190 三门禁 → ready → 用户批准合并；随后 Stage C 切片 2（持久化模型 + 每日
+  runner + datahub_job_runs 新鲜度 + CLI，tasks 3.1/3.2）；task 3.3 operator 实跑
+  （需 DB 授权，runbook 已备）。
+- 阻塞：#190 合并待用户批准；task 3.3/4.4 的 DB 执行需 operator 授权（dev 集群本会话
+  不可达）；未 promote 任何模型版本，线上默认评分不变。
+
+---
+
 ### 2026-09-05 22:59 CST — 复核 PR #188：补齐 backend compare 空配置注册表回退
 
 - 状态：已完成（PR #188 ready，最新补丁与全套 CI 均通过；待用户决定是否合并）

@@ -60,7 +60,9 @@ def test_config_rejects_missing_version():
 
 
 def test_config_rejects_bad_selection_bounds():
-    cfg = dict(DEFAULT_STRATEGY_CONFIG)
+    import copy
+
+    cfg = copy.deepcopy(DEFAULT_STRATEGY_CONFIG)
     cfg["selection"] = {
         "mode": "top_percentile",
         "lower": 0.5,
@@ -72,10 +74,50 @@ def test_config_rejects_bad_selection_bounds():
 
 
 def test_config_rejects_zero_size():
-    cfg = dict(DEFAULT_STRATEGY_CONFIG)
+    import copy
+
+    cfg = copy.deepcopy(DEFAULT_STRATEGY_CONFIG)
     cfg["selection"]["portfolio_size"] = 0
     with pytest.raises(ValueError, match="portfolio_size"):
         validate_strategy_config(cfg)
+
+
+def test_config_mutation_does_not_corrupt_module_default():
+    # Shallow dict() copies share nested dicts; deep copy must be used by
+    # callers, and validation must never mutate the exported default.
+    import copy
+
+    snapshot = copy.deepcopy(DEFAULT_STRATEGY_CONFIG)
+    cfg = copy.deepcopy(DEFAULT_STRATEGY_CONFIG)
+    cfg["selection"]["portfolio_size"] = 0
+    with pytest.raises(ValueError, match="portfolio_size"):
+        validate_strategy_config(cfg)
+    assert DEFAULT_STRATEGY_CONFIG == snapshot
+    # And a valid config still validates afterwards (order independence).
+    validate_strategy_config(copy.deepcopy(DEFAULT_STRATEGY_CONFIG))
+
+
+def test_config_rejects_unknown_nested_keys():
+    # A typo inside a nested block must fail loudly (mirrors the scoring
+    # registry) instead of being absorbed into the default.
+    cases = [
+        {
+            "score_model_version": "v1",
+            "selection": {"mode": "top_n", "portfolio_size": 30, "portflio_size": 30},
+        },
+        {
+            "score_model_version": "v1",
+            "constraints": {"exclude_bogus": True},
+        },
+        {
+            "score_model_version": "v1",
+            "rebalance": {"cadence": 5},
+        },
+    ]
+    for cfg in cases:
+        block = next(k for k in ("selection", "constraints", "rebalance") if k in cfg)
+        with pytest.raises(ValueError, match=f"unknown {block} keys"):
+            validate_strategy_config(cfg)
 
 
 def test_config_top_n_with_explicit_bounds_rejected():
@@ -222,6 +264,9 @@ def test_paper_nav_basic_mark_and_turnover():
     assert curve[0]["date"] == dates[0]
     assert curve[1]["positions_count"] == 1
     assert result["terminal_nav"] > 0
+    # cycle 1: buys only -> turnover > 0; cycle 2: sell b + top-up a.
+    assert curve[0]["turnover"] is not None and curve[0]["turnover"] > 0
+    assert curve[1]["turnover"] is not None and curve[1]["turnover"] > 0
 
 
 def test_paper_nav_entry_costs_reduce_nav_on_flat_prices():
@@ -237,15 +282,47 @@ def test_paper_nav_entry_costs_reduce_nav_on_flat_prices():
 def test_paper_nav_skips_suspended_buy():
     dates = ["2026-01-02"]
     prices = {
-        "a": {dates[0]: QuoteView(10.0, 10.5, trade_status=1)},
+        "a": {dates[0]: QuoteView(10.0, 10.0, trade_status=1)},  # flat price
         "b": {dates[0]: QuoteView(20.0, 21.0, trade_status=0)},  # suspended
     }
     schedule = [{"date": dates[0], "holdings": {"a": 0.5, "b": 0.5}}]
     result = simulate_paper_nav(prices=prices, schedule=schedule, initial_nav=100_000.0)
     curve = result["curve"]
-    # b suspended -> only a bought; positions_count == 1
+    # b suspended -> only a bought; positions_count == 1. Cash that could not
+    # be deployed to b stays idle, so NAV < initial (a's entry cost) and the
+    # idle half is not marked up.
     assert curve[0]["positions_count"] == 1
-    assert "b" not in result["curve"][0]
+    assert 90_000.0 < curve[0]["nav"] < 100_000.0
+
+
+def test_paper_nav_suspended_held_name_valued_at_last_close():
+    # a is held (bought on day 1), then suspended on day 2 with NO quote:
+    # it must be valued at day-1 close (last observed mark), not at entry open.
+    dates = ["2026-01-02", "2026-01-05"]
+    prices = {
+        "a": {
+            dates[0]: QuoteView(10.0, 12.0, trade_status=1),  # entry open 10
+            # day 2 suspended: no quote entry at all -> roll forward
+        }
+    }
+    schedule = [
+        {"date": dates[0], "holdings": {"a": 0.9}},
+        {"date": dates[1], "holdings": {"a": 0.9}},
+    ]
+    result = simulate_paper_nav(prices=prices, schedule=schedule, initial_nav=200_000.0)
+    curve = result["curve"]
+    # Day-1 close 12 vs entry 10: ~18-20% gain on the deployed 90%.
+    assert curve[0]["nav"] > 220_000.0
+    # Day 2 has no quote: NAV must hold the last observed close (~day-1 mark),
+    # not collapse back toward the entry price.
+    assert curve[1]["nav"] >= curve[0]["nav"] * 0.999
+
+
+def test_paper_nav_rejects_empty_schedule():
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="at least one"):
+        simulate_paper_nav(prices={}, schedule=[])
 
 
 def test_paper_nav_records_benchmark_when_supplied():
