@@ -511,12 +511,25 @@ def _compute_benchmark(
                 benchmark_daily_returns.append(0.0)
             prev = cp
 
+        # Daily benchmark NAV for the equity-curve chart: index-aligned to the
+        # strategy daily_values. Strategy day 0 starts at initial_cash (no
+        # return yet); apply each benchmark daily return afterwards so
+        # len(benchmark_nav) == len(strategy daily_values).
+        benchmark_nav: List[float] = [initial_cash]
+        for ret in benchmark_daily_returns:
+            benchmark_nav.append(benchmark_nav[-1] * (1.0 + ret))
+        benchmark_daily_values = [
+            {"index": idx, "equity": round(nav, 2)}
+            for idx, nav in enumerate(benchmark_nav)
+        ]
+
         return {
             "benchmark_code": benchmark_code,
             "benchmark_return": round(total_return, 4),
             "benchmark_return_pct": round(total_return_pct, 4),
             "benchmark_annualized_return": round(cagr * 100, 4),
             "benchmark_daily_returns": benchmark_daily_returns,
+            "benchmark_daily_values": benchmark_daily_values,
         }
     except Exception:
         logger.warning(
@@ -879,6 +892,7 @@ def run_backtest(
             benchmark_annualized_return=sim_result.get(
                 "benchmark_annualized_return", 0.0
             ),
+            benchmark_daily_values=sim_result.get("benchmark_daily_values", []),
             excess_return=sim_result.get("excess_return", 0.0),
             excess_return_pct=sim_result.get("excess_return_pct", 0.0),
             information_ratio=sim_result.get("information_ratio", 0.0),
@@ -1202,6 +1216,7 @@ def run_multi_stock_backtest(
             benchmark_annualized_return=sim_result.get(
                 "benchmark_annualized_return", 0.0
             ),
+            benchmark_daily_values=sim_result.get("benchmark_daily_values", []),
             excess_return=sim_result.get("excess_return", 0.0),
             excess_return_pct=sim_result.get("excess_return_pct", 0.0),
             information_ratio=sim_result.get("information_ratio", 0.0),

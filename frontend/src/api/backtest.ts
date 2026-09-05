@@ -34,6 +34,11 @@ export interface DailyValue {
   positions_value: number
 }
 
+export interface BenchmarkDailyValue {
+  index: number
+  equity: number
+}
+
 export interface BacktestResult {
   id: string
   name: string
@@ -71,6 +76,7 @@ export interface BacktestResult {
   benchmark_return?: number
   benchmark_return_pct?: number
   benchmark_annualized_return?: number
+  benchmark_daily_values?: BenchmarkDailyValue[]
   excess_return?: number
   excess_return_pct?: number
   information_ratio?: number
