@@ -17,6 +17,12 @@ from app.lib.auth_decorators import block_service_tokens
 
 logger = logging.getLogger(__name__)
 
+# Backend-local default (mirror score_strategies.py). Kept here instead of
+# importing from datahub's app.lib.scoring_engine.config: backend API tests
+# and the API package must not depend on the datahub library at module load.
+# Registry validation in _requested_model_version() still guards overrides.
+DEFAULT_MODEL_VERSION = "score_v2_202605b"
+
 decisions_bp = Blueprint("decisions", __name__, url_prefix="/api/decisions")
 decisions_bp.before_request(block_service_tokens)
 
@@ -30,10 +36,6 @@ def _requested_model_version() -> str:
     and invert rankings silently). An explicit ?model_version= override is
     allowed for inspection, but it must match a known version name.
     """
-    # Lazy import mirrors scores.py/score_experiments.py: backend cannot
-    # import app.lib.scoring_engine at module load (it lives in datahub).
-    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
-
     override = (request.args.get("model_version") or "").strip()
     if override and override != DEFAULT_MODEL_VERSION:
         # Only permit versions that are actually registered; unknown labels
@@ -540,8 +542,6 @@ def rebalance_preview():
         portfolio_stocks : list[str] — current holdings (stock codes)
         cash             : float     — available cash (default 100000)
     """
-    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
-
     payload = request.get_json(silent=True) or {}
     portfolio_stocks = payload.get("portfolio_stocks", [])
     cash = float(payload.get("cash", 100_000.0))
