@@ -21,16 +21,49 @@ decisions_bp = Blueprint("decisions", __name__, url_prefix="/api/decisions")
 decisions_bp.before_request(block_service_tokens)
 
 
+def _requested_model_version() -> str:
+    """Resolve the model version for a production-view query.
+
+    Defaults to DEFAULT_MODEL_VERSION so the dashboard / alerts / quality
+    views never mix predictions across scoring model versions (a flipped
+    construction-layer version would otherwise interleave with the default
+    and invert rankings silently). An explicit ?model_version= override is
+    allowed for inspection, but it must match a known version name.
+    """
+    # Lazy import mirrors scores.py/score_experiments.py: backend cannot
+    # import app.lib.scoring_engine at module load (it lives in datahub).
+    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
+
+    override = (request.args.get("model_version") or "").strip()
+    if override and override != DEFAULT_MODEL_VERSION:
+        # Only permit versions that are actually registered; unknown labels
+        # would silently query an empty set (safer to reject loudly).
+        try:
+            from app.model.scoring import ScoreModelVersion
+
+            known = ScoreModelVersion.objects(model_version=override).first()
+        except Exception:  # noqa: BLE001 - registry best-effort
+            known = None
+        if known is None:
+            raise ValueError(
+                f"unknown model_version {override!r} (not registered); "
+                f"omit the parameter to use {DEFAULT_MODEL_VERSION!r}"
+            )
+    return override or DEFAULT_MODEL_VERSION
+
+
 def _now_utc() -> datetime.datetime:
     return datetime.datetime.now(datetime.UTC).replace(
         hour=0, minute=0, second=0, microsecond=0, tzinfo=None
     )
 
 
-def _latest_score_date(horizon: int) -> datetime.datetime | None:
-    """Return most recent date with score predictions for a horizon."""
+def _latest_score_date(horizon: int, model_version: str) -> datetime.datetime | None:
+    """Return most recent date with score predictions for a horizon/version."""
     pred = (
-        StockScorePrediction.objects(horizon=horizon)
+        StockScorePrediction.objects(
+            horizon=horizon, model_version=model_version
+        )
         .order_by("-date")
         .only("date")
         .first()
@@ -154,21 +187,26 @@ def daily_dashboard():
     """
     horizon = int(request.args.get("horizon", 5))
     n_limit = min(int(request.args.get("limit", 20)), 100)
+    model_version = _requested_model_version()
 
     def _load_for(h: int) -> dict:
-        score_date = _latest_score_date(h)
+        score_date = _latest_score_date(h, model_version)
         if not score_date:
             return {"horizon": h, "date": None, "count": 0, "items": []}
 
         today_preds = list(
-            StockScorePrediction.objects(date=score_date, horizon=h)
+            StockScorePrediction.objects(
+                date=score_date, horizon=h, model_version=model_version
+            )
             .order_by("-score")
             .limit(n_limit)
         )
 
         # Previous score date — fetch all scores for today's stock codes
         prev = (
-            StockScorePrediction.objects(date__lt=score_date, horizon=h)
+            StockScorePrediction.objects(
+                date__lt=score_date, horizon=h, model_version=model_version
+            )
             .order_by("-date")
             .only("date")
             .first()
@@ -178,7 +216,10 @@ def daily_dashboard():
         if prev_date:
             today_codes = [p.stock_code for p in today_preds]
             for p in StockScorePrediction.objects(
-                date=prev_date, horizon=h, stock_code__in=today_codes
+                date=prev_date,
+                horizon=h,
+                stock_code__in=today_codes,
+                model_version=model_version,
             ):
                 yday_scores[p.stock_code] = p
 
@@ -186,7 +227,10 @@ def daily_dashboard():
         conf_start = score_date - datetime.timedelta(days=90)
         verified = list(
             StockScorePrediction.objects(
-                horizon=h, status="VERIFIED", date__gte=conf_start
+                horizon=h,
+                status="VERIFIED",
+                date__gte=conf_start,
+                model_version=model_version,
             )
         )
 
@@ -261,18 +305,23 @@ def score_alerts():
     jump_threshold = float(request.args.get("jump_threshold", 15))
     strong_threshold = float(request.args.get("strong_threshold", 80))
     limit = min(int(request.args.get("limit", 20)), 100)
+    model_version = _requested_model_version()
 
     today = _now_utc()
 
     today_preds = list(
-        StockScorePrediction.objects(date=today, horizon=horizon)
+        StockScorePrediction.objects(
+            date=today, horizon=horizon, model_version=model_version
+        )
         .order_by("-score")
         .limit(limit * 2)
     )
 
     yesterday = today - datetime.timedelta(days=1)
     yesterday_preds_list = list(
-        StockScorePrediction.objects(date__lte=yesterday, horizon=horizon)
+        StockScorePrediction.objects(
+            date__lte=yesterday, horizon=horizon, model_version=model_version
+        )
         .order_by("-date")
         .limit(limit * 2)
     )
@@ -351,13 +400,17 @@ def score_quality():
     horizon = int(request.args.get("horizon", 20))
     window_days = int(request.args.get("window_days", 30))
     lookback_days = int(request.args.get("lookback_days", 90))
+    model_version = _requested_model_version()
 
     today = _now_utc()
     start_date = today - datetime.timedelta(days=lookback_days * 2)
 
     predictions = list(
         StockScorePrediction.objects(
-            date__gte=start_date, horizon=horizon, status="VERIFIED"
+            date__gte=start_date,
+            horizon=horizon,
+            status="VERIFIED",
+            model_version=model_version,
         ).order_by("date")
     )
 
@@ -489,9 +542,14 @@ def rebalance_preview():
         portfolio_stocks : list[str] — current holdings (stock codes)
         cash             : float     — available cash (default 100000)
     """
+    from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
+
     payload = request.get_json(silent=True) or {}
     portfolio_stocks = payload.get("portfolio_stocks", [])
     cash = float(payload.get("cash", 100_000.0))
+    model_version = (payload.get("model_version") or "").strip() or (
+        DEFAULT_MODEL_VERSION
+    )
 
     if not portfolio_stocks:
         return jsonify(
@@ -509,7 +567,9 @@ def rebalance_preview():
         top_recommendation = None
         for h in [5, 20, 60]:
             pred = (
-                StockScorePrediction.objects(stock_code=stock_code, horizon=h)
+                StockScorePrediction.objects(
+                    stock_code=stock_code, horizon=h, model_version=model_version
+                )
                 .order_by("-date")
                 .first()
             )
@@ -1005,6 +1065,7 @@ def list_watchlists():
 @decisions_bp.route("/watchlists/<wl_id>", methods=["GET"])
 def get_watchlist(wl_id: str):
     """Get a watchlist with current scores for each stock."""
+    model_version = _requested_model_version()
     try:
         wl = Watchlist.objects(id=wl_id).first()
     except Exception:
@@ -1032,7 +1093,9 @@ def get_watchlist(wl_id: str):
         scores = {}
         for h in [5, 20, 60]:
             pred = (
-                StockScorePrediction.objects(stock_code=code, horizon=h)
+                StockScorePrediction.objects(
+                    stock_code=code, horizon=h, model_version=model_version
+                )
                 .order_by("-date")
                 .first()
             )

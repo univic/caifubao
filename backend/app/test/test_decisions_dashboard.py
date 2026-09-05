@@ -121,7 +121,7 @@ def _make_score_pred(**overrides):
         "explanation": {
             "components": [{"id": "momentum", "contribution": 20}],
         },
-        "model_version": "score_v2_202604",
+        "model_version": "score_v2_202605b",
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
