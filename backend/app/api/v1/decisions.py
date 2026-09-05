@@ -56,9 +56,9 @@ def _requested_model_version() -> str:
     return _validate_model_version(request.args.get("model_version") or "")
 
 
-def _validate_model_version(raw_value: str) -> str:
+def _validate_model_version(raw_value) -> str:
     """Validate an explicit model_version override ('' means default)."""
-    override = raw_value.strip()
+    override = str(raw_value or "").strip()
     if override and override != DEFAULT_MODEL_VERSION:
         try:
             from app.model.scoring import ScoreModelVersion
