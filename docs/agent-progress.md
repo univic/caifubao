@@ -25,6 +25,22 @@
 
 ## 进度记录
 
+### 2026-09-05 22:59 CST — 复核 PR #188：补齐 backend compare 空配置注册表回退
+
+- 状态：进行中（PR #188 原全链路实现已 ready；新增漏口修复待 CI）
+- 已完成：复核 DSH 在 `518eb48` 后的最终 diff，确认 DataHub calibration/comparison
+  已将空 `{}` 解释为“无显式 override”并回退 `ScoreModelVersion`；同时发现 backend
+  `/api/score-experiments/compare` 以实验 ID 解析目标时仍直接返回空 config，导致指向已注册
+  flipped model 的空配置实验在正分窗口退回 raw-score basis。现已让该分支同样调用
+  `_registered_model_config`，并新增实验 ID + 空配置的回归测试。
+- 验证：backend score-experiment 聚焦测试 **8 passed**；相关 Ruff check/format 与
+  `git diff --check` 通过。此前同一 PR 的 DataHub **474 passed**、Frontend 43 passed +
+  build、OpenSpec 10/10 及三类 gate 结果继续有效。
+- 下一步：提交并推送本次补丁，等待 PR #188 新一轮 CI 全绿；随后给出是否可合并结论。
+- 阻塞：无；CI 全绿前不建议合并，未 promote 模型、未改变线上默认评分。
+
+---
+
 ### 2026-09-05 15:10 CST — 3.2 全链路完成 + 三门禁 GATE_OK + PR #188 CI 绿
 
 - 状态：进行中（PR #188 draft 就绪；待用户合并批准后完成 task 3.2/4.4）

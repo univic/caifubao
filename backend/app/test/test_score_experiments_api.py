@@ -315,3 +315,36 @@ def test_run_endpoint_returns_422_and_failed_experiment(client, monkeypatch):
         "message": "invalid percentile",
         "data": {"status": "FAILED"},
     }
+
+
+def test_comparison_target_empty_experiment_config_falls_back_to_registry(
+    monkeypatch,
+):
+    from app.api.v1 import score_experiments
+
+    experiment = SimpleNamespace(model_version="registered_flip", config={})
+    monkeypatch.setattr(
+        score_experiments,
+        "ScoreExperiment",
+        SimpleNamespace(
+            objects=lambda **_kwargs: SimpleNamespace(first=lambda: experiment)
+        ),
+    )
+    monkeypatch.setattr(
+        score_experiments,
+        "_registered_model_config",
+        lambda model_version: {
+            "20": {"directions": {"momentum": -1}},
+            "resolved_for": model_version,
+        },
+    )
+
+    target = score_experiments._resolve_comparison_target("experiment-id")
+
+    assert target == {
+        "model_version": "registered_flip",
+        "config": {
+            "20": {"directions": {"momentum": -1}},
+            "resolved_for": "registered_flip",
+        },
+    }

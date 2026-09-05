@@ -740,9 +740,10 @@ def _resolve_comparison_target(identifier):
     except ValidationError:
         experiment = None
     if experiment is not None:
+        model_version = experiment.model_version or identifier
         return {
-            "model_version": experiment.model_version or identifier,
-            "config": experiment.config or {},
+            "model_version": model_version,
+            "config": experiment.config or _registered_model_config(model_version),
         }
 
     model_version = _resolve_to_model_version(identifier)
