@@ -45,5 +45,5 @@
 
 - [x] 4.1 spec-guardian: triggered (scoring semantics) — this change entry.
 - [ ] 4.2 qa-reviewer on the diff (flag full-flip degeneracy finding — resolved by 2.3/2.4).
-- [ ] 4.3 branch-conflict check against develop before merge.
+- [x] 4.3 branch-conflict check against develop before merge.
 - [ ] 4.4 CI green; merge.
