@@ -9,6 +9,7 @@ SCORING_CONFIG (backward compatible).
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -258,3 +259,140 @@ class TestWeightsValidation:
 
         with pytest.raises(ValueError, match="real scored components"):
             _validate_config({"20": {"directions": {"momemtum": -1}}})
+
+
+class TestFlipWideShadowArtifact:
+    """flip_wide shadow registration config (research -> registry bridge).
+
+    The artifact registers the construction-layer reversal at horizon 20 only
+    (the horizon whose production weights equal the research composite, sum
+    110). It must validate, resolve to flipped directions, pin a stable hash,
+    and register as a non-default shadow version (DEFAULT_MODEL_VERSION
+    unchanged). No DB: _validate_config is pure and register() is exercised
+    through a fake-model harness (CI runs pytest from datahub/, so the artifact
+    path is anchored to this file, never to the CWD).
+    """
+
+    # datahub/app/test/test_model_registry.py -> parents[3] = repo root
+    _ARTIFACT = (
+        Path(__file__).resolve().parents[3]
+        / "datahub/research/autoresearch/h20_excess_alpha/flip_wide_registry_config.json"
+    )
+
+    @classmethod
+    def _load(cls):
+        import json
+
+        assert cls._ARTIFACT.exists(), f"artifact missing: {cls._ARTIFACT}"
+        return json.loads(cls._ARTIFACT.read_text(encoding="utf-8"))
+
+    def test_artifact_validates(self):
+        from app.jobs.model_registry_runner import _validate_config
+
+        _validate_config(self._load())  # no raise
+
+    def test_artifact_resolves_flipped_directions(self):
+        from app.lib.scoring_engine.config import get_effective_horizon_config
+
+        resolved = get_effective_horizon_config(20, self._load())
+        directions = resolved["directions"]
+        for component in (
+            "signal_strength",
+            "momentum",
+            "trend_alignment",
+            "breakout_or_position",
+            "industry_momentum",
+            "relative_strength",
+            "real_relative_strength",
+        ):
+            assert directions[component] == -1, component
+        # risk_penalty keeps its default penalty direction (never flipped).
+        assert directions["risk_penalty"] == -1
+
+    def test_artifact_weights_match_production_h20(self):
+        resolved = self._load()["20"]["weights"]
+        assert abs(sum(resolved.values()) - 110.0) < 1e-9
+
+    def test_artifact_config_hash_stable(self):
+        # Golden hash pins the registered semantics: any accidental change to
+        # the artifact (directions/weights/horizon) breaks this test.
+        from app.lib.scoring_engine.config import model_config_hash
+
+        assert (
+            model_config_hash(self._load())
+            == "8c8f3ee4b2f32f54281a7ecbb04b33b87de15fae1826a640d056df4575e547dc"
+        )
+
+    def test_artifact_registers_as_shadow(self, monkeypatch):
+        from app.lib.scoring_engine.config import model_config_hash
+
+        registry_runner = _fake_runner_with_model(monkeypatch)
+        out = registry_runner.register(
+            "flip_wide_shadow_v1", self._load(), description="shadow"
+        )
+        assert out["status"] == "ACTIVE"
+        assert out["config_hash"] == model_config_hash(self._load())
+
+
+def _fake_runner_with_model(monkeypatch):
+    """Minimal fake ScoreModelVersion harness for register/list/retire."""
+    import app.jobs.model_registry_runner as runner_module
+    import app.model.scoring as model_scoring
+
+    records = []
+
+    class FakeDoc:
+        def __init__(self, **kwargs):
+            self.model_version = kwargs["model_version"]
+            self.config = kwargs.get("config") or {}
+            self.config_hash = kwargs.get("config_hash")
+            self.status = kwargs.get("status", "ACTIVE")
+            self.description = kwargs.get("description", "")
+
+        def delete(self):
+            records[:] = [r for r in records if r is not self]
+
+        def save(self):
+            records.append(self)
+
+    class FakeQS:
+        def __init__(self, items):
+            self.items = items
+
+        def first(self):
+            return self.items[0] if self.items else None
+
+        def order_by(self, *fields):
+            return self
+
+        def __iter__(self):
+            return iter(self.items)
+
+    class FakeModel:
+        @classmethod
+        def objects(cls, **query):
+            matches = [
+                r
+                for r in records
+                if all(getattr(r, k, None) == v for k, v in query.items())
+            ]
+            return FakeQS(matches)
+
+        def __init__(self, **kwargs):
+            self.model_version = kwargs["model_version"]
+            self.description = kwargs.get("description", "")
+            self.scoring_mode = kwargs.get("scoring_mode")
+            self.config = kwargs.get("config") or {}
+            self.config_hash = kwargs.get("config_hash")
+            self.status = kwargs.get("status", "ACTIVE")
+            records.append(self)
+
+        def delete(self):
+            records[:] = [r for r in records if r is not self]
+
+        def save(self):
+            return self
+
+    monkeypatch.setattr(model_scoring, "ScoreModelVersion", FakeModel)
+    monkeypatch.setattr(runner_module, "_init_db", lambda: None)
+    return runner_module

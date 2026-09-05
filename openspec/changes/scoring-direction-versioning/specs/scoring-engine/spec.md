@@ -73,6 +73,30 @@ remain default-direction-only and are undefined for flipped percentile scores.
 - THEN both sides resolve to the `score` basis
 - AND raw score values may be compared directly
 
+#### Scenario: Flipped shadow version is registered without changing the default
+
+- GIVEN a research candidate with flipped component directions (e.g. flip_wide:
+  construction-layer reversal at horizon 20, weights equal to the production
+  horizon-20 config)
+- WHEN the candidate config is registered as a non-default model version
+- THEN `DEFAULT_MODEL_VERSION` is unchanged
+- AND scoring runs that name the shadow version resolve flipped directions and a
+  `percentile` bucket basis
+- AND the flip_wide registry config artifact
+  (`datahub/research/autoresearch/h20_excess_alpha/flip_wide_registry_config.json`)
+  validates, resolves to -1 directions, and pins a stable `config_hash`
+
+#### Scenario: Operator compares flipped shadow version against baseline
+
+- GIVEN a flipped shadow model version replayed over a full-market window and a
+  default-direction baseline over the same window
+- WHEN an operator runs `scoring_runner compare`
+- THEN the comparison aligns both sides on the `percentile` basis
+- AND the raw `avg_score` delta is not reported across the two directions
+- AND `comparison_status` is `ok` when both sides have verified predictions
+- AND the result does not by itself promote the flipped version (promotion still
+  requires the operator validation gate and the ≥120-day safe-production track)
+
 ### Requirement: Signed-score calibration uses percentile semantics
 
 Calibration and comparison reports MUST preserve the legacy 0-100 score basis
