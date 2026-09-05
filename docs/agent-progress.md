@@ -37,10 +37,11 @@
 - 验证：先新增失败测试（4 failed）再实现；聚焦 5 tests passed；datahub 全量
   **464 passed**；相关 ruff/format 通过；`openspec validate --all --strict` **10/10 passed**；
   `git diff --check` 通过；与最新 `origin/develop` 的 branch-conflict 检查 clean。
-- 下一步：执行 spec-guardian + qa-reviewer，完成 Draft PR CI；随后进行
+- 下一步：执行 spec-guardian + contract-reviewer + qa-reviewer，完成 Draft PR CI；随后进行
   task 3.3（一个翻转 model_version 的全市场 replay + 新旧校准对比），再独立处理模型注册表
   真不可变、`scoring_mode` 绑定和 fail-closed。
-- 阻塞：强制 reviewer 门禁尚未执行，因此当前分支不得标记 ready/merge；未 promote 任何
+- 阻塞：强制 reviewer 门禁（含新增 basis 响应字段的 contract review）尚未执行，因此当前
+  分支不得标记 ready/merge；未 promote 任何
   模型版本，也未改变线上默认评分。
 
 ---
