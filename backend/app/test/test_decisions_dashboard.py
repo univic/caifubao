@@ -121,7 +121,7 @@ def _make_score_pred(**overrides):
         "explanation": {
             "components": [{"id": "momentum", "contribution": 20}],
         },
-        "model_version": "score_v2_202604",
+        "model_version": "score_v2_202605b",
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -297,3 +297,50 @@ class TestDecisionsDashboard:
         assert "exit_threshold" in inv
         assert "stop_loss_pct" in inv
         assert "expiry_days" in inv
+
+    def test_dashboard_rejects_unknown_model_version(self, client, monkeypatch):
+        """GET /api/decisions/dashboard?model_version=ghost -> JSON 400, not 500."""
+        from unittest.mock import patch
+
+        class _EmptyQS:
+            def first(self):
+                return None
+
+        with patch(
+            "app.model.scoring.ScoreModelVersion.objects",
+            return_value=_EmptyQS(),
+        ):
+            resp = client.get("/api/decisions/dashboard?model_version=ghost")
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body is not None and body.get("success") is False
+        assert "unknown model_version" in (body.get("message") or "")
+
+    def test_dashboard_accepts_registered_override(self, client, monkeypatch):
+        """A registered non-default override is served with its rows."""
+        from unittest.mock import patch
+
+        class _Registered:
+            pass
+
+        class _RegQS:
+            def first(self):
+                return _Registered()
+
+        rows = [
+            _make_score_pred(model_version="ranked_v1_h20", score=60.0),
+            _make_score_pred(
+                stock_code="sh600001", model_version="ranked_v1_h20", score=55.0
+            ),
+        ]
+        with patch(
+            "app.model.scoring.ScoreModelVersion.objects",
+            return_value=_RegQS(),
+        ):
+            self._setup_mocks(monkeypatch, rows)
+            resp = client.get(
+                "/api/decisions/dashboard?horizon=5&model_version=ranked_v1_h20"
+            )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data.get("success") is True

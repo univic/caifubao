@@ -17,8 +17,61 @@ from app.lib.auth_decorators import block_service_tokens
 
 logger = logging.getLogger(__name__)
 
+# Backend-local default (mirror score_strategies.py). Kept here instead of
+# importing from datahub's app.lib.scoring_engine.config: backend API tests
+# and the API package must not depend on the datahub library at module load.
+# Registry validation in _requested_model_version() still guards overrides.
+DEFAULT_MODEL_VERSION = "score_v2_202605b"
+
 decisions_bp = Blueprint("decisions", __name__, url_prefix="/api/decisions")
 decisions_bp.before_request(block_service_tokens)
+
+
+class _ModelVersionError(Exception):
+    """Raised when an explicit ?model_version= override is not usable."""
+
+
+def _resolve_model_version():
+    """Return (model_version, None) or (None, jsonify(400)) on bad override."""
+    try:
+        return _requested_model_version(), None
+    except _ModelVersionError as exc:
+        return None, (
+            jsonify({"success": False, "message": str(exc), "data": None}),
+            400,
+        )
+
+
+def _requested_model_version() -> str:
+    """Resolve the model version for a production-view query.
+
+    Defaults to DEFAULT_MODEL_VERSION so the dashboard / alerts / quality
+    views never mix predictions across scoring model versions (a flipped
+    construction-layer version would otherwise interleave with the default
+    and invert rankings silently). An explicit ?model_version= override is
+    allowed for inspection, but it must match a known version name; unknown
+    labels raise _ModelVersionError so the view can respond JSON 400 (not an
+    unhandled 500).
+    """
+    return _validate_model_version(request.args.get("model_version") or "")
+
+
+def _validate_model_version(raw_value) -> str:
+    """Validate an explicit model_version override ('' means default)."""
+    override = str(raw_value or "").strip()
+    if override and override != DEFAULT_MODEL_VERSION:
+        try:
+            from app.model.scoring import ScoreModelVersion
+
+            known = ScoreModelVersion.objects(model_version=override).first()
+        except Exception:  # noqa: BLE001 - registry best-effort
+            known = None
+        if known is None:
+            raise _ModelVersionError(
+                f"unknown model_version {override!r} (not registered); "
+                f"omit the parameter to use {DEFAULT_MODEL_VERSION!r}"
+            )
+    return override or DEFAULT_MODEL_VERSION
 
 
 def _now_utc() -> datetime.datetime:
@@ -27,10 +80,10 @@ def _now_utc() -> datetime.datetime:
     )
 
 
-def _latest_score_date(horizon: int) -> datetime.datetime | None:
-    """Return most recent date with score predictions for a horizon."""
+def _latest_score_date(horizon: int, model_version: str) -> datetime.datetime | None:
+    """Return most recent date with score predictions for a horizon/version."""
     pred = (
-        StockScorePrediction.objects(horizon=horizon)
+        StockScorePrediction.objects(horizon=horizon, model_version=model_version)
         .order_by("-date")
         .only("date")
         .first()
@@ -154,21 +207,28 @@ def daily_dashboard():
     """
     horizon = int(request.args.get("horizon", 5))
     n_limit = min(int(request.args.get("limit", 20)), 100)
+    model_version, version_error = _resolve_model_version()
+    if version_error is not None:
+        return version_error
 
     def _load_for(h: int) -> dict:
-        score_date = _latest_score_date(h)
+        score_date = _latest_score_date(h, model_version)
         if not score_date:
             return {"horizon": h, "date": None, "count": 0, "items": []}
 
         today_preds = list(
-            StockScorePrediction.objects(date=score_date, horizon=h)
+            StockScorePrediction.objects(
+                date=score_date, horizon=h, model_version=model_version
+            )
             .order_by("-score")
             .limit(n_limit)
         )
 
         # Previous score date — fetch all scores for today's stock codes
         prev = (
-            StockScorePrediction.objects(date__lt=score_date, horizon=h)
+            StockScorePrediction.objects(
+                date__lt=score_date, horizon=h, model_version=model_version
+            )
             .order_by("-date")
             .only("date")
             .first()
@@ -178,7 +238,10 @@ def daily_dashboard():
         if prev_date:
             today_codes = [p.stock_code for p in today_preds]
             for p in StockScorePrediction.objects(
-                date=prev_date, horizon=h, stock_code__in=today_codes
+                date=prev_date,
+                horizon=h,
+                stock_code__in=today_codes,
+                model_version=model_version,
             ):
                 yday_scores[p.stock_code] = p
 
@@ -186,7 +249,10 @@ def daily_dashboard():
         conf_start = score_date - datetime.timedelta(days=90)
         verified = list(
             StockScorePrediction.objects(
-                horizon=h, status="VERIFIED", date__gte=conf_start
+                horizon=h,
+                status="VERIFIED",
+                date__gte=conf_start,
+                model_version=model_version,
             )
         )
 
@@ -261,18 +327,25 @@ def score_alerts():
     jump_threshold = float(request.args.get("jump_threshold", 15))
     strong_threshold = float(request.args.get("strong_threshold", 80))
     limit = min(int(request.args.get("limit", 20)), 100)
+    model_version, version_error = _resolve_model_version()
+    if version_error is not None:
+        return version_error
 
     today = _now_utc()
 
     today_preds = list(
-        StockScorePrediction.objects(date=today, horizon=horizon)
+        StockScorePrediction.objects(
+            date=today, horizon=horizon, model_version=model_version
+        )
         .order_by("-score")
         .limit(limit * 2)
     )
 
     yesterday = today - datetime.timedelta(days=1)
     yesterday_preds_list = list(
-        StockScorePrediction.objects(date__lte=yesterday, horizon=horizon)
+        StockScorePrediction.objects(
+            date__lte=yesterday, horizon=horizon, model_version=model_version
+        )
         .order_by("-date")
         .limit(limit * 2)
     )
@@ -351,13 +424,19 @@ def score_quality():
     horizon = int(request.args.get("horizon", 20))
     window_days = int(request.args.get("window_days", 30))
     lookback_days = int(request.args.get("lookback_days", 90))
+    model_version, version_error = _resolve_model_version()
+    if version_error is not None:
+        return version_error
 
     today = _now_utc()
     start_date = today - datetime.timedelta(days=lookback_days * 2)
 
     predictions = list(
         StockScorePrediction.objects(
-            date__gte=start_date, horizon=horizon, status="VERIFIED"
+            date__gte=start_date,
+            horizon=horizon,
+            status="VERIFIED",
+            model_version=model_version,
         ).order_by("date")
     )
 
@@ -488,10 +567,19 @@ def rebalance_preview():
     Request body (JSON):
         portfolio_stocks : list[str] — current holdings (stock codes)
         cash             : float     — available cash (default 100000)
+        model_version    : str       — scoring model version (default: the
+                                       production default; must be registered
+                                       if provided)
     """
     payload = request.get_json(silent=True) or {}
     portfolio_stocks = payload.get("portfolio_stocks", [])
     cash = float(payload.get("cash", 100_000.0))
+    try:
+        model_version = _validate_model_version(
+            (payload.get("model_version") or "").strip()
+        )
+    except _ModelVersionError as exc:
+        return jsonify({"success": False, "message": str(exc), "data": None}), 400
 
     if not portfolio_stocks:
         return jsonify(
@@ -509,7 +597,9 @@ def rebalance_preview():
         top_recommendation = None
         for h in [5, 20, 60]:
             pred = (
-                StockScorePrediction.objects(stock_code=stock_code, horizon=h)
+                StockScorePrediction.objects(
+                    stock_code=stock_code, horizon=h, model_version=model_version
+                )
                 .order_by("-date")
                 .first()
             )
@@ -1005,6 +1095,9 @@ def list_watchlists():
 @decisions_bp.route("/watchlists/<wl_id>", methods=["GET"])
 def get_watchlist(wl_id: str):
     """Get a watchlist with current scores for each stock."""
+    model_version, version_error = _resolve_model_version()
+    if version_error is not None:
+        return version_error
     try:
         wl = Watchlist.objects(id=wl_id).first()
     except Exception:
@@ -1032,7 +1125,9 @@ def get_watchlist(wl_id: str):
         scores = {}
         for h in [5, 20, 60]:
             pred = (
-                StockScorePrediction.objects(stock_code=code, horizon=h)
+                StockScorePrediction.objects(
+                    stock_code=code, horizon=h, model_version=model_version
+                )
                 .order_by("-date")
                 .first()
             )
