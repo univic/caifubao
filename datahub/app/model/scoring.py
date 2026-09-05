@@ -127,6 +127,10 @@ class StockScorePrediction(db.Document):
 class ScoreExperiment(db.Document):
     """
     Research experiment for comparing scoring model versions and factor weights.
+
+    The first MVP stores experiment metadata and aggregates already-generated
+    StockScorePrediction records. Datahub replay workers can later use the same
+    config to regenerate predictions under a new model_version.
     """
 
     name = StringField(required=True)
@@ -159,3 +163,47 @@ class ScoreExperiment(db.Document):
     def save(self, *args, **kwargs):
         self.updated_at = datetime.datetime.now(datetime.UTC)
         return super(ScoreExperiment, self).save(*args, **kwargs)
+
+
+class ScoreModelVersion(db.Document):
+    """Immutable registry of scoring model-version configurations.
+
+    A model version is a named, auditable configuration that fully determines
+    how scores are produced: the per-horizon scoring override (weights,
+    thresholds, component directions) and the model version label persisted on
+    predictions. Registering a version makes its config reproducible: scoring
+    runs that name the version load this registered config instead of relying
+    on ad-hoc override dicts.
+
+    Versions are immutable after activation: ``status`` moves ACTIVE ->
+    RETIRED and a new version name must be created for any change, so stored
+    predictions stay traceable to one exact configuration (config_hash pins
+    it). ``DEFAULT_MODEL_VERSION`` in config.py need not be registered; the
+    engine falls back to built-in SCORING_CONFIG when no registration exists.
+    """
+
+    model_version = StringField(required=True, unique=True)
+    description = StringField()
+    # scoring_mode: "ranked" | "raw" (None = engine default)
+    scoring_mode = StringField(choices=["ranked", "raw"], required=False)
+    # Per-horizon override passed to get_effective_horizon_config, e.g.
+    # {"20": {"weights": {...}, "directions": {"momentum": -1}, ...}}
+    config = DictField(default=dict)
+    config_hash = StringField()  # sha256 of canonicalized config
+    status = StringField(choices=["ACTIVE", "RETIRED"], default="ACTIVE")
+    activated_at = DateTimeField(default=lambda: datetime.datetime.now(datetime.UTC))
+    retired_at = DateTimeField()
+    created_at = DateTimeField(default=lambda: datetime.datetime.now(datetime.UTC))
+    updated_at = DateTimeField()
+
+    meta = {
+        "collection": "score_model_versions",
+        "indexes": [
+            {"fields": ["model_version"], "unique": True},
+            ("status", "model_version"),
+        ],
+    }
+
+    def save(self, *args, **kwargs):
+        self.updated_at = datetime.datetime.now(datetime.UTC)
+        return super(ScoreModelVersion, self).save(*args, **kwargs)

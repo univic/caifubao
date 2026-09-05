@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import hashlib
+import json
 from copy import deepcopy
 
 SUPPORTED_HORIZONS = (5, 20, 60)
@@ -157,3 +159,17 @@ def get_effective_horizon_config(
         config["directions"] = resolved
 
     return config
+
+
+def model_config_hash(config: dict) -> str:
+    """Canonical sha256 of a per-horizon scoring override dict.
+
+    Keys are sorted recursively so semantically equal configs hash equal
+    regardless of insertion order. Used by the model-version registry to pin
+    an immutable configuration.
+    """
+    return hashlib.sha256(
+        json.dumps(config, sort_keys=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
+    ).hexdigest()
