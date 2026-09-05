@@ -61,9 +61,7 @@ def _now_utc() -> datetime.datetime:
 def _latest_score_date(horizon: int, model_version: str) -> datetime.datetime | None:
     """Return most recent date with score predictions for a horizon/version."""
     pred = (
-        StockScorePrediction.objects(
-            horizon=horizon, model_version=model_version
-        )
+        StockScorePrediction.objects(horizon=horizon, model_version=model_version)
         .order_by("-date")
         .only("date")
         .first()
