@@ -23,18 +23,21 @@
 
 ## 3. Runner + freshness + persistence
 
-- [ ] 3.1 strategy_runner daily job + CLI; datahub_job_runs freshness record;
-  skip (not empty) when no VERIFIED scores; assert the named model_version is
-  registered and covers the configured horizon before backfill.
-- [ ] 3.2 Persistence models for target portfolio / rebalance / paper NAV /
-  equity curve (datahub model; hash the *validated* config, pin it).
+- [x] 3.1 strategy_runner daily job + CLI (run/report); datahub_job_runs
+  freshness record; skip (not empty) when no VERIFIED scores; fails closed
+  unless the score source is ACTIVE-registered and covers the horizon.
+- [x] 3.2 StrategyPaperRun persistence model (date/model_version/horizon/
+  config_hash of the *validated* config, target holdings, rebalance, status);
+  paper NAV snapshot persistence wired when the NAV engine is called by the
+  runner (model field present; curve fill lands with the daily-NAV slice).
 
 ## 4. Tests + gates
 
 - [x] 4.1 Unit tests: config validation + hash order-insensitivity + mutation
   safety, selection bands/eligibility/caps, rebalance diff, NAV costs /
   turnover / suspension roll-forward / last-close valuation / benchmark
-  passthrough / empty-schedule guard. Skip-on-no-data test lands with 3.1.
+  passthrough / empty-schedule guard; runner registry fail-closed (unregistered
+  / horizon-missing) + skip-on-no-data + parser wiring tests.
 - [ ] 4.2 spec-guardian / qa-reviewer / contract-reviewer on the diff.
 - [ ] 4.3 branch-conflict check against develop; CI green; merge.
 - [ ] 4.4 (post-merge, operator) paper runbook: register flip_wide shadow if
