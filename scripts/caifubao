@@ -31,7 +31,8 @@
 #     lint                  Run ruff + pytest on datahub
 #
 # Environment:
-#   KUBECONFIG              Path to k3s.yaml (default: /etc/rancher/k3s/k3s.yaml)
+#   KUBECONFIG              Path to k3s.yaml (default: ~/.kube/config if present,
+#                           else /etc/rancher/k3s/k3s.yaml)
 #   CFB_NAMESPACE           K8s namespace (default: caifubao-dev)
 #
 # Examples:
@@ -47,6 +48,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ---- Defaults ----
+# KUBECONFIG fallback: prefer the user's kubeconfig when present (macOS/workstation
+# setups keep it at ~/.kube/config); the /etc/rancher/k3s/k3s.yaml path only exists
+# on the K3s server host itself. Without this, `system health` reports
+# "cannot reach namespace" on any non-server machine even though the cluster is up.
+if [ -z "${KUBECONFIG:-}" ] && [ -f "$HOME/.kube/config" ]; then
+  KUBECONFIG="$HOME/.kube/config"
+fi
 KUBECONFIG="${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}"
 CFB_NAMESPACE="${CFB_NAMESPACE:-caifubao-dev}"
 CFB_POD_LABEL="${CFB_POD_LABEL:-app=caifubao-datahub}"
@@ -468,7 +476,8 @@ Dev (local):
   lint                                Ruff + pytest on datahub
 
 Environment:
-  KUBECONFIG        Path to k3s.yaml (default: /etc/rancher/k3s/k3s.yaml)
+  KUBECONFIG        Path to k3s.yaml (default: ~/.kube/config if present,
+                    else /etc/rancher/k3s/k3s.yaml)
   CFB_NAMESPACE     K8s namespace (default: caifubao-dev)
 
 Examples:
