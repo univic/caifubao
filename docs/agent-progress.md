@@ -25,6 +25,27 @@
 
 ## 进度记录
 
+### 2026-09-06 18:50 CST — 排查"dev 集群不可达"：根因是 CLI KUBECONFIG 默认值 bug，非集群故障
+
+- 状态：已完成（#194 已合并；dev 集群确认可达、全健康）
+- 已完成：用户指出"dev 集群之前是通的"后系统排查。根因：`scripts/caifubao` 默认
+  `KUBECONFIG=/etc/rancher/k3s/k3s.yaml`（仅 K3s 服务器主机存在），本机 macOS 真实
+  kubeconfig 在 `~/.kube/config`；无 `KUBECONFIG` 环境变量时每次 kubectl 都失败 →
+  `system health` 连续多轮误报 "cannot reach namespace caifubao-dev"。修复 #194：
+  未设 KUBECONFIG 且 `~/.kube/config` 存在时回退到它（保留服务器路径作后备），并同步
+  agent-cli.md 文档 + `${HOME:-}` 加固。qa GATE_OK。
+- 验证：修复后无 env 直接 `./scripts/caifubao system health` → K3s ✓ connected、
+  datahub pod Running、MongoDB LOCAL/SRC ✓（~18.6M quotes）、CronJobs/数据各层齐全；
+  诊断期间确认 #192 镜像自动发布 roll out 成功（旧 pod 终止）。只读核查 dev：注册表
+  为空（flip_wide_shadow_v1 未注册，符合预期）；score_v2_202605b h20 VERIFIED 仅 50
+  只×42 天（旧实验子集），quote 全市场覆盖至 09-04。
+- 下一步：dev 集群现已可达 → task 3.3 operator 实跑条件具备（注册 flip_wide_shadow_v1
+  → 全市场 backfill → report/compare vs baseline）；task 4.4 ≥120 天 paper run。
+- 阻塞：task 3.3/4.4 实跑为写库操作，需用户显式授权（runbook 已备）；未 promote 任何
+  模型版本，线上默认评分不变。
+
+---
+
 ### 2026-09-06 09:30 CST — Stage C 代码链全部完成：#192 合并（slice 3 NAV 接线 + 4.4 runbook）
 
 - 状态：已完成（代码侧全部合并；仅剩 task 3.3/4.4 operator 实跑需 DB 授权）
