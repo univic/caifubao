@@ -14,6 +14,8 @@ trading days later, so the operator/runbook passes a lagged date (task 4.4).
 Usage:
     python -m app.jobs.strategy_runner run --date 2026-09-04 \
         --config-json '{"score_model_version":"flip_wide_shadow_v1"}'
+    python -m app.jobs.strategy_runner nav --from 2026-03-01 --to 2026-08-31 \
+        --config-json '{"score_model_version":"flip_wide_shadow_v1"}'
     python -m app.jobs.strategy_runner report --date 2026-09-04
 """
 
@@ -257,6 +259,172 @@ def run_strategy(
     }
 
 
+def _load_quotes_for_codes(
+    codes: list[str],
+    from_date: datetime.datetime,
+    to_date: datetime.datetime,
+) -> dict[str, dict[str, "object"]]:
+    """Load StockDailyQuote open/close/trade_status for codes over a range.
+
+    Returns {stock_code: {date.isoformat(): QuoteView}}. Suspended days keep
+    their quote row (trade_status=0) so the NAV engine rolls them forward.
+    """
+    from app.lib.scoring_engine.scoring_service import normalize_date
+    from app.lib.strategy_engine.nav import QuoteView
+    from app.model.stock import StockDailyQuote
+
+    quotes = StockDailyQuote.objects(
+        code__in=list(codes),
+        date__gte=normalize_date(from_date),
+        date__lte=normalize_date(to_date),
+    )
+    by_code: dict[str, dict[str, object]] = {}
+    for q in quotes:
+        day = normalize_date(q.date).date().isoformat()
+        by_code.setdefault(q.code, {})[day] = QuoteView(
+            open_price=q.open,
+            close_price=q.close,
+            trade_status=int(q.trade_status or 1),
+        )
+    return by_code
+
+
+def _benchmark_returns_for_dates(
+    from_date: datetime.datetime, to_date: datetime.datetime
+) -> dict[str, float]:
+    """Same-date tradable-universe equal-weight return per date.
+
+    Uses close vs previous_close over all tradable (trade_status=1) quote rows
+    in the window; returns {date.isoformat(): mean return}.
+    """
+    from app.lib.scoring_engine.scoring_service import normalize_date
+    from app.model.stock import StockDailyQuote
+
+    quotes = StockDailyQuote.objects(
+        date__gte=normalize_date(from_date),
+        date__lte=normalize_date(to_date),
+        trade_status=1,
+    ).only("date", "code", "close", "previous_close")
+    per_date: dict[str, list[float]] = {}
+    for q in quotes:
+        if not q.close or not q.previous_close:
+            continue
+        ret = q.close / q.previous_close - 1.0
+        per_date.setdefault(normalize_date(q.date).date().isoformat(), []).append(ret)
+    return {
+        day: round(sum(returns) / len(returns), 8)
+        for day, returns in per_date.items()
+        if returns
+    }
+
+
+def run_nav(
+    *,
+    from_date: datetime.datetime,
+    to_date: datetime.datetime,
+    config: dict | None = None,
+    model_version: str | None = None,
+    horizon: int | None = None,
+) -> dict:
+    """Recompute the paper NAV curve over a range of COMPLETED runs.
+
+    Reads COMPLETED StrategyPaperRun docs in [from, to], builds the rebalance
+    schedule from their target_holdings, loads quote prices + equal-weight
+    benchmark, runs simulate_paper_nav, and writes each curve point back into
+    the matching run's nav_snapshot. Pure helpers (schedule_from_runs /
+    attach_nav_points) live in strategy_engine.runner.
+    """
+    from app.lib.strategy_engine.config import validate_strategy_config
+    from app.lib.strategy_engine.nav import simulate_paper_nav
+    from app.lib.strategy_engine.runner import attach_nav_points, schedule_from_runs
+    from app.model.strategy import StrategyPaperRun
+
+    resolved = validate_strategy_config(config or DEFAULT_STRATEGY_CONFIG)
+    eff_version = model_version or resolved["score_model_version"]
+    eff_horizon = int(horizon or resolved.get("horizon", DEFAULT_HORIZON))
+    _resolve_model_version(
+        {**resolved, "score_model_version": eff_version, "horizon": eff_horizon}
+    )
+
+    query = StrategyPaperRun.objects(
+        strategy_name=DEFAULT_STRATEGY_NAME,
+        model_version=eff_version,
+        horizon=eff_horizon,
+        status="COMPLETED",
+        date__gte=from_date,
+        date__lte=to_date,
+    ).order_by("date")
+    runs = list(query)
+    if not runs:
+        return {"found_runs": 0, "reason": "no COMPLETED runs in range"}
+
+    # Deduplicate by date: a rerun with a changed config (no --replace) can
+    # leave two COMPLETED docs for the same date (unique index includes
+    # config_hash); keep the most recent and never execute two rebalances on
+    # the same day.
+    by_date: dict[str, object] = {}
+    for run in runs:
+        key = run.date.date().isoformat()
+        if key not in by_date or (getattr(run, "completed_at", None) or run.date) >= (
+            getattr(by_date[key], "completed_at", None) or by_date[key].date
+        ):
+            by_date[key] = run
+    runs = [by_date[key] for key in sorted(by_date)]
+
+    schedule = schedule_from_runs(runs)
+    if not schedule:
+        return {"found_runs": len(runs), "reason": "no runs carry holdings"}
+
+    # Board-lot granularity makes the curve NAV-scale-sensitive: inherit the
+    # recorded initial_nav from the earliest run's config when the caller did
+    # not supply one, so a recompute reproduces the book the operator sized.
+    if "initial_nav" not in (config or {}):
+        recorded = (runs[0].config or {}).get("initial_nav")
+        if recorded:
+            resolved["initial_nav"] = float(recorded)
+
+    codes = sorted({code for decision in schedule for code in decision["holdings"]})
+    prices = _load_quotes_for_codes(codes, from_date, to_date)
+    benchmark = _benchmark_returns_for_dates(from_date, to_date)
+
+    if not prices:
+        return {
+            "found_runs": len(runs),
+            "reason": (
+                f"no StockDailyQuote rows for {len(codes)} held codes in "
+                "[from, to]; refusing to write a flat cash nav_snapshot"
+            ),
+        }
+
+    result = simulate_paper_nav(
+        prices=prices,
+        schedule=schedule,
+        benchmark_returns=benchmark,
+        initial_nav=float(resolved.get("initial_nav", 1_000_000.0)),
+    )
+    attached = attach_nav_points(runs, result["curve"])
+
+    updated = 0
+    for run in runs:
+        key = run.date.date().isoformat()
+        point = attached["points_by_date"].get(key)
+        if point is None:
+            continue
+        run.nav_snapshot = point
+        run.save()
+        updated += 1
+
+    return {
+        "found_runs": len(runs),
+        "updated_runs": updated,
+        "initial_nav": result["initial_nav"],
+        "terminal_nav": result["terminal_nav"],
+        "curve_points": len(result["curve"]),
+        "benchmark_dates": len(benchmark),
+        "unmatched_dates": [d.date().isoformat() for d in attached["unmatched_dates"]],
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Caifubao Strategy Paper Runner")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -274,6 +442,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_report = sub.add_parser("report", help="Show the latest paper run for a date")
     p_report.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
     p_report.add_argument("--model-version", default=None)
+
+    p_nav = sub.add_parser(
+        "nav", help="Recompute paper NAV curve over COMPLETED runs in a range"
+    )
+    p_nav.add_argument("--from", dest="from_date", required=True)
+    p_nav.add_argument("--to", dest="to_date", required=True)
+    p_nav.add_argument("--config-json", default=None)
+    p_nav.add_argument("--model-version", default=None)
+    p_nav.add_argument("--horizon", type=int, choices=[5, 20, 60], default=None)
     return parser
 
 
@@ -336,6 +513,16 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "run":
         config = json.loads(args.config_json) if args.config_json else None
         _run_with_tracking(args, config)
+    elif args.command == "nav":
+        config = json.loads(args.config_json) if args.config_json else None
+        result = run_nav(
+            from_date=parse_date(args.from_date),
+            to_date=parse_date(args.to_date),
+            config=config,
+            model_version=args.model_version,
+            horizon=args.horizon,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     elif args.command == "report":
         from app.model.strategy import StrategyPaperRun
 

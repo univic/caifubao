@@ -108,6 +108,26 @@ equal-weight return.
 - THEN the strategy equity curve and the benchmark curve are both recorded
   with per-date values
 
+#### Scenario: NAV curve recomputes from persisted runs
+
+- GIVEN a range with ≥1 COMPLETED StrategyPaperRun carrying target holdings
+- WHEN the operator runs `strategy_runner nav --from <date> --to <date>`
+- THEN the runs are sorted by date into a rebalance schedule
+- AND quote prices (open/close/trade_status) plus the same-date equal-weight
+  benchmark are loaded for the range
+- AND `simulate_paper_nav` runs with realistic T+1 costs
+- AND each curve point (nav/daily_return/turnover/drawdown/benchmark_return) is
+  written back into the matching run's `nav_snapshot`
+
+#### Scenario: NAV recompute with no runs is reported, not crashed
+
+- GIVEN a range with no COMPLETED runs for the configured model version
+- WHEN the operator runs `strategy_runner nav --from <date> --to <date>`
+- THEN the command returns a no-runs result with a reason
+- AND nothing is written
+- AND a range whose held codes have no quote rows also returns a reason
+  instead of writing a flat cash nav_snapshot
+
 ## Non-goals
 
 - No real order execution, broker integration, or account mutation (paper-only;

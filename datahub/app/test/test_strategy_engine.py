@@ -97,6 +97,25 @@ def test_config_mutation_does_not_corrupt_module_default():
     validate_strategy_config(copy.deepcopy(DEFAULT_STRATEGY_CONFIG))
 
 
+def test_config_accepts_initial_nav_override():
+    cfg = validate_strategy_config(
+        {
+            "score_model_version": "v1",
+            "initial_nav": 20_000_000.0,
+            "selection": {"mode": "top_n", "portfolio_size": 30},
+        }
+    )
+    assert cfg["initial_nav"] == 20_000_000.0
+
+
+def test_config_rejects_non_positive_initial_nav():
+    import pytest
+
+    cfg = {"score_model_version": "v1", "initial_nav": 0}
+    with pytest.raises(ValueError, match="initial_nav must be a positive number"):
+        validate_strategy_config(cfg)
+
+
 def test_config_rejects_unknown_nested_keys():
     # A typo inside a nested block must fail loudly (mirrors the scoring
     # registry) instead of being absorbed into the default.
