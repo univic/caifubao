@@ -347,3 +347,102 @@ def test_paper_nav_drawdown_never_positive():
     result = simulate_paper_nav(prices=prices, schedule=schedule, initial_nav=100_000.0)
     for point in result["curve"]:
         assert point["drawdown"] <= 0.0
+
+
+# ---------------------------------------------------------------------------
+# runner orchestration
+# ---------------------------------------------------------------------------
+
+
+def test_eligible_codes_excludes_st_bse_suspended():
+    from app.lib.strategy_engine.runner import eligible_codes_from_flags
+
+    flags = {
+        "sh600000": {"is_st": 0, "is_bse": 0, "trade_status": 1},  # eligible
+        "sh600001": {"is_st": 1, "is_bse": 0, "trade_status": 1},  # ST
+        "sh600002": {"is_st": 0, "is_bse": 1, "trade_status": 1},  # BSE
+        "sh600003": {"is_st": 0, "is_bse": 0, "trade_status": 0},  # suspended
+    }
+    cfg = {
+        "score_model_version": "flip_wide_shadow_v1",
+        "selection": {"mode": "top_n", "portfolio_size": 10},
+    }
+    assert eligible_codes_from_flags(flags, cfg) == {"sh600000"}
+
+
+def test_eligible_codes_missing_row_is_fail_closed():
+    from app.lib.strategy_engine.runner import eligible_codes_from_flags
+
+    cfg = {
+        "score_model_version": "flip_wide_shadow_v1",
+        "selection": {"mode": "top_n", "portfolio_size": 10},
+    }
+    # sh600999 has no flag row -> unknown liquidity -> excluded
+    assert eligible_codes_from_flags({"sh600000": {"trade_status": 1}}, cfg) == {
+        "sh600000"
+    }
+
+
+def test_assemble_daily_plan_skips_when_no_predictions():
+    import datetime
+
+    from app.lib.strategy_engine.runner import assemble_daily_plan
+
+    plan = assemble_daily_plan(
+        config={"score_model_version": "v1"},
+        date=datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        predictions=[],
+        previous_holdings=None,
+    )
+    assert plan["skipped"] is True
+    assert "no VERIFIED predictions" in plan["reason"]
+
+
+def test_assemble_daily_plan_builds_target_and_rebalance():
+    import datetime
+
+    from app.lib.strategy_engine.runner import assemble_daily_plan
+
+    preds = [
+        _Pred("sh600001", 90.0, percentile=0.99),
+        _Pred("sh600002", 80.0, percentile=0.98),
+    ]
+    flags = {
+        "sh600001": {"trade_status": 1},
+        "sh600002": {"trade_status": 1},
+    }
+    plan = assemble_daily_plan(
+        config={
+            "score_model_version": "v1",
+            "selection": {"mode": "top_n", "portfolio_size": 10},
+        },
+        date=datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        predictions=preds,
+        previous_holdings=[{"stock_code": "sh600001", "weight": 1.0}],
+        flags=flags,
+    )
+    assert plan["skipped"] is False
+    codes = {h["stock_code"] for h in plan["target_holdings"]}
+    assert codes == {"sh600001", "sh600002"}
+    assert plan["rebalance"]["added"] == ["sh600002"]
+
+
+def test_assemble_daily_plan_skips_when_selection_empty_after_flags():
+    import datetime
+
+    from app.lib.strategy_engine.runner import assemble_daily_plan
+
+    preds = [_Pred("sh600001", 90.0, percentile=0.99)]
+    # code is ST -> excluded -> no eligible holdings
+    plan = assemble_daily_plan(
+        config={
+            "score_model_version": "v1",
+            "selection": {"mode": "top_n", "portfolio_size": 10},
+        },
+        date=datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        predictions=preds,
+        previous_holdings=None,
+        flags={"sh600001": {"is_st": 1, "trade_status": 1}},
+    )
+    assert plan["skipped"] is True
+    assert plan["reason"] == "selection produced no eligible holdings"
