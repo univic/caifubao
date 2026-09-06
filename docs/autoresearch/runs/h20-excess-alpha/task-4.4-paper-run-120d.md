@@ -59,8 +59,9 @@ PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.strategy_runner run \
 
 ## 3. NAV 曲线回算（可每周/每月）
 
-**必须与 `run` 使用相同 `initial_nav`**（§2 示例已包含；省略则退回 1,000,000 默认，
-在 800 宽书下大多数股票买不进 1 手，曲线会严重失真）：
+**必须与 `run` 使用相同 `initial_nav`**（§2 示例已包含；若省略，`nav` 会继承最早
+COMPLETED run 记录 config 里的 `initial_nav`——所以 §2 记录什么，§3 就回算什么，
+切勿两处不一致）：
 
 ```bash
 PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.strategy_runner nav \
