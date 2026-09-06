@@ -6,7 +6,10 @@ horizon, applies the versioned strategy config (eligibility, wide-book
 selection — buy-high only), persists the target portfolio + rebalance list
 (StrategyPaperRun), and records a strategy-freshness datahub_job_run.
 Paper-only: never places real orders. Skip (not empty) when the configured
-source has no VERIFIED scores for the date.
+source has no VERIFIED scores for the date (freshness records SKIPPED, so an
+upstream scoring gap is visible rather than masked as a fresh run). The caller
+chooses the run date: predictions for date D are VERIFIED only ~horizon
+trading days later, so the operator/runbook passes a lagged date (task 4.4).
 
 Usage:
     python -m app.jobs.strategy_runner run --date 2026-09-04 \
@@ -41,15 +44,6 @@ STRATEGY_JOB_MINUTE = 10
 # Strategy run label stored on StrategyPaperRun; the strategy *semantics* are
 # pinned by model_version + config_hash (this label is not part of config).
 DEFAULT_STRATEGY_NAME = "flip_wide_paper"
-
-# scoring_daily must have a SUCCESS record before strategy runs (strategy
-# consumes VERIFIED scores produced later in the evening).
-DEPENDENCY_JOB_FAMILY = "scoring_daily"
-DEPENDENCY_JOB_NAME = "datahub_scoring_daily"
-DEPENDENCY_JOB_HOUR = 18
-DEPENDENCY_JOB_MINUTE = 35
-DEPENDENCY_WAIT_TIMEOUT_SECONDS = 600
-DEPENDENCY_POLL_INTERVAL_SECONDS = 10
 
 
 def parse_date(value: str | None) -> datetime.datetime | None:
@@ -112,44 +106,44 @@ def _query_verified_predictions(model_version, date, horizon):
     )
 
 
-def _query_flags(date, horizon) -> dict[str, dict]:
+def _query_flags(date, horizon, model_version=None) -> dict[str, dict]:
     """{stock_code: {is_st, is_bse, trade_status}} for the date's cohort.
 
-    Quote rows carry trade_status/isST; BSE is derived from the stock code.
-    Codes without a quote row for the date keep trade_status=1 but ST/BSE flags
-    only when known — the engine treats unknown-flag codes as eligible for
-    selection; liquidity filtering beyond trade_status is a later-slice concern
-    (min_trade_amount is validated but unenforced in the core).
+    Sources ST/trade_status from the StockDailyQuote collection (the real quote
+    store — the embedded DailyQuote list on IndividualStock is never written by
+    any pipeline) via one bulk query; BSE is derived from the stock code.
+    Codes with no quote row for the date are excluded by the engine's
+    fail-closed rule (unknown status/liquidity is not tradable), so ST or
+    suspended names cannot enter the paper portfolio.
     """
+    from app.lib.scoring_engine.scoring_service import normalize_date
     from app.lib.utilities.data_capability_helper import is_bse_stock_code
     from app.model.scoring import StockScorePrediction
-    from app.model.stock import IndividualStock
+    from app.model.stock import StockDailyQuote
 
-    predictions = list(
-        StockScorePrediction.objects(
-            date=date, horizon=horizon, status="VERIFIED"
-        ).only("stock_code")
-    )
+    query = StockScorePrediction.objects(date=date, horizon=horizon, status="VERIFIED")
+    if model_version:
+        query = query(model_version=model_version)
+    predictions = list(query.only("stock_code"))
     codes = [p.stock_code for p in predictions]
+    if not codes:
+        return {}
+
+    quotes = {
+        q.code: q
+        for q in StockDailyQuote.objects(code__in=codes, date=normalize_date(date))
+    }
     flags = {}
     for code in codes:
-        is_st = 0
-        trade_status = 1
-        stock = IndividualStock.objects(code=code).first()
-        if stock is not None:
-            quotes = [
-                q
-                for q in (stock.daily_quote_hfq or [])
-                if getattr(q, "date", None) == date
-            ]
-            if quotes:
-                quote = quotes[-1]
-                is_st = int(quote.isST or 0)
-                trade_status = int(quote.trade_status or 1)
+        quote = quotes.get(code)
+        if quote is None:
+            # No quote row for the date: engine treats it as not eligible
+            # (fail-closed); omit from the map so the code is excluded.
+            continue
         flags[code] = {
-            "is_st": is_st,
+            "is_st": int(quote.isST or 0),
             "is_bse": 1 if is_bse_stock_code(code) else 0,
-            "trade_status": trade_status,
+            "trade_status": int(quote.trade_status or 1),
         }
     return flags
 
@@ -177,7 +171,12 @@ def run_strategy(
         config_hash=config_hash,
     )
     existing = query.first()
-    if existing is not None and existing.status == "COMPLETED" and not replace:
+    if (
+        existing is not None
+        and existing.status == "COMPLETED"
+        and not replace
+        and not dry_run
+    ):
         logger.info("strategy already completed for %s; pass --replace to rerun", date)
         return {
             "skipped_existing": True,
@@ -186,18 +185,48 @@ def run_strategy(
             "config_hash": config_hash,
         }
 
+    # Previous holdings come from the most recent COMPLETED run BEFORE this
+    # date (same strategy/version/horizon), so the persisted rebalance diff is
+    # "what changed since the previous portfolio", not "since nothing".
+    previous_run = (
+        StrategyPaperRun.objects(
+            strategy_name=DEFAULT_STRATEGY_NAME,
+            model_version=model_version,
+            horizon=horizon,
+            date__lt=date,
+            status="COMPLETED",
+        )
+        .order_by("-date")
+        .first()
+    )
+    previous_holdings = (
+        previous_run.target_holdings if previous_run is not None else None
+    )
+
     predictions = _query_verified_predictions(model_version, date, horizon)
-    flags = _query_flags(date, horizon) if predictions else {}
+    flags = (
+        _query_flags(date, horizon, model_version=model_version) if predictions else {}
+    )
     plan = assemble_daily_plan(
         config=resolved,
         date=date,
         predictions=predictions,
-        previous_holdings=None,
+        previous_holdings=previous_holdings,
         flags=flags,
         horizon=horizon,
     )
     if dry_run:
-        return {"dry_run": True, "date": date, "plan": plan}
+        return {
+            "dry_run": True,
+            "date": date,
+            "model_version": model_version,
+            "horizon": horizon,
+            "config_hash": config_hash,
+            "previous_run_date": (
+                previous_run.date.date() if previous_run is not None else None
+            ),
+            "plan": plan,
+        }
 
     if existing is not None:
         existing.delete()
@@ -214,6 +243,7 @@ def run_strategy(
         target_holdings=plan.get("target_holdings", []),
         rebalance=plan.get("rebalance", {}),
     )
+    run.completed_at = datetime.datetime.now(datetime.UTC)
     run.save()
     return {
         "date": date,
@@ -223,6 +253,7 @@ def run_strategy(
         "status": run.status,
         "skip_reason": run.skip_reason,
         "target_holdings_count": len(run.target_holdings or []),
+        "rebalance": run.rebalance,
     }
 
 
@@ -266,11 +297,16 @@ def _run_with_tracking(args, config: dict | None) -> None:
             dry_run=args.dry_run,
             replace=args.replace,
         )
-        status = (
-            job_run_helper.STATUS_SKIPPED
-            if result.get("skipped_existing") or result.get("plan", {}).get("skipped")
-            else job_run_helper.STATUS_SUCCESS
-        )
+        if args.dry_run:
+            # Preview only: nothing persisted -> record SKIPPED (not SUCCESS),
+            # with the resolved score source for traceability.
+            status = job_run_helper.STATUS_SKIPPED
+        elif result.get("skipped_existing"):
+            status = job_run_helper.STATUS_SKIPPED
+        elif result.get("status") == "SKIPPED":
+            status = job_run_helper.STATUS_SKIPPED
+        else:
+            status = job_run_helper.STATUS_SUCCESS
         job_run_helper.finish_job_run(
             job_run,
             status=status,
@@ -278,7 +314,11 @@ def _run_with_tracking(args, config: dict | None) -> None:
                 "target": args.date,
                 "model_version": result.get("model_version"),
                 "config_hash": result.get("config_hash"),
-                "written_total": 1 if status == job_run_helper.STATUS_SUCCESS else 0,
+                "written_total": (
+                    1
+                    if status == job_run_helper.STATUS_SUCCESS and not args.dry_run
+                    else 0
+                ),
             },
         )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))

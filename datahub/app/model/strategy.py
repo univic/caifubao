@@ -38,6 +38,7 @@ class StrategyPaperRun(Document):
     nav_snapshot = DictField()  # {initial_nav, terminal_nav, curve:[...]}
 
     created_at = DateTimeField(default=lambda: datetime.datetime.now(datetime.UTC))
+    updated_at = DateTimeField()
     completed_at = DateTimeField()
     error_msg = StringField()
 
@@ -60,4 +61,5 @@ class StrategyPaperRun(Document):
     }
 
     def save(self, *args, **kwargs):
+        self.updated_at = datetime.datetime.now(datetime.UTC)
         return super(StrategyPaperRun, self).save(*args, **kwargs)
