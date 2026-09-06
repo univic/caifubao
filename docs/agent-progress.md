@@ -40,6 +40,7 @@
     5. compare vs score_v2_202605b（06-03）：basis=percentile，verdict「Candidate
        clearly wins on both hit rate and return」；同 50 只子集 flip=baseline 收益
        （翻转改选择不改个股收益，数学正确）。
+  - 记录口径：本 replay 记入 manual-experiments-ledger（autoresearch/ledger.jsonl 按既有约定仅收官方 runner profile run）；baseline VERIFIED 为 50 只子集，对等全市场对比待 task 4.4。
   - 执行中发现并规避：raw 模式不应用 directions（需 ranked env）、06-02 raw 残留、
     datahub pod OOM（report 大聚合超 2Gi → 改分日内存安全聚合）。
 - 验证：flip 数据 27,770 条完好；校准/对比输出稳定一致；ledger 已补录。
