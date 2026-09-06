@@ -24,6 +24,28 @@
 ```
 
 ## 进度记录
+### 2026-09-07 00:08 CST — datahub-perf 2.6+2.7 合并：#197（ranked 收尾内存化 + 验证批量路径）
+
+- 状态：已完成
+- 已完成：PR #197（datahub-perf-optimization 2.6+2.7，用户选定「2.6+2.7 完整」）squash 合并
+  到 develop（f993ca3）。2.6（C5）：ranked 评分收尾消费内存结果——`assign_ranks(predictions=)`
+  免 cohort 重查、`_require_complete_prediction_set(persisted_codes=)` 内存完整性校验、
+  BLOCKED 行不入内存排名；2.7（C6）：`verify_predictions_batch`/`_verify_many` 批量验证
+  ——未来行情按 stock_code 单次拉取（.only() 投影含 hfq）后按 (date, target_date] 双界
+  bisect 切片，status/verification bulk_write 更新，verify_predictions 路由到批量路径。
+  评审过程修复两轮 P1/P2：①窗口须止于各自 target_date（防跨窗吸收）；②ranked 修复路径
+  （replace=False）下存留的既有 BLOCKED 行须计入 persisted_codes（stored_blocked_codes
+  union，防「cohort incomplete」误报），仍不入内存排名且由 _repair_blocked_predictions 治愈。
+- 验证：datahub 530 通过（525 基线 + 5 新增回归）；ruff 0.15.15 clean；openspec 11/11；
+  CI 全绿（Datahub Tests/Lint、OpenSpec、Private Deploy Dry Run）；qa-reviewer 与
+  spec-guardian 均 GATE_OK（@200bbb4）；conflict check clean。perf-analysis C5/C6 行
+  已按 #143/#144 惯例在 PR 内补记实现 vs 遗留。
+- 下一步：遗留项跟踪（tasks.md 注明）：replay_service/_upgrade_recommendations 收尾全量
+  重读、验证候选查询预测侧 .only()、增量验证门槛（last_verified_date）、dev 实测回填
+  （5.3）；待用户 dispatch datahub_deploy 部署配额提升（私有 #60）后测 dev 单日 ranked
+  耗时对比。
+- 阻塞：无。
+
 ### 2026-09-06 20:30 CST — task 3.3 实跑完成：flip_wide 生产链全市场 replay + 校准对比
 
 - 状态：已完成（代码/工具/DB 执行全链路打通；选择有效性需 ≥120 天窗口）
