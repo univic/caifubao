@@ -297,6 +297,7 @@ class StockScoringService:
         complete for the cohort — ranking sorts internally. When None,
         predictions are loaded from the DB (raw path, unchanged behavior).
         """
+        in_memory = predictions is not None
         if predictions is None:
             filters = {
                 "date": normalize_date(date),
@@ -333,6 +334,13 @@ class StockScoringService:
                     {"$set": {"rank": idx, "percentile": percentile}},
                 )
             )
+            if in_memory:
+                # Keep the caller's in-memory objects consistent with what
+                # bulk_write persists, so downstream tail steps (e.g.
+                # _upgrade_recommendations) can reuse them instead of
+                # re-reading the cohort from Mongo (perf C5 remainder).
+                prediction.rank = idx
+                prediction.percentile = percentile
         if not operations:
             return 0
         result = self.prediction_model._get_collection().bulk_write(
@@ -346,24 +354,33 @@ class StockScoringService:
         horizon: int,
         *,
         expected_codes: list[str] | None = None,
+        predictions: list | None = None,
     ) -> None:
         """Re-compute recommendations using hybrid logic after ranks are assigned.
 
         Called after assign_ranks() so that percentiles are available.
         Updates the recommendation field in-place for all predictions on this
         date/horizon/model_version.
+
+        predictions: optional already-loaded non-BLOCKED prediction objects
+        for this cohort (the objects assign_ranks just ranked in memory).
+        When provided, no DB re-read happens (perf C5 remainder) — the list
+        must be the complete non-BLOCKED cohort with fresh rank/percentile.
+        When None, predictions are loaded from the DB (raw path, unchanged).
         """
-        filters = {
-            "date": normalize_date(date),
-            "horizon": horizon,
-            "model_version": self.model_version,
-            "status__ne": "BLOCKED",
-        }
-        if expected_codes is not None:
-            filters["stock_code__in"] = expected_codes
-        predictions = list(self.prediction_model.objects(**filters))
-        if not predictions:
-            return
+        in_memory = predictions is not None
+        if predictions is None:
+            filters = {
+                "date": normalize_date(date),
+                "horizon": horizon,
+                "model_version": self.model_version,
+                "status__ne": "BLOCKED",
+            }
+            if expected_codes is not None:
+                filters["stock_code__in"] = expected_codes
+            predictions = list(self.prediction_model.objects(**filters))
+            if not predictions:
+                return
 
         config = self._get_horizon_config(horizon)
         bulk_ops = []
@@ -380,6 +397,10 @@ class StockScoringService:
                         {"$set": {"recommendation": new_rec}},
                     )
                 )
+                if in_memory:
+                    # Mirror the bulk write on the in-memory object so the
+                    # caller's cohort stays consistent with the DB.
+                    p.recommendation = new_rec
 
         if bulk_ops:
             result = self.prediction_model._get_collection().bulk_write(
@@ -953,7 +974,10 @@ class StockScoringService:
                     predictions=rankable,
                 )
                 self._upgrade_recommendations(
-                    date, current_horizon, expected_codes=expected_codes
+                    date,
+                    current_horizon,
+                    expected_codes=expected_codes,
+                    predictions=rankable,
                 )
 
         return {

@@ -62,7 +62,20 @@ class ScoreVerificationService:
         if horizon:
             query["horizon"] = horizon
 
-        predictions = list(self.prediction_model.objects(**query))
+        # Project only the fields verification needs: full-document hydration
+        # of ~15k due candidates per day is pure overhead (perf C6 remainder).
+        # score/rank/percentile/explanation/input_snapshot are untouched here.
+        predictions = list(
+            self.prediction_model.objects(**query).only(
+                "stock_code",
+                "date",
+                "horizon",
+                "base_price",
+                "status",
+                "target_date",
+                "verification",
+            )
+        )
         return self._verify_many(predictions, today=today)
 
     def verify_predictions_batch(

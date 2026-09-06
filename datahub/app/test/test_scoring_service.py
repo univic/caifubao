@@ -543,6 +543,152 @@ def test_assign_ranks_in_memory_excludes_blocked(scoring_service):
     assert getattr(blocked, "percentile", None) is None
 
 
+def test_assign_ranks_in_memory_mutates_passed_objects(scoring_service, monkeypatch):
+    """Perf C5 remainder: the in-memory branch must set rank/percentile on the
+    caller-provided objects itself (real mongoengine bulk_write never mutates
+    loaded docs), so downstream tail steps can reuse the list without a cohort
+    re-read."""
+    from types import SimpleNamespace
+
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    p1 = FakePrediction(
+        stock_code="sh600000",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=80.0,
+    )
+    p2 = FakePrediction(
+        stock_code="sh600001",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=70.0,
+    )
+    FakePrediction.records.extend([p1, p2])
+    # no-op bulk_write: emulates real mongoengine (does not mutate docs)
+    monkeypatch.setattr(
+        FakePrediction,
+        "_get_collection",
+        classmethod(
+            lambda cls: SimpleNamespace(
+                bulk_write=lambda operations, ordered=False: SimpleNamespace(
+                    modified_count=len(operations)
+                )
+            )
+        ),
+    )
+
+    scoring_service.assign_ranks(date, 5, predictions=[p1, p2])
+
+    assert p1.rank == 1
+    assert p1.percentile == 1.0
+    assert p2.rank == 2
+    assert p2.percentile == 0.5
+
+
+def test_upgrade_recommendations_in_memory_skips_db_read(scoring_service, monkeypatch):
+    """Perf C5 remainder: _upgrade_recommendations(predictions=...) must not
+    re-read the cohort from Mongo; it recomputes from the passed objects and
+    mirrors the updates onto them (rank/percentile set by assign_ranks)."""
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+
+    def boom(*args, **kwargs):
+        raise AssertionError(
+            "_upgrade_recommendations must not re-read the cohort from Mongo"
+        )
+
+    monkeypatch.setattr(FakePrediction, "objects", boom)
+    p1 = FakePrediction(
+        stock_code="sh600000",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=95.0,
+        percentile=0.97,
+        recommendation="WATCH",  # wrong: top band -> BUY
+    )
+    p2 = FakePrediction(
+        stock_code="sh600001",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=40.0,
+        percentile=0.10,
+        recommendation="NONE",  # wrong: bottom band -> AVOID
+    )
+    FakePrediction.records.extend([p1, p2])
+
+    scoring_service._upgrade_recommendations(
+        date, 5, expected_codes=["sh600000", "sh600001"], predictions=[p1, p2]
+    )
+
+    assert p1.recommendation == "BUY"
+    assert p2.recommendation == "AVOID"
+    assert FakePrediction.bulk_calls
+    assert {op._filter["_id"] for op in FakePrediction.bulk_calls[0][0]} == {
+        p1.id,
+        p2.id,
+    }
+
+
+def test_verify_predictions_projects_only_needed_fields(scoring_service, monkeypatch):
+    """Perf C6 remainder: verify_predictions' candidate query must .only() the
+    fields verification touches instead of hydrating full prediction docs."""
+    from app.lib.scoring_engine.verification_service import ScoreVerificationService
+
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    target = datetime.datetime(2026, 4, 17, tzinfo=datetime.UTC)
+    due = FakePrediction(
+        stock_code="sh600000",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=80.0,
+        base_price=10.0,
+        target_date=target,
+        verification={},
+    )
+    FakePrediction.records.append(due)
+    captured = {}
+    original_objects = FakePrediction.objects.__func__
+
+    def spy_objects(cls, **query):
+        queryset = original_objects(cls, **query)
+        original_only = queryset.only
+
+        def spy_only(*fields):
+            captured["fields"] = fields
+            return original_only(*fields)
+
+        queryset.only = spy_only
+        return queryset
+
+    monkeypatch.setattr(FakePrediction, "objects", classmethod(spy_objects))
+    svc = ScoreVerificationService(
+        quote_model=FakeQuote,
+        prediction_model=FakePrediction,
+        model_version=scoring_service.model_version,
+    )
+    svc.verify_predictions(today=datetime.datetime(2026, 4, 20, tzinfo=datetime.UTC))
+
+    assert "fields" in captured
+    assert {
+        "stock_code",
+        "date",
+        "horizon",
+        "base_price",
+        "status",
+        "target_date",
+        "verification",
+    }.issubset(set(captured["fields"]))
+
+
 def test_legacy_blocked_fields_are_repaired_then_fast_skipped(scoring_service):
     stock = seed_stock()
     date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
