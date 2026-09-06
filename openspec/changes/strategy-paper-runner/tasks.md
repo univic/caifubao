@@ -39,8 +39,10 @@
   turnover / suspension roll-forward / last-close valuation / benchmark
   passthrough / empty-schedule guard; runner registry fail-closed (unregistered
   / horizon-missing) + skip-on-no-data + parser wiring tests.
-- [ ] 4.2 spec-guardian / qa-reviewer / contract-reviewer on the diff.
-- [ ] 4.3 branch-conflict check against develop; CI green; merge.
+- [x] 4.2 spec-guardian / qa-reviewer / contract-reviewer on the diff — all
+  GATE_OK across #190/#191/#192 (slice 1 P2s, slice 2 P1s, and the slice 3 P1
+  date-key bug all fixed and re-reviewed).
+- [x] 4.3 branch-conflict check against develop; CI green; merged (#190/#191/#192).
 - [ ] 4.4 (operator, DB access required) paper run per
   docs/autoresearch/runs/h20-excess-alpha/task-4.4-paper-run-120d.md: register
   flip_wide shadow if absent, backfill VERIFIED scores, pick an initial NAV

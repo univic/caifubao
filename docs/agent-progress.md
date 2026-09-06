@@ -25,6 +25,30 @@
 
 ## 进度记录
 
+### 2026-09-06 09:30 CST — Stage C 代码链全部完成：#192 合并（slice 3 NAV 接线 + 4.4 runbook）
+
+- 状态：已完成（代码侧全部合并；仅剩 task 3.3/4.4 operator 实跑需 DB 授权）
+- 已完成：
+  - **#192 已合并**（d52437c）：Stage C slice 3——`strategy_runner nav` CLI（COMPLETED
+    runs → schedule → StockDailyQuote 价格 + 等权基准 → simulate_paper_nav → 逐日写回
+    nav_snapshot）；`schedule_from_runs`/`attach_nav_points` 纯辅助；config 增加
+    `initial_nav` 一级键（>0 校验）；task-4.4-paper-run-120d.md operator runbook；
+    openspec +2 场景、tasks 3.2 勾选。
+  - **三门禁抓到同一 P1 并修复**：日期键类型不匹配（schedule datetime vs 价格/基准
+    iso 字符串）→ run_nav 静默产出全现金平曲线仍报成功。修复：统一 iso-string 键空间
+    + 全链路 happy-path 回归测试（旧键下必失败）；另修 initial_nav 继承最早 run 值、
+    同日期去重、无行情窗口拒绝写入、过期模型注释。
+  - **openspec tasks 4.2/4.3 勾选**（#190/#191/#192 三门禁 + CI + 合并均已实际完成）；
+    change 仅剩 4.4 operator 实跑（unchecked）。
+- 验证：#190/#191/#192 CI 全绿（datahub 525 passed、OpenSpec 11/11、ruff clean）；
+  每 PR 三门禁 GATE_OK；分支冲突 clean。
+- 下一步：task 3.3 operator 实跑（runbook 已备：注册 flip_wide_shadow_v1 → backfill →
+  compare vs baseline）；task 4.4 operator ≥120 天 paper run（runbook 已备）。
+- 阻塞：DB 执行需 operator 授权（dev 集群不可达）；未 promote 任何模型版本，线上默认
+  评分不变。
+
+---
+
 ### 2026-09-06 00:30 CST — Stage C 代码链完成：#189/#190/#191 合并
 
 - 状态：已完成（Stage A task-3.3 工具 + Stage C slice 1/2 全部合并；DB 执行步骤待 operator）
