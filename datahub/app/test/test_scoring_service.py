@@ -512,6 +512,37 @@ def test_assign_ranks_uses_stock_code_as_stable_tie_break(scoring_service):
     assert later_code.rank == 2
 
 
+def test_assign_ranks_in_memory_excludes_blocked(scoring_service):
+    """Perf 2.6 + spec: the in-memory predictions branch must exclude BLOCKED
+    rows so they never receive ranks nor shift cohort percentiles (parity with
+    the DB branch's status__ne: BLOCKED)."""
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    good = FakePrediction(
+        stock_code="sh600000",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=80.0,
+    )
+    blocked = FakePrediction(
+        stock_code="sh600001",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="BLOCKED",
+        score=0.0,
+    )
+    FakePrediction.records.extend([good, blocked])
+    # BLOCKED row must not be ranked and must not dilute the denominator.
+    scoring_service.assign_ranks(date, 5, predictions=[good, blocked])
+
+    assert good.rank == 1
+    assert good.percentile == 1.0
+    assert getattr(blocked, "rank", None) is None
+    assert getattr(blocked, "percentile", None) is None
+
+
 def test_legacy_blocked_fields_are_repaired_then_fast_skipped(scoring_service):
     stock = seed_stock()
     date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
@@ -726,6 +757,207 @@ def test_verification_transitions_to_verified(scoring_service):
     assert prediction.verification["max_return"] > 0
     assert prediction.verification["hit_target_close"] is True
     assert prediction.verification["hit_target_intra"] is True
+
+
+def test_verification_batch_matches_single_and_uses_one_quote_query(
+    scoring_service, monkeypatch
+):
+    """Perf 2.7: batch verification must produce the same statuses as the
+    single-prediction path while fetching future quotes once per stock code
+    (not once per prediction)."""
+    import datetime
+
+    stock = seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    service = ScoreVerificationService(
+        quote_model=FakeQuote, prediction_model=FakePrediction
+    )
+
+    # Create two due predictions (horizon 5) for the same stock.
+    preds = []
+    for pdate in (
+        datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC),
+    ):
+        p = FakePrediction(
+            stock_code=stock.code,
+            stock_name=stock.name,
+            date=pdate,
+            horizon=5,
+            model_version=service.model_version,
+            status="PENDING",
+            score=50.0,
+            base_price=10.0,
+            target_date=datetime.datetime(2026, 4, 20, tzinfo=datetime.UTC),
+            verification={
+                "status": "PENDING",
+                "target_date": "2026-04-20",
+                "expected_quote_count": 5,
+                "verified_quote_count": 0,
+            },
+        )
+        FakePrediction.records.append(p)
+        preds.append(p)
+
+    for idx in range(1, 8):
+        FakeQuote.records.append(
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 13 + idx - 1, tzinfo=datetime.UTC),
+                close=10.0 + idx * 0.2,
+                high=10.1 + idx * 0.2,
+                low=9.9,
+            )
+        )
+
+    quote_queries = []
+
+    original_objects = FakeQuote.objects.__func__
+
+    def counting_objects(cls, **query):
+        if "code" in query:
+            quote_queries.append(query.get("code"))
+        return original_objects(cls, **query)
+
+    monkeypatch.setattr(FakeQuote, "objects", classmethod(counting_objects))
+
+    result = service.verify_predictions_batch(
+        preds, today=datetime.datetime(2026, 4, 25, tzinfo=datetime.UTC)
+    )
+
+    assert result["checked_count"] == 2
+    assert result["status_counts"]["VERIFIED"] == 2
+    # one quote query for the single distinct stock code
+    assert len(quote_queries) == 1
+    refreshed = [FakePrediction.records[-2], FakePrediction.records[-1]]
+    assert all(p.status == "VERIFIED" for p in refreshed)
+    assert all(p.verification["verified_quote_count"] >= 5 for p in refreshed)
+
+
+def test_verification_batch_caps_window_at_each_target_date(scoring_service):
+    """Perf 2.7 P1 regression: with two due candidates of one code at
+    staggered target dates, each prediction must only count quotes within its
+    OWN (date, target_date] window. The earlier prediction must not absorb
+    quotes that belong to the later prediction's window."""
+    import datetime
+
+    stock = seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    service = ScoreVerificationService(
+        quote_model=FakeQuote, prediction_model=FakePrediction
+    )
+
+    def make_pred(pdate, target):
+        p = FakePrediction(
+            stock_code=stock.code,
+            stock_name=stock.name,
+            date=pdate,
+            horizon=5,
+            model_version=service.model_version,
+            status="PENDING",
+            score=50.0,
+            base_price=10.0,
+            target_date=target,
+            verification={
+                "status": "PENDING",
+                "target_date": target.isoformat(),
+                "expected_quote_count": 5,
+                "verified_quote_count": 0,
+            },
+        )
+        FakePrediction.records.append(p)
+        return p
+
+    # Candidate A: scored 04-10, target 04-17 (needs 5 quotes by 04-17).
+    # Candidate B: scored 04-14, target 04-22 (later window).
+    d1 = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    d2 = datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC)
+    pred_a = make_pred(d1, datetime.datetime(2026, 4, 17, tzinfo=datetime.UTC))
+    pred_b = make_pred(d2, datetime.datetime(2026, 4, 22, tzinfo=datetime.UTC))
+
+    # Trading quotes 04-13..04-22: A's window is 04-13..04-17 (5 quotes);
+    # 04-20..04-22 belong ONLY to B's window and must not leak into A.
+    FakeQuote.records.extend(
+        [
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC),
+                close=10.1,
+                high=10.2,
+                low=9.9,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC),
+                close=10.2,
+                high=10.3,
+                low=9.8,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 15, tzinfo=datetime.UTC),
+                close=10.3,
+                high=10.4,
+                low=9.7,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 16, tzinfo=datetime.UTC),
+                close=10.4,
+                high=10.5,
+                low=9.6,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 17, tzinfo=datetime.UTC),
+                close=10.5,
+                high=10.6,
+                low=9.5,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 20, tzinfo=datetime.UTC),
+                close=10.6,
+                high=10.7,
+                low=9.4,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 21, tzinfo=datetime.UTC),
+                close=10.7,
+                high=10.8,
+                low=9.3,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 22, tzinfo=datetime.UTC),
+                close=10.8,
+                high=10.9,
+                low=9.2,
+            ),
+        ]
+    )
+
+    service.verify_predictions_batch(
+        [pred_a, pred_b],
+        today=datetime.datetime(2026, 4, 25, tzinfo=datetime.UTC),
+    )
+
+    a = next(
+        p for p in FakePrediction.records if p.stock_code == stock.code and p.date == d1
+    )
+    b = next(
+        p for p in FakePrediction.records if p.stock_code == stock.code and p.date == d2
+    )
+    # A: exactly 5 quotes (04-13..04-17) == horizon -> VERIFIED, NOT 8
+    # (no absorption of B's 04-20..04-22 window).
+    assert a.status == "VERIFIED"
+    assert a.verification["verified_quote_count"] == 5
+    # B: 6 quotes (04-15..04-22) >= horizon -> VERIFIED.
+    assert b.status == "VERIFIED"
+    assert b.verification["verified_quote_count"] == 6
 
 
 def test_replay_backfills_trading_dates(scoring_service):
@@ -1507,6 +1739,84 @@ class TestScoreAllStocksRankedEndToEnd:
 
         with pytest.raises(RuntimeError, match="membership changed"):
             scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+
+    def test_ranked_tail_assigns_ranks_from_in_memory_results(
+        self, scoring_service, monkeypatch
+    ):
+        """Perf 2.6: the ranked tail must assign ranks/percentiles from the
+        in-memory persisted objects. Ranks are 1..N over non-BLOCKED rows and
+        BLOCKED rows carry no rank."""
+        import datetime
+
+        self._seed_cohort(scoring_service)
+        d = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+
+        preds = list(scoring_service.prediction_model.records)
+        blocked = [p for p in preds if p.stock_code == "sh600099"]
+        scored = [p for p in preds if p.status != "BLOCKED"]
+        assert len(blocked) == 1
+        assert (
+            getattr(blocked[0], "rank", None) is None
+            and getattr(blocked[0], "percentile", None) is None
+        )
+        assert all(
+            getattr(p, "rank", None) is not None
+            and getattr(p, "percentile", None) is not None
+            for p in scored
+        )
+        ranks = sorted(p.rank for p in scored)
+        assert ranks == list(range(1, len(scored) + 1))
+
+    def test_ranked_repair_counts_stored_blocked_row_in_completeness(
+        self, scoring_service, monkeypatch
+    ):
+        """Regression (perf 2.6/2.7 review): a replace=False partial-cohort
+        repair must not hard-fail when a stock with a STORED BLOCKED
+        prediction becomes scorable (quote data corrected between runs).
+        The in-memory completeness set must count the skipped existing
+        BLOCKED row's code (any-status DB semantics), while ranking stays
+        non-BLOCKED-only: the row remains BLOCKED, unranked, healed."""
+        import datetime
+
+        from app.test.test_scoring_service import (
+            FakePrediction,
+            seed_quotes,
+        )
+
+        self._seed_cohort(scoring_service)
+        monkeypatch.delenv("DATAHUB_SCORING_MODE", raising=False)
+        d = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+
+        # run 1: full cohort — sh600099 has no quote -> stored BLOCKED row
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+        stored = [p for p in FakePrediction.records if p.stock_code == "sh600099"]
+        assert len(stored) == 1
+        assert stored[0].status == "BLOCKED"
+        # make it legacy-dirty: stale rank artifacts from the pre-fix era
+        stored[0].rank = 1
+        stored[0].percentile = 1.0
+        stored[0].recommendation = "BUY"
+
+        # data corrected between runs: sh600099 now has a quote on the
+        # scoring date, and another code's row is dropped (partial cohort)
+        seed_quotes(stock_code="sh600099")
+        FakePrediction.records = [
+            p for p in FakePrediction.records if p.stock_code != "sh600001"
+        ]
+
+        # run 2 (replace=False): must succeed — no "cohort incomplete" raise
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+
+        blocked = [p for p in FakePrediction.records if p.stock_code == "sh600099"]
+        assert len(blocked) == 1
+        assert blocked[0].status == "BLOCKED"
+        assert getattr(blocked[0], "rank", None) is None
+        assert getattr(blocked[0], "percentile", None) is None
+        assert blocked[0].recommendation == "NONE"
+        scored = [p for p in FakePrediction.records if p.status != "BLOCKED"]
+        ranks = sorted(p.rank for p in scored)
+        assert ranks == list(range(1, len(scored) + 1))
 
 
 class TestRankedPenaltyDirection:

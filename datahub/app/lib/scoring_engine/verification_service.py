@@ -9,6 +9,23 @@ from app.model.scoring import StockScorePrediction
 from app.model.stock import StockDailyQuote
 
 
+def _bisect_right_date(quotes: list, boundary: datetime.datetime) -> int:
+    """Return the index of the first quote whose date is > boundary.
+
+    quotes must be ascending by date. Used to slice a prediction's future
+    window (date, target_date] from a per-code ordered quote list without a
+    linear scan per prediction (perf task 2.7).
+    """
+    lo, hi = 0, len(quotes)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if normalize_date(quotes[mid].date) <= normalize_date(boundary):
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
 class ScoreVerificationService:
     """Update tracking and verified outcomes for score predictions."""
 
@@ -46,11 +63,139 @@ class ScoreVerificationService:
             query["horizon"] = horizon
 
         predictions = list(self.prediction_model.objects(**query))
+        return self._verify_many(predictions, today=today)
+
+    def verify_predictions_batch(
+        self,
+        predictions,
+        today: datetime.datetime | None = None,
+    ) -> dict:
+        """Verify a caller-supplied prediction list (batch path).
+
+        Perf task 2.7: verifies in bulk — future quotes are fetched per stock
+        code in one query each (not per prediction), and status/verification
+        updates are bulk_written. Returns the same shape as
+        verify_predictions.
+        """
+        return self._verify_many(list(predictions), today=today)
+
+    def _verify_many(self, predictions, today=None) -> dict:
+        today = normalize_date(today or datetime.datetime.now(datetime.UTC))
+        today = today.replace(tzinfo=None)
         counts = {"TRACKING": 0, "VERIFIED": 0, "INSUFFICIENT_DATA": 0, "PENDING": 0}
+        if not predictions:
+            return {"checked_count": 0, "status_counts": counts}
+
+        # Group by stock code, then load each code's whole future window in
+        # ONE query (instead of one query per prediction) and slice per
+        # prediction. Only the price/date fields are projected.
+        by_code: dict[str, list] = {}
         for prediction in predictions:
-            status = self.verify_single_prediction(prediction, today=today)
-            counts[status] = counts.get(status, 0) + 1
+            if prediction.status == "BLOCKED":
+                continue
+            if not prediction.date or not prediction.target_date:
+                # No window to verify (target_date__lte excludes these in the
+                # normal query path; caller-supplied lists may still carry
+                # them). Leave untouched, matching the old per-prediction
+                # path which simply matched nothing.
+                continue
+            by_code.setdefault(prediction.stock_code, []).append(prediction)
+
+        quotes_by_code: dict[str, list] = {}
+        for code in by_code:
+            preds = by_code[code]
+            min_date = min(p.date for p in preds)
+            max_target = max(p.target_date for p in preds)
+            quotes_by_code[code] = list(
+                self.quote_model.objects(
+                    code=code,
+                    date__gt=normalize_date(min_date),
+                    date__lte=normalize_date(max_target),
+                )
+                # Project the HFQ fields too: quote_price() prefers
+                # {field}_hfq and falls back to raw only when absent. The old
+                # per-prediction path and verify_single_prediction load full
+                # docs and therefore use HFQ-adjusted prices; dropping the
+                # hfq fields here would silently compute metrics on raw
+                # prices whenever fq_factor != 1.
+                .only(
+                    "date",
+                    "open",
+                    "close",
+                    "high",
+                    "low",
+                    "close_hfq",
+                    "high_hfq",
+                    "low_hfq",
+                )
+                .order_by("date")
+            )
+
+        # Slice each code's ordered quote list per prediction and compute
+        # status; collect updates for one bulk_write.
+        from pymongo import UpdateOne
+
+        operations = []
+        results: dict[str, int] = {}
+        for code, preds in by_code.items():
+            quotes = quotes_by_code.get(code) or []
+            for prediction in preds:
+                # quotes are date-ordered; slice this prediction's window
+                # (date, target_date] via bisect so an earlier prediction
+                # never counts quotes past its own target date (spec: each
+                # prediction verifies only its own horizon window).
+                pd = normalize_date(prediction.date)
+                target = normalize_date(prediction.target_date)
+                start_idx = _bisect_right_date(quotes, pd)
+                end_idx = _bisect_right_date(quotes, target)
+                future = quotes[start_idx:end_idx]
+                status = self._status_for(prediction, future, today)
+                metrics = (
+                    self._build_metrics(prediction, future)
+                    if future
+                    else {"verified_quote_count": 0}
+                )
+                verification = {
+                    **(prediction.verification or {}),
+                    **metrics,
+                    "status": status,
+                    "target_date": prediction.target_date.isoformat()
+                    if prediction.target_date
+                    else None,
+                    "expected_quote_count": prediction.horizon,
+                    "verified_at": datetime.datetime.now(datetime.UTC).isoformat()
+                    if status == "VERIFIED"
+                    else None,
+                }
+                operations.append(
+                    UpdateOne(
+                        {"_id": prediction.id},
+                        {"$set": {"status": status, "verification": verification}},
+                    )
+                )
+                results[status] = results.get(status, 0) + 1
+        if operations:
+            self.prediction_model._get_collection().bulk_write(
+                operations, ordered=False
+            )
+        for key in counts:
+            counts[key] = results.get(key, 0)
         return {"checked_count": len(predictions), "status_counts": counts}
+
+    @staticmethod
+    def _status_for(prediction, future_quotes: list, today) -> str:
+        if not future_quotes:
+            return "PENDING"
+        expected = prediction.horizon
+        target_reached = len(future_quotes) >= expected
+        target_date_passed = prediction.target_date and normalize_date(
+            prediction.target_date
+        ).replace(tzinfo=None) <= today.replace(tzinfo=None)
+        if target_reached:
+            return "VERIFIED"
+        if target_date_passed:
+            return "INSUFFICIENT_DATA"
+        return "TRACKING"
 
     def verify_single_prediction(self, prediction, today=None) -> str:
         if prediction.status == "BLOCKED":
