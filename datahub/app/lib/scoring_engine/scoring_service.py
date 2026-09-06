@@ -287,21 +287,40 @@ class StockScoringService:
         horizon: int,
         *,
         expected_codes: list[str] | None = None,
+        predictions: list | None = None,
     ) -> int:
-        filters = {
-            "date": normalize_date(date),
-            "horizon": horizon,
-            "model_version": self.model_version,
-            "status__ne": "BLOCKED",
-        }
-        if expected_codes is not None:
-            filters["stock_code__in"] = expected_codes
-        predictions = list(
-            self.prediction_model.objects(**filters).order_by("-score", "+stock_code")
+        """Assign cross-sectional rank + percentile to a cohort.
+
+        predictions: optional already-loaded non-BLOCKED prediction objects
+        for this cohort (e.g. the objects just persisted by the ranked path).
+        When provided, no DB re-read happens (perf task 2.6); the list must be
+        complete for the cohort — ranking sorts internally. When None,
+        predictions are loaded from the DB (raw path, unchanged behavior).
+        """
+        if predictions is None:
+            filters = {
+                "date": normalize_date(date),
+                "horizon": horizon,
+                "model_version": self.model_version,
+                "status__ne": "BLOCKED",
+            }
+            if expected_codes is not None:
+                filters["stock_code__in"] = expected_codes
+            predictions = list(
+                self.prediction_model.objects(**filters).order_by(
+                    "-score", "+stock_code"
+                )
+            )
+        # In-memory branch: defensively exclude BLOCKED rows too (parity with
+        # the DB branch's status__ne: BLOCKED) so a stray BLOCKED object can
+        # never receive a rank or shift cohort percentiles.
+        ranked = sorted(
+            [p for p in predictions if getattr(p, "status", None) != "BLOCKED"],
+            key=lambda p: (-(p.score or 0.0), p.stock_code),
         )
-        total = len(predictions)
+        total = len(ranked)
         operations = []
-        for idx, prediction in enumerate(predictions, start=1):
+        for idx, prediction in enumerate(ranked, start=1):
             percentile = round(1 - ((idx - 1) / total), 4) if total else None
             if (
                 getattr(prediction, "rank", None) == idx
@@ -421,12 +440,28 @@ class StockScoringService:
             .order_by("-score", "+stock_code")
         )
 
-    def _require_complete_prediction_set(self, stocks, date, horizon) -> None:
+    def _require_complete_prediction_set(
+        self, stocks, date, horizon, *, persisted_codes: set[str] | None = None
+    ) -> None:
+        """Verify every expected stock has a stored prediction for the cohort.
+
+        persisted_codes: optional set of stock codes just written by the
+        caller (ranked path, perf task 2.6). When provided, completeness is
+        checked against this in-memory set instead of re-reading the cohort
+        from Mongo — safe because the ranked path just persisted every
+        expected code (any failure raises before this point). When None, the
+        DB is queried (raw path, unchanged behavior).
+        """
         expected_codes = {stock.code for stock in stocks}
-        stored_codes = {
-            prediction.stock_code
-            for prediction in self._cohort_predictions(date, horizon, expected_codes)
-        }
+        if persisted_codes is not None:
+            stored_codes = persisted_codes
+        else:
+            stored_codes = {
+                prediction.stock_code
+                for prediction in self._cohort_predictions(
+                    date, horizon, expected_codes
+                )
+            }
         missing_codes = sorted(expected_codes - stored_codes)
         if missing_codes:
             raise RuntimeError(
@@ -644,6 +679,20 @@ class StockScoringService:
             raw_by_code = {}
             blocked_codes = []
             failed_codes = []
+            # Codes whose stored (non-replaced) prediction is BLOCKED from an
+            # earlier run while a quote now exists. They keep their stored
+            # row (no re-score under replace=False) and must never join the
+            # in-memory ranking set, but they DO count toward cohort
+            # completeness (any-status semantics of the DB read this set
+            # replaces) — otherwise the tail's completeness check would raise
+            # on a cohort the DB-based path completed fine.
+            stored_blocked_codes = []
+            # Per-horizon list of persisted non-BLOCKED predictions (the
+            # objects just saved), so the ranking tail can consume in-memory
+            # results instead of re-reading the whole cohort from Mongo
+            # (perf task 2.6). `results` is cross-horizon, so it cannot be
+            # reused for the per-horizon assign_ranks call.
+            rankable = []
             for stock in stocks:
                 try:
                     raw = self._compute_raw_components(stock, date, current_horizon)
@@ -758,6 +807,18 @@ class StockScoringService:
                 existing = self._find_existing_prediction(code, date, current_horizon)
                 if existing is not None and not replace and not dry_run:
                     results.append(existing)
+                    # Repair path (replace=False partial cohort): the stored
+                    # row could be a BLOCKED record from an earlier run (data
+                    # corrected since). BLOCKED rows must never receive ranks
+                    # nor affect cohort percentiles (spec: "BLOCKED rows SHALL
+                    # neither receive nor affect ranks"), so only a
+                    # non-BLOCKED stored row joins the in-memory ranking set.
+                    # A stored BLOCKED row still counts toward cohort
+                    # completeness (see stored_blocked_codes).
+                    if existing.status != "BLOCKED":
+                        rankable.append(existing)
+                    else:
+                        stored_blocked_codes.append(code)
                     continue
                 recommendation = self._recommendation(score, config)
                 # persist real component values so downstream analysis
@@ -829,6 +890,7 @@ class StockScoringService:
                 try:
                     persisted = self._persist_prediction(payload, existing, dry_run)
                     results.append(persisted)
+                    rankable.append(persisted)
                 except Exception as exc:
                     failed_codes.append(code)
                     logger.exception(
@@ -868,9 +930,28 @@ class StockScoringService:
                     + ", ".join(sorted(set(failed_codes)))
                 )
             if not dry_run:
-                self._require_complete_prediction_set(stocks, date, current_horizon)
+                # ranked path: in-memory persisted objects ARE the cohort
+                # (failed_codes is empty here), so completeness + ranking can
+                # consume them instead of re-reading the whole cohort from
+                # Mongo (perf task 2.6).
+                persisted_codes = (
+                    {p.stock_code for p in rankable}
+                    | set(blocked_codes)
+                    | set(stored_blocked_codes)
+                )
+                self._require_complete_prediction_set(
+                    stocks,
+                    date,
+                    current_horizon,
+                    persisted_codes=persisted_codes,
+                )
                 self._repair_blocked_predictions(date, current_horizon, expected_codes)
-                self.assign_ranks(date, current_horizon, expected_codes=expected_codes)
+                self.assign_ranks(
+                    date,
+                    current_horizon,
+                    expected_codes=expected_codes,
+                    predictions=rankable,
+                )
                 self._upgrade_recommendations(
                     date, current_horizon, expected_codes=expected_codes
                 )

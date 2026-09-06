@@ -23,8 +23,15 @@
 ### 评分写路径（C5/C6/C2）
 
 - [x] 2.5 `assign_ranks` 改 `bulk_write($set:{rank,percentile})`，值未变跳过（C5）
-- [ ] 2.6 replay/评分收尾（rank/upgrade/aggregate）消费内存结果，消除 3 次全量重读（C5）
-- [ ] 2.7 验证服务：仅验「到期未验且自上次验证后有新行情」；未来行情按天批量拉；`bulk_write` 更新；`.only()` 投影（C6）
+- [x] 2.6 ranked 评分收尾消费内存结果：assign_ranks 接受已持久化对象列表
+  （predictions=）免 cohort 重查；_require_complete_prediction_set 接受
+  persisted_codes 集合做内存完整性校验；BLOCKED 行不入内存排名（C5）。
+  注：replay_service 与 _upgrade_recommendations 的全量重读未在本任务处理，
+  留待后续（见 perf-analysis 文档 C5 行）
+- [x] 2.7 验证服务批量路径（verify_predictions_batch/_verify_many）：未来行情按
+  stock_code 一次拉取（.only() 投影）后按预测切片；status/verification 用
+  bulk_write 更新（C6）。注：「仅验到期未验且自上次验证后有新行情」的增量门槛
+  未实现（verify_predictions 仍查 status__in PENDING/TRACKING 全量候选），留待后续
 - [x] 2.8 消除 prod 评分双跑：服务层按 horizon 验证完整 cohort 后在逐股取数前跳过（C2，无需私有 overlay 变更）
 
 ### 日历与杂项（R4/F4/Q4/G3）
