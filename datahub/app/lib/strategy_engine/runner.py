@@ -107,3 +107,61 @@ def assemble_daily_plan(
         "target_holdings": target,
         "rebalance": compute_rebalance(previous_holdings, target),
     }
+
+
+def schedule_from_runs(runs) -> list[dict]:
+    """Build a NAV schedule from persisted COMPLETED runs.
+
+    runs: iterable of run-like objects with `date` and `target_holdings`
+    (list of {"stock_code", "weight"}). Returns [{date, holdings:
+    {stock_code: weight}}] sorted by date ascending, skipping runs with no
+    holdings (SKIPPED runs carry none).
+
+    Dates are emitted as "YYYY-MM-DD" iso strings — the SAME key space the
+    quote loader (_load_quotes_for_codes), the benchmark loader
+    (_benchmark_returns_for_dates), and simulate_paper_nav's own tests use.
+    simulate_paper_nav looks prices/benchmark up with the schedule date, so a
+    datetime-vs-string mismatch would silently open zero positions.
+    """
+    schedule = []
+    for run in runs:
+        holdings = {
+            h["stock_code"]: float(h["weight"])
+            for h in (run.target_holdings or [])
+            if h.get("stock_code")
+        }
+        if not holdings:
+            continue
+        schedule.append({"date": _date_key(run.date), "holdings": holdings})
+    schedule.sort(key=lambda item: item["date"])
+    return schedule
+
+
+def attach_nav_points(runs, curve: list[dict]) -> dict:
+    """Merge simulate_paper_nav curve points back onto their runs.
+
+    Returns a map date.isoformat() -> {date, nav, daily_return, turnover,
+    drawdown, benchmark_return?, positions_count} plus a list of dates with no
+    matching curve point. The caller persists each point into the matching
+    StrategyPaperRun.nav_snapshot.
+    """
+    by_date = {}
+    for point in curve:
+        key = _date_key(point["date"])
+        by_date[key] = point
+
+    matched = {}
+    unmatched_dates = []
+    for run in runs:
+        key = _date_key(run.date)
+        if key in by_date:
+            matched[key] = by_date[key]
+        else:
+            unmatched_dates.append(run.date)
+    return {"points_by_date": matched, "unmatched_dates": unmatched_dates}
+
+
+def _date_key(value) -> str:
+    if isinstance(value, datetime.datetime):
+        return value.date().isoformat()
+    return str(value)

@@ -25,6 +25,31 @@
 
 ## 进度记录
 
+### 2026-09-06 00:30 CST — Stage C 代码链完成：#189/#190/#191 合并
+
+- 状态：已完成（Stage A task-3.3 工具 + Stage C slice 1/2 全部合并；DB 执行步骤待 operator）
+- 已完成：
+  - **#189 已合并**（cc2137f）：Stage A——`scoring_runner compare` CLI + flip_wide 影子注册
+    工件 + runbook + openspec；三门禁 GATE_OK。
+  - **#190 已合并**（6fd3794）：Stage C slice 1——openspec change `strategy-paper-runner` +
+    纯逻辑核心 `strategy_engine/{config,selection,nav}.py`（版本化配置/校验/config_hash、
+    等权选高、paper NAV 真实成本 + 停牌 roll-forward + turnover）；P2 修复（嵌套 key
+    拒绝、slippage 双计、停牌按最后收盘计价、测试隔离）；三门禁 GATE_OK。
+  - **#191 已合并**（561645c）：Stage C slice 2——`strategy_engine/runner.py`（eligibility
+    fail-closed + 每日计划/skip）、`model/strategy.py`（StrategyPaperRun）、
+    `jobs/strategy_runner.py`（run/report CLI + freshness + 注册表 fail-closed + 对上一期
+    rebalance diff）；qa 抓到 2 个 P1 并修复：freshness 映射（真实 skip 记 SKIPPED 而非
+    SUCCESS）、quote 源真 bug（`daily_quote_hfq` 无人写 → 改查真实 StockDailyQuote，
+    ST/停牌排除才生效）；三门禁 GATE_OK。
+- 验证：#189/#190/#191 CI 全绿（OpenSpec 11/11、datahub 518 passed、ruff clean）；
+  三门禁每 PR 均 GATE_OK；分支冲突 clean。
+- 下一步：Stage C 仅剩 daily NAV 曲线接线（nav_snapshot 填充）+ task 4.4 operator
+  ≥120 天 paper runbook；task 3.3 operator 实跑（全市场 replay + 校准对比）。
+- 阻塞：DB 执行（task 3.3 注册/backfill/compare、4.4 paper run、Stage C runner 实跑）
+  需 operator 授权（dev 集群不可达）；未 promote 任何模型版本，线上默认评分不变。
+
+---
+
 ### 2026-09-05 23:55 CST — 实盘就绪评估 + #189 合并 + Stage C 切片 1（PR #190）
 
 - 状态：进行中（#188/#189 已合并；Stage C 切片 1 三门禁评审中）

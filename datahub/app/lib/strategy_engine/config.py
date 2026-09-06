@@ -37,6 +37,7 @@ PAPER_EXECUTION = {
 DEFAULT_STRATEGY_CONFIG = {
     "score_model_version": DEFAULT_SCORE_MODEL_VERSION,
     "horizon": DEFAULT_HORIZON,
+    "initial_nav": 1_000_000.0,
     "selection": {
         "mode": "top_percentile",
         "lower": 0.20,
@@ -66,6 +67,7 @@ def strategy_config_hash(config: dict) -> str:
 _KNOWN_TOP_LEVEL = {
     "score_model_version",
     "horizon",
+    "initial_nav",
     "selection",
     "constraints",
     "rebalance",
@@ -144,6 +146,14 @@ def validate_strategy_config(config: dict) -> dict:
     horizon = normalized.get("horizon", DEFAULT_HORIZON)
     if horizon not in (5, 20, 60):
         raise ValueError(f"horizon must be one of 5/20/60, got {horizon!r}")
+
+    initial_nav = normalized.get("initial_nav", 1_000_000.0)
+    if (
+        isinstance(initial_nav, bool)
+        or not isinstance(initial_nav, (int, float))
+        or not initial_nav > 0
+    ):
+        raise ValueError("initial_nav must be a positive number")
 
     selection = normalized.get("selection") or {}
     if not isinstance(selection, dict):

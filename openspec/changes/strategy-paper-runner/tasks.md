@@ -28,8 +28,9 @@
   unless the score source is ACTIVE-registered and covers the horizon.
 - [x] 3.2 StrategyPaperRun persistence model (date/model_version/horizon/
   config_hash of the *validated* config, target holdings, rebalance, status);
-  paper NAV snapshot persistence wired when the NAV engine is called by the
-  runner (model field present; curve fill lands with the daily-NAV slice).
+  `nav` CLI command recomputes the paper NAV curve over COMPLETED runs in a
+  range (quote prices + equal-weight benchmark -> simulate_paper_nav) and
+  writes each curve point back into the matching run's nav_snapshot.
 
 ## 4. Tests + gates
 
@@ -40,7 +41,8 @@
   / horizon-missing) + skip-on-no-data + parser wiring tests.
 - [ ] 4.2 spec-guardian / qa-reviewer / contract-reviewer on the diff.
 - [ ] 4.3 branch-conflict check against develop; CI green; merge.
-- [ ] 4.4 (post-merge, operator) paper runbook: register flip_wide shadow if
-  absent, backfill VERIFIED scores, pick an initial NAV coherent with the
-  book size (per-name budget >= a few board lots), run paper for ≥120 trading
-  days, record in the manual-experiment ledger.
+- [ ] 4.4 (operator, DB access required) paper run per
+  docs/autoresearch/runs/h20-excess-alpha/task-4.4-paper-run-120d.md: register
+  flip_wide shadow if absent, backfill VERIFIED scores, pick an initial NAV
+  coherent with the book size, run paper ≥120 trading days, record in the
+  manual-experiment ledger.

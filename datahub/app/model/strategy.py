@@ -35,7 +35,11 @@ class StrategyPaperRun(Document):
 
     target_holdings = ListField(DictField())  # [{stock_code, weight}]
     rebalance = DictField()  # {added, removed, unchanged}
-    nav_snapshot = DictField()  # {initial_nav, terminal_nav, curve:[...]}
+    # Single paper-NAV curve point for THIS run's date, written by the `nav`
+    # recompute command: {date, nav, daily_return, turnover, drawdown,
+    # benchmark_return?, positions_count} (aggregate initial/terminal NAV lives
+    # in the nav command's return, not here).
+    nav_snapshot = DictField()
 
     created_at = DateTimeField(default=lambda: datetime.datetime.now(datetime.UTC))
     updated_at = DateTimeField()
