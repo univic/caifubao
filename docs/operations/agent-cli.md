@@ -32,7 +32,7 @@ The CLI connects to the **K3s development cluster** by default.
 
 | Variable | Default | Description |
 |:---|:---|:---|
-| `KUBECONFIG` | `/etc/rancher/k3s/k3s.yaml` | Path to k3s kubeconfig |
+| `KUBECONFIG` | `~/.kube/config` if present, else `/etc/rancher/k3s/k3s.yaml` | Path to k3s kubeconfig (the `/etc/rancher/k3s` path only exists on the K3s server host) |
 | `CFB_NAMESPACE` | `caifubao-dev` | K8s namespace |
 
 The CLI executes commands inside the `caifubao-datahub` pod via `kubectl exec`.

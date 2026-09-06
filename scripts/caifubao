@@ -52,7 +52,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # setups keep it at ~/.kube/config); the /etc/rancher/k3s/k3s.yaml path only exists
 # on the K3s server host itself. Without this, `system health` reports
 # "cannot reach namespace" on any non-server machine even though the cluster is up.
-if [ -z "${KUBECONFIG:-}" ] && [ -f "$HOME/.kube/config" ]; then
+if [ -z "${KUBECONFIG:-}" ] && [ -n "${HOME:-}" ] && [ -f "$HOME/.kube/config" ]; then
   KUBECONFIG="$HOME/.kube/config"
 fi
 KUBECONFIG="${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}"
