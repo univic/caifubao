@@ -24,6 +24,32 @@
 ```
 
 ## 进度记录
+### 2026-09-06 20:30 CST — task 3.3 实跑完成：flip_wide 生产链全市场 replay + 校准对比
+
+- 状态：已完成（代码/工具/DB 执行全链路打通；选择有效性需 ≥120 天窗口）
+- 已完成：
+  - **dev 集群可达性根因修复**（#194）：caifubao CLI KUBECONFIG 默认值 bug（指向不存在的
+    /etc/rancher/k3s/k3s.yaml），修复为回退 ~/.kube/config。
+  - **task 3.3 实跑**（用户授权）：
+    1. 注册 flip_wide_shadow_v1（ACTIVE，config_hash 8c8f3ee4=工件金标）；
+    2. 全市场 ranked backfill 06-03~06-09（5 交易日，DATAHUB_SCORING_MODE=ranked，
+       ~10min/日）→ 27,770 条；
+    3. T+1 verify → 25,671 VERIFIED / 1,816 BLOCKED / 283 不足；
+    4. 校准：每日 ~5,134 VERIFIED，score 范围 **-75~0**（翻转语义正确、无 0 平局），
+       percentile 中位 ~0.50，推荐分布 BUY~258/WATCH~777/AVOID~1,023；
+    5. compare vs score_v2_202605b（06-03）：basis=percentile，verdict「Candidate
+       clearly wins on both hit rate and return」；同 50 只子集 flip=baseline 收益
+       （翻转改选择不改个股收益，数学正确）。
+  - 记录口径：本 replay 记入 manual-experiments-ledger（autoresearch/ledger.jsonl 按既有约定仅收官方 runner profile run）；baseline VERIFIED 为 50 只子集，对等全市场对比待 task 4.4。
+  - 执行中发现并规避：raw 模式不应用 directions（需 ranked env）、06-02 raw 残留、
+    datahub pod OOM（report 大聚合超 2Gi → 改分日内存安全聚合）。
+- 验证：flip 数据 27,770 条完好；校准/对比输出稳定一致；ledger 已补录。
+- 下一步：task 4.4 operator ≥120 天 paper run（runbook 已备，需持续每日执行）；
+  选择有效性判定依赖该长期窗口。
+- 阻塞：无（本轮目标达成；未 promote 任何模型版本，线上默认评分不变）。
+
+---
+
 
 ### 2026-09-06 18:50 CST — 排查"dev 集群不可达"：根因是 CLI KUBECONFIG 默认值 bug，非集群故障
 

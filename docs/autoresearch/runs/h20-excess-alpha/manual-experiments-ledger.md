@@ -24,6 +24,7 @@
 | 2026-09-04 | flip_wide 官方口径复核 | 官方 runner train 2024/val 2025 | **validation IR +0.385（正）**，但 train 2024 +0.975 更强 → decay 0.605 > 0.2 → discard | 官方窗口 IR 为正、仅因 decay 门被拦（非 IR 为负）| ledger.jsonl（已补录） |
 | 2026-09-04 | 估值融合（w=0.2/0.3/0.5）| 扩展 walk-forward | 任何 w 破坏 2025 稳健性（+0.385→−0.742 @w=0.5）| 估值不加 | value-flip-blend-2019-2026.md |
 | 2026-09-04 | 单股可执行化示例（sh600519）| 2024-2026，entry 0.90/exit 0.30 | +15.33% vs buy&hold −11.78% | 展示形态，非推荐 | flip_wide-single-stock-execution.md |
+| 2026-09-06 | flip_wide 生产链 replay（task 3.3 实跑） | dev 全市场 ranked backfill 06-03~06-09（5 交易日），flip_wide_shadow_v1（注册 config_hash 8c8f3ee4）| 27,770 条（25,671 VERIFIED / 1,816 BLOCKED / 283 不足）；每日 ~5,134 VERIFIED，score 范围 -75~0（翻转语义正确），percentile 中位 ~0.50，推荐分布 BUY~258/WATCH~777/AVOID~1,023；compare vs score_v2_202605b（06-03）：basis=percentile，verdict=「Candidate clearly wins on both hit rate and return」；同 50 只子集 flip=baseline 收益（翻转改选择不改个股收益，数学正确）。⚠️ 口径：dev baseline VERIFIED 仅旧 50 只×42 天研究子集，非全市场——verdict 为候选全市场 vs baseline 子集，非对等比较；对等对比待 task 4.4 回补全市场 baseline VERIFIED 后可行| 生产链 flip_wide 全市场 replay + T+1 verify + 校准对比全链路可用；选择有效性需 ≥120 天窗口判定（task 4.4）| task-3.3-flip-wide-shadow-validation.md |
 | 2026-09-05 | 2025 异常年归因 | 2019-2026 + size 分桶 | 极端小盘轮动（H1 最强小盘溢价），非信号失效/伪影 | style-aware 评估 | attrib-2025-anomaly.md |
 
 ## 关键口径提示（避免误读）

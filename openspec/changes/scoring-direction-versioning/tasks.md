@@ -36,13 +36,14 @@
   threshold consumers (SCORE_THRESHOLD backtest entry/exit, consensus/openclaw
   thresholds) remain default-direction-only (raw-score semantics); they are out of
   scope for flipped percentile scores.
-- [ ] 3.3 Operator validation of one flipped experiment model version: full-market replay
-  + calibration comparison vs baseline before any promotion. Tooling ready:
-  `scoring_runner compare` CLI + flip_wide shadow registry config artifact
-  (`datahub/research/autoresearch/h20_excess_alpha/flip_wide_registry_config.json`)
-  + runbook
-  (`docs/autoresearch/runs/h20-excess-alpha/task-3.3-flip-wide-shadow-validation.md`);
-  execution needs operator DB access and records results in the manual-experiment ledger.
+- [x] 3.3 Operator validation of one flipped experiment model version: full-market replay
+  + calibration comparison vs baseline before any promotion. Executed 2026-09-06 on dev:
+  registered flip_wide_shadow_v1 (ACTIVE, config_hash 8c8f3ee4), full-market ranked
+  backfill 06-03~06-09 (27,770 predictions, 25,671 VERIFIED after T+1 verify), per-day
+  calibration (score range -75..0, percentile median ~0.50), compare vs
+  score_v2_202605b -> percentile basis, verdict "Candidate clearly wins on both hit rate
+  and return". Recorded in the manual-experiment ledger. Selection effectiveness still
+  requires the >=120-day paper window (strategy-paper-runner task 4.4).
 - [x] 3.4 Raw-score comparisons stay within same-direction model versions;
   cross-direction promotion comparisons align scale-dependent metrics by percentile.
 
