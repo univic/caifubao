@@ -372,6 +372,7 @@ def test_forward_progress_counts_only_forward_completed_in_window(monkeypatch):
             strategy_name="flip_wide_paper",
             model_version="flip_wide_shadow_v1",
             horizon=20,
+            config_hash="hashA",
             evidence_kind="FORWARD",
             status="COMPLETED",
             date=_dt("2026-09-04"),
@@ -380,6 +381,7 @@ def test_forward_progress_counts_only_forward_completed_in_window(monkeypatch):
             strategy_name="flip_wide_paper",
             model_version="flip_wide_shadow_v1",
             horizon=20,
+            config_hash="hashA",
             evidence_kind="FORWARD",
             status="COMPLETED",
             date=_dt("2026-09-07"),
@@ -389,6 +391,7 @@ def test_forward_progress_counts_only_forward_completed_in_window(monkeypatch):
             strategy_name="flip_wide_paper",
             model_version="flip_wide_shadow_v1",
             horizon=20,
+            config_hash="hashA",
             evidence_kind="REPLAY",
             status="COMPLETED",
             date=_dt("2026-09-08"),
@@ -397,6 +400,7 @@ def test_forward_progress_counts_only_forward_completed_in_window(monkeypatch):
             strategy_name="flip_wide_paper",
             model_version="flip_wide_shadow_v1",
             horizon=20,
+            config_hash="hashA",
             evidence_kind="FORWARD",
             status="SKIPPED",
             date=_dt("2026-09-09"),
@@ -406,6 +410,7 @@ def test_forward_progress_counts_only_forward_completed_in_window(monkeypatch):
             strategy_name="flip_wide_paper",
             model_version="flip_wide_shadow_v1",
             horizon=20,
+            config_hash="hashA",
             evidence_kind="FORWARD",
             status="COMPLETED",
             date=_dt("2026-09-01"),
@@ -623,3 +628,74 @@ def test_same_config_restart_resets_counter(monkeypatch):
     after = job.forward_progress(model_version="flip_wide_shadow_v1", horizon=20)
     assert after["start_date"] == "2026-09-07"
     assert after["count"] == 0  # old-window FORWARD dates no longer count
+
+
+def test_same_session_recert_does_not_inherit_predecessor_runs(monkeypatch):
+    """R4 (qa P2): a same-session re-cert window MUST NOT count the
+    predecessor config's FORWARD runs toward its 120-session gate."""
+    import app.jobs.strategy_runner as job
+    import app.model.strategy as model_strategy
+    from app.lib.utilities import trading_day_helper
+
+    from app.lib.strategy_engine.config import (
+        strategy_config_hash,
+        validate_strategy_config,
+    )
+
+    records, Win, Run = _window_store()
+    cfg_a = {
+        "score_model_version": "flip_wide_shadow_v1",
+        "horizon": 20,
+        "initial_nav": 100000,
+    }
+    cfg_b = {
+        "score_model_version": "flip_wide_shadow_v1",
+        "horizon": 20,
+        "initial_nav": 200000,
+    }
+    hash_a = strategy_config_hash(validate_strategy_config(cfg_a))
+    hash_b = strategy_config_hash(validate_strategy_config(cfg_b))
+    records["windows"].append(
+        Win(
+            model_version="flip_wide_shadow_v1",
+            horizon=20,
+            config_hash=hash_a,
+            start_date=_dt("2026-09-04"),
+            status="ACTIVE",
+        )
+    )
+    records["runs"].append(
+        Run(
+            strategy_name="flip_wide_paper",
+            model_version="flip_wide_shadow_v1",
+            horizon=20,
+            config_hash=hash_a,
+            evidence_kind="FORWARD",
+            status="COMPLETED",
+            date=_dt("2026-09-04"),
+        )
+    )
+    monkeypatch.setattr(model_strategy, "StrategyForwardWindow", Win)
+    monkeypatch.setattr(model_strategy, "StrategyPaperRun", Run)
+    monkeypatch.setattr(
+        job, "_resolve_model_version", lambda cfg: cfg["score_model_version"]
+    )
+    monkeypatch.setattr(job, "_resolve_start_date", lambda: _dt("2026-09-04"))
+    monkeypatch.setattr(
+        trading_day_helper,
+        "get_a_stock_market_trade_calendar",
+        lambda: [_dt("2026-09-04")],
+    )
+
+    # same-session re-cert to config B (start_date unchanged = same session)
+    cert = job.certify_forward_window(
+        model_version="flip_wide_shadow_v1", horizon=20, config=cfg_b
+    )
+    assert cert["config_hash"] == hash_b
+    assert cert["closed_predecessors"] == [hash_a]
+
+    progress = job.forward_progress(model_version="flip_wide_shadow_v1", horizon=20)
+    assert progress["config_hash"] == hash_b
+    assert progress["count"] == 0, (
+        "predecessor-config FORWARD run must not count toward window B"
+    )

@@ -258,7 +258,7 @@ def test_nav_uses_exact_track_and_extends_to_execution_date(paper_store, monkeyp
     monkeypatch.setattr(p.job, "_benchmark_returns_for_dates", lambda *_: {})
     result = p.job.run_nav(from_date=signal, to_date=signal, config=p.cfg)
     assert result["found_runs"] == result["updated_runs"] == 1
-    assert result["evidence_kind"] == "REPLAY"
+    assert result["evidence_kinds"] == ["REPLAY"]
     assert chosen.nav_snapshot["date"] == "2026-09-07"
     assert chosen.nav_snapshot["positions_count"] == 1
     assert other.nav_snapshot == legacy.nav_snapshot == {}

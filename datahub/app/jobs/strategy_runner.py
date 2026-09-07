@@ -478,7 +478,9 @@ def run_nav(
         "curve_points": len(result["curve"]),
         "benchmark_dates": len(benchmark),
         "config_hash": config_hash,
-        "evidence_kind": "REPLAY",
+        "evidence_kinds": sorted(
+            {getattr(r, "evidence_kind", "REPLAY") or "REPLAY" for r in runs}
+        ),
         "execution_from": execution_from.date().isoformat(),
         "execution_to": execution_to.date().isoformat(),
         "unmatched_dates": [d.date().isoformat() for d in attached["unmatched_dates"]],
@@ -593,6 +595,10 @@ def forward_progress(*, model_version: str, horizon: int) -> dict:
             strategy_name=DEFAULT_STRATEGY_NAME,
             model_version=model_version,
             horizon=horizon,
+            # Only runs whose stored config matches THIS window's config count
+            # toward its 120-session gate (spec: evidence cannot span configs;
+            # a same-session re-cert must not inherit predecessor runs).
+            config_hash=window.config_hash,
             evidence_kind="FORWARD",
             status="COMPLETED",
             date__gte=window.start_date,
