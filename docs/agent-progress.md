@@ -24,6 +24,27 @@
 ```
 
 ## 进度记录
+### 2026-09-07 22:40 CST — 1.3a 合并（#204）+ #199 backfill 复测结论
+
+- 状态：已完成
+- 已完成：
+  - **PR #204 合并**（develop `4316a35`，roadmap 1.3a）：paper NAV 开盘买入费用预算——
+    `nav.py` 新增 `_fit_buy_quantity`（整手二分），选最大整手数量满足
+    `成交额(含滑点) + commission ≤ min(现金, 目标预算)`；仅一手都放不下才跳过。
+    失败测试先行（6 新 + 1 既有因果测试更新为费用感知期望，原断言超预算 62.51）；
+    spec-guardian / qa-reviewer / contract-reviewer 均 GATE_OK；CI 全绿；
+    openspec 14/14（新 change `strategy-fee-aware-opening-budget`）。
+  - **#199 backfill 复测（dev，sha-87a0ca2 含 #199）**：同负载单日全市场 ranked h20
+    replace（06-10，5,188 股，2 核）pod 级 **87 s——与 #197 基线一致，噪声内无差异**。
+    结论：#199 为常数级收尾优化（省 1 次收尾 cohort 重读），在 87s 内不可分辨；
+    可测提速来自配额（0.3→2 核）与 #197 收尾内存化（600s→87s ≈ 6.9×）。
+  - **codex 并行进度已接续**：#202（causal paper timing）/#203（交接）已合并；
+    dev 已部署到 sha-87a0ca2；#202 语义下所有 paper 产物为 REPLAY，120 日前瞻未启动。
+- 验证：567 datahub passed、ruff clean、openspec 14/14、conflict clean、CI 全绿。
+- 下一步：1.3a 遗留（roadmap 交接节）——1.3 其余组合约束、NEXT.1 不可变前瞻捕获与
+  每日 operator 运行、真实执行（默认关闭）；均未授权未启动，待用户分配。
+- 阻塞：无。
+
 ### 2026-09-07 21:36 CST — #202 已合并；DSH 接续费用预算切片
 
 - 状态：已完成（合并与交接记录；DSH 后续实现尚未开始）
