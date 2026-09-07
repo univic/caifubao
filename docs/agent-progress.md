@@ -24,6 +24,21 @@
 ```
 
 ## 进度记录
+### 2026-09-07 21:36 CST — #202 已合并；DSH 接续费用预算切片
+
+- 状态：已完成（合并与交接记录；DSH 后续实现尚未开始）
+- 已完成：用户授权后 squash merge **PR #202 → develop `87a0ca2`**；
+  `strategy-paper-causal-timing` tasks 收尾，roadmap P0.1 标记完成。DSH 接续范围为
+  roadmap **1.3a 含费用开盘买入预算**：整手缩量满足现金/目标预算（含滑点和佣金），
+  不再跳过原本可以缩量成交的订单。交接步骤/写范围/验收均见
+  `openspec/changes/production-capability-roadmap/tasks.md` 的 DSH 交接节。
+- 验证：#202 最新 head `0666850` 的 CI run `34128089619` 全绿；此前 561 tests、
+  Ruff、OpenSpec 13/13、三 reviewer GATE_OK，合并状态与 commit 已由 GitHub 确认。
+- 下一步：DSH 从最新 develop 独立分支，先 Spec Gate/新 change、失败测试，再实现预算
+  修正并走三审/Draft PR CI；其他组合约束和不可变前瞻捕获保持待办。
+- 阻塞：无。DSH 交接已落文档，本会话未直接启动其进程；未手动部署、未 operator 写库、
+  未 promote/真实下单；所有当前 paper 产物仍为 REPLAY，120 日前瞻未启动。
+
 ### 2026-09-07 21:27 CST — P0 paper 因果时序修复：PR #202 与 CI 完成
 
 - 状态：已完成（P0 代码与验证；PR #202，提交 982e8a9；未合并/部署）
