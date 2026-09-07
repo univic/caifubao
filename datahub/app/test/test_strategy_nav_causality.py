@@ -72,12 +72,17 @@ def test_fill_ledger_and_nav_account_for_actual_execution_costs():
     )
     buy, sell = result["trades"]
     assert (buy["date"], sell["date"]) == (D1, D2)
-    assert buy["quantity"] == sell["quantity"] == 5000
+    # Fee-aware sizing (roadmap 1.3a): budget 50,000 -> 4900 shares, because
+    # 5000 shares would spend 50,062.51 > target budget at the slippage
+    # adjusted open (10.01).
+    assert buy["quantity"] == sell["quantity"] == 4900
     assert buy["price"] == pytest.approx(10.01)
     assert sell["price"] == pytest.approx(9.99)
-    assert buy["costs"] == pytest.approx({"commission": 12.5125, "stamp_duty": 0})
-    assert sell["costs"] == pytest.approx({"commission": 12.4875, "stamp_duty": 49.95})
-    assert result["terminal_nav"] == 99_825.05
+    assert buy["costs"] == pytest.approx({"commission": 12.26225, "stamp_duty": 0})
+    assert sell["costs"] == pytest.approx(
+        {"commission": 12.23775, "stamp_duty": 48.951}
+    )
+    assert result["terminal_nav"] == pytest.approx(99_828.55)
 
 
 @pytest.mark.parametrize("bad_price", [None, 0, -10, float("nan"), float("inf"), "bad"])
