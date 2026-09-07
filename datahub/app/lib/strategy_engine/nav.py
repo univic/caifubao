@@ -63,6 +63,37 @@ def _order_cost(exec_price: float, quantity: float, side: str, cfg: dict) -> dic
     return {"value": value, "commission": commission, "stamp_duty": stamp_duty}
 
 
+def _buy_spend(exec_price: float, quantity: int, cfg: dict) -> float:
+    """Total cash cost of a BUY of ``quantity`` shares: value at the
+    slippage-adjusted exec price plus commission (min-commission aware)."""
+    cost = _order_cost(exec_price, quantity, "BUY", cfg)
+    return cost["value"] + cost["commission"]
+
+
+def _fit_buy_quantity(budget: float, exec_price: float, lot: int, cfg: dict) -> int:
+    """Largest board-lot quantity (``k * lot``, k >= 1) whose total spend
+    (value at exec price + commission) fits ``budget``.
+
+    Roadmap 1.3a: fees (slippage inside exec_price, commission) are reserved
+    in sizing so an order is skipped only when even one lot cannot fit —
+    never because the fee-unadjusted lot count overshoots. Returns 0 when
+    nothing fits (caller skips the order).
+    """
+    if budget <= 0 or lot <= 0 or not _valid_price(exec_price):
+        return 0
+    # Binary search over lot count k in [0, hi]; spend(0) == 0 always fits,
+    # so the search is well-founded.
+    hi = int(budget // (exec_price * lot)) + 1
+    lo = 0
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _buy_spend(exec_price, mid * lot, cfg) <= budget:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo * lot
+
+
 def simulate_paper_nav(
     *,
     prices: dict[str, dict[str, QuoteView]],  # stock_code -> {date: QuoteView}
@@ -165,17 +196,17 @@ def simulate_paper_nav(
                 continue
             budget = min(cash, total_before * weight)
             raw_open = float(quote.open)
-            # Size from the raw open; exec price (with slippage) is applied to
-            # the order cost only, so slippage is not double-counted.
-            max_qty = int(budget / raw_open)
-            qty = (max_qty // lot) * lot
+            exec_price = _exec_price(raw_open, "BUY", cfg)
+            # Fee-aware board-lot sizing: pick the largest quantity whose
+            # total spend (value at the slippage-adjusted exec price +
+            # commission) fits min(cash, target budget). Skip only when even
+            # one lot cannot fit — never skip an order just because the
+            # fee-unadjusted lot count overshoots the budget.
+            qty = _fit_buy_quantity(budget, exec_price, lot, cfg)
             if qty <= 0:
                 continue
-            exec_price = _exec_price(raw_open, "BUY", cfg)
             cost = _order_cost(exec_price, qty, "BUY", cfg)
             spend = cost["value"] + cost["commission"]
-            if spend > cash:
-                continue
             cash -= spend
             positions[code] = {"qty": qty, "last_price": raw_open}
             buy_notional += cost["value"]
