@@ -487,15 +487,29 @@ def run_nav(
     }
 
 
-def _resolve_start_date():
-    """Certification session = the closest trading session to now (never
-    backdated; NEXT.1 start_date semantics)."""
+def _resolve_start_date(now=None):
+    """Certification session = the EARLIEST trading session at/after the
+    certification instant (Beijing date) — never a past session (spec:
+    start_date is never backdated). Certifying on a session day keeps that
+    day as start (its evening capture is the day-1 FORWARD run); certifying
+    off-session (weekend/holiday/pre-open) starts at the next session.
+    """
     from app.lib.utilities.trading_day_helper import (
-        determine_closest_trading_date,
         get_a_stock_market_trade_calendar,
     )
 
-    return determine_closest_trading_date(get_a_stock_market_trade_calendar())
+    if now is None:
+        bj = datetime.timezone(datetime.timedelta(hours=8))
+        now = datetime.datetime.now(bj)
+    today = now.date().isoformat()
+    sessions = sorted(
+        d.date().isoformat()
+        for d in get_a_stock_market_trade_calendar()
+        if d.date().isoformat() >= today
+    )
+    if not sessions:
+        raise ValueError("trading calendar does not cover the certification date")
+    return datetime.datetime.fromisoformat(sessions[0])
 
 
 def certify_forward_window(*, model_version: str, horizon: int, config: dict) -> dict:

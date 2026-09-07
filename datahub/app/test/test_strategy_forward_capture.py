@@ -699,3 +699,38 @@ def test_same_session_recert_does_not_inherit_predecessor_runs(monkeypatch):
     assert progress["count"] == 0, (
         "predecessor-config FORWARD run must not count toward window B"
     )
+
+
+def test_resolve_start_date_never_backdates(monkeypatch):
+    """Contract P2-2: certification start is the earliest session at/after the
+    certification instant (Beijing date) — weekend/early-morning certification
+    must NOT snap back to the prior (e.g. Friday) session."""
+    import app.jobs.strategy_runner as job
+    from app.lib.utilities import trading_day_helper
+
+    sessions = [
+        _dt("2026-09-04"),  # Friday
+        _dt("2026-09-07"),  # Monday
+        _dt("2026-09-08"),  # Tuesday
+    ]
+    monkeypatch.setattr(
+        trading_day_helper, "get_a_stock_market_trade_calendar", lambda: sessions
+    )
+    cst = datetime.timezone(datetime.timedelta(hours=8))
+
+    # Saturday 02:00 CST -> next session Monday, never Friday
+    assert job._resolve_start_date(
+        now=datetime.datetime(2026, 9, 5, 2, 0, tzinfo=cst)
+    ) == _dt("2026-09-07")
+    # Sunday -> Monday
+    assert job._resolve_start_date(
+        now=datetime.datetime(2026, 9, 6, 12, 0, tzinfo=cst)
+    ) == _dt("2026-09-07")
+    # Friday evening (after close) -> Friday itself (evening capture is day-1)
+    assert job._resolve_start_date(
+        now=datetime.datetime(2026, 9, 4, 18, 0, tzinfo=cst)
+    ) == _dt("2026-09-04")
+    # Monday pre-open (Beijing) -> Monday, not Friday
+    assert job._resolve_start_date(
+        now=datetime.datetime(2026, 9, 7, 8, 0, tzinfo=cst)
+    ) == _dt("2026-09-07")
