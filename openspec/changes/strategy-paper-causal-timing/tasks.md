@@ -8,7 +8,8 @@
 - [x] 6. Correct active specs/runbook/roadmap evidence claims.
 - [x] 7. Focused/full datahub tests, Ruff, strict OpenSpec validation.
 - [x] 8. Final spec-guardian, contract-reviewer, qa-reviewer.
-- [ ] 9. Branch conflict check, Draft PR, CI green, ready for review.
+- [x] 9. Branch conflict clean; Draft PR #202 created; implementation CI green
+  (run 34127666134). Final documentation CI and ready status tracked in PR #202.
 
 ## Task notes
 Outcome: P0 causal retrospective paper baseline; forward capture remains next.
@@ -17,7 +18,7 @@ Spec Gate: required.
 Assumptions: no real orders, model promotion or operator database runs.
 Validation Plan: failing regression first, focused tests, full datahub suite, Ruff, OpenSpec.
 Reviewer Requests: spec-guardian, contract-reviewer, qa-reviewer after validation.
-Branch Conflict Check: pending against origin/develop.
+Branch Conflict Check: clean against origin/develop 35a9254.
 
 ## Review outcomes
 

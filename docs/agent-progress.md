@@ -24,17 +24,18 @@
 ```
 
 ## 进度记录
-### 2026-09-07 21:27 CST — P0 paper 因果时序修复：本地验证与三门禁完成
+### 2026-09-07 21:27 CST — P0 paper 因果时序修复：PR #202 与 CI 完成
 
-- 状态：进行中（分支 `codex/fix/paper-causal-timing`，准备 Draft PR/CI）
+- 状态：已完成（P0 代码与验证；PR #202，提交 982e8a9；未合并/部署）
 - 已完成：新增 `strategy-paper-causal-timing` OpenSpec；`paper_causal_v1` config 隔离，
   可用评分不依赖未来 VERIFIED 结果；记录实际 decision_at/下一交易日 execution_date；
   NAV 用开盘信息定量并按执行日挂回信号记录；保留停牌 0/未知状态；全部新产物标为
   REPLAY。同步纸面 runbook/路线图，撤销 06-10/09-04 已认证前瞻起点与 SUCCESS 计数口径。
 - 验证：修复前因果回归确认失败；datahub 全量 561 passed（含补充 QA 用例），
   Ruff check/format clean，OpenSpec 13/13；spec-guardian/contract-reviewer/qa-reviewer
-  均 GATE_OK，无 P1/P2 blocker。
-- 下一步：Draft PR CI；随后组合预算/约束与不可变前瞻捕获分片。120 交易日前瞻仍未启动；
+  均 GATE_OK，无 P1/P2 blocker；与 develop 35a9254 无冲突，PR #202 实现 CI
+  run 34127666134 全绿（含 Required Checks），文档收尾检查及 ready 状态以 PR 为准。
+- 下一步：PR #202 审阅/合并；随后组合预算/约束与不可变前瞻捕获分片。120 交易日前瞻仍未启动；
   未运行 operator 写库、未 promote、未执行真实交易。
 - 阻塞：无；合并与部署尚未发生。
 
