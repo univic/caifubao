@@ -414,7 +414,7 @@ def test_assemble_daily_plan_skips_when_no_predictions():
         previous_holdings=None,
     )
     assert plan["skipped"] is True
-    assert "no VERIFIED predictions" in plan["reason"]
+    assert "no usable predictions" in plan["reason"]
 
 
 def test_assemble_daily_plan_builds_target_and_rebalance():

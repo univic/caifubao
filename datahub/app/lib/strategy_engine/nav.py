@@ -9,11 +9,14 @@ supplied by the runner), with commission/minimum/slippage, sell stamp duty,
 and board-lot rounding; suspended names roll forward (sell kept, buy skipped,
 valuation held at the last observed close, never a forced mark). NAV is marked
 to close of each schedule date. Turnover per cycle = (buy + sell notional) /
-pre-cycle NAV. Baseline = same-date equal-weight return of the tradable
+pre-cycle opening NAV (valid opens, otherwise the last known close).
+Baseline = same-date equal-weight return of the tradable
 universe (subset supplied by the caller).
 """
 
 from __future__ import annotations
+
+import math
 
 from app.lib.strategy_engine.config import PAPER_EXECUTION
 
@@ -30,6 +33,24 @@ class QuoteView:
 def _exec_price(price: float, side: str, cfg: dict) -> float:
     slippage = float(cfg["slippage_per_side"])
     return price * (1 + slippage if side == "BUY" else 1 - slippage)
+
+
+def _valid_price(price) -> bool:
+    try:
+        return (
+            not isinstance(price, bool)
+            and math.isfinite(float(price))
+            and float(price) > 0
+        )
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _tradable(quote) -> bool:
+    try:
+        return quote is not None and int(quote.trade_status) == 1
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 
 def _order_cost(exec_price: float, quantity: float, side: str, cfg: dict) -> dict:
@@ -53,7 +74,9 @@ def simulate_paper_nav(
 ) -> dict:
     """Simulate a paper portfolio over a rebalance schedule.
 
-    Returns {"initial_nav", "terminal_nav", "curve"} where each curve point is
+    Schedule dates are execution sessions supplied by the caller. Opening
+    sizing never reads the session's close; close marks follow all fills.
+    Returns {"initial_nav", "terminal_nav", "curve", "trades"} where each curve point is
     {"date", "nav", "daily_return", "turnover", "drawdown",
     "benchmark_return"?, "positions_count"}.
     """
@@ -71,23 +94,21 @@ def simulate_paper_nav(
     # code -> {"qty": shares, "last_price": last observed mark}
     positions: dict[str, dict] = {}
     curve = []
+    trades = []
     peak = start_nav
 
     def _mark(date) -> float:
         total = cash
         for code, pos in positions.items():
             quote = (prices.get(code) or {}).get(date)
-            if quote is not None and quote.close is not None:
+            if _tradable(quote) and _valid_price(quote.close):
                 pos["last_price"] = float(quote.close)
             total += pos["qty"] * pos["last_price"]
         return total
 
     def _executable(code, date):
         quote = (prices.get(code) or {}).get(date)
-        if quote is None:
-            return None
-        status = quote.trade_status
-        if status is None or int(status) != 1 or quote.open is None:
+        if not _tradable(quote) or not _valid_price(quote.open):
             return None
         return quote
 
@@ -95,7 +116,13 @@ def simulate_paper_nav(
         date = decision["date"]
         targets = decision.get("holdings") or {}
         target_codes = set(targets)
-        total_before = _mark(date)
+        # Only information observable at execution is available for sizing.
+        # Do not mutate the prior close carried for missing/suspended quotes.
+        total_before = cash
+        for code, pos in positions.items():
+            quote = _executable(code, date)
+            mark = float(quote.open) if quote is not None else pos["last_price"]
+            total_before += pos["qty"] * mark
         sell_notional = 0.0
         buy_notional = 0.0
 
@@ -111,6 +138,19 @@ def simulate_paper_nav(
             cost = _order_cost(exec_price, pos["qty"], "SELL", cfg)
             cash += cost["value"] - cost["commission"] - cost["stamp_duty"]
             sell_notional += cost["value"]
+            trades.append(
+                {
+                    "date": date,
+                    "stock_code": code,
+                    "side": "SELL",
+                    "quantity": pos["qty"],
+                    "price": exec_price,
+                    "costs": {
+                        "commission": cost["commission"],
+                        "stamp_duty": cost["stamp_duty"],
+                    },
+                }
+            )
 
         # 2) Buy target names not yet held (each target's weight is its
         # notional share of the portfolio, as produced by selection).
@@ -139,6 +179,19 @@ def simulate_paper_nav(
             cash -= spend
             positions[code] = {"qty": qty, "last_price": raw_open}
             buy_notional += cost["value"]
+            trades.append(
+                {
+                    "date": date,
+                    "stock_code": code,
+                    "side": "BUY",
+                    "quantity": qty,
+                    "price": exec_price,
+                    "costs": {
+                        "commission": cost["commission"],
+                        "stamp_duty": cost["stamp_duty"],
+                    },
+                }
+            )
 
         nav = _mark(date)
         daily_return = None
@@ -166,6 +219,7 @@ def simulate_paper_nav(
 
     return {
         "initial_nav": round(start_nav, 2),
-        "terminal_nav": round(_mark(schedule[-1]["date"]), 2),
+        "terminal_nav": curve[-1]["nav"],
         "curve": curve,
+        "trades": trades,
     }

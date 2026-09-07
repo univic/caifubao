@@ -18,6 +18,8 @@ import json
 # registered model version.
 DEFAULT_SCORE_MODEL_VERSION = "flip_wide_shadow_v1"
 
+TIMING_VERSION = "paper_causal_v1"
+
 DEFAULT_HORIZON = 20
 DEFAULT_REBALANCE_CADENCE_DAYS = 5  # weekly (5 trading days)
 
@@ -35,6 +37,7 @@ PAPER_EXECUTION = {
 
 # flip_wide research selection (flip_wide.yaml): top_percentile wide book.
 DEFAULT_STRATEGY_CONFIG = {
+    "timing_version": TIMING_VERSION,
     "score_model_version": DEFAULT_SCORE_MODEL_VERSION,
     "horizon": DEFAULT_HORIZON,
     "initial_nav": 1_000_000.0,
@@ -65,6 +68,7 @@ def strategy_config_hash(config: dict) -> str:
 
 
 _KNOWN_TOP_LEVEL = {
+    "timing_version",
     "score_model_version",
     "horizon",
     "initial_nav",
@@ -142,6 +146,9 @@ def validate_strategy_config(config: dict) -> dict:
     if not version:
         raise ValueError("score_model_version is required")
     normalized["score_model_version"] = version
+
+    if normalized.get("timing_version") != TIMING_VERSION:
+        raise ValueError(f"timing_version must be {TIMING_VERSION}")
 
     horizon = normalized.get("horizon", DEFAULT_HORIZON)
     if horizon not in (5, 20, 60):

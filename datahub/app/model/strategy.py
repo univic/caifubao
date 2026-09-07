@@ -23,6 +23,10 @@ from mongoengine import (
 class StrategyPaperRun(Document):
     strategy_name = StringField(required=True, default="flip_wide_paper")
     date = DateTimeField(required=True)
+    # Missing provenance on legacy records is retrospective, never forward.
+    decision_at = DateTimeField()
+    execution_date = DateTimeField()
+    evidence_kind = StringField(choices=["REPLAY"])
     model_version = StringField(required=True)
     horizon = IntField(required=True, choices=[5, 20, 60])
     config_hash = StringField(required=True)  # hash of the VALIDATED config
@@ -35,7 +39,7 @@ class StrategyPaperRun(Document):
 
     target_holdings = ListField(DictField())  # [{stock_code, weight}]
     rebalance = DictField()  # {added, removed, unchanged}
-    # Single paper-NAV curve point for THIS run's date, written by the `nav`
+    # Single paper-NAV curve point for THIS run's execution_date, written by the `nav`
     # recompute command: {date, nav, daily_return, turnover, drawdown,
     # benchmark_return?, positions_count} (aggregate initial/terminal NAV lives
     # in the nav command's return, not here).

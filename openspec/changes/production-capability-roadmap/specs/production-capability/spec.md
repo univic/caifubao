@@ -49,21 +49,43 @@ paper-only until that gate exists.
 ### Requirement: Promotion to tradable requires ≥120-day paper evidence
 
 A model version MUST NOT be promoted to "tradable/actionable" status until it has
-≥120 trading days of forward verified paper evidence (strategy-paper-runner task
-4.4), evaluated against its research walk-forward expectation; until then it MAY
-only produce research/watch outputs.
+≥120 trading days of immutable forward paper evidence captured by the separate
+forward-capture change, evaluated against its research walk-forward expectation.
+The causal-timing correction's `REPLAY` records, historical backfills,
+replacements, NAV recomputations, and job `SUCCESS` statuses MUST NOT satisfy
+this gate; until the gate is met the version MAY only produce research/watch
+outputs.
 
 #### Scenario: Unvalidated model stays research-grade
 
-- GIVEN a model version with less than 120 trading days of verified paper
-  evidence (e.g. flip_wide_shadow_v1)
+- GIVEN a model version with less than 120 immutable forward paper sessions,
+  regardless of its replay or job-success count (e.g. flip_wide_shadow_v1)
 - WHEN a consumer asks for actionable output
 - THEN the output is labeled research/observation-grade
 - AND the version is not marked tradable or promoted
 
-#### Scenario: Paper evidence window is counted from operator runs
+#### Scenario: Paper evidence window is counted from immutable forward capture
 
 - GIVEN the daily strategy operator chain (job_family strategy_daily)
 - WHEN counting progress toward the 120-day gate
-- THEN only COMPLETED (non-SKIPPED/non-FAILED) run dates count
+- THEN only immutable forward-capture sessions with the required causal timing,
+  complete execution-day evidence, and a fixed config hash count
+- AND `evidence_kind=REPLAY`, historical backfills, replacements, NAV
+  recomputations, and `strategy_daily` `SUCCESS` records do not count
 - AND the count and NAV metrics are recorded in the autoresearch ledger
+
+### Requirement: Causal replay integrity precedes forward evidence
+
+The roadmap MUST track P0 causal replay integrity as `IN PROGRESS` before any
+forward evidence counter is started. The first causal slice MUST use
+`timing_version=paper_causal_v1`, consume only usable score states
+(`PENDING`/`TRACKING`/`VERIFIED`/`INSUFFICIENT_DATA`, excluding `BLOCKED`/`FAILED`),
+persist actual UTC `decision_at` and the next calendar-session
+`execution_date`, and mark all output `evidence_kind=REPLAY`.
+
+#### Scenario: Historical dates do not start the forward window
+
+- GIVEN a replay record dated `2026-06-10` or `2026-09-04`
+- WHEN the operator evaluates the 120-session gate
+- THEN neither date is certified as the forward start
+- AND the record remains replay evidence regardless of run or job `SUCCESS`

@@ -1,5 +1,16 @@
 # Strategy Paper Runner Tasks
 
+> **Causal-timing correction:** `strategy-paper-causal-timing` supersedes the
+> pre-correction VERIFIED-only and forward-evidence interpretation in this
+> change. Usable score states are `PENDING`, `TRACKING`, `VERIFIED` and
+> `INSUFFICIENT_DATA`; `BLOCKED` and `FAILED` are excluded. The correction adds
+> actual UTC `decision_at`, the next calendar-session `execution_date`, and
+> `timing_version=paper_causal_v1`; NAV requires the exact full config, including
+> `initial_nav`, to match its `config_hash`. All output from that first slice is
+> `evidence_kind=REPLAY` and cannot count toward a 120-session forward gate.
+> The checked entries below remain historical gate records for #190/#191/#192;
+> they do not claim that the correction's implementation or tests are complete.
+
 ## 1. Strategy config + selection
 
 - [x] 1.1 Versioned strategy config (score source model_version, selection
@@ -8,8 +19,10 @@
   (typos fail loudly), bounds in [0,1], size > 0, explicit score source.
 - [x] 1.2 Selection service: rank by score desc, filter by eligibility, apply
   the top_percentile band / top_n cap, equal-weight output; "buy high" only
-  (no direction logic in the strategy layer). Runner slice maps VERIFIED
-  predictions + stock flags onto the injected shapes.
+  (no direction logic in the strategy layer). The runner consumes usable
+  predictions (`PENDING`/`TRACKING`/`VERIFIED`/`INSUFFICIENT_DATA`) and maps
+  them with stock flags onto the injected shapes; `BLOCKED`/`FAILED` rows are
+  excluded.
 - [x] 1.3 Rebalance-list derivation (diff previous vs target holdings).
 
 ## 2. Paper NAV simulation
@@ -24,7 +37,7 @@
 ## 3. Runner + freshness + persistence
 
 - [x] 3.1 strategy_runner daily job + CLI (run/report); datahub_job_runs
-  freshness record; skip (not empty) when no VERIFIED scores; fails closed
+  freshness record; skip (not empty) when no usable scores; fails closed
   unless the score source is ACTIVE-registered and covers the horizon.
 - [x] 3.2 StrategyPaperRun persistence model (date/model_version/horizon/
   config_hash of the *validated* config, target holdings, rebalance, status);
@@ -45,6 +58,8 @@
 - [x] 4.3 branch-conflict check against develop; CI green; merged (#190/#191/#192).
 - [ ] 4.4 (operator, DB access required) paper run per
   docs/autoresearch/runs/h20-excess-alpha/task-4.4-paper-run-120d.md: register
-  flip_wide shadow if absent, backfill VERIFIED scores, pick an initial NAV
-  coherent with the book size, run paper ≥120 trading days, record in the
-  manual-experiment ledger.
+  flip_wide shadow if absent, prepare usable scores, pass the exact full
+  `paper_causal_v1` config (including `initial_nav`) to run and NAV, and record
+  `decision_at`, next-session `execution_date`, and `evidence_kind=REPLAY`.
+  This slice's replay output cannot count toward the 120-session forward gate;
+  immutable forward capture/count is a separate later task.
