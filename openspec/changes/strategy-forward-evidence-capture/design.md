@@ -52,7 +52,9 @@ replacement runs, runs after `execution_date` opened, records outside a window
 ## 3. Certified forward window (append-only)
 
 New collection `strategy_forward_windows`, one ACTIVE window per
-`(model_version, horizon, config_hash)`:
+`(model_version, horizon)` (config_hash is certification content of the window
+document — records must match it to be FORWARD-eligible — but ACTIVE
+uniqueness is on the pair, so a config change closes the predecessor):
 
 ```
 {model_version, horizon, config_hash,
