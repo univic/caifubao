@@ -2,7 +2,7 @@
 """Daily-run orchestration for the paper-first strategy runner.
 
 Pure, dependency-injected: the caller (jobs/strategy_runner) supplies concrete
-query functions for VERIFIED predictions and stock flags; this module assembles
+query functions for usable predictions and stock flags; this module assembles
 a daily plan (eligible universe -> target holdings -> rebalance vs previous),
 decides skip, and never touches Mongo itself. So the full decision path is
 unit-testable without a database.
@@ -52,7 +52,7 @@ def eligible_codes_from_flags(
         if constraints.get("exclude_bse") and _truthy(row.get("is_bse")):
             continue
         if constraints.get("exclude_suspended") and _truthy(
-            row.get("trade_status", 1) != 1
+            row.get("trade_status") != 1
         ):
             continue
         eligible.add(code)
@@ -63,7 +63,7 @@ def assemble_daily_plan(
     *,
     config: dict,
     date: datetime.datetime,
-    predictions,  # iterable of VERIFIED predictions for the configured version
+    predictions,  # iterable of usable predictions for the configured version
     previous_holdings: list[dict] | None,
     flags: dict[str, dict] | None = None,
     horizon: int | None = None,
@@ -71,7 +71,7 @@ def assemble_daily_plan(
     """Build one day's paper plan.
 
     Returns {"skipped": bool, "reason"?: str, "date", "horizon",
-    "target_holdings": [...], "rebalance": {...}}. When no VERIFIED predictions
+    "target_holdings": [...], "rebalance": {...}}. When no usable predictions
     exist for the configured model version, the plan is skipped (no empty
     portfolio is written).
     """
@@ -82,7 +82,7 @@ def assemble_daily_plan(
         return {
             "skipped": True,
             "reason": (
-                f"no VERIFIED predictions for model_version="
+                f"no usable predictions for model_version="
                 f"{config['score_model_version']} on {date.date()} "
                 f"(horizon {horizon})"
             ),
@@ -109,21 +109,22 @@ def assemble_daily_plan(
     }
 
 
+def next_execution_date(signal_date, trade_calendar):
+    """Resolve a strictly later market session; never guess beyond coverage."""
+    days = sorted({_date_key(day) for day in trade_calendar})
+    signal_key = _date_key(signal_date)
+    if signal_key not in days:
+        raise ValueError("signal date is not in the trading calendar")
+    later = [day for day in days if day > signal_key]
+    if not later:
+        raise ValueError("calendar does not cover the next trading session")
+    return datetime.datetime.fromisoformat(later[0])
+
+
 def schedule_from_runs(runs) -> list[dict]:
-    """Build a NAV schedule from persisted COMPLETED runs.
-
-    runs: iterable of run-like objects with `date` and `target_holdings`
-    (list of {"stock_code", "weight"}). Returns [{date, holdings:
-    {stock_code: weight}}] sorted by date ascending, skipping runs with no
-    holdings (SKIPPED runs carry none).
-
-    Dates are emitted as "YYYY-MM-DD" iso strings — the SAME key space the
-    quote loader (_load_quotes_for_codes), the benchmark loader
-    (_benchmark_returns_for_dates), and simulate_paper_nav's own tests use.
-    simulate_paper_nav looks prices/benchmark up with the schedule date, so a
-    datetime-vs-string mismatch would silently open zero positions.
-    """
+    """Translate signal records into explicit execution-session schedules."""
     schedule = []
+    seen = set()
     for run in runs:
         holdings = {
             h["stock_code"]: float(h["weight"])
@@ -132,9 +133,17 @@ def schedule_from_runs(runs) -> list[dict]:
         }
         if not holdings:
             continue
-        schedule.append({"date": _date_key(run.date), "holdings": holdings})
-    schedule.sort(key=lambda item: item["date"])
-    return schedule
+        execution = getattr(run, "execution_date", None)
+        if execution is None or _date_key(execution) <= _date_key(run.date):
+            raise ValueError(
+                "run requires execution_date after signal date; replay legacy records"
+            )
+        day = _date_key(execution)
+        if day in seen:
+            raise ValueError("duplicate execution_date in paper track")
+        seen.add(day)
+        schedule.append({"date": day, "holdings": holdings})
+    return sorted(schedule, key=lambda item: item["date"])
 
 
 def attach_nav_points(runs, curve: list[dict]) -> dict:
@@ -154,8 +163,9 @@ def attach_nav_points(runs, curve: list[dict]) -> dict:
     unmatched_dates = []
     for run in runs:
         key = _date_key(run.date)
-        if key in by_date:
-            matched[key] = by_date[key]
+        execution_key = _date_key(getattr(run, "execution_date", None))
+        if execution_key in by_date:
+            matched[key] = by_date[execution_key]
         else:
             unmatched_dates.append(run.date)
     return {"points_by_date": matched, "unmatched_dates": unmatched_dates}

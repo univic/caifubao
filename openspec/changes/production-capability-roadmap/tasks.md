@@ -3,14 +3,26 @@
 > 合规口径：产品对外始终称「研究/学习/演示 MVP、非投资建议」；本文只规划**实盘能力**
 > 的内部路线。本 change 不授权真实资金执行。
 
-## 0. 证据与定版门槛（进行中）
+> **证据修正顺序：** 先完成 P0 causal replay integrity（`IN PROGRESS`），再另行
+> 设计不可变 forward capture/count（`NEXT`）。strategy-paper-runner 的历史 gate
+> checkmarks 保留作历史记录；因果修正的实现和测试在此处不标记为已完成。
 
-- [ ] 0.1 task 4.4 纸面 ≥120 交易日 operator 日更已启动（day-1 = 2026-06-10，
-      flip_wide_shadow_v1 宽书 top-800、等权、排除 ST/BSE/停牌、initial_nav 2,000 万）；
-      每日补跑最新 VERIFIED 日期并计入 strategy_daily SUCCESS 计数
-- [ ] 0.2 每周纸面 NAV/超额/回撤/换手记入 autoresearch ledger（同 manual-experiments-ledger）
-- [ ] 0.3 promote 检查清单：120 日窗口结束后 paper 结果 vs 研究 walk-forward 预期对照，
-      通过后走 version bump + Spec Gate 的 promote 流程（本 change 不授权 promote）
+## 0. 证据与定版门槛（因果修正优先）
+
+- [ ] P0.1 **causal replay integrity — IN PROGRESS**：完成 `paper_causal_v1` 可用分数
+      消费、实际 UTC `decision_at`、下一个交易日 `execution_date`、完整 config hash
+      隔离、开盘信息定量和 `evidence_kind=REPLAY` 标记；本切片产物不进入 120 日计数。
+- [ ] NEXT.1 **immutable forward capture/count — NEXT**：在 P0 完成后由独立 change 设计
+      不可变前瞻捕获和 120-session counter；不得把历史 replay、backfill、replacement、
+      NAV recompute 或 job SUCCESS 当作前瞻证据。
+- [ ] 0.1 task 4.4 纸面 ≥120 交易日 operator 窗口：`2026-06-10` 和 `2026-09-04` 均为
+      历史/replay 日期，不是已认证的前瞻起点；在 NEXT 可用前不计数，也不按
+      `strategy_daily` SUCCESS 数量计数。
+- [ ] 0.2 每周纸面 NAV/超额/回撤/换手记入 autoresearch ledger（同 manual-experiments-ledger），
+      并明确标注 `REPLAY`，不得写成前瞻证据
+- [ ] 0.3 promote 检查清单：仅在 NEXT 的不可变前瞻 120 日窗口结束后，将 paper 结果
+      与研究 walk-forward 预期对照；通过后再走 version bump + Spec Gate 的 promote
+      流程（本 change 不授权 promote）
 - [ ] 0.4 生产环境部署验证：datahub prod 配额（2 核/2Gi，私有 #60）dispatch 部署并跑一次
       单日 ranked 计时回填对比
 - [ ] 0.5 MVP 收尾：capability-inventory.md 刷新到当前（H20/flip/strategy/perf 均已合入）；

@@ -1,15 +1,9 @@
 # -*- coding: utf-8 -*-
 """Paper-first strategy runner (daily).
 
-Reads VERIFIED score predictions for a configured model_version + date +
-horizon, applies the versioned strategy config (eligibility, wide-book
-selection — buy-high only), persists the target portfolio + rebalance list
-(StrategyPaperRun), and records a strategy-freshness datahub_job_run.
-Paper-only: never places real orders. Skip (not empty) when the configured
-source has no VERIFIED scores for the date (freshness records SKIPPED, so an
-upstream scoring gap is visible rather than masked as a fresh run). The caller
-chooses the run date: predictions for date D are VERIFIED only ~horizon
-trading days later, so the operator/runbook passes a lagged date (task 4.4).
+Reads usable scores independently of future outcome verification, records signal
+and execution dates, and produces retrospective paper artifacts only. REPLAY
+outputs and successful jobs never certify frozen forward evidence.
 
 Usage:
     python -m app.jobs.strategy_runner run --date 2026-09-04 \
@@ -35,6 +29,8 @@ from app.lib.strategy_engine.config import (
 from app.lib.utilities import job_run_helper
 
 logger = logging.getLogger(__name__)
+
+USABLE_SCORE_STATUSES = ("PENDING", "TRACKING", "VERIFIED", "INSUFFICIENT_DATA")
 
 STRATEGY_JOB_FAMILY = "strategy_daily"
 STRATEGY_JOB_NAME = "datahub_strategy_daily"
@@ -95,7 +91,7 @@ def _resolve_model_version(config: dict) -> str:
     return model_version
 
 
-def _query_verified_predictions(model_version, date, horizon):
+def _query_usable_predictions(model_version, date, horizon):
     from app.model.scoring import StockScorePrediction
 
     return list(
@@ -103,7 +99,7 @@ def _query_verified_predictions(model_version, date, horizon):
             model_version=model_version,
             date=date,
             horizon=horizon,
-            status="VERIFIED",
+            status__in=USABLE_SCORE_STATUSES,
         ).order_by("stock_code")
     )
 
@@ -123,7 +119,9 @@ def _query_flags(date, horizon, model_version=None) -> dict[str, dict]:
     from app.model.scoring import StockScorePrediction
     from app.model.stock import StockDailyQuote
 
-    query = StockScorePrediction.objects(date=date, horizon=horizon, status="VERIFIED")
+    query = StockScorePrediction.objects(
+        date=date, horizon=horizon, status__in=USABLE_SCORE_STATUSES
+    )
     if model_version:
         query = query(model_version=model_version)
     predictions = list(query.only("stock_code"))
@@ -145,9 +143,16 @@ def _query_flags(date, horizon, model_version=None) -> dict[str, dict]:
         flags[code] = {
             "is_st": int(quote.isST or 0),
             "is_bse": 1 if is_bse_stock_code(code) else 0,
-            "trade_status": int(quote.trade_status or 1),
+            "trade_status": quote.trade_status,
         }
     return flags
+
+
+def _execution_date(date):
+    from app.lib.strategy_engine.runner import next_execution_date
+    from app.lib.utilities.trading_day_helper import get_a_stock_market_trade_calendar
+
+    return next_execution_date(date, get_a_stock_market_trade_calendar())
 
 
 def run_strategy(
@@ -160,6 +165,9 @@ def run_strategy(
     from app.lib.strategy_engine.runner import assemble_daily_plan
     from app.model.strategy import StrategyPaperRun
 
+    date = datetime.datetime.combine(date.date(), datetime.time())
+    decision_at = datetime.datetime.now(datetime.UTC)
+    execution_date = _execution_date(date)
     resolved = validate_strategy_config(config or DEFAULT_STRATEGY_CONFIG)
     model_version = _resolve_model_version(resolved)
     horizon = int(resolved.get("horizon", DEFAULT_HORIZON))
@@ -196,6 +204,8 @@ def run_strategy(
             model_version=model_version,
             horizon=horizon,
             date__lt=date,
+            config_hash=config_hash,
+            evidence_kind="REPLAY",
             status="COMPLETED",
         )
         .order_by("-date")
@@ -205,7 +215,7 @@ def run_strategy(
         previous_run.target_holdings if previous_run is not None else None
     )
 
-    predictions = _query_verified_predictions(model_version, date, horizon)
+    predictions = _query_usable_predictions(model_version, date, horizon)
     flags = (
         _query_flags(date, horizon, model_version=model_version) if predictions else {}
     )
@@ -220,6 +230,9 @@ def run_strategy(
     if dry_run:
         return {
             "dry_run": True,
+            "decision_at": decision_at,
+            "execution_date": execution_date,
+            "evidence_kind": "REPLAY",
             "date": date,
             "model_version": model_version,
             "horizon": horizon,
@@ -240,6 +253,9 @@ def run_strategy(
         horizon=horizon,
         config_hash=config_hash,
         config=resolved,
+        decision_at=decision_at,
+        execution_date=execution_date,
+        evidence_kind="REPLAY",
         status="SKIPPED" if plan["skipped"] else "COMPLETED",
         skip_reason=plan.get("reason"),
         target_holdings=plan.get("target_holdings", []),
@@ -253,6 +269,9 @@ def run_strategy(
         "horizon": horizon,
         "config_hash": config_hash,
         "status": run.status,
+        "decision_at": decision_at,
+        "execution_date": execution_date,
+        "evidence_kind": "REPLAY",
         "skip_reason": run.skip_reason,
         "target_holdings_count": len(run.target_holdings or []),
         "rebalance": run.rebalance,
@@ -284,7 +303,7 @@ def _load_quotes_for_codes(
         by_code.setdefault(q.code, {})[day] = QuoteView(
             open_price=q.open,
             close_price=q.close,
-            trade_status=int(q.trade_status or 1),
+            trade_status=q.trade_status,
         )
     return by_code
 
@@ -342,14 +361,18 @@ def run_nav(
     resolved = validate_strategy_config(config or DEFAULT_STRATEGY_CONFIG)
     eff_version = model_version or resolved["score_model_version"]
     eff_horizon = int(horizon or resolved.get("horizon", DEFAULT_HORIZON))
-    _resolve_model_version(
+    resolved = validate_strategy_config(
         {**resolved, "score_model_version": eff_version, "horizon": eff_horizon}
     )
+    _resolve_model_version(resolved)
+    config_hash = strategy_config_hash(resolved)
 
     query = StrategyPaperRun.objects(
         strategy_name=DEFAULT_STRATEGY_NAME,
         model_version=eff_version,
         horizon=eff_horizon,
+        config_hash=config_hash,
+        evidence_kind="REPLAY",
         status="COMPLETED",
         date__gte=from_date,
         date__lte=to_date,
@@ -358,34 +381,15 @@ def run_nav(
     if not runs:
         return {"found_runs": 0, "reason": "no COMPLETED runs in range"}
 
-    # Deduplicate by date: a rerun with a changed config (no --replace) can
-    # leave two COMPLETED docs for the same date (unique index includes
-    # config_hash); keep the most recent and never execute two rebalances on
-    # the same day.
-    by_date: dict[str, object] = {}
-    for run in runs:
-        key = run.date.date().isoformat()
-        if key not in by_date or (getattr(run, "completed_at", None) or run.date) >= (
-            getattr(by_date[key], "completed_at", None) or by_date[key].date
-        ):
-            by_date[key] = run
-    runs = [by_date[key] for key in sorted(by_date)]
-
     schedule = schedule_from_runs(runs)
     if not schedule:
         return {"found_runs": len(runs), "reason": "no runs carry holdings"}
-
-    # Board-lot granularity makes the curve NAV-scale-sensitive: inherit the
-    # recorded initial_nav from the earliest run's config when the caller did
-    # not supply one, so a recompute reproduces the book the operator sized.
-    if "initial_nav" not in (config or {}):
-        recorded = (runs[0].config or {}).get("initial_nav")
-        if recorded:
-            resolved["initial_nav"] = float(recorded)
+    execution_from = datetime.datetime.fromisoformat(schedule[0]["date"])
+    execution_to = datetime.datetime.fromisoformat(schedule[-1]["date"])
 
     codes = sorted({code for decision in schedule for code in decision["holdings"]})
-    prices = _load_quotes_for_codes(codes, from_date, to_date)
-    benchmark = _benchmark_returns_for_dates(from_date, to_date)
+    prices = _load_quotes_for_codes(codes, execution_from, execution_to)
+    benchmark = _benchmark_returns_for_dates(execution_from, execution_to)
 
     if not prices:
         return {
@@ -395,6 +399,13 @@ def run_nav(
                 "[from, to]; refusing to write a flat cash nav_snapshot"
             ),
         }
+
+    covered_dates = {day for quotes in prices.values() for day in quotes}
+    missing_dates = [
+        item["date"] for item in schedule if item["date"] not in covered_dates
+    ]
+    if missing_dates:
+        raise ValueError(f"missing execution-day quote coverage: {missing_dates}")
 
     result = simulate_paper_nav(
         prices=prices,
@@ -421,6 +432,10 @@ def run_nav(
         "terminal_nav": result["terminal_nav"],
         "curve_points": len(result["curve"]),
         "benchmark_dates": len(benchmark),
+        "config_hash": config_hash,
+        "evidence_kind": "REPLAY",
+        "execution_from": execution_from.date().isoformat(),
+        "execution_to": execution_to.date().isoformat(),
         "unmatched_dates": [d.date().isoformat() for d in attached["unmatched_dates"]],
     }
 
@@ -491,6 +506,7 @@ def _run_with_tracking(args, config: dict | None) -> None:
                 "target": args.date,
                 "model_version": result.get("model_version"),
                 "config_hash": result.get("config_hash"),
+                "evidence_kind": result.get("evidence_kind"),
                 "written_total": (
                     1
                     if status == job_run_helper.STATUS_SUCCESS and not args.dry_run
@@ -542,6 +558,9 @@ def main(argv: list[str] | None = None) -> None:
                         "horizon": doc.horizon,
                         "config_hash": doc.config_hash,
                         "status": doc.status,
+                        "decision_at": doc.decision_at,
+                        "execution_date": doc.execution_date,
+                        "evidence_kind": doc.evidence_kind or "REPLAY",
                         "skip_reason": doc.skip_reason,
                         "target_holdings_count": len(doc.target_holdings or []),
                     },
