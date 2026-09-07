@@ -26,7 +26,9 @@ class StrategyPaperRun(Document):
     # Missing provenance on legacy records is retrospective, never forward.
     decision_at = DateTimeField()
     execution_date = DateTimeField()
-    evidence_kind = StringField(choices=["REPLAY"])
+    # FORWARD only when certified by the forward-evidence rules (NEXT.1);
+    # legacy/missing provenance and every retrospective artifact stay REPLAY.
+    evidence_kind = StringField(choices=["REPLAY", "FORWARD"], default="REPLAY")
     model_version = StringField(required=True)
     horizon = IntField(required=True, choices=[5, 20, 60])
     config_hash = StringField(required=True)  # hash of the VALIDATED config
@@ -71,3 +73,39 @@ class StrategyPaperRun(Document):
     def save(self, *args, **kwargs):
         self.updated_at = datetime.datetime.now(datetime.UTC)
         return super(StrategyPaperRun, self).save(*args, **kwargs)
+
+
+class StrategyForwardWindow(Document):
+    """Append-only certified forward-evidence window (roadmap NEXT.1).
+
+    One ACTIVE window per (model_version, horizon); config_hash is
+    certification content — a record is FORWARD-eligible only when its
+    config_hash matches the ACTIVE window's. Certifying a new window closes
+    any ACTIVE predecessor on the pair (score/config changes mean evidence
+    cannot span configurations). start_date is the certification session and
+    is never backdated.
+    """
+
+    model_version = StringField(required=True)
+    horizon = IntField(required=True, choices=[5, 20, 60])
+    config_hash = StringField(required=True)
+    start_date = DateTimeField(required=True)  # first signal date allowed FORWARD
+    status = StringField(choices=["ACTIVE", "CLOSED"], default="ACTIVE")
+    decision_at = DateTimeField()  # when the window was opened
+    closed_at = DateTimeField()
+
+    created_at = DateTimeField(default=lambda: datetime.datetime.now(datetime.UTC))
+
+    meta = {
+        "collection": "strategy_forward_windows",
+        "indexes": [
+            # At most one ACTIVE window per (model_version, horizon): config
+            # changes must close the predecessor, never coexist.
+            {
+                "fields": ["model_version", "horizon"],
+                "unique": True,
+                "partialFilterExpression": {"status": "ACTIVE"},
+            },
+            ("model_version", "-start_date"),
+        ],
+    }

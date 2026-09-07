@@ -155,6 +155,18 @@ def _execution_date(date):
     return next_execution_date(date, get_a_stock_market_trade_calendar())
 
 
+def _active_window(model_version: str, horizon: int):
+    """Return the ACTIVE certified forward window for (model_version, horizon),
+    or None when none is certified (NEXT.1)."""
+    from app.model.strategy import StrategyForwardWindow
+
+    return StrategyForwardWindow.objects(
+        model_version=model_version,
+        horizon=horizon,
+        status="ACTIVE",
+    ).first()
+
+
 def run_strategy(
     *,
     date: datetime.datetime,
@@ -194,10 +206,36 @@ def run_strategy(
             "model_version": model_version,
             "config_hash": config_hash,
         }
+    # NEXT.1 immutability: a FORWARD plan is certified evidence — replacing it
+    # would rewrite a forward capture, so it fails closed.
+    if (
+        existing is not None
+        and existing.status == "COMPLETED"
+        and replace
+        and getattr(existing, "evidence_kind", "REPLAY") == "FORWARD"
+    ):
+        raise ValueError(
+            "cannot replace a FORWARD plan: forward evidence is immutable "
+            f"({date.date()} {model_version} h={horizon})"
+        )
+
+    from app.lib.strategy_engine.runner import classify_evidence_kind
+
+    evidence_kind = classify_evidence_kind(
+        date=date,
+        decision_at=decision_at,
+        execution_date=execution_date,
+        window=_active_window(model_version, horizon),
+        config_hash=config_hash,
+        existing_status=getattr(existing, "status", None),
+        replace=replace,
+    )
 
     # Previous holdings come from the most recent COMPLETED run BEFORE this
     # date (same strategy/version/horizon), so the persisted rebalance diff is
     # "what changed since the previous portfolio", not "since nothing".
+    # Continuity spans BOTH evidence kinds (NEXT.1): a FORWARD run on day S is
+    # the previous holdings for day S+1, exactly like a REPLAY run would be.
     previous_run = (
         StrategyPaperRun.objects(
             strategy_name=DEFAULT_STRATEGY_NAME,
@@ -205,7 +243,9 @@ def run_strategy(
             horizon=horizon,
             date__lt=date,
             config_hash=config_hash,
-            evidence_kind="REPLAY",
+            # Continuity spans REPLAY + FORWARD (NEXT.1); pre-#202 legacy rows
+            # (missing kind) are historical and stay out of the paper track.
+            evidence_kind__in=["REPLAY", "FORWARD"],
             status="COMPLETED",
         )
         .order_by("-date")
@@ -232,7 +272,7 @@ def run_strategy(
             "dry_run": True,
             "decision_at": decision_at,
             "execution_date": execution_date,
-            "evidence_kind": "REPLAY",
+            "evidence_kind": evidence_kind,
             "date": date,
             "model_version": model_version,
             "horizon": horizon,
@@ -246,6 +286,11 @@ def run_strategy(
     if existing is not None:
         existing.delete()
 
+    # A SKIPPED day is not captured evidence: it must never carry FORWARD
+    # (the counter/continuity/NAV paths already exclude SKIPPED, but a
+    # FORWARD kind on a skipped doc would mislabel provenance). The same-day
+    # evening rerun that succeeds is the FORWARD capture.
+    persisted_kind = "REPLAY" if plan["skipped"] else evidence_kind
     run = StrategyPaperRun(
         strategy_name=DEFAULT_STRATEGY_NAME,
         date=date,
@@ -255,7 +300,7 @@ def run_strategy(
         config=resolved,
         decision_at=decision_at,
         execution_date=execution_date,
-        evidence_kind="REPLAY",
+        evidence_kind=persisted_kind,
         status="SKIPPED" if plan["skipped"] else "COMPLETED",
         skip_reason=plan.get("reason"),
         target_holdings=plan.get("target_holdings", []),
@@ -271,7 +316,7 @@ def run_strategy(
         "status": run.status,
         "decision_at": decision_at,
         "execution_date": execution_date,
-        "evidence_kind": "REPLAY",
+        "evidence_kind": run.evidence_kind,
         "skip_reason": run.skip_reason,
         "target_holdings_count": len(run.target_holdings or []),
         "rebalance": run.rebalance,
@@ -372,7 +417,7 @@ def run_nav(
         model_version=eff_version,
         horizon=eff_horizon,
         config_hash=config_hash,
-        evidence_kind="REPLAY",
+        evidence_kind__in=["REPLAY", "FORWARD"],
         status="COMPLETED",
         date__gte=from_date,
         date__lte=to_date,
@@ -433,10 +478,178 @@ def run_nav(
         "curve_points": len(result["curve"]),
         "benchmark_dates": len(benchmark),
         "config_hash": config_hash,
-        "evidence_kind": "REPLAY",
+        "evidence_kinds": sorted(
+            {getattr(r, "evidence_kind", "REPLAY") or "REPLAY" for r in runs}
+        ),
         "execution_from": execution_from.date().isoformat(),
         "execution_to": execution_to.date().isoformat(),
         "unmatched_dates": [d.date().isoformat() for d in attached["unmatched_dates"]],
+    }
+
+
+def _resolve_start_date(now=None):
+    """Certification session = the EARLIEST trading session at/after the
+    certification instant (Beijing date) — never a past session (spec:
+    start_date is never backdated). Certifying on a session day keeps that
+    day as start (its evening capture is the day-1 FORWARD run); certifying
+    off-session (weekend/holiday/pre-open) starts at the next session.
+    """
+    from app.lib.utilities.trading_day_helper import (
+        get_a_stock_market_trade_calendar,
+    )
+
+    if now is None:
+        bj = datetime.timezone(datetime.timedelta(hours=8))
+        now = datetime.datetime.now(bj)
+    today = now.date().isoformat()
+    sessions = sorted(
+        d.date().isoformat()
+        for d in get_a_stock_market_trade_calendar()
+        if d.date().isoformat() >= today
+    )
+    if not sessions:
+        raise ValueError("trading calendar does not cover the certification date")
+    return datetime.datetime.fromisoformat(sessions[0])
+
+
+def certify_forward_window(*, model_version: str, horizon: int, config: dict) -> dict:
+    """Certify an ACTIVE forward-evidence window (NEXT.1).
+
+    Closes any ACTIVE predecessor on (model_version, horizon); start_date =
+    the certification session; config_hash = the validated config hash. The
+    score source must be ACTIVE-registered and cover the horizon (same gate as
+    a strategy run). Append-only: an existing ACTIVE window is closed, never
+    mutated in place.
+    """
+    from app.model.strategy import StrategyForwardWindow
+
+    resolved = validate_strategy_config(config or DEFAULT_STRATEGY_CONFIG)
+    resolved = validate_strategy_config(
+        {**resolved, "score_model_version": model_version, "horizon": horizon}
+    )
+    eff_version = _resolve_model_version(resolved)
+    eff_horizon = int(resolved.get("horizon"))
+    config_hash = strategy_config_hash(resolved)
+    now = datetime.datetime.now(datetime.UTC)
+
+    closed = []
+    for w in StrategyForwardWindow.objects(
+        model_version=eff_version, horizon=eff_horizon, status="ACTIVE"
+    ):
+        w.status = "CLOSED"
+        w.closed_at = now
+        w.save()
+        closed.append(w.config_hash)
+
+    start_date = _resolve_start_date()
+    window = StrategyForwardWindow(
+        model_version=eff_version,
+        horizon=eff_horizon,
+        config_hash=config_hash,
+        start_date=start_date,
+        status="ACTIVE",
+        decision_at=now,
+    )
+    window.save()
+    return {
+        "model_version": eff_version,
+        "horizon": eff_horizon,
+        "config_hash": config_hash,
+        "start_date": start_date,
+        "status": window.status,
+        "decision_at": now,
+        "closed_predecessors": closed,
+    }
+
+
+def close_forward_window(*, model_version: str, horizon: int) -> dict:
+    """Explicitly close the ACTIVE window (operator pause / config change)."""
+    from app.model.strategy import StrategyForwardWindow
+
+    now = datetime.datetime.now(datetime.UTC)
+    closed = []
+    for w in StrategyForwardWindow.objects(
+        model_version=model_version, horizon=horizon, status="ACTIVE"
+    ):
+        w.status = "CLOSED"
+        w.closed_at = now
+        w.save()
+        closed.append(w.config_hash)
+    return {"closed_windows": closed, "closed_at": now}
+
+
+def forward_progress(*, model_version: str, horizon: int) -> dict:
+    """120-session counter over an ACTIVE (or CLOSED) certified window.
+
+    Counts distinct FORWARD COMPLETED signal dates at/after the window's
+    start_date. REPLAY/SKIPPED/FAILED records, job SUCCESS and NAV recomputes
+    never count; gaps are reported, never fabricated.
+    """
+    from app.model.strategy import StrategyForwardWindow, StrategyPaperRun
+
+    window = (
+        StrategyForwardWindow.objects(
+            model_version=model_version, horizon=horizon, status="ACTIVE"
+        ).first()
+        or StrategyForwardWindow.objects(
+            model_version=model_version, horizon=horizon, status="CLOSED"
+        )
+        .order_by("-closed_at")
+        .first()
+    )
+    if window is None:
+        return {
+            "certified": False,
+            "count": 0,
+            "target": 120,
+            "reason": "no certified forward window for this model/horizon",
+        }
+    runs = list(
+        StrategyPaperRun.objects(
+            strategy_name=DEFAULT_STRATEGY_NAME,
+            model_version=model_version,
+            horizon=horizon,
+            # Only runs whose stored config matches THIS window's config count
+            # toward its 120-session gate (spec: evidence cannot span configs;
+            # a same-session re-cert must not inherit predecessor runs).
+            config_hash=window.config_hash,
+            evidence_kind="FORWARD",
+            status="COMPLETED",
+            date__gte=window.start_date,
+        ).order_by("date")
+    )
+    dates = sorted({r.date.date().isoformat() for r in runs})
+    gaps = []
+    leading = 0
+    if dates:
+        from app.lib.utilities.trading_day_helper import (
+            get_a_stock_market_trade_calendar,
+        )
+
+        sessions = sorted(
+            d.date().isoformat()
+            for d in get_a_stock_market_trade_calendar()
+            if d.date().isoformat() >= window.start_date.date().isoformat()
+        )
+        expected = [d for d in sessions if d <= dates[-1]]
+        present = set(dates)
+        gaps = [d for d in expected if d not in present]
+        for d in expected:
+            if d in present:
+                leading += 1
+            else:
+                break
+    return {
+        "certified": True,
+        "window_status": window.status,
+        "config_hash": window.config_hash,
+        "start_date": window.start_date.date().isoformat(),
+        "count": len(dates),
+        "target": 120,
+        "first_date": dates[0] if dates else None,
+        "last_date": dates[-1] if dates else None,
+        "contiguous_leading_span": leading,
+        "gap_dates": gaps,
     }
 
 
@@ -466,6 +679,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_nav.add_argument("--config-json", default=None)
     p_nav.add_argument("--model-version", default=None)
     p_nav.add_argument("--horizon", type=int, choices=[5, 20, 60], default=None)
+
+    p_fwd = sub.add_parser("forward", help="Certified forward evidence window (NEXT.1)")
+    fsub = p_fwd.add_subparsers(dest="forward_command", required=True)
+    p_cert = fsub.add_parser("certify", help="Open an ACTIVE forward window")
+    p_cert.add_argument("--model-version", required=True)
+    p_cert.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
+    p_cert.add_argument("--config-json", default=None)
+    p_close = fsub.add_parser("close", help="Close the ACTIVE forward window")
+    p_close.add_argument("--model-version", required=True)
+    p_close.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
+    p_prog = fsub.add_parser("progress", help="120-session forward counter")
+    p_prog.add_argument("--model-version", required=True)
+    p_prog.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
     return parser
 
 
@@ -538,6 +764,25 @@ def main(argv: list[str] | None = None) -> None:
             model_version=args.model_version,
             horizon=args.horizon,
         )
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    elif args.command == "forward":
+        config = (
+            json.loads(args.config_json) if getattr(args, "config_json", None) else None
+        )
+        if args.forward_command == "certify":
+            result = certify_forward_window(
+                model_version=args.model_version,
+                horizon=args.horizon,
+                config=config,
+            )
+        elif args.forward_command == "close":
+            result = close_forward_window(
+                model_version=args.model_version, horizon=args.horizon
+            )
+        else:
+            result = forward_progress(
+                model_version=args.model_version, horizon=args.horizon
+            )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     elif args.command == "report":
         from app.model.strategy import StrategyPaperRun

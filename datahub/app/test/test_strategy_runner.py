@@ -151,6 +151,13 @@ def test_run_strategy_dry_run_skips_when_no_predictions(monkeypatch):
 
     monkeypatch.setattr(model_scoring, "ScoreModelVersion", FakeModel)
     monkeypatch.setattr(model_strategy, "StrategyPaperRun", FakeRunModel)
+
+    class FakeWindowModel:
+        @classmethod
+        def objects(cls, **query):
+            return _FakeQS([])
+
+    monkeypatch.setattr(model_strategy, "StrategyForwardWindow", FakeWindowModel)
     monkeypatch.setattr(
         strategy_runner,
         "_query_usable_predictions",
@@ -202,6 +209,13 @@ def test_run_strategy_non_dry_skip_persists_skipped(monkeypatch):
 
     monkeypatch.setattr(model_scoring, "ScoreModelVersion", FakeRegModel)
     monkeypatch.setattr(model_strategy, "StrategyPaperRun", FakeRunModel)
+
+    class FakeWindowModel:
+        @classmethod
+        def objects(cls, **query):
+            return _FakeQS([])
+
+    monkeypatch.setattr(model_strategy, "StrategyForwardWindow", FakeWindowModel)
     monkeypatch.setattr(
         strategy_runner, "_query_usable_predictions", lambda mv, d, h: []
     )
@@ -262,6 +276,13 @@ def test_run_strategy_rebalance_diffs_against_previous_run(monkeypatch):
 
     monkeypatch.setattr(model_scoring, "ScoreModelVersion", FakeRegModel)
     monkeypatch.setattr(model_strategy, "StrategyPaperRun", FakeRunModel)
+
+    class FakeWindowModel:
+        @classmethod
+        def objects(cls, **query):
+            return _FakeQS([])
+
+    monkeypatch.setattr(model_strategy, "StrategyForwardWindow", FakeWindowModel)
     monkeypatch.setattr(
         strategy_runner,
         "_query_usable_predictions",
@@ -439,6 +460,13 @@ def test_run_nav_returns_no_runs_message(monkeypatch):
 
     monkeypatch.setattr(model_scoring, "ScoreModelVersion", FakeRegModel)
     monkeypatch.setattr(model_strategy, "StrategyPaperRun", FakeRunModel)
+
+    class FakeWindowModel:
+        @classmethod
+        def objects(cls, **query):
+            return _FakeQS([])
+
+    monkeypatch.setattr(model_strategy, "StrategyForwardWindow", FakeWindowModel)
     result = strategy_runner.run_nav(
         from_date=datetime.datetime(2026, 3, 1, tzinfo=datetime.UTC),
         to_date=datetime.datetime(2026, 6, 30, tzinfo=datetime.UTC),
@@ -506,6 +534,13 @@ def test_run_nav_happy_path_opens_positions_and_moves_nav(monkeypatch):
 
     monkeypatch.setattr(model_scoring, "ScoreModelVersion", FakeRegModel)
     monkeypatch.setattr(model_strategy, "StrategyPaperRun", FakeRunModel)
+
+    class FakeWindowModel:
+        @classmethod
+        def objects(cls, **query):
+            return _FakeQS([])
+
+    monkeypatch.setattr(model_strategy, "StrategyForwardWindow", FakeWindowModel)
     monkeypatch.setattr(
         strategy_runner,
         "_load_quotes_for_codes",
