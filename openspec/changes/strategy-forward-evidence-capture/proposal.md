@@ -18,17 +18,23 @@ promote 门槛（0.3）与“实战”证据链的入口。合规口径不变：
 ## What Changes
 
 - **前瞻证据边界（evidence_kind=FORWARD）**：一条 run 记录只有在
-  `decision_at < open(execution_date)`（决策先于其执行日开盘）、信号日期处于该
-  config_hash 的**认证窗口**内、且不覆盖任何既有记录时才可标 FORWARD；其余一律
-  REPLAY（缺省/历史）。
-- **不可变性**：FORWARD 记录的目标组合/状态/配置一旦写入，replace/backfill/重跑
-  MUST 拒绝改写（fail-closed）；NAV 属**派生数据**（可重算），永不改写计划证据。
-- **认证窗口（append-only）**：按 (model_version, horizon, config_hash) 一个窗口，
-  显式 operator 认证开启（记录 start_date/decision_at/配置指纹），不可回填；
-  评分源或策略配置变化 → 旧窗口关闭、新窗口另开（证据不可跨配置）。
-- **120-session counter**：只统计窗口内 distinct 的 FORWARD COMPLETED 信号日期；
-  job SUCCESS、replay、replace、NAV recompute 一律不计；进度命令报告
-  count/120、首末日期、缺口与连续段（供 0.3 promote 对照）。
+  `decision_at < open(execution_date)`（决策先于其执行日开盘，execution_date 由
+  #202 的 `next_execution_date` + ChinaAStock 日历严格取下一交易日）、信号日期
+  处于该窗口的**认证窗口**内、且不覆盖任何既有 COMPLETED 计划记录时才可标
+  FORWARD（SKIPPED/FAILED 可当日重跑升级为 FORWARD）；其余一律 REPLAY（缺省/
+  历史）。前提：信号日评分只在该日收盘后可用（operator 收盘后运行）。
+- **不可变性 + 连续性**：FORWARD 记录的目标组合/状态/配置一旦写入，
+  replace/backfill/重跑 MUST 拒绝改写（fail-closed）；NAV 属**派生数据**（可重算），
+  永不改写计划证据；同时 FORWARD 记录必须像 REPLAY 一样参与组合连续性（前持仓/
+  调仓 diff）与 NAV 曲线——证据过滤 MUST NOT 把 FORWARD 排除出 paper track。
+- **认证窗口（append-only）**：按 (model_version, horizon) 唯一 ACTIVE——认证新窗
+  口 MUST 关闭同对上的 ACTIVE 前驱（评分源/配置变化 → 证据不可跨配置）；start_date
+  = 认证当日会话，**永不回溯**；operator 可显式关闭后在同一 key 另开新窗口
+  （计数器从新 start 重启）。
+- **120-session counter**：只统计窗口内 distinct 的 FORWARD COMPLETED 信号日期
+  （ACTIVE 时截止报告日 / CLOSED 时截止关闭日）；job SUCCESS、replay、replace、
+  NAV recompute 一律不计；进度命令报告 count/120 个交易日、首末日期、缺口与
+  连续段（供 0.3 promote 对照）。
 
 ## Non-goals
 
