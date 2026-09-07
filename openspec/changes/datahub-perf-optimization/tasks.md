@@ -26,8 +26,10 @@
 - [x] 2.6 ranked 评分收尾消费内存结果：assign_ranks 接受已持久化对象列表
   （predictions=）免 cohort 重查；_require_complete_prediction_set 接受
   persisted_codes 集合做内存完整性校验；BLOCKED 行不入内存排名（C5）。
-  注：replay_service 与 _upgrade_recommendations 的全量重读未在本任务处理，
-  留待后续（见 perf-analysis 文档 C5 行）
+  注：本任务未处理 replay_service 与 _upgrade_recommendations 的全量重读；
+  ranked 收尾的 _upgrade_recommendations 重读已由后续 PR #199 内存化消除
+  （predictions= 并同步改写对象），replay/raw 侧重读与行业/指数缓存仍留待
+  后续（见 perf-analysis 文档 C5 行；dev 实测 87 s/日 @2 核）
 - [x] 2.7 验证服务批量路径（verify_predictions_batch/_verify_many）：未来行情按
   stock_code 一次拉取（.only() 投影）后按预测切片；status/verification 用
   bulk_write 更新（C6）。注：「仅验到期未验且自上次验证后有新行情」的增量门槛

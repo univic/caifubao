@@ -43,7 +43,10 @@
   calibration (score range -75..0, percentile median ~0.50), compare vs
   score_v2_202605b -> percentile basis, verdict "Candidate clearly wins on both hit rate
   and return". Recorded in the manual-experiment ledger. Selection effectiveness still
-  requires the >=120-day paper window (strategy-paper-runner task 4.4).
+  requires the >=120-day paper window (strategy-paper-runner task 4.4). Follow-up
+  2026-09-07: shadow forward-tracking extended with a fresh full-market run for
+  2026-09-04 (5,207 scored, h20) as day-1 of forward accumulation — unverified; daily
+  shadow scoring cadence is to be formalized under task 4.4.
 - [x] 3.4 Raw-score comparisons stay within same-direction model versions;
   cross-direction promotion comparisons align scale-dependent metrics by percentile.
 

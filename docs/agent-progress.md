@@ -24,6 +24,27 @@
 ```
 
 ## 进度记录
+### 2026-09-07 07:44 CST — #199 合并 + 私有部署落地 + C5 实测 + flip_wide 09-04 前瞻首日
+
+- 状态：已完成
+- 已完成：
+  - **PR #198（docs：2.6/2.7 合并记录）已合并**（develop 85c4bcc）。
+  - **私有仓库 datahub_deploy 触发并成功**（@main 9121bf4=CPU 配额 #60）：dev datahub
+    Deployment 实测 **2 核/1Gi**，镜像 sha-f993ca394912（= #197 代码，public develop f993ca3）。
+  - **PR #199 合并**（develop 4bd6855，C5/C6 收尾）：ranked 收尾 `_upgrade_recommendations
+    (predictions=)` 内存化（消除最后一次 cohort 重读）、`assign_ranks` 内存分支同步改写对象、
+    verify 候选查询 `.only()` 投影；双评审 GATE_OK；533 测试通过。
+  - **C5 dev 实测回填**（perf-analysis 文档，5.3 进度）：单日全市场 ranked h20 replace 重算
+    5,188 股 = **87 s @2 核**（旧代码 0.3 核 ≈600 s、4 核 95 s——新代码 2 核反超旧 4 核）。
+  - **flip_wide_shadow_v1 前瞻首日评分**：对 2026-09-04（最新完整交易日）全市场 ranked 评分
+    5,207 股（85 s @2 核，replace=False）——shadow 数据集由 06-03~06-10 扩展出 09-04 新截面，
+    作为前瞻累积的 day-1（未验证，≥120 交易日证据仍需 task 4.4 纸面流程）。
+- 验证：dev 注册表仅 flip_wide_shadow_v1（config_hash 8c8f3ee4…，最新 09-04 5,207 行）；默认
+  score_v2_202605b 在 dev 无全市场新输出（研究判定方向反预测，不用于推荐做多）。
+- 下一步：遗留项——C6 增量验证门槛（last_verified_date，spec SHALL）、2.9 日历 bisect、
+  2.11 Q4 死代码、task 4.4 纸面日更（可把 09-04 作为 day-1 建立每日 shadow 跟踪）。
+- 阻塞：无。
+
 ### 2026-09-07 00:08 CST — datahub-perf 2.6+2.7 合并：#197（ranked 收尾内存化 + 验证批量路径）
 
 - 状态：已完成
