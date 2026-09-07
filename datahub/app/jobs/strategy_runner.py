@@ -286,6 +286,11 @@ def run_strategy(
     if existing is not None:
         existing.delete()
 
+    # A SKIPPED day is not captured evidence: it must never carry FORWARD
+    # (the counter/continuity/NAV paths already exclude SKIPPED, but a
+    # FORWARD kind on a skipped doc would mislabel provenance). The same-day
+    # evening rerun that succeeds is the FORWARD capture.
+    persisted_kind = "REPLAY" if plan["skipped"] else evidence_kind
     run = StrategyPaperRun(
         strategy_name=DEFAULT_STRATEGY_NAME,
         date=date,
@@ -295,7 +300,7 @@ def run_strategy(
         config=resolved,
         decision_at=decision_at,
         execution_date=execution_date,
-        evidence_kind=evidence_kind,
+        evidence_kind=persisted_kind,
         status="SKIPPED" if plan["skipped"] else "COMPLETED",
         skip_reason=plan.get("reason"),
         target_holdings=plan.get("target_holdings", []),

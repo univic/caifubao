@@ -253,8 +253,15 @@ def _window_store():
         def first(self):
             return self[0] if self else None
 
-        def order_by(self, *fields):
-            return self
+        def order_by(self, field, *rest):
+            key = field.lstrip("-")
+            return QS(
+                sorted(
+                    self,
+                    key=lambda r: getattr(r, key).date().isoformat(),
+                    reverse=field.startswith("-"),
+                )
+            )
 
     def _matches(row, query):
         for key, value in query.items():
@@ -287,6 +294,14 @@ def _window_store():
     class Run:
         def __init__(self, **kw):
             self.__dict__.update(kw)
+
+        def save(self):
+            if self not in records["runs"]:
+                records["runs"].append(self)
+
+        def delete(self):
+            if self in records["runs"]:
+                records["runs"].remove(self)
 
         @staticmethod
         def objects(**query):
@@ -416,3 +431,195 @@ def test_forward_progress_counts_only_forward_completed_in_window(monkeypatch):
     assert progress["count"] == 2
     assert progress["first_date"] == "2026-09-04"
     assert progress["last_date"] == "2026-09-07"
+
+
+# ---------------------------------------------------------------------------
+# 5) Missing spec-scenario regressions (spec-guardian P2) + index intent
+# ---------------------------------------------------------------------------
+
+
+def test_forward_window_active_unique_index_is_on_model_horizon_pair():
+    """R3 + P3: the ACTIVE partial-unique index must be on the PAIR
+    (model_version, horizon), never the config triple."""
+    from app.model.strategy import StrategyForwardWindow
+
+    indexes = StrategyForwardWindow._meta["indexes"]
+    partial = [
+        i for i in indexes if isinstance(i, dict) and i.get("partialFilterExpression")
+    ]
+    assert len(partial) == 1
+    idx = partial[0]
+    assert idx["unique"] is True
+    assert idx["fields"] == ["model_version", "horizon"]
+    assert idx["partialFilterExpression"] == {"status": "ACTIVE"}
+
+
+def _forward_runner_store(monkeypatch):
+    """run_strategy/run_nav harness: window ACTIVE + FORWARD-capable fakes."""
+    import app.jobs.strategy_runner as job
+    import app.model.strategy as model_strategy
+    from types import SimpleNamespace
+
+    from app.lib.strategy_engine.config import (
+        strategy_config_hash,
+        validate_strategy_config,
+    )
+
+    records, Win, Run = _window_store()
+    cfg = {
+        "score_model_version": "flip_wide_shadow_v1",
+        "horizon": 20,
+        "initial_nav": 100000,
+    }
+    cfg_hash = strategy_config_hash(validate_strategy_config(cfg))
+
+    def add_forward_run(date, holdings, execution=None):
+        run = Run(
+            strategy_name="flip_wide_paper",
+            date=date,
+            model_version="flip_wide_shadow_v1",
+            horizon=20,
+            config_hash=cfg_hash,
+            config=validate_strategy_config(cfg),
+            decision_at=_utc("2026-09-04T07:00:00"),
+            execution_date=execution or _dt("2026-09-07"),
+            evidence_kind="FORWARD",
+            status="COMPLETED",
+            target_holdings=holdings,
+            rebalance={},
+        )
+        run.save()
+        return run
+
+    records["windows"].append(
+        Win(
+            model_version="flip_wide_shadow_v1",
+            horizon=20,
+            config_hash=cfg_hash,
+            start_date=_dt("2026-09-04"),
+            status="ACTIVE",
+        )
+    )
+
+    monkeypatch.setattr(model_strategy, "StrategyPaperRun", Run)
+    monkeypatch.setattr(model_strategy, "StrategyForwardWindow", Win)
+    monkeypatch.setattr(
+        job, "_resolve_model_version", lambda c: c["score_model_version"]
+    )
+    monkeypatch.setattr(
+        job,
+        "_execution_date",
+        lambda date: _dt("2099-01-05"),  # far future -> decision_at < open
+    )
+    monkeypatch.setattr(
+        job,
+        "_query_usable_predictions",
+        lambda *_, **__: [
+            SimpleNamespace(stock_code=c, score=50.0 - i, percentile=1.0 - i / 10)
+            for i, c in enumerate(["a", "b", "c"])
+        ],
+    )
+    monkeypatch.setattr(
+        job,
+        "_query_flags",
+        lambda *_, **__: {
+            "a": {"trade_status": 1},
+            "b": {"trade_status": 1},
+            "c": {"trade_status": 1},
+        },
+    )
+    return records, Win, Run, cfg, cfg_hash, add_forward_run
+
+
+def test_second_forward_day_rebalances_against_first(monkeypatch):
+    """R2 S1: previous holdings MUST come from the prior FORWARD run."""
+    import app.jobs.strategy_runner as job
+
+    records, Win, Run, cfg, cfg_hash, add_forward_run = _forward_runner_store(
+        monkeypatch
+    )
+    add_forward_run(
+        _dt("2026-09-04"),
+        [{"stock_code": "a", "weight": 0.5}, {"stock_code": "b", "weight": 0.5}],
+    )
+
+    result = job.run_strategy(date=_dt("2026-09-07"), config=cfg)
+
+    assert result["status"] == "COMPLETED"
+    assert result["evidence_kind"] == "FORWARD"
+    # Continuity found the FORWARD day-1 holdings -> only c is added. If the
+    # query silently dropped FORWARD rows, a/b/c would all be "added".
+    assert result["rebalance"]["added"] == ["c"]
+    assert sorted(result["rebalance"]["unchanged"]) == ["a", "b"]
+
+
+def test_nav_recompute_includes_forward_and_keeps_plan_immutable(monkeypatch):
+    """R1 S5 + R2 S2: run_nav over a FORWARD run writes only nav_snapshot."""
+    from app.lib.strategy_engine.nav import QuoteView
+
+    import app.jobs.strategy_runner as job
+
+    records, Win, Run, cfg, cfg_hash, add_forward_run = _forward_runner_store(
+        monkeypatch
+    )
+    run = add_forward_run(
+        _dt("2026-09-04"),
+        [{"stock_code": "a", "weight": 1.0}],
+        execution=_dt("2026-09-07"),
+    )
+    plan_before = {
+        "target_holdings": list(run.target_holdings),
+        "evidence_kind": run.evidence_kind,
+        "status": run.status,
+        "config_hash": run.config_hash,
+        "execution_date": run.execution_date,
+    }
+    monkeypatch.setattr(
+        job,
+        "_load_quotes_for_codes",
+        lambda codes, start, end: {"a": {"2026-09-07": QuoteView(10, 11)}},
+    )
+    monkeypatch.setattr(job, "_benchmark_returns_for_dates", lambda *_, **__: {})
+
+    result = job.run_nav(
+        from_date=_dt("2026-09-04"), to_date=_dt("2026-09-04"), config=cfg
+    )
+
+    assert result["found_runs"] == 1  # FORWARD run included in the curve
+    assert run.nav_snapshot, "nav_snapshot must be written for the FORWARD run"
+    assert run.target_holdings == plan_before["target_holdings"]
+    assert run.evidence_kind == plan_before["evidence_kind"] == "FORWARD"
+    assert run.status == plan_before["status"] == "COMPLETED"
+    assert run.config_hash == plan_before["config_hash"] == cfg_hash
+    assert run.execution_date == plan_before["execution_date"]
+
+
+def test_same_config_restart_resets_counter(monkeypatch):
+    """R3 S2: close + re-certify under the same key restarts the counter."""
+    import app.jobs.strategy_runner as job
+
+    records, Win, Run, cfg, cfg_hash, add_forward_run = _forward_runner_store(
+        monkeypatch
+    )
+    add_forward_run(_dt("2026-09-04"), [{"stock_code": "a", "weight": 1.0}])
+
+    from app.lib.utilities import trading_day_helper
+
+    monkeypatch.setattr(
+        trading_day_helper,
+        "get_a_stock_market_trade_calendar",
+        lambda: [_dt("2026-09-04"), _dt("2026-09-07")],
+    )
+    before = job.forward_progress(model_version="flip_wide_shadow_v1", horizon=20)
+    assert before["count"] == 1
+
+    job.close_forward_window(model_version="flip_wide_shadow_v1", horizon=20)
+    # same config/key restart with a fresh start date
+    monkeypatch.setattr(job, "_resolve_start_date", lambda: _dt("2026-09-07"))
+    job.certify_forward_window(
+        model_version="flip_wide_shadow_v1", horizon=20, config=cfg
+    )
+
+    after = job.forward_progress(model_version="flip_wide_shadow_v1", horizon=20)
+    assert after["start_date"] == "2026-09-07"
+    assert after["count"] == 0  # old-window FORWARD dates no longer count
