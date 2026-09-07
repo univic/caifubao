@@ -121,6 +121,61 @@ def next_execution_date(signal_date, trade_calendar):
     return datetime.datetime.fromisoformat(later[0])
 
 
+# A-share session open is 09:30 CST == 01:30 UTC; the causal boundary for a
+# FORWARD decision is that its decision timestamp precedes this instant.
+SESSION_OPEN_UTC = datetime.time(1, 30)
+
+
+def _session_open_utc(execution_date) -> datetime.datetime:
+    day = (
+        execution_date.date()
+        if isinstance(execution_date, datetime.datetime)
+        else execution_date
+    )
+    return datetime.datetime.combine(day, SESSION_OPEN_UTC, tzinfo=datetime.UTC)
+
+
+def classify_evidence_kind(
+    *,
+    date,
+    decision_at,
+    execution_date,
+    window,  # StrategyForwardWindow or None (ACTIVE certified window)
+    config_hash: str,
+    existing_status: str | None,
+    replace: bool,
+) -> str:
+    """Certify a strategy run record as FORWARD or REPLAY (NEXT.1).
+
+    FORWARD requires ALL of: an ACTIVE window exists and its config_hash
+    matches this run's; the signal date is at/after the window's start_date;
+    no COMPLETED plan is being replaced (a replacement is retrospective —
+    FORWARD plans are immutable, and a REPLAY/legacy COMPLETED plan replaced
+    stays REPLAY); and decision_at precedes the open of the calendar
+    execution date (next_execution_date + ChinaAStock calendar). Anything
+    else — missing window, config mismatch, backdated signal date, late
+    decision, replacement — is REPLAY (legacy/missing provenance default).
+    A SKIPPED/FAILED existing document may be rewritten (same-day rerun)
+    and still certify FORWARD when all conditions hold.
+    """
+    if window is None or getattr(window, "status", None) != "ACTIVE":
+        return "REPLAY"
+    if getattr(window, "config_hash", None) != config_hash:
+        return "REPLAY"
+    if _date_key(date) < _date_key(window.start_date):
+        return "REPLAY"
+    if existing_status == "COMPLETED" and replace:
+        # Replacing a completed plan is retrospective; FORWARD plans are
+        # immutable (the runner additionally fails closed on that path).
+        return "REPLAY"
+    try:
+        if decision_at is None or not (decision_at < _session_open_utc(execution_date)):
+            return "REPLAY"
+    except (TypeError, ValueError):
+        return "REPLAY"
+    return "FORWARD"
+
+
 def schedule_from_runs(runs) -> list[dict]:
     """Translate signal records into explicit execution-session schedules."""
     schedule = []
