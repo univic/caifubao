@@ -81,8 +81,11 @@ def _fit_buy_quantity(budget: float, exec_price: float, lot: int, cfg: dict) -> 
     """
     if budget <= 0 or lot <= 0 or not _valid_price(exec_price):
         return 0
-    # Binary search over lot count k in [0, hi]; spend(0) == 0 always fits,
-    # so the search is well-founded.
+    # Binary search over the lot count k in [0, hi]. k = 0 is the sentinel for
+    # "nothing fits" (returned as no order); spend(k) grows monotonically in k
+    # (commission may floor at the minimum, but never decreases), so the
+    # largest feasible k is found by bisection. spend(0) is not evaluated
+    # (it would be the minimum commission, not 0, under the default config).
     hi = int(budget // (exec_price * lot)) + 1
     lo = 0
     while lo < hi:
