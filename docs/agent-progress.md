@@ -24,7 +24,46 @@
 ```
 
 ## 进度记录
-### 2026-09-07 22:40 CST — 1.3a 合并（#204）+ #199 backfill 复测结论
+### 2026-09-08 06:40 CST — #205/#206/#207 合并 + 策略探索首轮 + **2026 研究数据疑似污染**（codex 交接）
+
+- 状态：已完成（合并与探索记录）；**数据质量发现待 codex 接手审计**
+- 已完成：
+  - **合并链**：#205（docs 1.3a）→ `6a23f4a`；#206（NEXT.1 设计 change）→ `7d50836`；
+    #207（NEXT.1 代码切片：FORWARD 认证/不可变/认证窗口/120-session counter/CLI
+    forward certify|close|progress）→ `e92bd93`（三审 GATE、CI 绿、585 测试）。develop = `e92bd93`。
+  - **部署**：dev datahub `sha-4316a3580d11`（= #204，2 核/1Gi）；prod datahub 部署完成
+    （同镜像 + 2 核/2Gi，pod Running）。0.4 基线：prod 09-07 日跑 **834 s**（旧环境）；
+    新环境对照 = 09-08 CronJob pod 耗时（待取）。
+  - **策略探索（首轮）**：
+    1) 研究快照扫描（flip_wide 变体）：top-800 宽书研究口径曾报 24m IR +0.439 /
+       2026H1 +0.48%/日 —— **2026 部分现判定不可信（见下）**；
+    2) dev 链扩展回填：flip_wide_shadow_v1 ranked 覆盖扩至 **2026-01-05..06-02
+       （97 个交易日）**（Job flip-explore-backfill，已完成）；
+    3) 逐名对照：dev flip top-800 vs 研究 flip top-800 **重叠 82–90%**（2026-03，
+       选择构造一致）；
+    4) dev 链 cadence 评估（T+1 开盘、top-800 等权、真实行情）：cadence1
+       strategy -0.017%/日 vs 全市场等权 +0.048%/日 → **2026H1 未跑赢**；
+       cadence5 亦负。**注意：均在疑似污染数据区间内的真实行情口径，样本仅半年**。
+- **关键发现（疑似数据污染，需审计）**：研究评估器在**同一窗口 2026-01-05..06-02**
+  给出 benchmark **-1.27%/日（≈5 个月 -75%，真实市场不可能）**、strategy -2.71%/日；
+  而 dev 真实行情 2026H1 基本走平（上证 4023→4075→3930）。→ **h20 研究 parquet
+  快照的 2026 段疑似污染**；凡含 2026 的研究窗口结论（test26H1/+0.426、24m/+0.439）
+  **暂不可信**；val2025（2019–2025 段）可能仍成立但需干净复核。
+- 验证：585–586 datahub 通过；openspec 15/15；CI 绿。
+- 下一步（**codex 候选**）：
+  1. **parquet-vs-dev 2026 分叉审计**（高优先）：逐名比对合并快照 2026 段 close vs dev
+     真实 quote（样本代码 × 多日期）→ 确定污染边界（仅 2026？是否波及 2024–2025？），
+     产出修复/重建快照建议；
+  2. 污染边界明确后，在干净窗口（建议 2024–2025，dev 侧把 flip 回填再往前扩 ~1 年）
+     重做策略探索（研究扫描 + dev 纸面链 cadence1/5）；
+  3. NEXT.1 runbook/roadmap/CLI 文档更新（含 contract P3-2 建议：certify --model-version
+     须与 run config 的 score_model_version 一致）；
+  4. 0.4 收尾：取 prod 09-08 CronJob 新环境耗时对照 834s，回填 perf-analysis/roadmap；
+  5. **dev DB 清理**：删除探索期间写入的 ~97 条 cadence-1 REPLAY StrategyPaperRun
+     （2026-01~06，config 含 initial_nav=2e7/constraints，hash 与 DEFAULT 不同；
+     建议清理以免影响未来同 config 的连续性）；删除 Job flip-explore-backfill；
+  6. 后续切片（未授权）：NEXT 认证开窗 + 每日 operator（需用户定 day-1）、1.3 组合约束。
+- 阻塞：无（数据审计结论前，不把任何含 2026 的策略结论当 promote 依据）。
 
 - 状态：已完成
 - 已完成：
