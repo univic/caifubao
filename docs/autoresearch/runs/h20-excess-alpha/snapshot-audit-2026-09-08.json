@@ -1,0 +1,104 @@
+{
+  "comparison_snapshot": {
+    "name": "h20-2019-2026-merged.parquet",
+    "sha256": "94b7289c9f09693dfe96c71569df3f4f6e14ff691f0f21997d586f01591e3c66"
+  },
+  "duplicate_key_rows": 0,
+  "eligible_invalid_chronology": 0,
+  "eligible_unusable_execution_prices": 0,
+  "inspected_columns": [
+    "stock_code",
+    "date",
+    "open_hfq",
+    "close_hfq",
+    "eligibility",
+    "actual_entry_date",
+    "actual_exit_date",
+    "actual_entry_open_hfq",
+    "actual_exit_open_hfq"
+  ],
+  "labels": {
+    "entry": {
+      "matched": 3171235,
+      "missing_label_date": 348060,
+      "price_mismatches": 0,
+      "unmatched": 6660,
+      "unusable_pairs": 0,
+      "usable_pairs": 3171235
+    },
+    "exit": {
+      "matched": 3067326,
+      "missing_label_date": 349389,
+      "price_mismatches": 0,
+      "unmatched": 109240,
+      "unusable_pairs": 0,
+      "usable_pairs": 3067326
+    }
+  },
+  "price_tolerance": {
+    "atol": 1e-09,
+    "rtol": 1e-09
+  },
+  "reference": {
+    "name": "h20-audit-dev-quotes.json",
+    "sha256": "f44b4dbb70203efd10e60b14a7154acfa7e3e299de2d00324b6062c3124cc88c"
+  },
+  "reference_comparison": {
+    "fields": {
+      "close_hfq": {
+        "price_mismatches": 0,
+        "unusable_pairs": 0,
+        "usable_pairs": 45
+      },
+      "open_hfq": {
+        "price_mismatches": 0,
+        "unusable_pairs": 0,
+        "usable_pairs": 45
+      }
+    },
+    "matched": 45,
+    "reference_rows": 45,
+    "scope": "provided reference keys only; not full-universe certification",
+    "unmatched": 0
+  },
+  "returns": {
+    "aggregation": "equal stock mean within signal date, then equal mean across signal dates",
+    "cost_convention": "2*commission + sell duty + 2*slippage",
+    "from_date": "2026-01-05",
+    "holding_calendar_days": {
+      "max": 103.0,
+      "median": 29.0,
+      "min": 28.0
+    },
+    "horizon_convention": "20 per-stock quote observations after entry plus tradability roll-forward",
+    "mean_holding_period_cohort_return": -0.012663523377482762,
+    "rate_cost": 0.0035,
+    "rows": 498026,
+    "signal_dates": 97,
+    "to_date": "2026-06-02",
+    "unit": "nominal H20 holding-period cohort return"
+  },
+  "rows": 3525955,
+  "snapshot": {
+    "name": "snapshot.parquet",
+    "sha256": "4112b39777af96e9d551df2ef7fe1eb39c58eccf03ca3123bc11b8419e8f9db1"
+  },
+  "snapshot_comparison": {
+    "comparison_only": 5677504,
+    "exact_field_mismatches": {
+      "actual_entry_date": 0,
+      "actual_entry_open_hfq": 0,
+      "actual_exit_date": 0,
+      "actual_exit_open_hfq": 0,
+      "close_hfq": 0,
+      "eligibility": 0,
+      "open_hfq": 0
+    },
+    "matched": 3525955,
+    "snapshot_only": 0
+  },
+  "unusable_quote_prices": {
+    "close_hfq": 349287,
+    "open_hfq": 349287
+  }
+}
