@@ -14,13 +14,13 @@ on:
           - frontend
           - datahub
       environment:
-        description: Target environment
+        description: Target deployment domain (dev | research)
         required: true
-        default: development
+        default: dev
         type: choice
         options:
-          - development
-          - production
+          - dev
+          - research
       image_tag:
         description: Image tag to deploy. Defaults to sha-<commit-sha-short>.
         required: false
@@ -34,7 +34,7 @@ on:
         required: false
         type: string
       bootstrap:
-        description: Allow bootstrap deployment in development
+        description: Allow bootstrap deployment in dev
         required: true
         default: false
         type: boolean
@@ -81,7 +81,7 @@ jobs:
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             TRIGGER_KIND="manual"
-            TARGET_ENV="${INPUT_ENVIRONMENT:-development}"
+            TARGET_ENV="${INPUT_ENVIRONMENT:-dev}"
             COMMIT_SHA="${INPUT_PUBLIC_REF:-${GITHUB_SHA}}"
             PUBLIC_REF="${INPUT_PUBLIC_REF:-${GITHUB_SHA}}"
             IMAGE_TAG="${INPUT_IMAGE_TAG:-}"
@@ -96,10 +96,10 @@ jobs:
             IMAGE_TAG=""
             case "$WORKFLOW_BRANCH" in
               develop)
-                TARGET_ENV="development"
+                TARGET_ENV="dev"
                 ;;
               main)
-                TARGET_ENV="production"
+                TARGET_ENV="research"
                 ;;
               *)
                 echo "Unsupported triggering branch: $WORKFLOW_BRANCH"
