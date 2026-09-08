@@ -351,11 +351,13 @@ repository 中配置：
 
 会在 `develop` / `main` 分支构建并推送镜像。
 
-`.github/workflows/deploy-dispatch.yml` 会在 `develop` 分支镜像发布成功后向
-private `caifubao-private` 发送 `dev` 部署事件，也会在 `main`
-分支镜像发布成功后发送 `research` 部署事件。建议在 private repo 的
-`production` environment 上启用 required reviewers 或手动 approval，
-把自动 dispatch 和生产准入控制分开。
+`.github/workflows/backend-publish.yml`、`frontend-publish.yml`、
+`datahub-publish.yml` 会在镜像发布成功后自动向 private `caifubao-private`
+发送部署事件：`develop` 分支发布对应 `dev` 域，`main` 分支发布对应
+`research` 域（P0-3 起；此前为 `development` / `production`）。
+`.github/workflows/deploy-dispatch.yml` 提供手动分发入口，接受 `dev` /
+`research` 目标。建议在 private repo 的 `production` environment 上启用
+required reviewers 或手动 approval，把自动 dispatch 和生产准入控制分开。
 
 ## 启动脚本说明
 

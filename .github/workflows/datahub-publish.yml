@@ -101,10 +101,10 @@ jobs:
 
           case "$SOURCE_BRANCH" in
             develop)
-              TARGET_ENVIRONMENT="development"
+              TARGET_ENVIRONMENT="dev"
               ;;
             main)
-              TARGET_ENVIRONMENT="production"
+              TARGET_ENVIRONMENT="research"
               ;;
             *)
               echo "Unsupported source branch: $SOURCE_BRANCH"
@@ -142,11 +142,11 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ steps.changes.outputs.changed }}" = "true" ]; then
             case "$SOURCE_BRANCH" in
               develop)
-                TARGET_ENVIRONMENT="development"
+                TARGET_ENVIRONMENT="dev"
                 CHANNEL_TAG="develop"
                 ;;
               main)
-                TARGET_ENVIRONMENT="production"
+                TARGET_ENVIRONMENT="research"
                 CHANNEL_TAG="prod, latest"
                 ;;
               *)
