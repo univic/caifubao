@@ -352,8 +352,8 @@ repository 中配置：
 会在 `develop` / `main` 分支构建并推送镜像。
 
 `.github/workflows/deploy-dispatch.yml` 会在 `develop` 分支镜像发布成功后向
-private `caifubao-private` 发送 development 部署事件，也会在 `main`
-分支镜像发布成功后发送 production 部署事件。建议在 private repo 的
+private `caifubao-private` 发送 `dev` 部署事件，也会在 `main`
+分支镜像发布成功后发送 `research` 部署事件。建议在 private repo 的
 `production` environment 上启用 required reviewers 或手动 approval，
 把自动 dispatch 和生产准入控制分开。
 
