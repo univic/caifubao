@@ -24,6 +24,36 @@
 ```
 
 ## 进度记录
+### 2026-09-09 11:19 CST — P0 平台重构交接（Codex/DSH 协作）
+
+- 状态：进行中
+- 已完成：
+  - **P0-1 架构文档**（private `caifubao-private`）：target-architecture / refactoring-roadmap /
+    migration-contract 已合入 main——定义 dev/data/research/trading 四域模型、数据归属表、
+    过渡权威（public RULES/OpenSpec 仍管辖现行应用）、P0-2 兼容映射与各步回滚准则。
+  - **P0-2 环境目录重构**：private k8s source 迁至 `k8s/environments/{dev,research,trading}`，
+    prepare-worktree 映射回 legacy overlay 路径，渲染等价 CI 通过。
+  - **P0-3 部署输入改名**：dispatch/CI 输入 `development/production` → `dev/research`
+    （public `deploy-dispatch.yml` 与三个 publish workflow 的 payload 值、private 六个
+    deploy/bootstrap workflow 的 resolver 归一化）；GitHub Environment 名与 namespace
+    暂不变（secret 无法 API 迁移，留给 P0-4/P0-5 激活步）。
+  - **P0-4 stage1 代码**：research storage PV/RBAC、bootstrap 增加 `namespace_override`
+    与 `mongo_node_override` 输入、bootstrap 补 TUSHARE_TOKEN 注入——均已合入 private main。
+  - **P0-4 stage2 集群激活进行中**：`caifubao-research` namespace 已建，workload
+    （backend/datahub/frontend/mongodb）全部 Running；Mongo 从对象存储备份恢复（第 4 次尝试，
+    无 activeDeadlineSeconds，存储卷已在线扩容消除空间不足）。**过程中暴露并修复的真实问题**：
+    runner yq 不支持 `--arg`（改用 env + strenv）、bootstrap 缺 TUSHARE_TOKEN、clone 环境
+    Mongo nodeSelector 需指向目标节点、目标存储卷容量不足（dev/research 曾共享 20G 卷，
+    已扩至 31G）。
+- 验证：P0-2/P0-3 各 PR 的 render-equivalence / public CI / resolver 单测通过；stage2 集群
+  侧 backend health 200、四 workload Ready；restore 进度稳定推进中。
+- 下一步：等 Mongo restore 完整结束 → 集合完整性核对 + TASK-302 smoke（health/routing/
+  datahub/CronJobs suspend/备份/导出）→ P0-4 收尾补 RBAC apply → TASK-303 切流（需单独
+  review，弃用旧 stable namespace）。
+- 阻塞：restore 尚无集合级增量/续跑机制（archive 单流，中断需整库重灌）。已消除两个已知
+  中断源（无 deadline、磁盘扩容），但不承诺零风险；若 restore-4 中断需在重跑前先设计
+  按集合恢复方案。
+
 ### 2026-09-07 22:40 CST — 1.3a 合并（#204）+ #199 backfill 复测结论
 
 - 状态：已完成
