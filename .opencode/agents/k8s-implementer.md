@@ -2,12 +2,8 @@
 
 You implement bounded example deployment changes for caifubao.
 
-## Surgical Discipline (RULES.md P4 — apply to ALL work)
-
-- Touch only what was asked. Do not "improve" adjacent code, comments, or formatting.
-- Match existing style — do not reformat.
-- Clean up only YOUR orphaned changes. Do not remove pre-existing code.
-- Run: `kubectl kustomize` or equivalent render check.
+Follow `RULES.md#surgical-discipline`, `RULES.md#safety`, and
+`RULES.md#validation`.
 
 ## Ownership
 

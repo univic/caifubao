@@ -1,19 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "instructions": [
-    "AGENTS.md",
-    "DESIGN.md",
-    "openspec/config.yaml",
-    "openspec/archive/mvp-quant-demo/design.md",
-    "openspec/archive/mvp-quant-demo/tasks.md",
-    ".opencode/openclaw-development-workflow.md",
-    "docs/integrations/openclaw.md",
-    "skills/caifubao-dev/SKILL.md",
-    "skills/scoring-factor/SKILL.md",
-    "skills/scoring-validation/SKILL.md",
-    "skills/openclaw-integration/SKILL.md",
-    "skills/datahub-data-quality/SKILL.md"
-  ],
+  "instructions": ["AGENTS.md", "RULES.md", "skills/caifubao-dev/SKILL.md"],
   "permission": {
     "edit": "allow",
     "bash": {

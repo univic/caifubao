@@ -71,13 +71,13 @@ gaps.
 You have `bash: allow` permission. Proactively run the smallest relevant check
 to verify your contract findings:
 
-| Change area | Command |
-|-------------|---------|
-| Backend API changes | `cd backend && python -m pytest app/test/ -x -q --tb=short` |
-| Python lint | `ruff check <paths>` and `ruff format --check <paths>` |
-| OpenSpec | `openspec validate mvp-quant-demo --strict` |
-| Frontend API client | `cd frontend && npm run lint` |
+| Change area         | Command                                                                 |
+| ------------------- | ----------------------------------------------------------------------- |
+| Backend API changes | `backend/venv312/bin/python -m pytest <focused-tests> -x -q --tb=short` |
+| Python lint         | CI-pinned `ruff check <paths>` and `ruff format --check <paths>`        |
+| OpenSpec            | `openspec validate --all --strict`                                      |
+| Frontend API client | `cd frontend && npm run lint`                                           |
 
-Also run `git diff HEAD~1..HEAD --stat` to confirm which files actually changed,
-so you don't review files that weren't touched. If a check cannot be run, state
-exactly why.
+Use `git diff --stat` and `git diff --cached --stat` for local work, or the PR
+diff when reviewing a PR, so the reviewed scope matches the actual change. If a
+check cannot be run, state exactly why.
