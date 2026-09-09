@@ -1,98 +1,142 @@
-# Caifubao Agent Rules (single authority)
+# Caifubao Agent Rules
 
-This file is the **single source of truth** for all agent rules in caifubao.
-Every other file (agent definitions, workflow docs, AGENTS.md) must reference
-this file rather than duplicate rules. When rules change, change them here.
+This file is the single authority for repository-wide agent rules. `AGENTS.md`
+defines workflow, `.project-rules.md` provides commands, and agent/skill files
+define role-specific guidance. Those files must link here instead of copying
+these rules.
 
-## Rule Priority (P1 > P2 > P3 > P4 > P5 > P6)
+Rules are ordered by priority: P1 > P2 > P3 > P4 > P5 > P6.
 
-When rules conflict, higher priority wins. The agent's first duty is to the
-rules at the top.
+<a id="safety"></a>
 
-### P1 — SAFETY (must not violate)
+## P1 — Safety
 
-- Do not commit credentials, tokens, kubeconfigs, database dumps, local env
+- Never commit credentials, tokens, kubeconfigs, database dumps, local env
   files, private domains, registry settings, or private runbooks.
-- Use `.env.example` files for placeholders.
-- Keep real deployment overlays and operator scripts in the private
-  `caifubao-private` repository.
+- Use `.env.example` placeholders. Keep real deployment overlays and operator
+  material in the private `caifubao-private` repository.
 
-### P2 — MODULE BOUNDARIES (must not violate)
+<a id="module-boundaries"></a>
 
-| Module | Owns | Must not |
-|--------|------|----------|
-| `datahub/` | Market data, factors, signals, scoring, freshness, data quality | Render frontend UI, expose user-facing APIs |
-| `backend/` | Flask APIs, auth, service-token checks, light aggregation | Run scheduled data collection or backfill jobs |
-| `frontend/` | Vue UI, API consumption, rendering | Depend on Mongo collection shapes, bypass backend APIs |
-| `k8s/` | Public example deployment assets | Contain real secrets, private domains, registry settings |
-| OpenClaw | Downstream read-only consumer of backend APIs | Receive Mongo credentials, trigger mutations/scheduling/backfills/admin |
+## P2 — Module boundaries
 
-API responses are the external contract. Mongo collection shape is not.
+| Module      | Owns                                                            | Must not                                                                    |
+| ----------- | --------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `datahub/`  | Market data, factors, signals, scoring, freshness, data quality | Render UI or expose user-facing APIs                                        |
+| `backend/`  | Flask APIs, auth, service-token checks, light aggregation       | Run scheduled collection or backfill jobs                                   |
+| `frontend/` | Vue UI, API consumption, rendering                              | Depend on Mongo shapes or bypass backend APIs                               |
+| `k8s/`      | Public example deployment assets                                | Contain private deployment material                                         |
+| OpenClaw    | Read-only consumption of backend APIs                           | Access MongoDB or trigger mutation, scheduling, backfills, or admin actions |
 
-### P3 — SPEC GATE (required when any of these change)
+API responses are contracts; Mongo collection shapes are not.
 
-- Public API endpoints, response fields, pagination, filtering, or error shapes
-- Authentication, authorization, service-token scope, token lifecycle, or audit
-- Freshness semantics, `data_as_of`, generated timestamps, or status states
-- Scoring, factors, signals, replay, calibration, or look-ahead-bias rules
-- Data ownership between `datahub`, `backend`, `frontend`, `k8s`, and OpenClaw
-- Public docs that external users or downstream systems rely on
+<a id="spec-gate"></a>
 
-Not required for: internal refactors, tests, formatting, small behavior-preserving
-fixes, or local implementation details.
+## P3 — Spec gate
 
-### P4 — SURGICAL DISCIPLINE (Karpathy principles, apply to ALL agents)
+Create or update an OpenSpec change before implementation when work changes:
 
-**1. Think Before Coding**
-- State assumptions explicitly before writing code. If ambiguous, ask.
-- If a simpler approach exists, say so. If you don't understand something, stop.
+- public API endpoints, fields, pagination, filtering, or error shapes;
+- authentication, authorization, token scope/lifecycle, or audit behavior;
+- freshness semantics, `data_as_of`, generated timestamps, or status states;
+- scoring, factors, signals, replay, calibration, or look-ahead-bias rules;
+- data ownership between modules; or
+- public documentation relied on by external users or downstream systems.
 
-**2. Simplicity First**
-- No features beyond what was asked. No speculative code.
-- No abstractions for single-use code (no class hierarchy for one function).
-- If 200 lines could be 50, rewrite it.
+The gate is not required for internal refactors, tests, formatting, local
+implementation details, or small behavior-preserving fixes.
 
-**3. Surgical Changes**
-- Do not "improve" adjacent code, comments, or formatting.
-- Do not refactor things that aren't broken.
-- Match existing style (quotes, naming, patterns) — do not reformat.
-- Clean up only YOUR orphaned imports/variables. Do not remove pre-existing dead
-  code unless asked.
-- Every changed line must trace directly to the request.
+<a id="surgical-discipline"></a>
 
-**4. Goal-Driven Execution**
-- Define a verifiable success criterion before writing code.
-- For bugs: write a failing test, then implement the fix.
-- Loop until verification passes. Do not stop at "looks right".
+## P4 — Surgical discipline
 
-**Tradeoff:** For trivial tasks (simple typo fixes, one-line changes), use
-judgment — not every change needs the full rigor.
+- State assumptions and a verifiable success criterion before editing.
+- Make the smallest change that satisfies the request; avoid speculative
+  features, one-use abstractions, and unrelated cleanup.
+- Match existing style. Clean up only artifacts introduced by the change.
+- For bugs, reproduce the failure with a test first when practical.
+- Loop on the smallest useful validation until it passes.
 
-### P5 — VALIDATION (run the smallest useful check before considering work done)
+<a id="validation"></a>
 
-| Change type | Command |
-|-------------|---------|
-| Python (backend or datahub) | `ruff check` + `ruff format --check` + smallest relevant pytest |
-| Backend API | Focused pytest under `backend/app/test/` |
-| Datahub | Focused datahub tests or runner dry-run |
-| Frontend | `cd frontend && npm run lint && npm run build` |
-| K8s examples | `kubectl kustomize` or equivalent render check |
+## P5 — Validation
 
-If a check cannot be run, say exactly why.
+| Change         | Minimum useful check                                                                              |
+| -------------- | ------------------------------------------------------------------------------------------------- |
+| Backend Python | CI-pinned `ruff` checks and focused pytest via `backend/venv312/bin/python`                       |
+| Datahub Python | CI-pinned `ruff` checks and focused pytest via `datahub/.venv/bin/python`, or a supported dry-run |
+| Frontend       | Focused tests when applicable, then `npm run lint` and `npm run build`                            |
+| K8s examples   | `kubectl kustomize` or equivalent render check                                                    |
+| OpenSpec       | `openspec validate --all --strict`                                                                |
+| Rules/docs     | Link, path, command, and duplicate-content checks scoped to changed files                         |
 
-### P6 — EXISTING PATTERNS (prefer, but lower priority than above)
+If a check cannot run, report the command and reason. Use the `RUFF_VERSION`
+pinned in `.github/workflows/ci.yml`; do not silently substitute another local
+version.
 
-- Prefer the existing patterns in `datahub/app/lib/scoring_engine/` over new patterns.
-- A new factor component is one function returning a dict — it does not need its own module.
-- An API endpoint is one Flask route function — it does not need a service layer unless
-  the logic is shared across 3+ endpoints.
-- Follow existing Flask blueprint, model, utility, and test patterns.
-- Follow Vue 3, Vite, Pinia, and Element Plus patterns already in the repo.
-- Use conventional commits: `feat:`, `fix:`, `docs:`, `style:`, `refactor:`, `test:`, `chore:`.
+<a id="existing-patterns"></a>
 
-## Task Notes Template
+## P6 — Existing patterns
 
-For every non-trivial task, maintain these notes:
+- Prefer existing module patterns over new architecture.
+- A factor is normally one function returning a dict; a Flask endpoint is
+  normally one route unless logic is reused across at least three endpoints.
+- Follow current Flask, Vue 3, Vite, Pinia, and Element Plus conventions.
+- Use Conventional Commit prefixes: `feat`, `fix`, `docs`, `style`, `refactor`,
+  `test`, or `chore`.
+
+<a id="non-trivial"></a>
+
+## Non-trivial changes
+
+A change is non-trivial if it touches runtime behavior, contracts, auth,
+scoring, data models, CI, deployment manifests, or multiple modules. A small
+docs-only, comments-only, formatting-only, or single-file mechanical edit is
+trivial. When uncertain, use the non-trivial workflow.
+
+<a id="review-gates"></a>
+
+## Review gates
+
+Implement, validate, review, check branch conflicts, then publish. Reviewers are
+read-only and run after local validation:
+
+| Reviewer            | Required when                                                                                      |
+| ------------------- | -------------------------------------------------------------------------------------------------- |
+| `spec-guardian`     | The P3 gate may apply                                                                              |
+| `contract-reviewer` | API contracts, auth, freshness metadata, or OpenClaw integration are touched                       |
+| `qa-reviewer`       | Any non-trivial code, CI, data-model, or deployment change; not docs/comments/formatting-only work |
+
+Resolve and re-review P1 findings. Acknowledge P2 findings and remaining risk.
+
+<a id="branch-and-pr"></a>
+
+## Branch and PR rules
+
+- Use a dedicated branch based on current `origin/develop`; never mix unrelated
+  work or edit `main`/`develop` directly. Use a descriptive type prefix such as
+  `feature/`, `fix/`, `docs/`, `chore/`, or `codex/`.
+- Before handoff, verify the branch is conflict-free with the target base.
+- When the requested delivery includes a PR, create it as Draft, wait for every
+  CI job to pass, then mark it ready. Do not push or change PR state without the
+  authority needed for that external action.
+
+Commands live in [`.project-rules.md`](./.project-rules.md).
+
+<a id="openclaw"></a>
+
+## OpenClaw invariants
+
+- Endpoints stay under `/api/v1/integrations/openclaw`.
+- Authentication uses dedicated service tokens with `openclaw:data-read` or
+  `openclaw:score-read`, not user JWTs.
+- Responses expose adequate freshness metadata and preserve request auditing.
+- Investment-analysis logic stays in OpenClaw; caifubao supplies read-only data,
+  contracts, freshness, auth, and auditability.
+
+<a id="task-notes"></a>
+
+## Non-trivial task notes
 
 ```text
 Outcome:
@@ -100,128 +144,8 @@ Module Impact:
 Spec Gate: required / not required
 Assumptions:
 Write Scope:
-Validation Plan:
-Reviewer Requests:
-Branch Conflict Check:
-Gate Checklist (close-out):
-  [ ] spec-guardian:
-  [ ] contract-reviewer:
-  [ ] qa-reviewer:
-  [ ] branch-conflict:
-  [ ] draft-pr-ci:
-```
-
-## Non-Trivial Task Definition
-
-A task is "non-trivial" (requiring full Gate and Task Notes) unless it meets ALL
-of these criteria:
-- Changes fewer than 10 lines of non-doc code
-- Touches exactly one file
-- Does not change API contracts, auth, scoring, data models, CI, or k8s manifests
-- Is a behavior-preserving fix (typo, formatting, comment, simple config value)
-
-When in doubt, treat the task as non-trivial. It is always safer to run gates
-and skip unnecessary ones than to skip a required gate.
-
-## OpenClaw-Specific Rules
-
-- Endpoints remain under `/api/v1/integrations/openclaw`.
-- Authentication uses dedicated service tokens, not user JWTs.
-- Required scope: `openclaw:data-read` (broad) or `openclaw:score-read` (narrow).
-- Responses include `data_as_of`, generated time, or freshness state.
-- OpenClaw cannot trigger mutation, scheduling, backfill, admin actions, or
-  direct database access.
-- Do not let OpenClaw investment analysis logic enter caifubao. Caifubao
-  provides data, contracts, freshness, auth, and auditability.
-
-## Review Gates (for orchestrator)
-
-### Execution Order (enforced)
-
-Reviews run AFTER implementation completes and validation passes. The orchestrator
-MUST invoke them — they do not self-activate.
-
-1. **Implement** → 2. **Validate** (P5 checks) → 3. **Review** (below) → 4. **Branch check** → 5. **Draft PR** → 6. **CI Check** → 7. **Done**
-
-Do not skip to "Done" before all gates clear.
-
-### Review Gate Table
-
-Schedule reviewers in the task plan BEFORE implementation starts. These do NOT
-self-trigger — the orchestrator MUST explicitly invoke them as subagents.
-
-| Reviewer | Required when |
-|----------|---------------|
-| `spec-guardian` | New API endpoint, auth change, scoring semantics change, boundary shift |
-| `contract-reviewer` | API contract change, auth change, freshness metadata change, OpenClaw integration touched |
-| `qa-reviewer` | **Any non-trivial code change** (Python, JS/TS, k8s manifests, CI, DB models, auth, scoring, API). Only skip for: docs-only, comment-only, formatting-only changes. |
-
-P1 issues must be resolved and re-reviewed. P2 warnings must be acknowledged.
-
-### Draft PR + CI Gate (enforced)
-
-Before any change is considered ready for review:
-
-1. **Always create PRs as Draft** (`gh pr create --draft --base develop`).
-   A regular PR implies the work is ready for human review and merge. Draft
-   status signals that CI validation is still pending.
-2. **Wait for all CI checks to pass.** Inspect every job in the CI workflow.
-   If any job fails, fix the issue and push again. Do NOT convert to a regular
-   PR while any check is failing or still running.
-3. **After all CI passes**, convert the Draft to "Ready for review":
-   `gh pr ready <PR_NUMBER>`
-
-This gate runs after the review gates above. Both must clear before
-the orchestrator considers the task complete.
-
-### Branch Isolation Rule (enforced)
-
-Every non-trivial task requires a dedicated feature/fix branch created from
-`develop`. Never edit on another task's branch. Never edit on `develop` or
-`main` directly. The orchestrator MUST verify the branch is clean and on-topic
-before making the first edit. If in doubt, create a new branch from develop.
-
-### Gate Checklist (include in final summary)
-
-Every non-trivial change MUST close with this checklist in the final summary:
-
-```text
-[ ] spec-guardian:   triggered / not triggered
-[ ] contract-reviewer: triggered / not triggered
-[ ] qa-reviewer:      triggered / not triggered
-[ ] branch-conflict:  clean / conflicts resolved
-[ ] draft-pr-ci:      created as draft / CI passed / converted to regular
-```
-
-## Branch Conflict Check (enforced)
-
-Before any change is marked "done," the orchestrator MUST verify the working
-branch is conflict-free against the target base branch (`develop` or `main`):
-
-```bash
-git fetch origin develop --quiet
-git merge-tree $(git merge-base HEAD origin/develop) origin/develop HEAD
-```
-
-- If output contains conflict markers (`<<<<<<<` / `>>>>>>>`) → resolve before completing.
-- If output is clean → proceed.
-- If the repo has no remote or the check cannot run → state exactly why in the summary.
-
-This check runs AFTER reviews pass and BEFORE the orchestrator closes the task.
-It replaces the manual step in `.project-rules.md#5` for agent-driven workflows.
-
-## Review Format
-
-```text
-Findings
-- [P1] File:line - concise issue and impact.
-
-Open Questions
-- Any assumption affecting correctness.
-
-Validation Gaps
-- Checks still needed.
-
-Summary
-- Brief safety note.
+Validation:
+Reviewers:
+Branch Conflict:
+PR/CI: not requested / draft / green / ready
 ```

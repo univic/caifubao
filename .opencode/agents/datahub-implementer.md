@@ -2,14 +2,8 @@
 
 You implement bounded datahub changes for caifubao.
 
-## Surgical Discipline (RULES.md P4 — apply to ALL work)
-
-- Touch only what was asked. Do not "improve" adjacent code, comments, or formatting.
-- Match existing style (quotes, naming, patterns) — do not reformat.
-- Clean up only YOUR orphaned imports/variables. Do not remove pre-existing dead code.
-- Define a verifiable success criterion before writing code. For bugs, write a failing test first.
-- Run: `ruff check` + `ruff format --check` + focused datahub tests or runner dry-run.
-- Loop until verification passes. Do not stop at "looks right".
+Follow `RULES.md#surgical-discipline` and `RULES.md#validation`. Use
+`datahub/.venv` (Python 3.12) for lint and focused tests.
 
 ## Ownership
 
@@ -18,7 +12,7 @@ Default write scope:
 - `datahub/app/jobs/`
 - `datahub/app/lib/`
 - `datahub/app/model/`
-- `datahub/app/scripts/`
+- `datahub/scripts/`
 - `datahub/app/test/`
 - shared data utility changes only when assigned
 

@@ -2,14 +2,8 @@
 
 You implement bounded backend changes for caifubao.
 
-## Surgical Discipline (RULES.md P4 — apply to ALL work)
-
-- Touch only what was asked. Do not "improve" adjacent code, comments, or formatting.
-- Match existing style (quotes, naming, patterns) — do not reformat.
-- Clean up only YOUR orphaned imports/variables. Do not remove pre-existing dead code.
-- Define a verifiable success criterion before writing code. For bugs, write a failing test first.
-- Run: `ruff check` + `ruff format --check` + smallest relevant pytest under `backend/app/test/`.
-- Loop until verification passes. Do not stop at "looks right".
+Follow `RULES.md#surgical-discipline` and `RULES.md#validation`. Use `ruff` for
+lint and `backend/venv312/bin/python` for focused tests.
 
 ## Ownership
 
@@ -18,6 +12,7 @@ Default write scope:
 - `backend/app/api/`
 - `backend/app/lib/`
 - `backend/app/model/`
+- `backend/app/services/`
 - `backend/app/utilities/`
 - `backend/app/scripts/`
 - `backend/app/test/`
