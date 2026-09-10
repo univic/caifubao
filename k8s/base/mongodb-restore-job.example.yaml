@@ -6,7 +6,15 @@ metadata:
     job.caifubao.io/type: mongodb-restore
 spec:
   backoffLimit: 0
-  activeDeadlineSeconds: 7200
+  # No activeDeadlineSeconds here on purpose. It is a hang guard, not a
+  # slow-job timer: a copied 2h/4h deadline killed two real restores mid-run.
+  # Protect long restores with ttlSecondsAfterFinished plus monitoring.
+  #
+  # This example streams one archive into one mongorestore call, which is only
+  # suitable for small databases. For a multi-GB database, download the
+  # archive to a staging volume first and restore it collection by collection
+  # (mongorestore --nsInclude --stopOnError) so an interruption does not
+  # discard every completed collection.
   template:
     metadata:
       labels:
