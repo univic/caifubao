@@ -172,7 +172,12 @@ for local datahub work:
 
 ```bash
 datahub/.venv/bin/python -m pytest datahub/app/test/     # full test suite
-datahub/.venv/bin/ruff check datahub/ && datahub/.venv/bin/ruff format --check datahub/
+# Pass the rule set explicitly: CI pins a specific ruff (see RUFF_VERSION in
+# .github/workflows/ci.yml) and relies on its default select, but a newer local
+# ruff can default to more rules and then report hundreds of pre-existing
+# findings that CI does not flag. `E4,E7,E9,F` is that CI default.
+datahub/.venv/bin/ruff check --select E4,E7,E9,F datahub/ && \
+  datahub/.venv/bin/ruff format --check datahub/
 ```
 
 - Interpreter source: `datahub/.tools/python312/` (uv-managed CPython 3.12).
