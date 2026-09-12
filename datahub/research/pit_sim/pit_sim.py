@@ -18,7 +18,7 @@ production model and the research candidate:
 | variant | model_version | scoring mode | construction |
 |:--|:--|:--|:--|
 | A production-as-deployed | pit_baseline_h20_v1 | raw | built-in weights, no flip |
-| B flip candidate | flip_wide_shadow_v1 | ranked | cross-sectional ranks, 7 components direction -1 |
+| B flip candidate | pit_flip_ranked_h20_v1 | ranked | cross-sectional ranks, 7 components direction -1 |
 | C ranked control | pit_baseline_ranked_h20_v1 | ranked | cross-sectional ranks, no flip |
 
 B vs C isolates the direction flip; C vs A isolates the rank construction.
@@ -46,7 +46,7 @@ DECISION_DATES = [
 
 VARIANTS = [
     ("A_production_raw", "pit_baseline_h20_v1", "raw"),
-    ("B_flip_ranked", "flip_wide_shadow_v1", "ranked"),
+    ("B_flip_ranked", "pit_flip_ranked_h20_v1", "ranked"),
     ("C_ranked_control", "pit_baseline_ranked_h20_v1", "ranked"),
 ]
 

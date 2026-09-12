@@ -14,7 +14,7 @@ import json
 
 VARIANTS = [
     ("A_production_raw", "pit_baseline_h20_v1", "b9ce2434"),
-    ("B_flip_ranked", "flip_wide_shadow_v1", "c9ffba3c"),
+    ("B_flip_ranked", "pit_flip_ranked_h20_v1", "091539f2"),
     ("C_ranked_control", "pit_baseline_ranked_h20_v1", "349b6c99"),
 ]
 WINDOW_FROM = datetime.datetime(2026, 8, 1)
