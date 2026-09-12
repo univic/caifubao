@@ -24,6 +24,54 @@
 ```
 
 ## 进度记录
+### 2026-09-12 12:18 CST — research 集群迁移收尾：TASK-303 切换已合并；research 激活被 bootstrap 镜像 tag 不变量阻塞（交接 codex）
+
+- 状态：阻塞（research 的激活路径缺失，需先修下方第 1~4 点）
+- 已完成：
+  - **P0-4 数据迁移与重命名已落地并验证**：research 实例的数据库与 Mongo 应用身份已按目标契约重命名，
+    13 个集合计数与源库逐一一致；旧库与旧身份保留作回滚。全程未删除任何 namespace、PVC、PV 或宿主目录。
+  - **TASK-303 切换已全部合入**。公共侧：新增 research 示例 overlay（**PR #214** → develop `e08ff3c`）。
+    私有部署仓：契约修复、设计记录、切换实现分别经 PR 合并到私有 main（私有 #73 / #71 / #74）。
+    私有 #72 因 base 分支被删而自动关闭，由 #74 取代。
+  - **映射现为**：`research` → 私有 research overlay + 自有受保护的 research GitHub Environment +
+    `caifubao-research` 命名空间；`production` 输入退役并显式报错；`dev` 行为不变。运行名与 Environment
+    名的解耦由解析器拆分（`target_environment` / `github_environment`）承担。
+  - **顺带修掉四个影响 CI 可信度的真实缺陷**：
+    1. 私有契约脚本仍断言 P0-3 之前的表达式，自 P0-3 起所有 `deploy-dry-run` 都在契约步骤失败，
+       并连带阻塞公共仓库每个 PR 的 `Private Deploy Dry Run`（已在私有 main 单独修复，私有 #73）。
+    2. 渲染等价检查假定基线版与候选版渲染同名环境，`production`→`research` 改名后必然失败；改为按各自
+       assembly 推导环境、只对共有部分断言等价，并对改名本身（含退役目标已消失）单独断言。
+    3. 清单校验脚本与 dry-run fixture **一致地**停留在改名前的 research 数据库/身份，互相掩盖了重命名；
+       二者已同时更正。
+    4. 一次只声明 Mongo 默认值的提交误删了三个 `env/**/.env.example`（README 仍在引用），已恢复，
+       并把稳定目标示例由 production 改名为 research。
+  - research GitHub Environment 原**没有** branch policy，已设为仅允许 main（与 production 一致）；
+    环境级取值为 9 个变量 + 6 个密钥，其中 `KUBE_CONFIG`、`MONGODB_USER` 无任何工作流或脚本读取。
+- 验证：私有 `environment-layout-check`（渲染等价）与 `deploy-dry-run` 全绿（含新旧两种 PR baseline）；
+  本地 `verify-environment-layout.sh` / `verify-overlay.sh --environment all` / `verify-rendered-manifest.sh` /
+  `verify-storage-manifest.sh` / `verify-tailscale-contract.sh` 全通过。已对 research 派发 `backend-deploy`
+  （`mode=deploy`）成功，**目标定位**（命名空间、环境级密钥、research overlay 补丁、镜像）确认无误。
+- 下一步：先修下方阻塞第 1~4 点（让 bootstrap 支持**分模块**镜像 tag），再以 `resume_partial=true` 跑
+  research bootstrap 做一次整体 apply——收敛 environment 标签、把三个工作负载拉到 1 副本，CronJob 依
+  `SUSPEND=true` 保持挂起、不建 Ingress——随后重跑 TASK-302 smoke。交接范围即
+  “修 bootstrap tag 不变量 → 激活 research → TASK-302 smoke”；集群侧其余状态已稳定，无需额外看护。
+- 阻塞：**research 无法被激活**（本轮新发现，属设计缺口）：
+  1. `environment-bootstrap.yml` 要求 `image_tag == sha-<public_ref[:12]>`；
+  2. 但公共 publish **只在对应模块有改动时才构建**镜像（k8s-only 提交的构建日志会打印
+     `No <module> changes detected … skipped image publish`），所以 tag 的真实语义是「最后改动该模块的提交」。
+     在 `e08ff3c` 上 backend/frontend 与 datahub 的该提交互不相同，且该 ref 根本没有镜像；
+  3. 即使放宽相等校验，bootstrap 仍只接受**一个** `image_tag`（`write-actions-env.sh --image-tag` 会把三个
+     模块设成同一个），今天取任何一个都是错的：要么 datahub 回退，要么 backend/frontend 镜像不存在。
+     正确修法是让 bootstrap 按模块推导 tag（它已以 `fetch-depth: 0` 检出公共源，可直接
+     `git log -1 --format=%h <public_ref> -- <module>/`），并让 `write-actions-env.sh` 接受分模块 tag；
+  4. 服务部署工作流无法替代：research 永远走「只 set image」的分支，`bootstrap.sh` 分支是 development 专属，
+     因此既不创建也不扩容工作负载。实测 research 的 backend 部署报 success 但 Deployment 仍为 0 副本，
+     而 0 副本的 `kubectl rollout status` 会平凡通过——**这是一个假成功信号**，建议一并加固
+     （目标副本为 0 时应显式失败或告警）。
+  另有一处残留：research 命名空间对象仍带 production 的环境标签（P0-4 clone 用 production overlay 引导所致），
+  基于 patch 的部署路径不会纠正它。当前无功能影响（Service 仅按 `app` 选择，无 NetworkPolicy），
+  但它是旧映射的可见残留，应在上述整体 apply 时一并收敛。
+
 ### 2026-09-07 22:40 CST — 1.3a 合并（#204）+ #199 backfill 复测结论
 
 - 状态：已完成
