@@ -33,6 +33,14 @@
       造成误导（行为仍是 fail closed，未改变 quarantine 口径）
 - [x] 1b.3 spec-guardian 开放问题：金额明确为“四舍五入到分”；BUY/HOLD 缺目标权重
       明确为 fail closed（补 scenario）
+- [x] 1b.4 qa-reviewer P3 全部收口：`--config-json` 解析移入 try（坏 JSON 走结构化
+      fail-closed 而非 traceback）；显式非法 `--base-nav` 报错而非静默回退；rebalance
+      分组交叉重复 fail closed；目标权重要求 `0 < w <= 1`；金额改为 half-up 取整到分；
+      测试里把 `RESEARCH` 字面量钉住（原断言同义反复）
+- [x] 1b.5 qa-reviewer validation gap 补齐：CLI fail-closed（退出码 1、stdout 为空）、
+      坏 config JSON、不创建 job run、`--format json` 标注字段、`--output` CSV 产物
+      注释行、候选查询 run key 断言、`_query_export_scores` / `_query_stock_names`
+      单测
 
 ## 2. 实现
 
@@ -46,8 +54,10 @@
 
 ## 3. Gates
 
-- [ ] 3.1 spec-guardian 复审（修订后）；qa-reviewer 审阅。contract-reviewer 不触发：
-      本切片不改 API/鉴权/freshness/OpenClaw，且不在 backend/OpenClaw 暴露
+- [x] 3.1 spec-guardian 复审 **GATE_OK**（`7787dfe`）；qa-reviewer 审阅结论
+      **无未决 P1/P2**（首提交的 config 回退缺陷已在 `f162344` 修复），5 项 P3 已全部
+      收口（见 1b.4/1b.5）。contract-reviewer 不触发：本切片不改 API/鉴权/freshness/
+      OpenClaw，且不在 backend/OpenClaw 暴露
 - [ ] 3.2 branch-conflict vs develop；Draft PR CI green
 - [ ] 3.3 operator 文档（`docs/operations/agent-cli.md` 策略小节）回填；
       agent-progress 回填；本切片不授权合并、写库、promote 或真实下单

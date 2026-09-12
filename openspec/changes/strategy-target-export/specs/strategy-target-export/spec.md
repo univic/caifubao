@@ -169,8 +169,8 @@ source, and MUST fail closed rather than substituting any other NAV.
 - GIVEN rows that carry a target weight
 - WHEN amounts are derived
 - THEN each such row's amount equals its target weight times the reported base
-  NAV, rounded to the nearest CNY 0.01
-- AND rows without a target weight carry no amount
+  NAV, rounded half-up to the nearest CNY 0.01
+- AND `SELL` rows, which carry no target weight, carry no amount
 
 ### Requirement: Export MUST be read-only and MUST NOT be an execution instruction
 

@@ -931,11 +931,13 @@ def main(argv: list[str] | None = None) -> None:
             )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     elif args.command == "export":
-        config = json.loads(args.config_json) if args.config_json else None
+        # json.loads is inside the guard: a malformed --config-json is a
+        # JSONDecodeError (a ValueError) and must give the same structured
+        # fail-closed error, not a traceback.
         try:
             result = export_targets(
                 date=parse_date(args.date),
-                config=config,
+                config=json.loads(args.config_json) if args.config_json else None,
                 model_version=args.model_version,
                 horizon=args.horizon,
                 base_nav=args.base_nav,

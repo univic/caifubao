@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import datetime
 import io
+from decimal import ROUND_HALF_UP, Decimal
 
 # Fixed labels — not configurable: a caller must not be able to render an
 # unpromoted model as tradable/actionable.
@@ -72,16 +73,27 @@ def _positive_number(value):
     return float(value)
 
 
+def _round_cents(value: float) -> float:
+    """Round a CNY amount to the nearest cent (half-up, not banker's)."""
+    return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
 def resolve_base_nav(run: dict, override=None) -> tuple[float, str]:
     """Return ``(base_nav, source)`` for the run, or raise when none exists.
 
     Order: an explicit override, then the run's persisted NAV snapshot, then the
     configured ``initial_nav``. Amounts in one export must all come from this
     single value, and a run with no usable NAV fails closed rather than
-    inventing a budget.
+    inventing a budget. An override that was supplied but is not a positive
+    number is an operator error and fails closed rather than being silently
+    ignored.
     """
-    explicit = _positive_number(override)
-    if explicit is not None:
+    if override is not None:
+        explicit = _positive_number(override)
+        if explicit is None:
+            raise ValueError(
+                f"base_nav override must be a positive number, got {override!r}"
+            )
         return explicit, "explicit"
     from_snapshot = _positive_number((run.get("nav_snapshot") or {}).get("nav"))
     if from_snapshot is not None:
@@ -132,18 +144,32 @@ def build_target_export(
     score_map = scores or {}
     name_map = names or {}
     rebalance = run.get("rebalance") or {}
+    added = set(rebalance.get("added") or [])
+    removed = set(rebalance.get("removed") or [])
+    unchanged = set(rebalance.get("unchanged") or [])
+    overlapping = (added & removed) | (added & unchanged) | (removed & unchanged)
+    if overlapping:
+        raise ValueError(
+            "rebalance groups overlap for "
+            f"{sorted(overlapping)}; the run's evidence is inconsistent"
+        )
 
     def _make_row(side: str, code: str) -> dict:
         weight = None
         amount = None
         if side in ("BUY", "HOLD"):
             raw_weight = weights.get(code)
-            if isinstance(raw_weight, bool) or not isinstance(raw_weight, (int, float)):
+            if (
+                isinstance(raw_weight, bool)
+                or not isinstance(raw_weight, (int, float))
+                or not 0 < float(raw_weight) <= 1
+            ):
                 raise ValueError(
-                    f"{side} code {code} has no target weight in target_holdings"
+                    f"{side} code {code} has no usable target weight in "
+                    "target_holdings (expected 0 < weight <= 1)"
                 )
             weight = float(raw_weight)
-            amount = round(weight * nav, 2)
+            amount = _round_cents(weight * nav)
         score_row = score_map.get(code) or {}
         return {
             "side": side,
@@ -157,11 +183,11 @@ def build_target_export(
         }
 
     rows = []
-    for code in sorted(set(rebalance.get("added") or [])):
+    for code in sorted(added):
         rows.append(_make_row("BUY", code))
-    for code in sorted(set(rebalance.get("removed") or [])):
+    for code in sorted(removed):
         rows.append(_make_row("SELL", code))
-    for code in sorted(set(rebalance.get("unchanged") or [])):
+    for code in sorted(unchanged):
         rows.append(_make_row("HOLD", code))
     rows.sort(key=lambda row: (SIDE_ORDER[row["side"]], row["stock_code"]))
 

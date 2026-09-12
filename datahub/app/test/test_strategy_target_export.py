@@ -108,9 +108,31 @@ def test_missing_base_nav_fails_closed():
         build_target_export(run=run, generated_at=FIXED_NOW)
 
 
+@pytest.mark.parametrize("bad", [0, -1, "1000"])
+def test_non_positive_or_non_numeric_base_nav_override_fails_closed(bad):
+    """An explicit override that is unusable must error, not be ignored."""
+    with pytest.raises(ValueError, match="base_nav override"):
+        build_target_export(run=_run(), base_nav=bad, generated_at=FIXED_NOW)
+
+
+def test_amounts_round_half_up_to_the_cent():
+    # 0.333 * 100.005 = 33.301665 -> 33.30; and an exact half-cent tie rounds up.
+    run = _run(
+        target_holdings=[{"stock_code": "sz000001", "weight": 0.5}],
+        rebalance={"added": ["sz000001"], "removed": [], "unchanged": []},
+        config={"initial_nav": 1.01},
+    )
+    result = build_target_export(run=run, generated_at=FIXED_NOW)
+    # 1.01 * 0.5 = 0.505 -> half-up gives 0.51 (banker's rounding would give 0.50)
+    assert result["rows"][0]["target_amount_cny"] == 0.51
+
+
 def test_research_grade_label_and_disclaimer_are_always_present():
     result = build_target_export(run=_run(), generated_at=FIXED_NOW)
-    assert result["grade"] == EXPORT_GRADE
+    # Pin the literal, not just the constant: a renamed constant must not let
+    # the compliance label silently change.
+    assert EXPORT_GRADE == "RESEARCH"
+    assert result["grade"] == "RESEARCH"
     assert result["disclaimer"] == EXPORT_DISCLAIMER
     assert "not investment advice" in result["disclaimer"].lower()
 
@@ -141,6 +163,30 @@ def test_buy_or_hold_without_target_weight_fails_closed():
         rebalance={"added": ["sz000001"], "removed": [], "unchanged": ["sh600000"]},
     )
     with pytest.raises(ValueError, match="target weight"):
+        build_target_export(run=run, generated_at=FIXED_NOW)
+
+
+@pytest.mark.parametrize("bad_weight", [0, -0.5, 1.5, "0.5"])
+def test_out_of_range_target_weight_fails_closed(bad_weight):
+    run = _run(
+        target_holdings=[{"stock_code": "sz000001", "weight": bad_weight}],
+        rebalance={"added": ["sz000001"], "removed": [], "unchanged": []},
+    )
+    with pytest.raises(ValueError, match="target weight"):
+        build_target_export(run=run, generated_at=FIXED_NOW)
+
+
+def test_overlapping_rebalance_groups_fail_closed():
+    """Corrupted evidence must not emit duplicate/contradictory rows."""
+    run = _run(
+        target_holdings=[{"stock_code": "sz000001", "weight": 0.5}],
+        rebalance={
+            "added": ["sz000001"],
+            "removed": ["sz000001"],
+            "unchanged": [],
+        },
+    )
+    with pytest.raises(ValueError, match="overlap"):
         build_target_export(run=run, generated_at=FIXED_NOW)
 
 

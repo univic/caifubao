@@ -726,3 +726,203 @@ def test_export_targets_disambiguates_by_given_config(monkeypatch):
     assert result["config_hash"] == wanted
     # Amounts come from the matched run's persisted config, not the CLI input.
     assert result["base_nav"] == 2_000_000.0
+
+
+def test_export_targets_queries_the_run_key(monkeypatch):
+    """The candidate query must carry the full run key (a wrong filter would
+    otherwise go undetected because the fake ignores kwargs)."""
+    import app.jobs.strategy_runner as strategy_runner
+    import app.model.scoring as model_scoring
+    import app.model.strategy as model_strategy
+
+    seen = {}
+
+    class FakeRegModel:
+        @classmethod
+        def objects(cls, **query):
+            return _FakeQS([_FakeRegistered({"20": {"directions": {}}})])
+
+    class FakeRunModel:
+        @classmethod
+        def objects(cls, **query):
+            seen.update(query)
+            return _FakeQS([_ExportDoc()])
+
+    monkeypatch.setattr(model_scoring, "ScoreModelVersion", FakeRegModel)
+    monkeypatch.setattr(model_strategy, "StrategyPaperRun", FakeRunModel)
+    monkeypatch.setattr(strategy_runner, "_query_export_scores", lambda d, h, mv: {})
+    monkeypatch.setattr(strategy_runner, "_query_stock_names", lambda codes: {})
+
+    strategy_runner.export_targets(
+        date=datetime.datetime(2026, 9, 11, tzinfo=datetime.UTC),
+        model_version="flip_wide_shadow_v1",
+        horizon=20,
+    )
+    assert seen == {
+        "strategy_name": "flip_wide_paper",
+        "date": datetime.datetime(2026, 9, 11),
+        "model_version": "flip_wide_shadow_v1",
+        "horizon": 20,
+        "evidence_kind__in": ["REPLAY", "FORWARD"],
+    }
+
+
+def test_query_export_scores_maps_predictions(monkeypatch):
+    import app.jobs.strategy_runner as strategy_runner
+    import app.model.scoring as model_scoring
+
+    class Row:
+        def __init__(self, code, score, percentile):
+            self.stock_code, self.score, self.percentile = code, score, percentile
+
+    class FakeQS:
+        def only(self, *fields):
+            assert set(fields) == {"stock_code", "score", "percentile"}
+            return [Row("sz000001", 88.0, 0.04)]
+
+    class FakePred:
+        @classmethod
+        def objects(cls, **query):
+            assert query["model_version"] == "flip_wide_shadow_v1"
+            assert query["horizon"] == 20
+            return FakeQS()
+
+    monkeypatch.setattr(model_scoring, "StockScorePrediction", FakePred)
+    scores = strategy_runner._query_export_scores(
+        datetime.datetime(2026, 9, 11), 20, "flip_wide_shadow_v1"
+    )
+    assert scores == {"sz000001": {"score": 88.0, "percentile": 0.04}}
+
+
+def test_query_stock_names_skips_unnamed_and_empty_codes(monkeypatch):
+    import app.jobs.strategy_runner as strategy_runner
+    import app.model.stock as model_stock
+
+    class Stock:
+        def __init__(self, code, name):
+            self.code, self.name = code, name
+
+    class FakeQS:
+        def only(self, *fields):
+            assert set(fields) == {"code", "name"}
+            return [Stock("sz000001", "平安银行"), Stock("sh600000", None)]
+
+    class FakeStock:
+        @classmethod
+        def objects(cls, **query):
+            assert query["code__in"] == ["sz000001", "sh600000"]
+            return FakeQS()
+
+    monkeypatch.setattr(model_stock, "IndividualStock", FakeStock)
+    assert strategy_runner._query_stock_names([]) == {}
+    names = strategy_runner._query_stock_names(["sz000001", "sh600000"])
+    assert names == {"sz000001": "平安银行"}
+
+
+# ---------------------------------------------------------------------------
+# export CLI contract (fail-closed exit, artifact labelling, no job run)
+# ---------------------------------------------------------------------------
+
+_MIN_EXPORT = {
+    "strategy_name": "flip_wide_paper",
+    "model_version": "flip_wide_shadow_v1",
+    "horizon": 20,
+    "config_hash": "deadbeef",
+    "date": "2026-09-11",
+    "execution_date": "2026-09-14T00:00:00",
+    "decision_at": "2026-09-11T10:40:00+00:00",
+    "evidence_kind": "REPLAY",
+    "status": "COMPLETED",
+    "base_nav": 1_000_000.0,
+    "base_nav_source": "config.initial_nav",
+    "grade": "RESEARCH",
+    "disclaimer": "Research / learning / demonstration MVP. Not investment advice.",
+    "generated_at": "2026-09-12T00:00:00+00:00",
+    "counts": {"buy": 0, "sell": 0, "hold": 0, "total": 0},
+    "rows": [],
+}
+
+
+def _patch_export_main(monkeypatch, replacement):
+    import app.jobs.strategy_runner as strategy_runner
+
+    monkeypatch.setattr(strategy_runner, "_init_db", lambda: None)
+    monkeypatch.setattr(strategy_runner, "export_targets", replacement)
+    return strategy_runner
+
+
+def test_export_main_exits_non_zero_and_prints_no_rows(monkeypatch, capsys):
+    def boom(**kwargs):
+        raise ValueError("no completed paper run to export for 2026-09-11")
+
+    strategy_runner = _patch_export_main(monkeypatch, boom)
+    with pytest.raises(SystemExit) as excinfo:
+        strategy_runner.main(["export", "--date", "2026-09-11"])
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no completed paper run" in captured.err
+
+
+def test_export_main_rejects_malformed_config_json(monkeypatch, capsys):
+    """Malformed --config-json must give the structured error, not a traceback."""
+    _patch_export_main(monkeypatch, lambda **kwargs: dict(_MIN_EXPORT))
+    import app.jobs.strategy_runner as strategy_runner
+
+    with pytest.raises(SystemExit) as excinfo:
+        strategy_runner.main(
+            ["export", "--date", "2026-09-11", "--config-json", "{nope"]
+        )
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip().startswith("{")
+    assert "Traceback" not in captured.err
+
+
+def test_export_main_never_records_a_job_run(monkeypatch, capsys):
+    import app.jobs.strategy_runner as strategy_runner
+    from app.lib.utilities import job_run_helper
+
+    _patch_export_main(monkeypatch, lambda **kwargs: dict(_MIN_EXPORT))
+
+    def forbidden(*args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("export must not create a job-run record")
+
+    monkeypatch.setattr(job_run_helper, "create_job_run", forbidden)
+    strategy_runner.main(["export", "--date", "2026-09-11"])
+    assert "side,stock_code" in capsys.readouterr().out
+
+
+def test_export_main_json_carries_grade_and_disclaimer(monkeypatch, capsys):
+    import json
+
+    _patch_export_main(monkeypatch, lambda **kwargs: dict(_MIN_EXPORT))
+    import app.jobs.strategy_runner as strategy_runner
+
+    strategy_runner.main(["export", "--date", "2026-09-11", "--format", "json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["grade"] == "RESEARCH"
+    assert "not investment advice" in payload["disclaimer"].lower()
+
+
+def test_export_main_writes_csv_artifact_with_compliance_comment(
+    monkeypatch, capsys, tmp_path
+):
+    _patch_export_main(monkeypatch, lambda **kwargs: dict(_MIN_EXPORT))
+    import app.jobs.strategy_runner as strategy_runner
+
+    out_file = tmp_path / "target.csv"
+    strategy_runner.main(["export", "--date", "2026-09-11", "--output", str(out_file)])
+    text = out_file.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    assert lines[0].startswith("# grade=RESEARCH")
+    assert _MIN_EXPORT["disclaimer"] in lines[0]
+    assert lines[1] == (
+        "side,stock_code,stock_name,score,percentile,"
+        "target_weight,target_amount_cny,reason"
+    )
+    # The metadata block still goes to stderr, not into the artifact.
+    stderr = capsys.readouterr().err
+    assert stderr.strip().startswith("{")
+    assert "strategy_name" in stderr
