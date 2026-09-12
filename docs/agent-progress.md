@@ -24,6 +24,25 @@
 ```
 
 ## 进度记录
+### 2026-09-12 18:34 CST — dev 声明漂移已收敛；research data-lake export smoke 通过
+
+- 状态：已完成（TASK-302 smoke 闭环；所有 research CronJob 继续 suspended）
+- 已完成：
+  - 修复 dev MongoDB 声明态与 live 状态的漂移：部署声明、运行检查与存储保护现已成套一致；旧存储继续
+    保留作回滚，没有清理数据。
+  - **TASK-302 data-lake export 验证通过**：从 suspended Parquet export CronJob 派生一次性 Job，读取
+    research MongoDB 并写入隔离的 research 前缀；daily quotes、factors、signals 各导出 5 个交易日分区，
+    共 15 个 Parquet 对象。三类最新对象又经独立 object metadata 查询确认存在且大小非零。
+  - smoke 暴露并修复了对象存储访问路径问题；部署模板和渲染契约现已固化经实测可用的网络路径。
+  - 部署通道和内部服务访问已验证；当前不提供公共应用入口。若未来需要对外用户流量，应作为单独入口决策，
+    不与本次数据迁移混在一起。
+- 验证：相关部署 CI 与 QA 均通过；export Job `SUCCESS`，daily quotes 28,844 行、factors 26,008 行、
+  signals 19,200 行；独立检查的三个对象均非空；research 应用与 MongoDB 就绪，节点无资源压力。
+  Mongo backup 与 Parquet export CronJob 最终均再次确认 `suspend=true`。
+- 下一步：按用户决定，暂不启用定时 Mongo backup；后续只需周期性人工确认备份路径。迁移遗留继续保留，
+  待单独批准并满足回滚观察期后再清理。
+- 阻塞：无。
+
 ### 2026-09-12 16:21 CST — research 手工 backup smoke 通过；备份负载固定到 5700X
 
 - 状态：已完成（本切片；备份 CronJob 按决策仍保持 suspended）
