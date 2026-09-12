@@ -10,7 +10,10 @@ npm install
 npm run dev
 ```
 
-The dev server connects to `http://api.dev.cfb.concorde102.cn` for backend APIs.
+The dev server proxies `/api` requests to the backend through the Vite proxy in
+`vite.config.ts` (default target `http://localhost:8000`); adjust that target
+locally if your backend runs elsewhere. Real dev/prod hosts are not part of this
+repository.
 
 ## Build
 

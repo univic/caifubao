@@ -34,9 +34,15 @@ The CLI connects to the **K3s development cluster** by default.
 |:---|:---|:---|
 | `KUBECONFIG` | `~/.kube/config` if present, else `/etc/rancher/k3s/k3s.yaml` | Path to k3s kubeconfig (the `/etc/rancher/k3s` path only exists on the K3s server host) |
 | `CFB_NAMESPACE` | `caifubao-dev` | K8s namespace |
+| `CFB_API_BASE` | *(unset)* | Base URL of the API used by the `curl` verification examples below. Real dev/prod hosts live in the private deployment repo or your local env — this repository only ships placeholders. |
 
 The CLI executes commands inside the `caifubao-datahub` pod via `kubectl exec`.
 No local Python dependencies are required.
+
+```bash
+# Example: point the verification snippets at your own environment
+export CFB_API_BASE="https://<your-api-host>"
+```
 
 ## Command Reference
 
@@ -237,7 +243,7 @@ It exits non-zero when required collections are missing.
 ./scripts/caifubao score score-one sz000977 --date $(date +%Y-%m-%d)
 
 # 5. Verify the result via API
-curl -s http://api.dev.cfb.concorde102.cn/api/scores/sz000977/$(date +%Y-%m-%d)/explanation?horizon=5
+curl -s "$CFB_API_BASE/api/scores/sz000977/$(date +%Y-%m-%d)/explanation?horizon=5"
 ```
 
 ### Workflow 2: Full market update after prod data refresh
@@ -253,7 +259,7 @@ curl -s http://api.dev.cfb.concorde102.cn/api/scores/sz000977/$(date +%Y-%m-%d)/
 ./scripts/caifubao data refresh-status
 
 # 4. Verify market view
-curl -s http://api.dev.cfb.concorde102.cn/api/market/comprehensive?date=$(date +%Y-%m-%d)
+curl -s "$CFB_API_BASE/api/market/comprehensive?date=$(date +%Y-%m-%d)"
 ```
 
 ### Workflow 3: Initial dev environment setup
