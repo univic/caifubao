@@ -73,6 +73,27 @@
 
 **执行顺序强制**：先写 3.5 的 harness（红），再 3.1 → 3.2 → 3.3 → 3.4；任一步使逐字段 diff 非空即回退该步，不带病前进。
 
+**3.5 harness 契约（2026-09-12 定位，可直接照写）**
+
+关键前提：`StockScoringService.__init__` 是**依赖注入**的（`stock_model`/`quote_model`/`factor_model`/`signal_model`/`prediction_model`，`scoring_service.py:42-51`），`test_scoring_service.py` 已有确定性 fake 骨架——**等价性测试不需要 MongoDB**，可做成纯单测：
+
+| 复用物 | 位置 | 用途 |
+|---|---|---|
+| `scoring_service` fixture | `test_scoring_service.py:163`（依赖 `calendar` fixture :146） | 注入 5 个 Fake 模型的 service 实例 |
+| `seed_stock()` / `seed_quotes()` / `seed_factors_and_signal()` | :207 / :213 / :243 | 造一只股票的完整输入 |
+| `FakeModel.objects(**query)` + `matches_query` | :46 / :121 | 支持 `__lt/__lte/__gt` 等查询语义，与真实取数语义一致 |
+| `FakeStock/FakeQuote/FakeFactor/FakeSignal/FakePrediction` | :68-84 | 记录写入，可直接断言持久化字段集 |
+
+新测试文件建议 `datahub/app/test/test_scoring_batch_equivalence.py`，形状：
+
+1. 用 fixture 造 1（后扩到 N）只股票的输入；
+2. **golden** = 逐股路径 `score_single_stock(...)` 的输出；
+3. **candidate** = 批量路径（3.1 要新增的按天方法）的输出；
+4. 对每个 horizon 逐字段比较 `score` / `rank` / `percentile` / `recommendation` / `explanation`，并比较持久化字段集（含 `existing` 行更新分支）；
+5. 先在批量方法**不存在**时红（`AttributeError`），这就是 ① 的起点；随后 3.1→3.4 每步跑一次，diff 非空即回退。
+
+⚠️ 落笔前需先确认 `_persist_prediction` 在 `dry_run=True` 下的返回形态（dict 还是 document），harness 的取值方式要与之匹配——否则会写出一个"形状不对所以永远失败"的假红测试。
+
 ### 信号增量（G1）
 
 - [x] 3.6 引入信号 anchor：cross 信号只算 `date > anchor` 窗口（含 shift(1) lookback）；状态型信号只写最新交易日
