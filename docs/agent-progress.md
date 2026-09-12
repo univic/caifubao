@@ -68,6 +68,11 @@
      因此既不创建也不扩容工作负载。实测 research 的 backend 部署报 success 但 Deployment 仍为 0 副本，
      而 0 副本的 `kubectl rollout status` 会平凡通过——**这是一个假成功信号**，建议一并加固
      （目标副本为 0 时应显式失败或告警）。
+  5. 另一个必需前置：`resume_partial=true` 会被 `Guard application environment state` 要求存在
+     `caifubao-bootstrap-state` marker，且其 `environment` / `public_ref` / `image_tag` 必须与本次输入**完全相等**
+     （`phase` 不得为 `complete`；既有 `mongodb-pvc` 的存储类须符合守卫预期）。research 现有的 marker 是
+     P0-4 clone 残留——`environment` 记的是旧映射名、`public_ref` 早于示例 overlay——所以跑 resume 前必须先把
+     这三项校到本次输入值，否则会在守卫处直接失败（本轮已实测：即使 marker 校好，仍会被第 1 点拦下）。
   另有一处残留：research 命名空间对象仍带 production 的环境标签（P0-4 clone 用 production overlay 引导所致），
   基于 patch 的部署路径不会纠正它。当前无功能影响（Service 仅按 `app` 选择，无 NetworkPolicy），
   但它是旧映射的可见残留，应在上述整体 apply 时一并收敛。
