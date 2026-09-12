@@ -172,6 +172,63 @@ make score-report
 ./scripts/caifubao score report 2026-04-01 2026-05-18
 ```
 
+#### `score equivalence-check DATE [--horizons 5,20,60] [--mode raw|ranked] [--apply]`
+
+C1 verification (perf tasks 3.5/5.3). Runs the **same** dev trading day through
+the legacy per-stock scoring path and the batched per-day path, then diffs every
+persisted field (`score`, `rank`, `percentile`, `recommendation`,
+`explanation`, `verification`, `input_snapshot`, `base_price`, `target_date`,
+`status`, the `stock` reference, `model_version`) for the frozen active cohort.
+It also reports the before/after wall time per horizon, which is the 5.3
+measurement.
+
+Read-only by default (it just reports the cohort size and the data available for
+that date):
+
+```
+./scripts/caifubao score equivalence-check 2026-05-18 --horizons 5 --mode ranked
+```
+
+**`--apply` is required to run the comparison** and rewrites that date's
+predictions with `replace=True` twice: per-stock first, batched last — so the
+persisted state ends up as the batched (production) path produces it. The
+command exits `1` when any field diverges, so wrap it in `set -e` / CI to fail
+closed; roll back the batch path with `DATAHUB_SCORING_BATCH=0` if it does.
+
+```
+./scripts/caifubao score equivalence-check 2026-05-18 --apply \
+  --mode ranked --report /tmp/c1-equivalence.json
+```
+
+**Which environment.** Run the primary check in **dev** (the CLI's default
+namespace `caifubao-dev`):
+
+- dev is prod-synced at full-market scale, and its datahub pod (the one
+  `_pod_exec` targets) has the same spec as the production scoring pod
+  (`1Gi`/`500m`), so the before/after numbers are comparable and the 1 GiB
+  window-frame bound is actually exercised;
+- `stock_signal_daily` can only be synced into dev-like environments
+  (`dev_only` gate), and dev schedules no scoring/signal CronJob — so sync the
+  window first, e.g.
+  `./scripts/caifubao data sync 2025-09-01 quote,factor,signal,market,industry`
+  (must cover the h60 lookback plus the signal-decay window);
+- `industry_daily_metrics` is produced by scoring, not synced: run one scoring
+  pass for an earlier trading day (or the check itself for an earlier day) if you
+  want the "industry metrics present" branch exercised rather than the neutral
+  one.
+
+Use **research** only as a supplement — it is production-shaped (full history,
+same schedules) and therefore good for larger/multi-day coverage, and it already
+has industry metrics for earlier dates. There, pass an isolated
+`--model-version` (e.g. `score_v2_202605b-c1check`) so the check cannot rewrite
+the version that research/autoresearch reads, and do not use research timings as
+the production before/after (different cluster, and the research scoring Job is
+`2Gi`/`1000m`).
+
+Never pass `--apply` against **production**: it rewrites that day's predictions
+with `replace=True`. For prod, collect the after numbers from
+`datahub_job_runs.elapsed_seconds` after deployment (perf task 5.3/5.4).
+
 ### Strategy (paper)
 
 The paper strategy runner is invoked as a datahub module inside the datahub pod

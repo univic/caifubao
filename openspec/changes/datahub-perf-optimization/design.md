@@ -35,6 +35,10 @@
 
 ## 3. 评分按天批量取数（C1）
 
+> 计划原文（下述数字按 §3.2 实现注记修正后为准）：每个 (date, horizon-run)
+> 恒定条数查询——当日 quote/factor/signal、信号衰减窗、全市场历史窗口、
+> CSI300、行业分类/指标、当日 existing；不再逐股取数。
+
 - 每天恒定 ~4 条查询：
   1. `StockDailyQuote.objects(date=d)` 当日行情；
   2. `date__gte=d-120` 全市场窗口行情 → `groupby("code")` 供 momentum/breakout/risk；
@@ -48,12 +52,55 @@
 - `DATAHUB_SCORING_MODE=ranked` 路径共享同一批预取与同一套分量函数，
   仅聚合阶段不同（两阶段 rank 归一化保留）。
 
+### 3.2 实现注记
+
+- **预取粒度**：`_DayPrefetch` 每个 `score_all_stocks(...)` 调用一份，与该次调用
+  的 cohort 规模无关（harness 断言）。`scoring_runner.run_scoring` 与
+  `ScoreReplayService.backfill_predictions` 均已合并为每个日期一次
+  `horizon=None` 调用（全部 horizon 共享一份预取），故一个完整交易日只建 **1** 份
+  预取（旧行为 3 份：h5/h20/h60 各 30/70/130 交易日的全市场窗口）。实测 dev
+  h20 单 horizon 80.4s → 见 5.3 回填的批量化后数字。
+- 历史窗口按**交易日** `max(minimum_quote_count, breakout_lookback,
+  risk_lookback)+10` 取；原文 `date__gte=d-120` 是日历日，覆盖不了 h60 需要的
+  120 根（≈168 日历日）。窗口内行数不足 `limit` 的 code 回退逐股精确查询，
+  稀疏/停牌股的历史不会被截断。
+- 数值内核保持原实现（`statistics.pstdev`、逐项 `round`）以逐位等价；pandas 只
+  用于窗口装配（分块 `from_records` → sort → `groupby("code").indices` → 按需
+  `take` 一只股票）。行用 `as_pymongo()` 原始 dict + mongoengine 字段默认骨架装配
+  （`_Row`），NaN/NaT→None、Timestamp→datetime。
+- 内存约束（1Gi pod）：窗口、信号衰减窗、行业分类/指标按分量实读字段投影
+  （窗口 8 个价格字段、衰减窗 5 个信号字段、行业 3+7 字段）；全字段窗口约 0.9GB
+  原始 dict。窗口按 5 万行分块建帧、`concat` 后立即释放 chunk 帧：702k 行 × 8 投影
+  字段合成实测 tracemalloc 峰值 ~102MB、保留 ~57MB（未分块单次建帧 ~420–460MB；
+  QA 独立复测分块收益 ~2.3–3.7×，实际数字随当日行数与 dtype 浮动）。只保留列式帧 +
+  code→行位置索引，逐股按需物化 `_Row`；读 existing predictions 只投影
+  `stock_code/horizon/status`。新增字段读取须同步白名单，等价性 harness 是兜底
+  （已实际拦下过 `buy_count` 漏投影）。
+- CSI300 不能整体按“当天窗口”下发：逐股路径按该股自身
+  `[min(quote dates), d]` 取指数，稀疏股回退到窗口之前时若只给窗口内指数，会把
+  评估日静默降级为 self-proxy。`index_quotes_for(code, history, quote)` 先按窗口
+  过滤，窗口覆盖不到的 code 各自读一次自身区间（每 code 一次，缓存），与逐股路径
+  逐字段一致。
+- ranked 收尾：bulk upsert 不水合对象，落库后每 horizon 读回 cohort 一次再排名
+  （1 查/horizon，仍与 cohort 规模无关）；完整性校验继续用内存 code 集合。
+- 行业/行业指标/CSI300 的按天缓存由 `_DayPrefetch.industry_lookup()` /
+  `.index_quotes_for()` 提供，经组件的 `industry_lookup=` / `index_quotes=` 参数
+  注入；预取失败返回 `None` 回退组件自身逐股读，不会静默按 "无行业/无指数" 计分。
+- 批量持久化 `$set` 全部业务字段（BLOCKED 行显式 `rank/percentile: null`）+ 每次
+  刷新的 `updated_at` + 插入时 `generated_at`。mongoengine 的 `save()` 会省略
+  None 字段并跑模型校验；bulk 路径写入显式 null 且跳过校验——读回语义相同
+  （无 `$exists`/聚合消费者），payload 全部由引擎自身生成。
+- `DATAHUB_SCORING_BATCH=0` 回退逐股读/写路径，既是回滚阀也是等价性 harness 的
+  逐股参照。
+
 ### 3.1 完整 cohort 幂等门禁（C2/C5 快赢）
 
 - 日常 `replace=False, dry_run=False` 在逐股取数前，按 horizon 一次读取
   `(date, horizon, model_version)` predictions，与本次冻结的 active code 集合对账。
 - 完整性同时校验 scoring mode、非 BLOCKED 的 rank/percentile 公式和
-  hybrid recommendation；任一不一致均进入 partial repair，不使用 count-only 短路。
+  hybrid recommendation；任一不一致即不得 fast skip——模式/ranked 指纹不匹配时
+  直接 fail closed 要求 `replace`（`_is_complete_cohort` 抛错），缺行/rank 公式
+  不匹配时进入 partial repair，不使用 count-only 短路。
 - rank/recommendation 查询仅限本次冻结 active codes，历史 inactive extra rows
   不参与且不修改；最终排序用 `-score,+stock_code` 使并列分稳定。
 - ranked rows 写入 active code 集合 SHA-256 指纹；成员变化或旧数据无指纹时

@@ -202,6 +202,36 @@ cmd_score_report() {
     --from "$from" --to "$to" --horizon "$horizon" --format json
 }
 
+# C1 verification (perf tasks 3.5/5.3): run the SAME dev trading day through the
+# per-stock path and the batched path, diff every persisted field and report the
+# before/after timing. Read-only unless --apply is given; --apply rewrites that
+# date's predictions (replace=True) twice and leaves the batched result — the
+# production path — persisted. Exit code 1 on any field diff.
+cmd_score_equivalence_check() {
+  local date="${1:-}"; shift || true
+  local horizons="" mode="" extra=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --horizons)  horizons="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --mode)      mode="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --report)    extra+=(--report "$(_opt_value "$1" "${2:-}")"); shift 2 ;;
+      --max-diffs) extra+=(--max-diffs "$(_opt_value "$1" "${2:-}")"); shift 2 ;;
+      --apply)     extra+=(--apply); shift ;;
+      *)           die "Unknown option for score equivalence-check: $1" ;;
+    esac
+  done
+  [[ -z "$date" ]] && die "Usage: caifubao score equivalence-check <DATE> [--horizons 5,20,60] [--mode raw|ranked] [--apply] [--report PATH] [--max-diffs N]"
+  [[ -n "$horizons" ]] && extra+=(--horizons "$horizons")
+  [[ -n "$mode" ]] && extra+=(--mode "$mode")
+  if [[ " ${extra[*]} " == *" --apply "* ]]; then
+    warn "score equivalence-check --apply rewrites $date predictions (replace=True) twice"
+  else
+    info "Read-only preview (pass --apply to run the comparison)"
+  fi
+  _pod_exec "$PYTHON_BIN" -m app.jobs.scoring_runner equivalence-check \
+    --date "$date" "${extra[@]}"
+}
+
 # ---- Strategy commands (paper-first; forward-evidence operations) ----
 
 # Paper-only: these record target portfolios and a paper NAV. None of them place
@@ -583,6 +613,9 @@ Score:
   score score-all [DATE] [HORIZON]    Score all active stocks
   score verify [FROM] [TO] [HORIZON]  Verify pending predictions
   score report [FROM] [TO] [HORIZON]  Generate calibration report
+  score equivalence-check <DATE> [--horizons 5,20,60] [--mode raw|ranked] [--apply]
+                                      C1: per-stock vs batched field diff + timing
+                                      (read-only unless --apply; exit 1 on diff)
 
 Strategy (paper-only; no orders):
   strategy run [DATE] [--config-json JSON] [--dry-run] [--replace]
@@ -648,7 +681,8 @@ main() {
         score-all)      cmd_score_all "$@" ;;
         verify)         cmd_score_verify "$@" ;;
         report)         cmd_score_report "$@" ;;
-        *)              die "Unknown score command: $cmd (use: score-one|score-all|verify|report)" ;;
+        equivalence-check) cmd_score_equivalence_check "$@" ;;
+        *)              die "Unknown score command: $cmd (use: score-one|score-all|verify|report|equivalence-check)" ;;
       esac
       ;;
     strategy)
