@@ -571,3 +571,158 @@ def test_run_nav_happy_path_opens_positions_and_moves_nav(monkeypatch):
     assert result["curve_points"] == 2
     assert result["terminal_nav"] != result["initial_nav"]  # NAV moved
     assert result["benchmark_dates"] == 2
+
+
+# ---------------------------------------------------------------------------
+# export (roadmap 2.1) — runner-layer mapping, fail-closed, read-only
+# ---------------------------------------------------------------------------
+
+_EXPORT_CFG = {"score_model_version": "flip_wide_shadow_v1", "horizon": 20}
+
+
+class _ExportDoc:
+    """A persisted paper run; save/delete raise so read-only is provable."""
+
+    def __init__(self, **overrides):
+        self.strategy_name = "flip_wide_paper"
+        self.model_version = "flip_wide_shadow_v1"
+        self.horizon = 20
+        self.config_hash = "hash-a"
+        self.date = datetime.datetime(2026, 9, 11)
+        self.execution_date = datetime.datetime(2026, 9, 14)
+        self.decision_at = datetime.datetime(2026, 9, 11, 10, 40, tzinfo=datetime.UTC)
+        self.evidence_kind = "REPLAY"
+        self.status = "COMPLETED"
+        self.target_holdings = [{"stock_code": "sz000001", "weight": 0.5}]
+        self.rebalance = {"added": ["sz000001"], "removed": [], "unchanged": []}
+        self.nav_snapshot = {}
+        self.config = {"initial_nav": 1_000_000.0}
+        self.__dict__.update(overrides)
+
+    def save(self, *args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("export must not write")
+
+    def delete(self, *args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("export must not delete")
+
+
+def _patch_export_deps(monkeypatch, docs):
+    import app.jobs.strategy_runner as strategy_runner
+    import app.model.scoring as model_scoring
+    import app.model.strategy as model_strategy
+
+    class FakeRegModel:
+        @classmethod
+        def objects(cls, **query):
+            return _FakeQS([_FakeRegistered({"20": {"directions": {}}})])
+
+    class FakeRunModel:
+        @classmethod
+        def objects(cls, **query):
+            return _FakeQS(docs)
+
+    monkeypatch.setattr(model_scoring, "ScoreModelVersion", FakeRegModel)
+    monkeypatch.setattr(model_strategy, "StrategyPaperRun", FakeRunModel)
+    monkeypatch.setattr(
+        strategy_runner,
+        "_query_export_scores",
+        lambda d, h, mv: {"sz000001": {"score": 88.0, "percentile": 0.04}},
+    )
+    monkeypatch.setattr(
+        strategy_runner, "_query_stock_names", lambda codes: {"sz000001": "平安银行"}
+    )
+
+
+def test_export_targets_maps_a_completed_run(monkeypatch):
+    import app.jobs.strategy_runner as strategy_runner
+
+    _patch_export_deps(monkeypatch, [_ExportDoc()])
+    result = strategy_runner.export_targets(
+        date=datetime.datetime(2026, 9, 11, tzinfo=datetime.UTC),
+        model_version="flip_wide_shadow_v1",
+        horizon=20,
+    )
+    assert result["grade"] == "RESEARCH"
+    assert result["status"] == "COMPLETED"
+    assert result["base_nav"] == 1_000_000.0
+    assert result["base_nav_source"] == "config.initial_nav"
+    assert [row["side"] for row in result["rows"]] == ["BUY"]
+    assert result["rows"][0]["score"] == 88.0
+    assert result["rows"][0]["stock_name"] == "平安银行"
+
+
+def test_export_targets_fails_closed_without_a_run(monkeypatch):
+    import app.jobs.strategy_runner as strategy_runner
+
+    _patch_export_deps(monkeypatch, [])
+    with pytest.raises(ValueError, match="no completed paper run"):
+        strategy_runner.export_targets(
+            date=datetime.datetime(2026, 9, 11, tzinfo=datetime.UTC),
+            model_version="flip_wide_shadow_v1",
+            horizon=20,
+        )
+
+
+def test_export_targets_fails_closed_on_a_non_completed_run(monkeypatch):
+    import app.jobs.strategy_runner as strategy_runner
+
+    _patch_export_deps(monkeypatch, [_ExportDoc(status="SKIPPED")])
+    with pytest.raises(ValueError, match="SKIPPED"):
+        strategy_runner.export_targets(
+            date=datetime.datetime(2026, 9, 11, tzinfo=datetime.UTC),
+            model_version="flip_wide_shadow_v1",
+            horizon=20,
+        )
+
+
+def test_export_targets_fails_closed_on_ambiguous_config_hashes(monkeypatch):
+    import app.jobs.strategy_runner as strategy_runner
+
+    _patch_export_deps(
+        monkeypatch,
+        [_ExportDoc(config_hash="hash-a"), _ExportDoc(config_hash="hash-b")],
+    )
+    with pytest.raises(ValueError, match="ambiguous"):
+        # No configuration named -> two COMPLETED configs cannot be told apart.
+        strategy_runner.export_targets(
+            date=datetime.datetime(2026, 9, 11, tzinfo=datetime.UTC),
+            model_version="flip_wide_shadow_v1",
+            horizon=20,
+        )
+
+
+def test_export_targets_requested_config_without_a_match_fails_closed(monkeypatch):
+    """Regression: a named config that matches no run must not silently export
+    a different configuration's run."""
+    import app.jobs.strategy_runner as strategy_runner
+
+    _patch_export_deps(monkeypatch, [_ExportDoc(config_hash="hash-a")])
+    with pytest.raises(ValueError, match="no completed paper run"):
+        strategy_runner.export_targets(
+            date=datetime.datetime(2026, 9, 11, tzinfo=datetime.UTC),
+            config={**_EXPORT_CFG, "initial_nav": 3_000_000.0},
+        )
+
+
+def test_export_targets_disambiguates_by_given_config(monkeypatch):
+    import app.jobs.strategy_runner as strategy_runner
+    from app.lib.strategy_engine.config import (
+        strategy_config_hash,
+        validate_strategy_config,
+    )
+
+    cfg = {**_EXPORT_CFG, "initial_nav": 2_000_000.0}
+    wanted = strategy_config_hash(validate_strategy_config(cfg))
+    _patch_export_deps(
+        monkeypatch,
+        [
+            _ExportDoc(config_hash="hash-a"),
+            _ExportDoc(config_hash=wanted, config={"initial_nav": 2_000_000.0}),
+        ],
+    )
+    result = strategy_runner.export_targets(
+        date=datetime.datetime(2026, 9, 11, tzinfo=datetime.UTC), config=cfg
+    )
+    assert result["config_hash"] == wanted
+    # Amounts come from the matched run's persisted config, not the CLI input.
+    assert result["base_nav"] == 2_000_000.0

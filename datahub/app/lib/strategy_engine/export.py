@@ -195,14 +195,21 @@ def select_export_run(runs: list[dict], *, config_hash: str | None = None) -> di
     """Select the one exportable run view from candidates for a single key.
 
     ``runs`` are run views already narrowed to one (date, model_version,
-    horizon). COMPLETED runs win; when ``config_hash`` is given only that
-    configuration is considered. More than one distinct COMPLETED config hash is
-    ambiguous and fails closed. With no COMPLETED candidate the most recent run
-    is returned, so the caller's status check reports its actual status.
+    horizon). When ``config_hash`` is given the candidates are scoped to that
+    configuration first, so a request can never fall back to an unrelated
+    configuration's run. Among scoped candidates COMPLETED runs win, and more
+    than one distinct COMPLETED config hash is ambiguous and fails closed. With
+    no COMPLETED candidate the most recent scoped run is returned, so the
+    caller's status check reports its actual status.
     """
-    completed = [run for run in runs if run.get("status") == "COMPLETED"]
-    if config_hash is not None:
-        completed = [run for run in completed if run.get("config_hash") == config_hash]
+    scoped = [
+        run
+        for run in runs
+        if config_hash is None or run.get("config_hash") == config_hash
+    ]
+    if not scoped:
+        raise ValueError("no completed paper run to export for this key")
+    completed = [run for run in scoped if run.get("status") == "COMPLETED"]
     if completed:
         hashes = {run.get("config_hash") for run in completed}
         if len(hashes) > 1:
@@ -212,9 +219,7 @@ def select_export_run(runs: list[dict], *, config_hash: str | None = None) -> di
                 "disambiguate"
             )
         return completed[0]
-    if not runs:
-        raise ValueError("no completed paper run to export for this key")
-    return runs[0]
+    return scoped[0]
 
 
 def render_csv(export: dict) -> str:

@@ -434,9 +434,9 @@ def _write_text(text: str, output: str | None) -> None:
 
 
 def _emit_export(result: dict, *, fmt: str, output: str | None) -> None:
-    """Render an export. CSV rows go to stdout/PATH while the metadata block
-    (grade, disclaimer, traceability) goes to stderr, so a CSV file stays a
-    clean table a human can open directly."""
+    """Render an export. CSV rows go to stdout/PATH (led by the artifact's own
+    label/disclaimer comment line) while the full metadata block is echoed to
+    stderr; JSON carries both metadata and rows in one document."""
     metadata = {key: value for key, value in result.items() if key != "rows"}
     if fmt == "json":
         _write_text(
