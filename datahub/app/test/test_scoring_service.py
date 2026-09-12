@@ -10,7 +10,10 @@ import pytest
 from app.lib.scoring_engine.calibration_report import ScoreCalibrationReport
 from app.lib.scoring_engine.comparison_report import ExperimentComparisonReport
 from app.lib.scoring_engine.replay_service import ScoreReplayService
-from app.lib.scoring_engine.scoring_service import StockScoringService
+from app.lib.scoring_engine.scoring_service import (
+    StockScoringService,
+    normalize_date,
+)
 from app.lib.scoring_engine.verification_service import ScoreVerificationService
 from app.model.scoring import StockScorePrediction
 
@@ -18,6 +21,13 @@ from app.model.scoring import StockScorePrediction
 class FakeQuerySet:
     def __init__(self, items):
         self.items = list(items)
+
+    def _clone(self, items):
+        """Copy of this queryset with the same projection (mongoengine clones)."""
+        clone = FakeQuerySet(items)
+        if getattr(self, "_only", None):
+            clone._only = self._only
+        return clone
 
     def first(self):
         return self.items[0] if self.items else None
@@ -28,16 +38,34 @@ class FakeQuerySet:
             reverse = field.startswith("-")
             key = field[1:] if field.startswith(("-", "+")) else field
             items = sorted(items, key=lambda item: getattr(item, key), reverse=reverse)
-        return FakeQuerySet(items)
+        return self._clone(items)
 
     def only(self, *fields):
+        self._only = fields
         return self
 
     def limit(self, count):
-        return FakeQuerySet(self.items[:count])
+        return self._clone(self.items[:count])
 
     def count(self):
         return len(self.items)
+
+    def filter(self, **query):
+        return self._clone([item for item in self.items if matches_query(item, query)])
+
+    def as_pymongo(self):
+        """Mimic mongoengine's raw-dict iteration (perf C1 batch prefetch)."""
+        rows = []
+        for item in self.items:
+            if isinstance(item, dict):
+                data = dict(item)
+            else:
+                data = dict(vars(item))
+            if getattr(self, "_only", None):
+                # mongoengine returns only the projected fields (plus _id).
+                data = {key: value for key, value in data.items() if key in self._only}
+            rows.append(data)
+        return FakeQuerySet(rows)
 
     def __iter__(self):
         return iter(self.items)
@@ -45,6 +73,10 @@ class FakeQuerySet:
 
 class FakeModel:
     records = []
+    #: mongoengine-like field metadata; the fakes carry no defaults, so batch
+    #: rows simply raise AttributeError for fields the record never set —
+    #: exactly what ``getattr(record, name, default)`` sees on a fake document.
+    _fields = {}
 
     def __init_subclass__(cls):
         cls.records = []
@@ -85,6 +117,7 @@ class FakePrediction(FakeModel):
     next_id = 1
     bulk_calls = []
     fail_bulk = False
+    fail_rank_bulk = False
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -98,16 +131,46 @@ class FakePrediction(FakeModel):
             def bulk_write(operations, ordered=False):
                 if cls.fail_bulk:
                     raise RuntimeError("prediction bulk failed")
+                if cls.fail_rank_bulk and any(
+                    "rank" in (operation._doc.get("$set") or {})
+                    and "$setOnInsert" not in operation._doc
+                    for operation in operations
+                ):
+                    # Only the rank/percentile/recommendation tail writes use a
+                    # bare $set; prediction upserts carry $setOnInsert and must
+                    # not be caught here (a BLOCKED upsert also sets rank:null).
+                    raise RuntimeError("rank bulk failed")
                 cls.bulk_calls.append((operations, ordered))
                 modified = 0
                 for operation in operations:
-                    prediction = next(
-                        item
-                        for item in cls.records
-                        if item.id == operation._filter["_id"]
-                    )
+                    doc = operation._doc.get("$set", {})
+                    on_insert = operation._doc.get("$setOnInsert", {})
+                    filter_key = operation._filter
+                    if "_id" in filter_key:
+                        prediction = next(
+                            (
+                                item
+                                for item in cls.records
+                                if item.id == filter_key["_id"]
+                            ),
+                            None,
+                        )
+                    else:
+                        # Natural-key upsert (perf C1/3.3 bulk persistence).
+                        prediction = next(
+                            (
+                                item
+                                for item in cls.records
+                                if matches_query(item, filter_key)
+                            ),
+                            None,
+                        )
+                    if prediction is None:
+                        cls.records.append(cls(**{**on_insert, **doc}))
+                        modified += 1
+                        continue
                     changed = False
-                    for key, value in operation._doc["$set"].items():
+                    for key, value in doc.items():
                         if getattr(prediction, key, None) != value:
                             setattr(prediction, key, value)
                             changed = True
@@ -166,6 +229,7 @@ def scoring_service(calendar):
         model.records = []
     FakePrediction.bulk_calls = []
     FakePrediction.fail_bulk = False
+    FakePrediction.fail_rank_bulk = False
 
     with (
         patch(
@@ -281,6 +345,145 @@ def test_get_t_plus_n_day(scoring_service):
     )
 
 
+def test_get_t_plus_n_day_is_cached_and_tracks_calendar_reassignment():
+    """Cached sorted calendar must not go stale when ``calendar`` is replaced.
+
+    ``get_t_plus_n_day`` runs once per stock per horizon, so the ascending
+    calendar is cached (perf C5/R4). The cache is keyed on the identity of the
+    calendar list, so reassigning ``service.calendar`` (as tests, re-bootstrap
+    and a market refresh do) must be picked up.
+    """
+    calendar_a = [
+        datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC),
+    ]
+    calendar_b = [
+        datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 20, tzinfo=datetime.UTC),
+    ]
+    service = StockScoringService.__new__(StockScoringService)
+    service.calendar = calendar_a
+    service._calendar_cache = None
+
+    start = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    assert service.get_t_plus_n_day(start, 1) == datetime.datetime(
+        2026, 4, 13, tzinfo=datetime.UTC
+    )
+    # Second call reuses the cached list object (no rebuild).
+    cached = service._sorted_calendar()
+    assert service._sorted_calendar() is cached
+
+    service.calendar = calendar_b
+    assert service.get_t_plus_n_day(start, 1) == datetime.datetime(
+        2026, 4, 20, tzinfo=datetime.UTC
+    )
+
+
+def test_get_t_plus_n_day_boundary_semantics():
+    """Non-trading start dates count from the next trading day; overflow clamps."""
+    service = StockScoringService.__new__(StockScoringService)
+    service.calendar = [
+        datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC),
+    ]
+    service._calendar_cache = None
+
+    # Saturday 2026-04-11 is not a trading day: the 1st trading day after it is
+    # Monday 04-13 (the legacy implementation counted from ``day > start_date``).
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 11, tzinfo=datetime.UTC), 1
+    ) == datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC)
+    # Beyond the end of the calendar the last known day is returned.
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC), 60
+    ) == datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC)
+    # n <= 0 is the identity answer (the legacy implementation raised
+    # IndexError for n=0 on a non-trading day, or returned the last day).
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 11, tzinfo=datetime.UTC), 0
+    ) == datetime.datetime(2026, 4, 11, tzinfo=datetime.UTC)
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC), 0
+    ) == datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC)
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC), -3
+    ) == datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC)
+    # Empty calendar falls back to a calendar-day approximation.
+    service.calendar = []
+    service._calendar_cache = None
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC), 2
+    ) == datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC)
+
+
+def _legacy_get_t_plus_n_day(calendar, start_date, n):
+    """The pre-cache implementation, kept verbatim as the differential oracle.
+
+    ``get_t_plus_n_day`` is the highest-risk part of the perf change (it runs
+    once per stock per horizon), so the bisect rewrite is pinned against the
+    original linear scan rather than against a handful of hand-picked dates.
+    """
+    start_date = normalize_date(start_date)
+    if not calendar:
+        return start_date + datetime.timedelta(days=round(n * 1.5))
+    sorted_cal = sorted(normalize_date(day) for day in calendar)
+    try:
+        start_idx = sorted_cal.index(start_date)
+        target_idx = start_idx + n
+        if target_idx < len(sorted_cal):
+            return sorted_cal[target_idx]
+        return sorted_cal[-1]
+    except ValueError:
+        future_days = [day for day in sorted_cal if day > start_date]
+        if len(future_days) >= n:
+            return future_days[n - 1]
+        return sorted_cal[-1]
+
+
+def test_get_t_plus_n_day_matches_legacy_scan_on_random_calendars():
+    """Randomized differential test: bisect == legacy linear scan for n >= 1."""
+    import random
+
+    rng = random.Random(20260913)
+    service = StockScoringService.__new__(StockScoringService)
+    checked = 0
+    for _ in range(60):
+        size = rng.randint(1, 40)
+        calendar = []
+        day = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        for _ in range(size):
+            day += datetime.timedelta(days=rng.choice([1, 1, 1, 2, 3, 5, 9]))
+            # Occasionally a non-midnight stamp and/or a duplicated day.
+            hour = rng.choice([0, 0, 0, 0, 15])
+            calendar.append(day + datetime.timedelta(hours=hour))
+        if rng.random() < 0.5:
+            rng.shuffle(calendar)
+        if rng.random() < 0.25:
+            calendar.append(calendar[0])
+
+        service.calendar = calendar
+        service._calendar_cache = None
+        probes = [
+            datetime.datetime(2025, 12, 1, tzinfo=datetime.UTC),  # before range
+            datetime.datetime(2030, 1, 1, tzinfo=datetime.UTC),  # after range
+        ]
+        probes += [normalize_date(rng.choice(calendar)) for _ in range(4)]
+        # A day guaranteed absent from the calendar.
+        probes.append(datetime.datetime(2026, 6, 14, tzinfo=datetime.UTC))
+        for probe in probes:
+            for n in (1, 2, 5, 20, 60, 5000):
+                expected = _legacy_get_t_plus_n_day(calendar, probe, n)
+                assert service.get_t_plus_n_day(probe, n) == expected, (
+                    probe,
+                    n,
+                    calendar,
+                )
+                checked += 1
+    assert checked >= 1000
+
+
 def test_score_single_stock_creates_horizon_prediction(scoring_service):
     stock = seed_stock()
     date = seed_quotes()
@@ -321,6 +524,8 @@ def test_score_all_stocks_generates_all_horizons_and_ranks(scoring_service):
 def test_complete_raw_cohort_rerun_skips_before_component_reads(
     scoring_service, monkeypatch
 ):
+    import app.lib.scoring_engine.scoring_service as scoring_module
+
     seed_stock()
     date = seed_quotes()
     seed_factors_and_signal(date)
@@ -330,7 +535,11 @@ def test_complete_raw_cohort_rerun_skips_before_component_reads(
     def fail_if_scored(*args, **kwargs):
         raise AssertionError("complete cohort must skip per-stock scoring")
 
+    def fail_if_prefetched(*args, **kwargs):
+        raise AssertionError("complete cohort must skip the per-day prefetch")
+
     monkeypatch.setattr(scoring_service, "score_single_stock", fail_if_scored)
+    monkeypatch.setattr(scoring_module, "_DayPrefetch", fail_if_prefetched)
     result = scoring_service.score_all_stocks(date=date, horizon=5)
 
     assert result["skipped_complete_horizons"] == [5]
@@ -364,20 +573,33 @@ def test_complete_gate_does_not_override_dry_run_or_replace(
     date = seed_quotes()
     seed_factors_and_signal(date)
     scoring_service.score_all_stocks(date=date, horizon=5)
+    written = []
+    original_bulk = scoring_service._persist_predictions_bulk
+
+    def recording_bulk(writes):
+        written.append(list(writes))
+        return original_bulk(writes)
+
     calls = []
-    original = scoring_service.score_single_stock
+    original_build = scoring_service._build_raw_prediction_payload
 
-    def recording_score(*args, **kwargs):
+    def recording_build(*args, **kwargs):
         calls.append(kwargs)
-        return original(*args, **kwargs)
+        return original_build(*args, **kwargs)
 
-    monkeypatch.setattr(scoring_service, "score_single_stock", recording_score)
+    monkeypatch.setattr(scoring_service, "_persist_predictions_bulk", recording_bulk)
+    monkeypatch.setattr(
+        scoring_service, "_build_raw_prediction_payload", recording_build
+    )
     scoring_service.score_all_stocks(date=date, horizon=5, dry_run=True)
+    assert len(calls) == 1
+    assert all(not batch for batch in written)  # dry_run never writes
+
     scoring_service.score_all_stocks(date=date, horizon=5, replace=True)
 
     assert len(calls) == 2
-    assert calls[0]["dry_run"] is True
-    assert calls[1]["replace"] is True
+    persisted_batches = [batch for batch in written if batch]
+    assert len(persisted_batches) == 1  # replace rewrites through the bulk path
     assert FakePrediction.records[0].stock_code == stock.code
 
 
@@ -390,13 +612,15 @@ def test_complete_gate_is_per_horizon(scoring_service, monkeypatch):
         prediction for prediction in FakePrediction.records if prediction.horizon != 20
     ]
     called_horizons = []
-    original = scoring_service.score_single_stock
+    original = scoring_service._build_raw_prediction_payload
 
-    def recording_score(stock, run_date, horizon, **kwargs):
+    def recording_build(stock, run_date, horizon, *args, **kwargs):
         called_horizons.append(horizon)
-        return original(stock, run_date, horizon, **kwargs)
+        return original(stock, run_date, horizon, *args, **kwargs)
 
-    monkeypatch.setattr(scoring_service, "score_single_stock", recording_score)
+    monkeypatch.setattr(
+        scoring_service, "_build_raw_prediction_payload", recording_build
+    )
     result = scoring_service.score_all_stocks(date=date)
 
     assert result["skipped_complete_horizons"] == [5, 60]
@@ -772,6 +996,57 @@ def test_inactive_extra_prediction_does_not_affect_active_cohort(
 def test_rank_bulk_failure_propagates_before_recommendations(
     scoring_service, monkeypatch
 ):
+    """The prediction upserts succeed, then the rank bulk fails: the failure
+    must propagate and recommendation finalization must not run."""
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    FakePrediction.fail_rank_bulk = True
+    recommendation_called = False
+
+    def mark_recommendation(*args, **kwargs):
+        nonlocal recommendation_called
+        recommendation_called = True
+
+    monkeypatch.setattr(
+        scoring_service, "_upgrade_recommendations", mark_recommendation
+    )
+
+    with pytest.raises(RuntimeError, match="rank bulk failed"):
+        scoring_service.score_all_stocks(date=date, horizon=5)
+
+    assert recommendation_called is False
+    assert FakePrediction.records  # the prediction upsert did commit first
+
+
+def test_ranked_rank_bulk_failure_propagates_before_recommendations(
+    scoring_service, monkeypatch
+):
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    FakePrediction.fail_rank_bulk = True
+    recommendation_called = False
+
+    def mark_recommendation(*args, **kwargs):
+        nonlocal recommendation_called
+        recommendation_called = True
+
+    monkeypatch.setattr(
+        scoring_service, "_upgrade_recommendations", mark_recommendation
+    )
+
+    with pytest.raises(RuntimeError, match="rank bulk failed"):
+        scoring_service.score_all_stocks_ranked(date=date, horizon=5)
+
+    assert recommendation_called is False
+
+
+def test_prediction_bulk_failure_propagates_before_recommendations(
+    scoring_service, monkeypatch
+):
+    """A failed batch upsert is a horizon failure: it propagates immediately
+    instead of being downgraded to a per-code scoring error."""
     seed_stock()
     date = seed_quotes()
     seed_factors_and_signal(date)
@@ -1122,6 +1397,37 @@ def test_replay_backfills_trading_dates(scoring_service):
 
     assert result["date_count"] == 1
     assert result["scored_count"] == 1
+
+
+def test_replay_backfill_makes_one_call_per_date_for_all_horizons(
+    scoring_service, monkeypatch
+):
+    """Perf C1 remainder: a multi-horizon backfill must build the per-day
+    prefetch once per date, not once per (date, horizon)."""
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    calls = []
+    original = scoring_service.score_all_stocks
+
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(scoring_service, "score_all_stocks", spy)
+    replay = ScoreReplayService(scoring_service=scoring_service)
+
+    result = replay.backfill_predictions(
+        start_date=date,
+        end_date=date,
+        horizon=None,
+        dry_run=True,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["horizon"] is None
+    assert result["horizons"] == [5, 20, 60]
+    assert result["scored_count"] == 3
 
 
 def test_calibration_report_summarizes_verified_predictions():
@@ -1889,11 +2195,14 @@ class TestScoreAllStocksRankedEndToEnd:
     def test_ranked_tail_assigns_ranks_from_in_memory_results(
         self, scoring_service, monkeypatch
     ):
-        """Perf 2.6: the ranked tail must assign ranks/percentiles from the
-        in-memory persisted objects. Ranks are 1..N over non-BLOCKED rows and
-        BLOCKED rows carry no rank."""
+        """Perf 2.6: the legacy ranked tail must assign ranks/percentiles from
+        the in-memory persisted objects. Ranks are 1..N over non-BLOCKED rows
+        and BLOCKED rows carry no rank. (The default batch path reads the
+        persisted cohort instead; its ranking is covered by
+        test_scoring_batch_equivalence.py.)"""
         import datetime
 
+        scoring_service.batch_prefetch = False
         self._seed_cohort(scoring_service)
         d = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
         scoring_service.score_all_stocks_ranked(date=d, horizon=5)

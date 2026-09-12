@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 
+import bisect
 import datetime
 import hashlib
 import logging
+import math
+import os
+from collections import defaultdict
 
+import pandas as pd
 from pymongo import UpdateOne
 
 from app.lib.scoring_engine.components import (
@@ -24,6 +29,7 @@ from app.lib.scoring_engine.config import (
     get_effective_horizon_config,
 )
 from app.model.factor import StockFactorDaily
+from app.model.industry import IndustryDailyMetrics, StockIndustryClassification
 from app.model.scoring import ScoreModelVersion, StockScorePrediction
 from app.model.signal import StockSignalDaily
 from app.model.stock import FinanceMarket, IndividualStock, StockDailyQuote
@@ -31,9 +37,560 @@ from app.lib.utilities import trading_day_helper
 
 logger = logging.getLogger(__name__)
 
+#: Kill switch for the C1 per-day batch path. ``0``/``false``/``no``/``off``
+#: restores the legacy per-stock read/write path (used as a rollback lever and
+#: by the batch/per-stock equivalence harness).
+BATCH_SCORING_ENV = "DATAHUB_SCORING_BATCH"
+_BATCH_FALSY = {"0", "false", "no", "off"}
+
+
+def batch_scoring_default() -> bool:
+    return os.getenv(BATCH_SCORING_ENV, "1").strip().lower() not in _BATCH_FALSY
+
 
 def normalize_date(value: datetime.datetime) -> datetime.datetime:
     return value.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+class _Row:
+    """Attribute view over one prefetched raw document (perf C1).
+
+    Batch scoring reads whole-market collections with ``as_pymongo()`` so no
+    mongoengine Document is hydrated. Components keep their existing
+    ``getattr``/attribute code paths against these rows.
+
+    Strictness depends on how the row was built, and only ONE of the three
+    paths is fail-loud:
+
+    * history window (``_row_from_frame``) rebuilds the dict from the frame
+      columns alone, so reading a de-projected field raises ``AttributeError``
+      like a Document with an unknown attribute;
+    * full-document and `.only()` reads (``_rows`` -> ``_row_from_doc``) merge
+      the complete model default skeleton (``_field_skeleton``), so a
+      de-projected field silently reads as the model default (usually
+      ``None``) instead of raising.
+
+    Adding a field to a component therefore requires adding it to the matching
+    whitelist (``_HISTORY_QUOTE_FIELDS`` / ``_SIGNAL_DECAY_FIELDS`` /
+    ``_INDUSTRY_*_FIELDS``); the batch/per-stock equivalence harness is the
+    safety net for the silent case.
+    """
+
+    __slots__ = ("_data",)
+
+    def __init__(self, data: dict):
+        self._data = data
+
+    def __getattr__(self, name):
+        try:
+            return self._data[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __repr__(self):  # pragma: no cover - debugging aid
+        ident = self._data.get("code") or self._data.get("stock_code")
+        return f"<_Row {ident}>"
+
+
+def _raw_data(item) -> dict:
+    """Stored values of one queried row (raw dict or Document-like object)."""
+    if isinstance(item, dict):
+        return dict(item)
+    return dict(getattr(item, "_data", None) or vars(item))
+
+
+def _row_from_doc(item, skeleton: dict) -> _Row:
+    data = dict(skeleton)
+    data.update(_raw_data(item))
+    return _Row(data)
+
+
+def _row_from_frame(record: dict) -> _Row:
+    """Rebuild a Document-like row from one pandas frame record.
+
+    pandas fills a missing numeric value with NaN and materialises datetime
+    columns as ``Timestamp``/``NaT``. Both would leak into component results
+    (NaN compares false and poisons the momentum/risk/range kernels), so map
+    them back to the ``None``/``datetime`` a mongoengine load would produce.
+    """
+    data = {}
+    for key, value in record.items():
+        if value is None or value is pd.NaT:
+            data[key] = None
+        elif isinstance(value, float) and math.isnan(value):
+            data[key] = None
+        elif isinstance(value, pd.Timestamp):
+            data[key] = value.to_pydatetime()
+        else:
+            data[key] = value
+    return _Row(data)
+
+
+#: Quote fields the prefetched history window must keep (perf C1).
+#:
+#: History rows are only consumed by momentum (close family), breakout
+#: (high/low family), risk and relative strength (close family) and real
+#: relative strength (close family + date); the evaluation-day quote itself is
+#: prefetched as a full document. Projecting the window keeps a whole-market
+#: frame at a few tens of MB instead of ~0.9GB of hydrated documents, which
+#: would not fit the 1Gi datahub pod. Any component that starts reading another
+#: quote field from history must be added here — the batch/per-stock
+#: equivalence harness (test_scoring_batch_equivalence.py) is the safety net.
+_HISTORY_QUOTE_FIELDS = (
+    "code",
+    "date",
+    "close",
+    "close_hfq",
+    "high",
+    "high_hfq",
+    "low",
+    "low_hfq",
+)
+
+_HISTORY_QUOTE_SKELETON = {name: None for name in _HISTORY_QUOTE_FIELDS}
+
+#: Rows per frame chunk while materialising the history window. Building one
+#: DataFrame from the whole cursor materialises hundreds of MB of raw dicts
+#: first; chunking (and releasing the chunk frames right after ``concat``)
+#: keeps the peak near one final frame plus the current chunk, which fits the
+#: 1Gi datahub pod.
+_WINDOW_CHUNK_ROWS = 50_000
+
+#: Signal fields the decay window keeps. Decay grouping reads only
+#: direction/signal_name/date/strength (the decayed evidence carries names and
+#: strengths), so the potentially large snapshot fields stay on disk. A live
+#: (evaluation-day) signal is still prefetched with its full document.
+_SIGNAL_DECAY_FIELDS = (
+    "stock_code",
+    "date",
+    "signal_name",
+    "direction",
+    "strength",
+)
+
+#: Industry fields the per-day cache keeps: the classification key/name plus
+#: the metrics columns the component reads (stock_count/avg_score for its
+#: value, buy_count/watch_count for its evidence).
+_INDUSTRY_CLASSIFICATION_FIELDS = (
+    "stock_code",
+    "industry_code_sw_l1",
+    "industry_name_sw_l1",
+)
+_INDUSTRY_METRIC_FIELDS = (
+    "industry_code",
+    "horizon",
+    "date",
+    "stock_count",
+    "avg_score",
+    "buy_count",
+    "watch_count",
+)
+
+
+class _HistoryWindow:
+    """Date-descending per-code quote history backed by a prefetched frame.
+
+    Components only need ``len()``, int/slice indexing, iteration,
+    ``reversed()`` and ``history + [quote]`` (momentum, breakout, risk and
+    relative strength). Rows are ``_Row`` views, so every numeric kernel stays
+    byte-identical to the per-stock path (3.5 equivalence harness).
+    """
+
+    __slots__ = ("_rows",)
+
+    def __init__(self, rows: list):
+        self._rows = list(rows)
+
+    def __len__(self):
+        return len(self._rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            return self._rows[key]
+        return self._rows[key]
+
+    def __add__(self, other):
+        return self._rows + list(other)
+
+    def __radd__(self, other):
+        return list(other) + self._rows
+
+
+class _DayPrefetch:
+    """Whole-market scoring inputs prefetched once per evaluation day (C1).
+
+    Replaces the per-stock N+1 reads (today's quote/factor/signals, the
+    per-stock history and signal-decay windows, industry classification and
+    metrics, CSI300 and existing predictions) with a constant number of
+    day-level queries shared by every stock and horizon:
+
+    1. ``StockDailyQuote`` for the evaluation date;
+    2. ``StockDailyQuote`` for ``[window_start, date)`` -> code -> DataFrame;
+    3. ``StockFactorDaily`` for the evaluation date;
+    4. ``StockSignalDaily`` for the evaluation date and the decay window;
+    5. CSI300 quotes over the same history window (per-day cache, C1/3.4);
+    6. L1 industry classification + latest metrics per horizon (C1/3.4);
+    7. existing predictions for this date/model_version.
+
+    Rows are raw-dict ``_Row`` views (no Document hydration). The history
+    window is sized in *trading* days (``max_history + margin``); a code whose
+    window holds fewer rows than the caller needs falls back to the exact
+    legacy per-code query, so batching can never truncate a sparse stock's
+    history.
+    """
+
+    def __init__(self, service, date, codes, horizons):
+        self.service = service
+        self.date = normalize_date(date)
+        self.codes = list(codes)
+        self.horizons = list(horizons)
+        configs = [service._get_horizon_config(h) for h in self.horizons]
+        self.max_history = max(
+            max(
+                config["minimum_quote_count"],
+                config["breakout_lookback"],
+                config["risk_lookback"],
+            )
+            for config in configs
+        )
+        self.decay_window = max(
+            config.get("signal_decay_max_days", 5) for config in configs
+        )
+        self.window_start = service._history_window_start(self.date, self.max_history)
+        self._skeletons: dict[int, dict] = {}
+        self._day_quotes = None
+        self._day_factors = None
+        self._day_signals = None
+        self._decay = None
+        self._window_frame = None
+        self._window_positions = None
+        self._fallback_history: dict[str, list] = {}
+        self._index_quotes = None
+        self._index_failed = False
+        #: CSI300 rows for a code whose fallback history reaches before the day
+        #: window, keyed by code. Bounded by the number of such (rare) codes and
+        #: by their fallback-history span (<= max_history quotes, i.e. at most a
+        #: few thousand small CSI300 rows), so the retention is negligible
+        #: against the window frame itself.
+        self._index_by_code: dict[str, list | None] = {}
+        self._industry = None
+        self._industry_failed = False
+        self._existing = None
+
+    # -- row materialization -------------------------------------------------
+    def _skeleton(self, model) -> dict:
+        key = id(model)
+        skeleton = self._skeletons.get(key)
+        if skeleton is None:
+            skeleton = self.service._field_skeleton(model)
+            self._skeletons[key] = skeleton
+        return skeleton
+
+    def _rows(self, queryset, model) -> list:
+        skeleton = self._skeleton(model)
+        if hasattr(queryset, "as_pymongo"):
+            queryset = queryset.as_pymongo()
+        return [_row_from_doc(item, skeleton) for item in queryset]
+
+    # -- evaluation-day data -------------------------------------------------
+    def _load_day(self):
+        if self._day_quotes is not None:
+            return
+        # Build locally and assign at the end: a failed read must not leave a
+        # half-initialised context behind for the next stock.
+        day_quotes = {
+            row.code: row
+            for row in self._rows(
+                self.service.quote_model.objects(code__in=self.codes, date=self.date),
+                self.service.quote_model,
+            )
+        }
+        day_factors = {
+            row.stock_code: row
+            for row in self._rows(
+                self.service.factor_model.objects(
+                    stock_code__in=self.codes, date=self.date
+                ),
+                self.service.factor_model,
+            )
+        }
+        signals = defaultdict(list)
+        for row in self._rows(
+            self.service.signal_model.objects(
+                stock_code__in=self.codes, date=self.date
+            ),
+            self.service.signal_model,
+        ):
+            signals[row.stock_code].append(row)
+        self._day_quotes = day_quotes
+        self._day_factors = day_factors
+        self._day_signals = signals
+
+    def quote(self, code):
+        self._load_day()
+        return self._day_quotes.get(code)
+
+    def factor(self, code):
+        self._load_day()
+        return self._day_factors.get(code)
+
+    def day_signals(self, code) -> list:
+        self._load_day()
+        return self._day_signals.get(code, [])
+
+    # -- history window ------------------------------------------------------
+    def _window_records_iter(self, queryset):
+        """Projected raw dicts for the window, streamed (no Document hydration)."""
+        if hasattr(queryset, "as_pymongo"):
+            queryset = queryset.as_pymongo()
+        for item in queryset:
+            data = dict(_HISTORY_QUOTE_SKELETON)
+            data.update(_raw_data(item))
+            # ``.only()`` already limits production rows; rebuilding from the
+            # whitelist keeps test doubles and missing stored keys identical.
+            yield {name: data[name] for name in _HISTORY_QUOTE_FIELDS}
+
+    def _load_window(self):
+        queryset = (
+            self.service.quote_model.objects(
+                code__in=self.codes,
+                date__gte=self.window_start,
+                date__lt=self.date,
+            )
+            .only(*_HISTORY_QUOTE_FIELDS)
+            .order_by("-date")
+        )
+        frames = []
+        chunk = []
+        for record in self._window_records_iter(queryset):
+            chunk.append(record)
+            if len(chunk) >= _WINDOW_CHUNK_ROWS:
+                frames.append(pd.DataFrame.from_records(chunk))
+                chunk = []
+        if chunk:
+            frames.append(pd.DataFrame.from_records(chunk))
+        if not frames:
+            self._window_frame = pd.DataFrame(columns=list(_HISTORY_QUOTE_FIELDS))
+            self._window_positions = {}
+            return
+        frame = frames[0] if len(frames) == 1 else pd.concat(frames, ignore_index=True)
+        del frames  # release the chunk frames before sorting/retaining the window
+        frame = frame.sort_values(
+            ["code", "date"], ascending=[True, False], kind="stable"
+        )
+        # Keep the frame (columnar, tens of MB) plus a code -> row-position
+        # index; materialise at most one stock's rows at a time in history().
+        self._window_frame = frame
+        self._window_positions = dict(frame.groupby("code", sort=False).indices)
+
+    def history(self, code, limit):
+        """Most recent ``limit`` quotes strictly before the evaluation date."""
+        limit = int(limit)
+        if self._window_positions is None:
+            self._load_window()
+        positions = self._window_positions.get(code)
+        if positions is not None and len(positions) >= limit:
+            frame_rows = self._window_frame.take(positions[:limit])
+            return _HistoryWindow(
+                [_row_from_frame(record) for record in frame_rows.to_dict("records")]
+            )
+        # Sparse/suspended code: the day window may hold fewer rows than the
+        # legacy unbounded per-code read would have returned. Re-read exactly
+        # that code so batching never changes its history.
+        fallback = self._fallback_history.get(code)
+        if fallback is None:
+            fallback = self._rows(
+                self.service.quote_model.objects(code=code, date__lt=self.date)
+                .order_by("-date")
+                .limit(self.max_history),
+                self.service.quote_model,
+            )
+            self._fallback_history[code] = fallback
+        return _HistoryWindow(fallback[:limit])
+
+    def decay_signals(self, code) -> list:
+        """Signals in the decay window, newest first (byte-parity with legacy).
+
+        The window spans the largest configured decay so one query serves every
+        horizon; components still gate on their own ``signal_decay_max_days``,
+        so a wider window can only yield the same "no decay" outcome.
+        """
+        if self._decay is None:
+            start = self.date - datetime.timedelta(days=self.decay_window + 1)
+            decay = defaultdict(list)
+            for row in self._rows(
+                self.service.signal_model.objects(
+                    stock_code__in=self.codes,
+                    date__gte=start,
+                    date__lt=self.date,
+                )
+                .only(*_SIGNAL_DECAY_FIELDS)
+                .order_by("-date"),
+                self.service.signal_model,
+            ):
+                decay[row.stock_code].append(row)
+            self._decay = decay
+        return self._decay.get(code, [])
+
+    # -- per-day caches (C1/3.4) --------------------------------------------
+    def index_quotes(self):
+        """CSI300 quotes for the whole history window (one read per day)."""
+        if self._index_failed:
+            return None
+        if self._index_quotes is None:
+            try:
+                self._index_quotes = self._rows(
+                    self.service.quote_model.objects(
+                        code="sh000300",
+                        date__gte=self.window_start,
+                        date__lte=self.date,
+                    ).order_by("date"),
+                    self.service.quote_model,
+                )
+            except Exception:  # noqa: BLE001 - component retries its own read
+                logger.warning(
+                    "CSI300 prefetch failed; falling back to per-stock reads",
+                    exc_info=True,
+                )
+                self._index_failed = True
+                return None
+        return self._index_quotes
+
+    def index_quotes_for(self, code, history_quotes, quote):
+        """CSI300 quotes for one stock, exactly as the per-stock path read them.
+
+        ``real_relative_strength`` derives its index range from the stock's own
+        quote dates (``[min(stock quote dates), evaluation date]``). Filtering
+        the day cache to that same range keeps the alpha input identical, and a
+        sparse-history fallback that reaches before the window start gets its
+        own index read instead of silently dropping the evaluation date to the
+        self-proxy fallback. Returns ``None`` on failure so the component
+        retries its own read.
+        """
+        dates = [row.date for row in history_quotes if getattr(row, "date", None)]
+        quote_date = getattr(quote, "date", None)
+        if quote_date:
+            dates.append(quote_date)
+        if not dates:
+            return []
+        start = min(dates)
+        end = max(dates)
+        if start >= self.window_start:
+            cached = self.index_quotes()
+            if cached is None:
+                return None
+            return [row for row in cached if start <= row.date <= end]
+        if code not in self._index_by_code:
+            # Read the code's whole fallback span once (its history limit is the
+            # deepest any horizon needs), then slice it per horizon below.
+            fallback_dates = [
+                row.date
+                for row in self._fallback_history.get(code, [])
+                if getattr(row, "date", None)
+            ]
+            full_start = min(fallback_dates) if fallback_dates else start
+            try:
+                self._index_by_code[code] = self._rows(
+                    self.service.quote_model.objects(
+                        code="sh000300", date__gte=full_start, date__lte=end
+                    ).order_by("date"),
+                    self.service.quote_model,
+                )
+            except Exception:  # noqa: BLE001 - component retries its own read
+                logger.warning(
+                    "CSI300 range read failed for %s; component falls back",
+                    code,
+                    exc_info=True,
+                )
+                self._index_by_code[code] = None
+        per_code = self._index_by_code[code]
+        if per_code is None:
+            return None
+        return [row for row in per_code if start <= row.date <= end]
+
+    def industry_lookup(self, horizon: int):
+        """{stock_code: (classification, latest metrics)} for one horizon.
+
+        Returns ``None`` when the prefetch fails so components fall back to
+        their own per-stock reads (never a silent "no industry" answer).
+        """
+        if self._industry_failed:
+            return None
+        if self._industry is None:
+            self._industry = self._load_industry()
+        if self._industry_failed:
+            return None
+        return self._industry.get(horizon, {})
+
+    def _load_industry(self):
+        try:
+            # Projected + raw rows: only the classification key/name and the
+            # newest metrics row per (industry, horizon) are consumed, so the
+            # wide documents are never hydrated.
+            classifications = {
+                row.stock_code: row
+                for row in self._rows(
+                    self.service.industry_model.objects(stock_code__in=self.codes).only(
+                        *_INDUSTRY_CLASSIFICATION_FIELDS
+                    ),
+                    self.service.industry_model,
+                )
+            }
+            industry_codes = sorted(
+                {
+                    row.industry_code_sw_l1
+                    for row in classifications.values()
+                    if getattr(row, "industry_code_sw_l1", None)
+                }
+            )
+            # Legacy reads the single newest metrics row per (industry,
+            # horizon) and then checks its stock_count — it does NOT fall back
+            # to an older date when the newest row is thin, so mirror that.
+            latest = {}
+            if industry_codes:
+                for metrics in self._rows(
+                    self.service.industry_metrics_model.objects(
+                        industry_code__in=industry_codes,
+                        date__lt=self.date,
+                        horizon__in=self.horizons,
+                        model_version=self.service.model_version,
+                    ).only(*_INDUSTRY_METRIC_FIELDS),
+                    self.service.industry_metrics_model,
+                ):
+                    key = (metrics.industry_code, metrics.horizon)
+                    current = latest.get(key)
+                    if current is None or metrics.date > current.date:
+                        latest[key] = metrics
+        except Exception:  # noqa: BLE001 - components retry their own reads
+            logger.warning(
+                "industry prefetch failed; falling back to per-stock reads",
+                exc_info=True,
+            )
+            self._industry_failed = True
+            return {}
+        return {
+            horizon: {
+                code: (row, latest.get((row.industry_code_sw_l1, horizon)))
+                for code, row in classifications.items()
+            }
+            for horizon in self.horizons
+        }
+
+    # -- existing predictions -----------------------------------------------
+    def existing(self, code, horizon):
+        if self._existing is None:
+            self._existing = {}
+            for prediction in self.service.prediction_model.objects(
+                date=self.date,
+                model_version=self.service.model_version,
+                stock_code__in=self.codes,
+                horizon__in=self.horizons,
+            ).only("stock_code", "horizon", "status"):
+                self._existing[(prediction.stock_code, prediction.horizon)] = prediction
+        return self._existing.get((code, horizon))
 
 
 class StockScoringService:
@@ -48,13 +605,23 @@ class StockScoringService:
         prediction_model=StockScorePrediction,
         model_version: str = DEFAULT_MODEL_VERSION,
         scoring_config: dict | None = None,
+        industry_model=StockIndustryClassification,
+        industry_metrics_model=IndustryDailyMetrics,
+        batch_prefetch: bool | None = None,
     ):
         self.stock_model = stock_model
         self.quote_model = quote_model
         self.factor_model = factor_model
         self.signal_model = signal_model
         self.prediction_model = prediction_model
+        self.industry_model = industry_model
+        self.industry_metrics_model = industry_metrics_model
         self.model_version = model_version
+        # C1: default to the per-day batch path; DATAHUB_SCORING_BATCH=0
+        # restores the legacy per-stock read/write path.
+        self.batch_prefetch = (
+            batch_scoring_default() if batch_prefetch is None else bool(batch_prefetch)
+        )
         # Config precedence: explicit scoring_config (experiment/backfill) >
         # registered ScoreModelVersion config > built-in SCORING_CONFIG.
         # A registered version makes the run reproducible from the registry
@@ -65,6 +632,8 @@ class StockScoringService:
             self.scoring_config = self._registered_config(model_version)
         self.market = FinanceMarket.objects(name="ChinaAStock").first()
         self.calendar = self.market.trade_calendar if self.market else []
+        # (calendar_list, ascending_normalized_calendar); see _sorted_calendar.
+        self._calendar_cache = None
 
     @staticmethod
     def _registered_config(model_version: str) -> dict:
@@ -89,26 +658,85 @@ class StockScoringService:
             return {}
         return dict(registered.config or {})
 
+    def _sorted_calendar(self) -> list:
+        """Ascending, time-normalized trading calendar, computed once.
+
+        ``get_t_plus_n_day`` runs once per stock per horizon (~15.6k calls on a
+        full-market day) and rebuilding + re-normalizing the ~8.5k-day calendar
+        on every call cost ~3.5 ms each — ~55 s of pure CPU per day (perf
+        C5/R4). The cache is keyed on the *identity* of ``self.calendar`` so a
+        reassigned calendar (tests, re-bootstrap) is picked up rather than
+        silently serving a stale list.
+        """
+        calendar = self.calendar or []
+        cache = getattr(self, "_calendar_cache", None)
+        if cache is None or cache[0] is not calendar:
+            cache = (calendar, sorted(normalize_date(day) for day in calendar))
+            self._calendar_cache = cache
+        return cache[1]
+
     def get_t_plus_n_day(
         self, start_date: datetime.datetime, n: int
     ) -> datetime.datetime:
         """Find the N-th trading day after start_date."""
         start_date = normalize_date(start_date)
-        if not self.calendar:
+        sorted_cal = self._sorted_calendar()
+        if not sorted_cal:
             return start_date + datetime.timedelta(days=round(n * 1.5))
+        if n <= 0:
+            # Not reachable from scoring (horizons are 5/20/60). The previous
+            # implementation raised IndexError for n=0 on a non-trading day and
+            # otherwise returned the calendar's last day; the identity answer
+            # is what every caller would want.
+            return start_date
 
-        sorted_cal = sorted(normalize_date(day) for day in self.calendar)
-        try:
-            start_idx = sorted_cal.index(start_date)
+        start_idx = bisect.bisect_left(sorted_cal, start_date)
+        if start_idx < len(sorted_cal) and sorted_cal[start_idx] == start_date:
             target_idx = start_idx + n
             if target_idx < len(sorted_cal):
                 return sorted_cal[target_idx]
             return sorted_cal[-1]
-        except ValueError:
-            future_days = [day for day in sorted_cal if day > start_date]
-            if len(future_days) >= n:
-                return future_days[n - 1]
-            return sorted_cal[-1]
+        # start_date is not a trading day: count from the next trading day.
+        if len(sorted_cal) - start_idx >= n:
+            return sorted_cal[start_idx + n - 1]
+        return sorted_cal[-1]
+
+    @staticmethod
+    def _field_skeleton(model) -> dict:
+        """Model field defaults as mongoengine applies them when loading.
+
+        Callable defaults (timestamps) become ``None``: batch scoring never
+        reads them, and calling them per row would both cost time and stamp a
+        meaningless value.
+        """
+        skeleton = {}
+        for name, field in (getattr(model, "_fields", None) or {}).items():
+            default = getattr(field, "default", None)
+            skeleton[name] = None if callable(default) else default
+        return skeleton
+
+    def _history_window_start(self, date, max_history: int) -> datetime.datetime:
+        """Start of the prefetched quote window, in *trading* days.
+
+        ``max_history`` trading days back (plus a margin for suspended names)
+        covers the deepest lookback any requested horizon needs; the per-code
+        sparse fallback in ``_DayPrefetch.history`` keeps equivalence exact.
+        """
+        if self.calendar:
+            calendar = self._sorted_calendar()
+            idx = bisect.bisect_left(calendar, date)
+            start_idx = max(0, idx - (max_history + 10))
+            if start_idx < idx:
+                return calendar[start_idx]
+        return date - datetime.timedelta(days=int(max_history * 2) + 20)
+
+    @staticmethod
+    def _history_limit(config: dict) -> int:
+        return max(
+            config["minimum_quote_count"],
+            config["breakout_lookback"],
+            config["risk_lookback"],
+        )
 
     def score_all_stocks(
         self,
@@ -122,9 +750,11 @@ class StockScoringService:
         When env DATAHUB_SCORING_MODE=ranked, delegates to the
         cross-sectional rank-normalized path (score_all_stocks_ranked).
         Default (raw) keeps the legacy component-weighted path.
-        """
-        import os
 
+        With ``batch_prefetch`` (default, perf C1) every horizon shares one
+        per-day prefetch and writes through a single bulk upsert per horizon;
+        ``DATAHUB_SCORING_BATCH=0`` restores the per-stock path.
+        """
         if os.getenv("DATAHUB_SCORING_MODE", "raw").strip().lower() == "ranked":
             return self.score_all_stocks_ranked(
                 date=date, horizon=horizon, dry_run=dry_run, replace=replace
@@ -138,6 +768,7 @@ class StockScoringService:
         results = []
         skipped_complete_horizons = []
         expected_codes = [stock.code for stock in stocks]
+        prefetch = None
         for current_horizon in horizons:
             if (
                 not dry_run
@@ -151,17 +782,35 @@ class StockScoringService:
                     date, current_horizon, expected_codes=expected_codes
                 )
                 continue
+            if self.batch_prefetch and prefetch is None and stocks:
+                prefetch = _DayPrefetch(self, date, expected_codes, horizons)
+            config = self._get_horizon_config(current_horizon)
             failed_codes = []
+            pending_writes = []
             for stock in stocks:
                 try:
-                    prediction = self.score_single_stock(
-                        stock,
-                        date,
-                        current_horizon,
-                        dry_run=dry_run,
-                        replace=replace,
+                    if prefetch is None:
+                        # Kill switch / harness reference: the legacy per-stock
+                        # path reads and persists one document at a time.
+                        prediction = self.score_single_stock(
+                            stock,
+                            date,
+                            current_horizon,
+                            dry_run=dry_run,
+                            replace=replace,
+                        )
+                        results.append(prediction)
+                        continue
+                    existing = prefetch.existing(stock.code, current_horizon)
+                    if existing is not None and not replace and not dry_run:
+                        results.append(existing)
+                        continue
+                    payload = self._build_raw_prediction_payload(
+                        stock, date, current_horizon, config, prefetch
                     )
-                    results.append(prediction)
+                    results.append(payload)
+                    if not dry_run:
+                        pending_writes.append((payload, existing))
                 except Exception as exc:
                     failed_codes.append(getattr(stock, "code", "unknown"))
                     logger.exception(
@@ -172,6 +821,9 @@ class StockScoringService:
                         exc,
                     )
 
+            # A batch write failure is a horizon-level failure: propagate it
+            # instead of masking it as a per-code scoring error.
+            self._persist_predictions_bulk(pending_writes)
             if failed_codes:
                 raise RuntimeError(
                     f"scoring failed for horizon={current_horizon}: "
@@ -211,31 +863,56 @@ class StockScoringService:
         if existing is not None and not replace and not dry_run:
             return existing
 
-        quote = self._get_quote_on_date(stock.code, date)
+        payload = self._build_raw_prediction_payload(stock, date, horizon, config)
+        return self._persist_prediction(payload, existing, dry_run)
+
+    def _build_raw_prediction_payload(
+        self,
+        stock,
+        date: datetime.datetime,
+        horizon: int,
+        config: dict,
+        prefetch: "_DayPrefetch | None" = None,
+    ) -> dict:
+        """Build one raw-path prediction payload without persisting it.
+
+        Shared by score_single_stock (legacy per-stock reads) and the batched
+        score_all_stocks loop so both produce byte-identical payloads.
+        """
+        if prefetch is not None:
+            quote = prefetch.quote(stock.code)
+        else:
+            quote = self._get_quote_on_date(stock.code, date)
         target_date = self.get_t_plus_n_day(date, horizon)
         if not quote:
-            payload = self._build_blocked_prediction(
+            return self._build_blocked_prediction(
                 stock=stock,
                 date=date,
                 horizon=horizon,
                 target_date=target_date,
                 reason="missing_quote",
             )
-            return self._persist_prediction(payload, existing, dry_run)
 
-        factors = self._get_factor_on_date(stock.code, date)
-        signals = self._get_signals_on_date(stock.code, date)
-        history_quotes = self._get_previous_quotes(
-            stock.code,
-            date,
-            max(
-                config["minimum_quote_count"],
-                config["breakout_lookback"],
-                config["risk_lookback"],
-            ),
-        )
+        if prefetch is not None:
+            factors = prefetch.factor(stock.code)
+            signals = prefetch.day_signals(stock.code)
+            history_quotes = prefetch.history(stock.code, self._history_limit(config))
+        else:
+            factors = self._get_factor_on_date(stock.code, date)
+            signals = self._get_signals_on_date(stock.code, date)
+            history_quotes = self._get_previous_quotes(
+                stock.code, date, self._history_limit(config)
+            )
         components, penalties = self._build_components(
-            quote, factors, signals, history_quotes, date, horizon, config, stock.code
+            quote,
+            factors,
+            signals,
+            history_quotes,
+            date,
+            horizon,
+            config,
+            stock.code,
+            prefetch=prefetch,
         )
         score = self._calculate_score(components, penalties)
         recommendation = self._recommendation(score, config)
@@ -256,7 +933,7 @@ class StockScoringService:
             config=config,
         )
 
-        payload = {
+        return {
             "stock": stock,
             "stock_code": stock.code,
             "stock_name": stock.name,
@@ -279,7 +956,6 @@ class StockScoringService:
             "input_snapshot": input_snapshot,
             "model_version": self.model_version,
         }
-        return self._persist_prediction(payload, existing, dry_run)
 
     def assign_ranks(
         self,
@@ -604,34 +1280,50 @@ class StockScoringService:
             )
 
     def _compute_raw_components(
-        self, stock, date: datetime.datetime, horizon: int
+        self,
+        stock,
+        date: datetime.datetime,
+        horizon: int,
+        prefetch: "_DayPrefetch | None" = None,
     ) -> dict | None:
         """Compute raw component values for one stock WITHOUT persisting.
 
         Returns None when the stock has no quote on ``date`` (blocked).
         Otherwise returns {stock_code, components: [{id, raw_value, weight}],
         penalties: [{id, raw_value, weight}], base_price, target_date}.
+
+        ``prefetch`` optionally supplies the C1 per-day prefetched inputs.
         """
         date = normalize_date(date)
         config = self._get_horizon_config(horizon)
-        quote = self._get_quote_on_date(stock.code, date)
+        if prefetch is not None:
+            quote = prefetch.quote(stock.code)
+        else:
+            quote = self._get_quote_on_date(stock.code, date)
         target_date = self.get_t_plus_n_day(date, horizon)
         if not quote:
             return None
 
-        factors = self._get_factor_on_date(stock.code, date)
-        signals = self._get_signals_on_date(stock.code, date)
-        history_quotes = self._get_previous_quotes(
-            stock.code,
-            date,
-            max(
-                config["minimum_quote_count"],
-                config["breakout_lookback"],
-                config["risk_lookback"],
-            ),
-        )
+        if prefetch is not None:
+            factors = prefetch.factor(stock.code)
+            signals = prefetch.day_signals(stock.code)
+            history_quotes = prefetch.history(stock.code, self._history_limit(config))
+        else:
+            factors = self._get_factor_on_date(stock.code, date)
+            signals = self._get_signals_on_date(stock.code, date)
+            history_quotes = self._get_previous_quotes(
+                stock.code, date, self._history_limit(config)
+            )
         components, penalties = self._build_components(
-            quote, factors, signals, history_quotes, date, horizon, config, stock.code
+            quote,
+            factors,
+            signals,
+            history_quotes,
+            date,
+            horizon,
+            config,
+            stock.code,
+            prefetch=prefetch,
         )
         return {
             "stock_code": stock.code,
@@ -685,6 +1377,7 @@ class StockScoringService:
         skipped_complete_horizons = []
         expected_codes = [stock.code for stock in stocks]
         cohort_fingerprint = self._cohort_fingerprint(expected_codes)
+        prefetch = None
 
         for current_horizon in horizons:
             if (
@@ -696,6 +1389,8 @@ class StockScoringService:
             ):
                 skipped_complete_horizons.append(current_horizon)
                 continue
+            if self.batch_prefetch and prefetch is None and stocks:
+                prefetch = _DayPrefetch(self, date, expected_codes, horizons)
             config = self._get_horizon_config(current_horizon)
             raw_by_code = {}
             blocked_codes = []
@@ -708,15 +1403,19 @@ class StockScoringService:
             # replaces) — otherwise the tail's completeness check would raise
             # on a cohort the DB-based path completed fine.
             stored_blocked_codes = []
-            # Per-horizon list of persisted non-BLOCKED predictions (the
-            # objects just saved), so the ranking tail can consume in-memory
-            # results instead of re-reading the whole cohort from Mongo
-            # (perf task 2.6). `results` is cross-horizon, so it cannot be
-            # reused for the per-horizon assign_ranks call.
+            # Per-horizon list of persisted non-BLOCKED predictions for the
+            # legacy path, so its ranking tail can consume in-memory results
+            # instead of re-reading the whole cohort from Mongo (perf task
+            # 2.6). The batch path writes one bulk upsert per horizon and then
+            # reads the persisted cohort once for the tail (C1/3.3), because a
+            # bulk write never hydrates the documents it upserts.
             rankable = []
+            pending_writes = []
             for stock in stocks:
                 try:
-                    raw = self._compute_raw_components(stock, date, current_horizon)
+                    raw = self._compute_raw_components(
+                        stock, date, current_horizon, prefetch=prefetch
+                    )
                     if raw is None:
                         blocked_codes.append(stock.code)
                         continue
@@ -825,7 +1524,11 @@ class StockScoringService:
                 else:
                     score = round(max(0.0, min(100.0, score * 100.0)), 2)
 
-                existing = self._find_existing_prediction(code, date, current_horizon)
+                existing = (
+                    prefetch.existing(code, current_horizon)
+                    if prefetch is not None
+                    else self._find_existing_prediction(code, date, current_horizon)
+                )
                 if existing is not None and not replace and not dry_run:
                     results.append(existing)
                     # Repair path (replace=False partial cohort): the stored
@@ -908,6 +1611,12 @@ class StockScoringService:
                     },
                     "model_version": self.model_version,
                 }
+                if prefetch is not None:
+                    # Deferred: one bulk upsert per horizon (C1/3.3).
+                    if not dry_run:
+                        pending_writes.append((payload, existing))
+                    results.append(payload)
+                    continue
                 try:
                     persisted = self._persist_prediction(payload, existing, dry_run)
                     results.append(persisted)
@@ -923,8 +1632,10 @@ class StockScoringService:
 
             for code in blocked_codes:
                 try:
-                    existing = self._find_existing_prediction(
-                        code, date, current_horizon
+                    existing = (
+                        prefetch.existing(code, current_horizon)
+                        if prefetch is not None
+                        else self._find_existing_prediction(code, date, current_horizon)
                     )
                     if existing is not None and not replace and not dry_run:
                         continue
@@ -938,6 +1649,10 @@ class StockScoringService:
                         scoring_mode="ranked",
                         cohort_fingerprint=cohort_fingerprint,
                     )
+                    if prefetch is not None:
+                        if not dry_run:
+                            pending_writes.append((payload, existing))
+                        continue
                     self._persist_prediction(payload, existing, dry_run)
                 except Exception as exc:
                     failed_codes.append(code)
@@ -945,28 +1660,60 @@ class StockScoringService:
                         "Failed to persist blocked prediction for %s: %s", code, exc
                     )
 
+            # Batch path: one bulk upsert for everything computed above. A
+            # write failure is a horizon failure and propagates (never masked
+            # as a per-code scoring error).
+            if prefetch is not None:
+                self._persist_predictions_bulk(pending_writes)
             if failed_codes:
                 raise RuntimeError(
                     f"ranked scoring failed for horizon={current_horizon}: "
                     + ", ".join(sorted(set(failed_codes)))
                 )
             if not dry_run:
-                # ranked path: in-memory persisted objects ARE the cohort
-                # (failed_codes is empty here), so completeness + ranking can
-                # consume them instead of re-reading the whole cohort from
-                # Mongo (perf task 2.6).
-                persisted_codes = (
-                    {p.stock_code for p in rankable}
-                    | set(blocked_codes)
-                    | set(stored_blocked_codes)
-                )
-                self._require_complete_prediction_set(
-                    stocks,
-                    date,
-                    current_horizon,
-                    persisted_codes=persisted_codes,
-                )
-                self._repair_blocked_predictions(date, current_horizon, expected_codes)
+                if prefetch is not None:
+                    # The bulk write does not hydrate the rows it upserts, so
+                    # the tail reads the persisted cohort once (one query per
+                    # horizon) and ranks exactly what is stored.
+                    persisted_codes = (
+                        set(raw_by_code)
+                        | set(blocked_codes)
+                        | set(stored_blocked_codes)
+                    )
+                    self._require_complete_prediction_set(
+                        stocks,
+                        date,
+                        current_horizon,
+                        persisted_codes=persisted_codes,
+                    )
+                    self._repair_blocked_predictions(
+                        date, current_horizon, expected_codes
+                    )
+                    rankable = [
+                        prediction
+                        for prediction in self._cohort_predictions(
+                            date, current_horizon, expected_codes
+                        )
+                        if getattr(prediction, "status", None) != "BLOCKED"
+                    ]
+                else:
+                    # legacy path: in-memory persisted objects ARE the cohort
+                    # (failed_codes is empty here), so completeness + ranking
+                    # consume them instead of re-reading Mongo (perf task 2.6).
+                    persisted_codes = (
+                        {p.stock_code for p in rankable}
+                        | set(blocked_codes)
+                        | set(stored_blocked_codes)
+                    )
+                    self._require_complete_prediction_set(
+                        stocks,
+                        date,
+                        current_horizon,
+                        persisted_codes=persisted_codes,
+                    )
+                    self._repair_blocked_predictions(
+                        date, current_horizon, expected_codes
+                    )
                 self.assign_ranks(
                     date,
                     current_horizon,
@@ -1045,6 +1792,50 @@ class StockScoringService:
         prediction.save()
         return prediction
 
+    def _persist_predictions_bulk(self, writes) -> None:
+        """Bulk-upsert prediction payloads (perf C1/3.3).
+
+        ``writes`` is an iterable of ``(payload, existing)`` pairs. Every
+        business field in the payload is ``$set`` on the natural key
+        ``{stock_code, date, horizon, model_version}`` (the unique index), so
+        the semantics match ``_persist_prediction``: blocked rows lose their
+        rank/percentile, ``updated_at`` refreshes on every write and
+        ``generated_at`` is stamped on insert. Rows not named by the payload
+        (rank/percentile of a PENDING rewrite) are left untouched, exactly as
+        the document-level save did.
+        """
+        writes = list(writes)
+        if not writes:
+            return
+        now = datetime.datetime.now(datetime.UTC)
+        operations = []
+        for payload, _existing in writes:
+            document = dict(payload)
+            stock = document.get("stock")
+            if stock is not None:
+                # ReferenceField stores the referenced document's _id; a raw
+                # bulk write must encode it the same way.
+                document["stock"] = getattr(stock, "id", stock)
+            if document.get("status") == "BLOCKED":
+                document.setdefault("rank", None)
+                document.setdefault("percentile", None)
+            operations.append(
+                UpdateOne(
+                    {
+                        "stock_code": document["stock_code"],
+                        "date": document["date"],
+                        "horizon": document["horizon"],
+                        "model_version": document["model_version"],
+                    },
+                    {
+                        "$set": {**document, "updated_at": now},
+                        "$setOnInsert": {"generated_at": now},
+                    },
+                    upsert=True,
+                )
+            )
+        self.prediction_model._get_collection().bulk_write(operations, ordered=False)
+
     def _build_blocked_prediction(
         self,
         stock,
@@ -1093,7 +1884,16 @@ class StockScoringService:
         }
 
     def _build_components(
-        self, quote, factors, signals, history_quotes, date, horizon, config, stock_code
+        self,
+        quote,
+        factors,
+        signals,
+        history_quotes,
+        date,
+        horizon,
+        config,
+        stock_code,
+        prefetch: "_DayPrefetch | None" = None,
     ):
         import datetime as dt
 
@@ -1116,14 +1916,20 @@ class StockScoringService:
         )
 
         if not has_bullish_today and decay_max_days > 0:
-            lookback_start = date - dt.timedelta(days=decay_max_days + 1)
-            recent = list(
-                self.signal_model.objects(
-                    stock_code=stock_code,
-                    date__gte=normalize_date(lookback_start),
-                    date__lt=normalize_date(date),
-                ).order_by("-date")
-            )
+            if prefetch is not None:
+                # One prefetched decay window serves every stock/horizon; the
+                # days_since_signal gate below keeps a wider window equivalent
+                # to the per-horizon query.
+                recent = prefetch.decay_signals(stock_code)
+            else:
+                lookback_start = date - dt.timedelta(days=decay_max_days + 1)
+                recent = list(
+                    self.signal_model.objects(
+                        stock_code=stock_code,
+                        date__gte=normalize_date(lookback_start),
+                        date__lt=normalize_date(date),
+                    ).order_by("-date")
+                )
             # Group by date, find most recent date with bullish signals
             by_date: dict = {}
             for sig in recent:
@@ -1182,6 +1988,11 @@ class StockScoringService:
                 history_quotes=history_quotes,
                 weight=weights.get("real_relative_strength", 0.0),
                 lookback=config.get("momentum_lookback", 10),
+                index_quotes=(
+                    prefetch.index_quotes_for(stock_code, history_quotes, quote)
+                    if prefetch is not None
+                    else None
+                ),
             ),
             industry_momentum_component(
                 stock_code=stock_code,
@@ -1189,6 +2000,9 @@ class StockScoringService:
                 horizon=horizon,
                 weight=weights.get("industry_momentum", 0.0),
                 model_version=self.model_version,
+                industry_lookup=(
+                    prefetch.industry_lookup(horizon) if prefetch is not None else None
+                ),
             ),
         ]
         penalties = [risk_penalty(quote, risk_quotes, weights["risk_penalty"])]

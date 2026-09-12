@@ -4,6 +4,7 @@ import argparse
 import datetime
 import json
 import logging
+import os
 import time
 
 from app.lib.utilities import job_run_helper
@@ -51,29 +52,28 @@ def run_scoring(args) -> dict:
     service = StockScoringService(model_version=args.model_version)
     horizons = [args.horizon] if args.horizon else DEFAULT_HORIZONS
 
-    results = {}
-    for horizon in horizons:
-        logger.info("Running scoring for horizon=%d...", horizon)
-        result = service.score_all_stocks(
-            date=parse_date(args.date),
-            horizon=horizon,
-            dry_run=args.dry_run,
-            replace=args.replace,
-        )
-        results[str(horizon)] = result
-        logger.info("Scoring horizon=%d completed: %s", horizon, result)
+    # Perf C1 remainder: one call covers every requested horizon. Looping here
+    # built one per-day prefetch per horizon, so a full-market day read the
+    # whole-market history window three times (30/70/130 trading days for
+    # h5/h20/h60) and re-listed the stock universe three times. The service
+    # already iterates the same horizon list internally, so the loop only
+    # multiplied the reads. ``horizon=None`` keeps the single-horizon case
+    # identical to before.
+    logger.info("Running scoring for horizons=%s...", horizons)
+    result = service.score_all_stocks(
+        date=parse_date(args.date),
+        horizon=args.horizon,
+        dry_run=args.dry_run,
+        replace=args.replace,
+    )
+    logger.info("Scoring completed for horizons=%s: %s", horizons, result)
 
+    scored_count = result.get("scored_count", 0) if isinstance(result, dict) else 0
     summary = {
         "horizons": horizons,
-        "results": results,
-        "pulled_total": sum(
-            r.get("scored_count", 0) if isinstance(r, dict) else 0
-            for r in results.values()
-        ),
-        "written_total": sum(
-            r.get("scored_count", 0) if isinstance(r, dict) else 0
-            for r in results.values()
-        ),
+        "results": result,
+        "pulled_total": scored_count,
+        "written_total": scored_count,
     }
     return summary
 
@@ -122,6 +122,53 @@ def run_backfill(args):
         replace=args.replace,
     )
     print(f"Backfill completed: {result}")
+
+
+def run_equivalence_check_cmd(args) -> int:
+    """C1 (perf 3.5/5.3): diff the per-stock and batched paths on one date.
+
+    Read-only unless ``--apply`` is given: both passes then run with
+    ``replace=True`` and the batched pass is the last writer, so the persisted
+    day ends up as production now produces it. Returns the process exit code
+    (1 when any field diverges, so an operator/CI wrapper fails closed).
+    """
+    _init_db_connection()
+    from app.lib.scoring_engine.equivalence_check import run_equivalence_check
+
+    horizons = (
+        [int(value) for value in args.horizons.split(",")]
+        if args.horizons
+        else DEFAULT_HORIZONS
+    )
+
+    def service_factory(batch_prefetch: bool):
+        from app.lib.scoring_engine.scoring_service import StockScoringService
+
+        return StockScoringService(
+            model_version=args.model_version, batch_prefetch=batch_prefetch
+        )
+
+    if args.apply:
+        logger.warning(
+            "equivalence-check --apply rewrites %s predictions with replace=True "
+            "(per-stock pass, then batched pass)",
+            args.date,
+        )
+    report = run_equivalence_check(
+        service_factory,
+        date=parse_date(args.date),
+        horizons=horizons,
+        mode=args.mode,
+        apply=args.apply,
+        max_diffs=args.max_diffs,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    if args.report:
+        with open(args.report, "w", encoding="utf-8") as handle:
+            json.dump(report, handle, ensure_ascii=False, indent=2, default=str)
+    if not report["applied"]:
+        return 0
+    return 0 if report["ok"] else 1
 
 
 def run_report(args):
@@ -373,6 +420,40 @@ def main(argv: list[str] | None = None) -> None:
     p_compare.add_argument("--baseline-model-version", required=True)
     p_compare.add_argument("--format", choices=["json", "text"], default="json")
 
+    # equivalence-check command - C1 batch/per-stock diff (perf 3.5/5.3)
+    p_equiv = subparsers.add_parser(
+        "equivalence-check",
+        help="Diff the per-stock and batched scoring paths on one evaluation date",
+    )
+    add_common_options(p_equiv, include_horizon=False)
+    p_equiv.add_argument(
+        "--date",
+        required=True,
+        help="Evaluation date (YYYY-MM-DD) with quotes already ingested.",
+    )
+    p_equiv.add_argument(
+        "--horizons",
+        help="Comma-separated horizons to check (default: all of 5,20,60).",
+    )
+    p_equiv.add_argument(
+        "--mode",
+        choices=["raw", "ranked"],
+        default=os.getenv("DATAHUB_SCORING_MODE", "raw").strip().lower() or "raw",
+        help="Scoring mode to compare (default: DATAHUB_SCORING_MODE or raw).",
+    )
+    p_equiv.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually run both paths (replace=True). Without it the check is read-only.",
+    )
+    p_equiv.add_argument(
+        "--max-diffs",
+        type=int,
+        default=20,
+        help="Maximum number of field diffs to keep in the report (default 20).",
+    )
+    p_equiv.add_argument("--report", help="Optional path to write the JSON report.")
+
     # experiment command
     p_experiment = subparsers.add_parser(
         "experiment", help="Run a stored score experiment"
@@ -473,6 +554,8 @@ def main(argv: list[str] | None = None) -> None:
         run_grid_search(args)
     elif args.command == "compare":
         run_compare(args)
+    elif args.command == "equivalence-check":
+        raise SystemExit(run_equivalence_check_cmd(args))
     else:
         parser.print_help()
 

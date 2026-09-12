@@ -128,7 +128,9 @@ class TestRankedDirectionFlip:
             )
 
         # Deterministic raw components: A has higher momentum than B.
-        def fake_components(stock, date, horizon):
+        # ``**kwargs`` absorbs the batch prefetch context (perf C1) so this
+        # stub keeps working against both scoring read paths.
+        def fake_components(stock, date, horizon, **kwargs):
             if stock.code == "sh600000":
                 momentum, trend = 0.9, 0.8
             else:

@@ -247,3 +247,79 @@ def test_main_compare_requires_both_versions(monkeypatch):
             ]
         )
     assert excinfo.value.code == 2  # argparse usage error
+
+
+def test_run_scoring_makes_one_call_covering_all_horizons(monkeypatch):
+    """Perf C1 remainder: the runner must not rebuild the per-day prefetch once
+    per horizon. A full-market day has to reach ``score_all_stocks`` exactly
+    once with ``horizon=None`` so the whole-market history window, decay window,
+    CSI300, industry and existing-prediction reads happen a single time."""
+    import app.jobs.scoring_runner as scoring_runner
+    from app.lib.scoring_engine import scoring_service as scoring_service_module
+
+    calls = []
+
+    class _FakeService:
+        def __init__(self, model_version=None, **kwargs):
+            self.model_version = model_version
+
+        def score_all_stocks(self, **kwargs):
+            calls.append(kwargs)
+            return {
+                "date": None,
+                "horizons": scoring_runner.DEFAULT_HORIZONS,
+                "scored_count": 123,
+                "skipped_complete_horizons": [],
+                "dry_run": False,
+            }
+
+    monkeypatch.setattr(scoring_service_module, "StockScoringService", _FakeService)
+    args = scoring_runner.argparse.Namespace(
+        model_version="score_v2_202605b",
+        horizon=None,
+        date="2026-08-03",
+        dry_run=False,
+        replace=False,
+    )
+
+    summary = scoring_runner.run_scoring(args)
+
+    assert len(calls) == 1
+    assert calls[0]["horizon"] is None
+    assert calls[0]["date"] == scoring_runner.datetime.datetime(2026, 8, 3)
+    assert summary["horizons"] == scoring_runner.DEFAULT_HORIZONS
+    assert summary["pulled_total"] == 123
+    assert summary["written_total"] == 123
+
+
+def test_run_scoring_passes_a_single_horizon_through_unchanged(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+    from app.lib.scoring_engine import scoring_service as scoring_service_module
+
+    calls = []
+
+    class _FakeService:
+        def __init__(self, model_version=None, **kwargs):
+            pass
+
+        def score_all_stocks(self, **kwargs):
+            calls.append(kwargs)
+            return {"horizons": [20], "scored_count": 7}
+
+    monkeypatch.setattr(scoring_service_module, "StockScoringService", _FakeService)
+    args = scoring_runner.argparse.Namespace(
+        model_version="score_v2_202605b",
+        horizon=20,
+        date=None,
+        dry_run=True,
+        replace=True,
+    )
+
+    summary = scoring_runner.run_scoring(args)
+
+    assert len(calls) == 1
+    assert calls[0]["horizon"] == 20
+    assert calls[0]["dry_run"] is True
+    assert calls[0]["replace"] is True
+    assert summary["horizons"] == [20]
+    assert summary["pulled_total"] == 7
