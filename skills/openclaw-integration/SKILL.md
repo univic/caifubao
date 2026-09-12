@@ -13,7 +13,7 @@ metadata:
 The integration contract between caifubao and OpenClaw, a downstream **read-only**
 consumer. Caifubao provides data, contracts, freshness metadata, authentication,
 and auditability; OpenClaw performs investment analysis. OpenClaw analysis logic
-must NEVER enter caifubao (`RULES.md` → OpenClaw-Specific Rules).
+must NEVER enter caifubao (`RULES.md#openclaw`).
 
 Source of truth: `docs/integrations/openclaw.md`, `docs/operations/service-tokens.md`,
 `backend/app/api/v1/integrations/openclaw/*`, `backend/app/lib/auth_decorators.py`,
@@ -43,22 +43,23 @@ Source of truth: `docs/integrations/openclaw.md`, `docs/operations/service-token
 
 ## 2. Endpoint map (all GET, base `/api/v1/integrations/openclaw`)
 
-| Endpoint | Scope | Key params | Notes |
-|---|---|---|---|
-| `/` | data-read | — | health/info; `version: v1-mvp`, `service_identity` = token name |
-| `/stocks` | data-read | page(1), per_page(100), active_status(0/1/2), exchange, market, keyword | stock metadata + data_capabilities |
-| `/quotes/daily` | data-read | symbols (docs say required; code does NOT enforce — absent ⇒ full-table scan), start_date, end_date, page, per_page(100) | OHLCV + trade_amount, turnover_rate, trade_status, is_st |
-| `/factors/daily` | data-read | symbols, start_date, end_date, page, per_page(50) | fq_factor, *_hfq, open/close, ma_10..ma_120 |
-| `/signals` | data-read | date, signal_name, direction, page, per_page(100) | includes factor/price snapshot, generated_at |
-| `/quality` | data-read | symbol, asset_type | freshness/coverage; items hard-capped at 500 |
-| `/scores` | score-read **or** data-read | date, horizon(5/20/60), stock_code, model_version, status, page(1), per_page(100, max 500) | ordered -date,-score; explanation / input_snapshot / verification |
-| `/recommendations/daily` | **data-read only** | date, horizon(5/20/60, default 5), min_score(60.0), limit(20), model_version | score >= min_score; 400 on invalid horizon |
-| `/recommendations/performance` | **data-read only** | horizon(default 5), model_version | total_verified, effective_predictions, accuracy_rate, top_recommendations_count, avg_max_profit_top |
+| Endpoint                       | Scope                       | Key params                                                                                                               | Notes                                                                                               |
+| ------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `/`                            | data-read                   | —                                                                                                                        | health/info; `version: v1-mvp`, `service_identity` = token name                                     |
+| `/stocks`                      | data-read                   | page(1), per_page(100), active_status(0/1/2), exchange, market, keyword                                                  | stock metadata + data_capabilities                                                                  |
+| `/quotes/daily`                | data-read                   | symbols (docs say required; code does NOT enforce — absent ⇒ full-table scan), start_date, end_date, page, per_page(100) | OHLCV + trade_amount, turnover_rate, trade_status, is_st                                            |
+| `/factors/daily`               | data-read                   | symbols, start_date, end_date, page, per_page(50)                                                                        | fq_factor, \*\_hfq, open/close, ma_10..ma_120                                                       |
+| `/signals`                     | data-read                   | date, signal_name, direction, page, per_page(100)                                                                        | includes factor/price snapshot, generated_at                                                        |
+| `/quality`                     | data-read                   | symbol, asset_type                                                                                                       | freshness/coverage; items hard-capped at 500                                                        |
+| `/scores`                      | score-read **or** data-read | date, horizon(5/20/60), stock_code, model_version, status, page(1), per_page(100, max 500)                               | ordered -date,-score; explanation / input_snapshot / verification                                   |
+| `/recommendations/daily`       | **data-read only**          | date, horizon(5/20/60, default 5), min_score(60.0), limit(20), model_version                                             | score >= min_score; 400 on invalid horizon                                                          |
+| `/recommendations/performance` | **data-read only**          | horizon(default 5), model_version                                                                                        | total_verified, effective_predictions, accuracy_rate, top_recommendations_count, avg_max_profit_top |
 
-> Code-vs-docs discrepancy (verified): `/scores` accepts `openclaw:score-read`, but
-> `/recommendations/*` require `openclaw:data-read` (`recommendations.py` decorators).
-> `openspec/.../openclaw-data-access/spec.md` claims score-read grants recommendation
-> access — **code is authoritative**; reconcile docs/spec via spec gate before relying on it.
+> Unresolved contract discrepancy: `/scores` accepts `openclaw:score-read`, but
+> `/recommendations/*` currently require `openclaw:data-read` in code while the
+> archived OpenSpec contract grants recommendation access to `score-read`. Do not
+> assume either behavior is intended; reconcile it through a new active OpenSpec
+> change before modifying or relying on this scope boundary.
 
 ## 3. Response envelope & errors
 
@@ -66,8 +67,7 @@ Source of truth: `docs/integrations/openclaw.md`, `docs/operations/service-token
   (uuid4), `generated_at` (ISO-8601), `data`; optional `data_as_of` (ISO-8601).
   Do not return raw Mongo shapes (P2: API response is the contract). Note: the
   `/` health endpoint and 401/403 error bodies are NOT wrapped — they return
-  only `success`/`message` (+`version`/`service_identity`/`timestamp` on `/`,
-  +`error_code` on auth failures), with no `request_id`/`generated_at`/`data`.
+  only `success`/`message` (+`version`/`service_identity`/`timestamp` on `/`, +`error_code` on auth failures), with no `request_id`/`generated_at`/`data`.
 - Errors: missing/bad Authorization header → 401 `AUTH_HEADER_MISSING`;
   invalid/inactive token → 401 `AUTH_FAILED`; valid token missing scope → 403
   `AUTH_FAILED`; service token on a compute endpoint → 403 `SERVICE_TOKEN_BLOCKED`;
@@ -96,7 +96,7 @@ Source of truth: `docs/integrations/openclaw.md`, `docs/operations/service-token
   `/api/decisions/*`, `/api/datahub/*`, `/api/factor-eval/*`.
 - Never hand OpenClaw Mongo credentials; never let it trigger scheduling, backfill,
   mutation, or admin actions; never let OpenClaw analysis logic enter caifubao
-  (P2 module boundary + OpenClaw-Specific Rules).
+  (`RULES.md#module-boundaries` and `RULES.md#openclaw`).
 - OpenClaw endpoints stay under `/api/v1/integrations/openclaw` — do not add
   OpenClaw access elsewhere.
 

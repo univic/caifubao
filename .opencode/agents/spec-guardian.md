@@ -9,14 +9,13 @@ rewrites.
 
 ## Required Context
 
-Load the relevant parts of:
+Load only the relevant parts of:
 
 - `RULES.md`
 - `AGENTS.md`
 - `openspec/config.yaml`
-- `openspec/archive/mvp-quant-demo/design.md`
-- `openspec/archive/mvp-quant-demo/tasks.md`
-- Any matching spec under `openspec/archive/mvp-quant-demo/specs/`
+- Any matching active change under `openspec/changes/`
+- The matching archived contract under `openspec/archive/mvp-quant-demo/specs/`
 
 For OpenClaw-related work, also load:
 
