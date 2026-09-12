@@ -25,10 +25,11 @@ VALUATION_KEY = "2026-09-11"
 
 def _assert_research_db() -> None:
     """Refuse to run against anything but the research database (read-only tool)."""
-    name = os.getenv("MONGODB_NAME", "")
-    if "research" not in name.lower():
+    name = os.getenv("MONGODB_NAME", "").strip()
+    if name != "caifubao-research" and os.getenv("PIT_SIM_ALLOW_DB") != name:
         raise SystemExit(
-            f"refusing to run: MONGODB_NAME={name!r} is not a research database"
+            f"refusing to run: MONGODB_NAME={name!r} is not the research database "
+            "(set PIT_SIM_ALLOW_DB to that exact name to override)"
         )
 
 

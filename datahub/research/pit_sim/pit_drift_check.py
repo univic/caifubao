@@ -17,7 +17,7 @@ What it measures:
 
 If the drift on the post-rewrite dates is ~0, re-derivation is a faithful
 substitute for a decision that production never got to make (the pipeline only
-scored 11 of the 30 window sessions).
+scored 12 of the 30 window sessions).
 """
 
 import datetime
@@ -28,10 +28,11 @@ import sys
 
 def _assert_research_db() -> None:
     """These scripts WRITE predictions: refuse non-research targets."""
-    name = os.getenv("MONGODB_NAME", "")
-    if "research" not in name.lower():
+    name = os.getenv("MONGODB_NAME", "").strip()
+    if name != "caifubao-research" and os.getenv("PIT_SIM_ALLOW_DB") != name:
         raise SystemExit(
-            f"refusing to run: MONGODB_NAME={name!r} is not a research database"
+            f"refusing to run: MONGODB_NAME={name!r} is not the research database "
+            "(set PIT_SIM_ALLOW_DB to that exact name to override)"
         )
 
 
@@ -45,6 +46,9 @@ def main() -> int:
     from app.lib.db_watcher.mongoengine_tool import mongo_watcher
 
     _assert_research_db()
+    # This audit compares against the built-in production configuration, which is
+    # only what the *raw* path scores; pin it instead of inheriting ambient env.
+    os.environ["DATAHUB_SCORING_MODE"] = "raw"
     mongo_watcher.get_db_connection()
     from app.model.scoring import StockScorePrediction
 
