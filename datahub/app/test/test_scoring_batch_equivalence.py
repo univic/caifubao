@@ -972,6 +972,23 @@ def test_row_from_frame_normalises_pandas_values():
     assert rows[1].close_hfq == 8.0
 
 
+def _names_and_strengths(service, code, horizon):
+    """(signal_name, strength, reason) tuples persisted for one stock/horizon."""
+    stored = [
+        p
+        for p in FakePrediction.records
+        if p.stock_code == code and p.horizon == horizon
+    ]
+    assert len(stored) == 1, f"expected one row for {code} h{horizon}"
+    component = next(
+        c for c in stored[0].explanation["components"] if c["id"] == "signal_strength"
+    )
+    return [
+        (s["name"], s.get("strength"), s.get("reason"))
+        for s in component["evidence"]["signals"]
+    ]
+
+
 def test_signal_evidence_order_is_canonical_and_path_independent(batch_harness):
     """Signal read order is a persisted field, so both paths must agree.
 
@@ -979,48 +996,84 @@ def test_signal_evidence_order_is_canonical_and_path_independent(batch_harness):
     ``stock_code__in`` while the per-stock path reads ``stock_code=X``. A real
     database returned those rows in different orders, which diverged on 27 of
     5,561 rows of ``explanation[].evidence.signals`` in the dev full-market
-    check. Seed the signals in reverse name order so an unsorted read is
-    detectable, then require both paths to persist the same, name-ordered list.
+    check. Seed one stock's signals in reverse name order (with unique names, so
+    the order key is injective and a stable sort cannot hide the bug) and require
+    both paths to persist the same name-ordered list including strengths.
+    """
+    seed_market()
+    code = "sh601999"
+    _seed_normal_stock(code, 3)
+    # Replace the helper's live signal with three uniquely named ones, inserted
+    # in reverse-alphabetical order.
+    FakeSignal.records = [s for s in FakeSignal.records if s.stock_code != code]
+    expected_names = ["MA10_CROSS_MA20", "MA20_ABOVE_MA60", "PRICE_ABOVE_MA60"]
+    for rank, name in enumerate(reversed(expected_names)):
+        FakeSignal.records.append(
+            FakeSignal(
+                stock_code=code,
+                date=EVAL_DATE,
+                signal_name=name,
+                direction="BULLISH",
+                strength=0.5 + rank,
+                reason=f"reason-{name}",
+            )
+        )
+
+    def measure(batch: bool):
+        FakePrediction.records = []
+        batch_harness.batch_prefetch = batch
+        batch_harness.score_all_stocks(date=EVAL_DATE, horizon=20)
+        return _names_and_strengths(batch_harness, code, 20)
+
+    batch_rows = measure(True)
+    legacy_rows = measure(False)
+
+    assert batch_rows == legacy_rows
+    assert [row[0] for row in batch_rows] == sorted(expected_names)
+    # Strengths travel with their name (a names-only comparison would miss a
+    # mis-ordered strengths list).
+    assert batch_rows == sorted(batch_rows, key=lambda row: row[0])
+
+
+def test_decayed_signal_evidence_order_is_canonical(batch_harness):
+    """The decay branch has its own signal list that must be ordered too.
+
+    ``has_bullish_today`` is False here, so the component reports the decayed
+    evidence built from ``by_date[most_recent_date]``; deleting the sort there
+    keeps the live-signal test green, so this case pins it.
     """
     from app.lib.scoring_engine.scoring_service import _signal_order_key
 
     seed_market()
-    # Deliberately reverse-alphabetical insertion order for one stock.
-    for name in ("PRICE_ABOVE_MA60", "MA20_ABOVE_MA60", "MA10_CROSS_MA20"):
+    code = "sh601998"
+    _seed_normal_stock(code, 4)
+    FakeSignal.records = [s for s in FakeSignal.records if s.stock_code != code]
+    decay_day = TRADE_DAYS[-3]
+    assert decay_day < EVAL_DATE
+    expected_names = ["MA20_ABOVE_MA60", "PRICE_ABOVE_MA60"]
+    # Reverse order on purpose: the raw query order must not leak.
+    for rank, name in enumerate(reversed(expected_names)):
         FakeSignal.records.append(
             FakeSignal(
-                stock_code="sh600000",
-                date=EVAL_DATE,
+                stock_code=code,
+                date=decay_day,
                 signal_name=name,
                 direction="BULLISH",
-                strength=1.0,
-                reason=name,
+                strength=0.25 + rank,
+                reason=f"decayed-{name}",
             )
         )
 
-    def names_for(batch: bool):
+    def measure(batch: bool):
         FakePrediction.records = []
         batch_harness.batch_prefetch = batch
         batch_harness.score_all_stocks(date=EVAL_DATE, horizon=20)
-        stored = [
-            p
-            for p in FakePrediction.records
-            if p.stock_code == "sh600000" and p.horizon == 20
-        ]
-        assert len(stored) == 1
-        components = stored[0].explanation["components"]
-        signal_component = next(c for c in components if c["id"] == "signal_strength")
-        return [s["name"] for s in signal_component["evidence"]["signals"]]
+        return _names_and_strengths(batch_harness, code, 20)
 
-    batch_names = names_for(True)
-    legacy_names = names_for(False)
+    batch_rows = measure(True)
+    legacy_rows = measure(False)
 
-    assert batch_names == legacy_names
-    assert batch_names == sorted(batch_names)
-    # The three seeded names are present and, because they were inserted in
-    # reverse-alphabetical order, a raw (unsorted) read would have put
-    # PRICE_ABOVE_MA60 first.
-    for name in ("MA10_CROSS_MA20", "MA20_ABOVE_MA60", "PRICE_ABOVE_MA60"):
-        assert name in batch_names
-    assert batch_names.index("MA10_CROSS_MA20") < batch_names.index("PRICE_ABOVE_MA60")
+    assert batch_rows, "decay branch must produce signal evidence"
+    assert batch_rows == legacy_rows
+    assert [row[0] for row in batch_rows] == sorted(expected_names)
     assert _signal_order_key(type("S", (), {"signal_name": None})()) == ""
