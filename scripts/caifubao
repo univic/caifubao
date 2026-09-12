@@ -202,6 +202,130 @@ cmd_score_report() {
     --from "$from" --to "$to" --horizon "$horizon" --format json
 }
 
+# ---- Strategy commands (paper-first; forward-evidence operations) ----
+
+# Paper-only: these record target portfolios and a paper NAV. None of them place
+# orders. `forward certify` opens the immutable forward-evidence window, which is
+# the promotion gate — it is never opened implicitly, requires `--yes`, and its
+# start date is the certification session (never backdated). Operator runbook:
+# docs/operations/strategy-forward-window.md.
+
+# Read one option's value, failing with usage instead of a bash `unbound
+# variable` error when the value is missing.
+_opt_value() {
+  if [[ $# -lt 2 || -z "${2:-}" ]]; then
+    die "Option $1 requires a value"
+  fi
+  printf '%s' "$2"
+}
+
+cmd_strategy_run() {
+  local date="${1:-}"; shift || true
+  local config="" extra=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --config-json) config="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --replace)     extra+=(--replace); shift ;;
+      --dry-run)     extra+=(--dry-run); shift ;;
+      # run takes its score source from the config JSON (the certified config
+      # must be byte-identical to the window's); forwarding these would make the
+      # runner exit 2, and translating them would risk a mismatched hash.
+      --model-version|--horizon)
+        die "$1 is not accepted by 'strategy run': pin it inside --config-json so the config_hash matches the certified window"
+        ;;
+      *) die "Unknown option: $1" ;;
+    esac
+  done
+  date="${date:-$(python3 -c 'import datetime;print(datetime.date.today().isoformat())')}"
+  # Build a non-empty args array: `"${arr[@]}"` on an empty array trips `set -u`
+  # on the bash 3.2 that ships with macOS.
+  local args=(run --date "$date")
+  if [[ -n "$config" ]]; then args+=(--config-json "$config"); fi
+  if [[ ${#extra[@]} -gt 0 ]]; then args+=("${extra[@]}"); fi
+  info "Running the paper strategy for $date..."
+  _pod_exec "$PYTHON_BIN" -m app.jobs.strategy_runner "${args[@]}"
+}
+
+cmd_strategy_report() {
+  local date="${1:-}"; shift || true
+  local extra=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --model-version) extra+=(--model-version "$(_opt_value "$1" "${2:-}")"); shift 2 ;;
+      *)               die "Unknown option: $1" ;;
+    esac
+  done
+  if [[ -z "$date" ]]; then
+    die "Usage: caifubao strategy report <DATE> [--model-version V]"
+  fi
+  local args=(report --date "$date")
+  if [[ ${#extra[@]} -gt 0 ]]; then args+=("${extra[@]}"); fi
+  _pod_exec "$PYTHON_BIN" -m app.jobs.strategy_runner "${args[@]}"
+}
+
+cmd_strategy_nav() {
+  local from="" to="" config="" model_version="" horizon=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --from)          from="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --to)            to="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --config-json)   config="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --model-version) model_version="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --horizon)       horizon="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      *)               die "Unknown option: $1" ;;
+    esac
+  done
+  if [[ -z "$from" || -z "$to" ]]; then
+    die "Usage: caifubao strategy nav --from DATE --to DATE [--config-json JSON] [--model-version V] [--horizon H]"
+  fi
+  local args=(nav --from "$from" --to "$to")
+  if [[ -n "$config" ]]; then args+=(--config-json "$config"); fi
+  if [[ -n "$model_version" ]]; then args+=(--model-version "$model_version"); fi
+  if [[ -n "$horizon" ]]; then args+=(--horizon "$horizon"); fi
+  info "Recomputing the paper NAV curve $from → $to..."
+  _pod_exec "$PYTHON_BIN" -m app.jobs.strategy_runner "${args[@]}"
+}
+
+cmd_strategy_forward() {
+  local sub="${1:-}"; shift || true
+  local model_version="" horizon="" config="" confirmed=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --model-version) model_version="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --horizon)       horizon="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --config-json)   config="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --yes)           confirmed="1"; shift ;;
+      *)               die "Unknown option: $1" ;;
+    esac
+  done
+  case "$sub" in
+    certify|close|progress) ;;
+    *) die "Unknown strategy forward command: ${sub:-<none>} (use: certify|close|progress)" ;;
+  esac
+  if [[ -z "$model_version" || -z "$horizon" ]]; then
+    die "Usage: caifubao strategy forward $sub --model-version V --horizon H"
+  fi
+  # Only certify takes a config or a confirmation; close/progress are plain.
+  if [[ -n "$config" && "$sub" != "certify" ]]; then
+    die "--config-json is only accepted by 'strategy forward certify'"
+  fi
+  if [[ -n "$confirmed" && "$sub" != "certify" ]]; then
+    die "--yes is only accepted by 'strategy forward certify'"
+  fi
+  local args=(forward "$sub" --model-version "$model_version" --horizon "$horizon")
+  if [[ "$sub" == "certify" ]]; then
+    warn "certify opens an ACTIVE forward-evidence window (the promotion gate) and"
+    warn "CLOSES any ACTIVE predecessor on this (model_version, horizon)."
+    warn "start_date is the certification session; historical replay can never be backdated in."
+    warn "Only the first session may be certified: a missed trading day is a permanent gap in the window."
+    if [[ -z "$confirmed" ]]; then
+      die "refusing to certify without --yes (explicit operator authorization required); see docs/operations/strategy-forward-window.md"
+    fi
+    if [[ -n "$config" ]]; then args+=(--config-json "$config"); fi
+  fi
+  _pod_exec "$PYTHON_BIN" -m app.jobs.strategy_runner "${args[@]}"
+}
+
 # ---- System commands ----
 
 cmd_system_health() {
@@ -460,6 +584,22 @@ Score:
   score verify [FROM] [TO] [HORIZON]  Verify pending predictions
   score report [FROM] [TO] [HORIZON]  Generate calibration report
 
+Strategy (paper-only; no orders):
+  strategy run [DATE] [--config-json JSON] [--dry-run] [--replace]
+                                      Record one day's paper target portfolio
+                                      (pin the certified config via --config-json)
+  strategy report <DATE> [--model-version V]
+                                      Show the recorded run for a date
+  strategy nav --from DATE --to DATE [--config-json JSON] [--model-version V] [--horizon H]
+                                      Recompute the paper NAV curve
+  strategy forward progress --model-version V --horizon H
+                                      120-session forward-evidence counter
+  strategy forward certify --model-version V --horizon H [--config-json JSON] --yes
+                                      Open the certified forward window
+                                      (closes any ACTIVE predecessor; needs --yes)
+  strategy forward close --model-version V --horizon H
+                                      Close the ACTIVE forward window
+
 System:
   system health                       Full environment health check
   system cron [status|trigger|suspend|resume] <name>
@@ -485,6 +625,7 @@ Examples:
   caifubao score score-one sz000977
   caifubao data status sz000977
   caifubao system health
+  caifubao strategy forward progress --model-version flip_wide_shadow_v1 --horizon 20
 EOF
 }
 
@@ -508,6 +649,16 @@ main() {
         verify)         cmd_score_verify "$@" ;;
         report)         cmd_score_report "$@" ;;
         *)              die "Unknown score command: $cmd (use: score-one|score-all|verify|report)" ;;
+      esac
+      ;;
+    strategy)
+      local cmd="${1:-}"; shift || true
+      case "$cmd" in
+        run)            cmd_strategy_run "$@" ;;
+        report)         cmd_strategy_report "$@" ;;
+        nav)            cmd_strategy_nav "$@" ;;
+        forward)        cmd_strategy_forward "$@" ;;
+        *)              die "Unknown strategy command: $cmd (use: run|report|nav|forward)" ;;
       esac
       ;;
     system)
@@ -534,7 +685,7 @@ main() {
       usage
       ;;
     *)
-      die "Unknown domain: $domain (use: data|score|system|dev)"
+      die "Unknown domain: $domain (use: data|score|strategy|system|dev)"
       ;;
   esac
 }
