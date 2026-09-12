@@ -92,6 +92,18 @@ class _Row:
         return f"<_Row {ident}>"
 
 
+def _signal_order_key(signal):
+    """Total, deterministic order key for one day's signals of a stock.
+
+    ``stock_signal_daily`` is unique on ``(stock_code, date, signal_name)`` and
+    neither scoring read sorts, so the returned order depends on the index plan
+    (``stock_code=X`` vs ``stock_code__in=[...]``). Signal order is persisted in
+    ``explanation[].evidence.signals`` and ``input_snapshot.signals.dates``, so
+    both paths must impose the same order.
+    """
+    return getattr(signal, "signal_name", None) or ""
+
+
 def _raw_data(item) -> dict:
     """Stored values of one queried row (raw dict or Document-like object)."""
     if isinstance(item, dict):
@@ -339,7 +351,8 @@ class _DayPrefetch:
 
     def day_signals(self, code) -> list:
         self._load_day()
-        return self._day_signals.get(code, [])
+        # Same canonical order as the per-stock read (see _get_signals_on_date).
+        return sorted(self._day_signals.get(code, []), key=_signal_order_key)
 
     # -- history window ------------------------------------------------------
     def _window_records_iter(self, queryset):
@@ -1902,6 +1915,11 @@ class StockScoringService:
         breakout_quotes = history_quotes[: config["breakout_lookback"]]
         risk_quotes = history_quotes[: config["risk_lookback"]]
 
+        # Belt-and-braces: both read paths already impose ``_signal_order_key``
+        # (see _get_signals_on_date / _DayPrefetch.day_signals), so this keeps a
+        # direct caller with an unsorted list deterministic too.
+        signals = sorted(signals, key=_signal_order_key)
+
         # Signal persistence decay: when today has no bullish signal, look back
         decay_max_days = config.get("signal_decay_max_days", 5)
         decay_factor = config.get("signal_decay_factor", 0.7)
@@ -1945,13 +1963,15 @@ class StockScoringService:
                 most_recent_date = max(by_date.keys())
                 days_since_signal = (normalize_date(date) - most_recent_date).days
                 if days_since_signal <= decay_max_days:
+                    # Same canonical ordering as the live signals above: the
+                    # decay strengths feed the component's evidence, so the
+                    # per-stock and batch reads must agree on the list order.
+                    decayed = sorted(by_date[most_recent_date], key=_signal_order_key)
                     last_signal_strengths = [
-                        float(getattr(s, "strength", 1.0) or 1.0)
-                        for s in by_date[most_recent_date]
+                        float(getattr(s, "strength", 1.0) or 1.0) for s in decayed
                     ]
                     last_signal_names = [
-                        getattr(s, "signal_name", None)
-                        for s in by_date[most_recent_date]
+                        getattr(s, "signal_name", None) for s in decayed
                     ]
                 else:
                     days_since_signal = None
@@ -2132,8 +2152,14 @@ class StockScoringService:
         ).first()
 
     def _get_signals_on_date(self, stock_code, date):
-        return list(
-            self.signal_model.objects(stock_code=stock_code, date=normalize_date(date))
+        # ``stock_signal_daily`` is unique on (stock_code, date, signal_name) and
+        # unsorted, so the read order is whatever the index plan returns. Order
+        # is a persisted field (explanation evidence + input_snapshot dates), so
+        # pin it — the batch path reads the same rows with ``stock_code__in`` and
+        # would otherwise disagree on 0.5% of the cohort.
+        return sorted(
+            self.signal_model.objects(stock_code=stock_code, date=normalize_date(date)),
+            key=_signal_order_key,
         )
 
     def _get_previous_quotes(self, stock_code, date, limit):

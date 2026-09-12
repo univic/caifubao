@@ -22,6 +22,10 @@ qualify for a fast skip.
 - **THEN** every persisted prediction SHALL be field-identical to the
   per-stock path (score, recommendation, rank, percentile, explanation,
   verification, input_snapshot, model_version)
+- **AND** signal arrays persisted in `explanation` (the `signal_strength`
+  `raw_value` name list and `evidence.signals`, live and decayed) SHALL be
+  ordered by `signal_name` ascending, so the persisted order does not depend on
+  the query or index plan of either read path
 
 #### Scenario: Bulk upsert preserves document identity and write timestamps
 
