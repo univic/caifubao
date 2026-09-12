@@ -106,7 +106,7 @@ def _query_usable_predictions(model_version, date, horizon):
 
 
 def _query_flags(date, horizon, model_version=None) -> dict[str, dict]:
-    """{stock_code: {is_st, is_bse, trade_status}} for the date's cohort.
+    """{stock_code: {is_st, is_bse, trade_status, trade_amount}} for the cohort.
 
     Sources ST/trade_status from the StockDailyQuote collection (the real quote
     store — the embedded DailyQuote list on IndividualStock is never written by
@@ -145,8 +145,78 @@ def _query_flags(date, horizon, model_version=None) -> dict[str, dict]:
             "is_st": int(quote.isST or 0),
             "is_bse": 1 if is_bse_stock_code(code) else 0,
             "trade_status": quote.trade_status,
+            # Signal-date traded amount, for the liquidity floor (roadmap 1.3).
+            "trade_amount": quote.trade_amount,
         }
     return flags
+
+
+def _as_calendar_date(value):
+    """A date for comparison, or None when the value is not usable.
+
+    Compared as calendar dates so mixed naive/aware timestamps cannot raise or
+    shift the comparison. ``industry_change_log`` entries store their timestamp
+    as an ISO string (the writer uses ``now.isoformat()``), so strings are
+    parsed; an unparseable value is unusable rather than assumed.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.datetime.fromisoformat(value).date()
+        except ValueError:
+            return None
+    return None
+
+
+def _classification_in_effect_on(row, as_of_date) -> bool:
+    """Whether the row's CURRENT classification is provably in effect on a date.
+
+    ``assigned_at`` is written only when the row is created; the sync records
+    later changes in ``industry_change_log`` instead of moving ``assigned_at``.
+    So the current code can be attributed to the signal date only when the row
+    existed on or before it AND no recorded change happened after it. An entry
+    dated after the signal date — or an entry whose date cannot be read — means
+    the current code may post-date the signal, so the row is not usable.
+    """
+    target = _as_calendar_date(as_of_date)
+    assigned = _as_calendar_date(getattr(row, "assigned_at", None))
+    if target is None or assigned is None or assigned > target:
+        return False
+    for entry in getattr(row, "industry_change_log", None) or []:
+        changed = _as_calendar_date(
+            entry.get("timestamp") if isinstance(entry, dict) else None
+        )
+        if changed is None or changed > target:
+            return False
+    return True
+
+
+def _query_industry_map(codes, as_of_date) -> dict[str, str]:
+    """{stock_code: level-1 industry code} resolvable on the signal date.
+
+    The classification store holds one current row per stock (baostock CSRC L1,
+    despite the legacy ``sw`` field names), so a row is usable only when its
+    creation date and its change history both place the current code on or
+    before the signal date. Unprovable or missing classifications are omitted,
+    and the engine buckets those names as UNKNOWN under the same cap — never
+    attributed to a later classification.
+    """
+    from app.model.industry import StockIndustryClassification
+
+    if not codes:
+        return {}
+    return {
+        row.stock_code: row.industry_code_sw_l1
+        for row in StockIndustryClassification.objects(stock_code__in=list(codes)).only(
+            "stock_code", "industry_code_sw_l1", "assigned_at", "industry_change_log"
+        )
+        if row.industry_code_sw_l1 and _classification_in_effect_on(row, as_of_date)
+    }
 
 
 def _execution_date(date):
@@ -260,12 +330,20 @@ def run_strategy(
     flags = (
         _query_flags(date, horizon, model_version=model_version) if predictions else {}
     )
+    # Only fetch industry classification when the config actually caps it; an
+    # unconfigured limit must not add a query or a failure mode.
+    industry_by_code = None
+    if predictions and resolved["constraints"].get("max_industry_pct") is not None:
+        industry_by_code = _query_industry_map(
+            [p.stock_code for p in predictions], date
+        )
     plan = assemble_daily_plan(
         config=resolved,
         date=date,
         predictions=predictions,
         previous_holdings=previous_holdings,
         flags=flags,
+        industry_by_code=industry_by_code,
         horizon=horizon,
     )
     if dry_run:
