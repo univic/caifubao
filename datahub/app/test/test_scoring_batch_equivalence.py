@@ -658,7 +658,24 @@ def _seed_normal_stock(code, index):
 
 
 def _count_model_queries(monkeypatch, counter):
-    for model in (FakeQuote, FakeFactor, FakeSignal, FakePrediction):
+    """Count every model read, including the two component-level caches.
+
+    ``FakeQuote/Factor/Signal/Prediction`` cover the service-level reads. The
+    C1/3.4 per-day caches are consumed *inside components* (industry
+    classification + L1 metrics through the patched component models, CSI300
+    through the real ``StockDailyQuote`` the legacy component imports), so a
+    regression that dropped ``industry_lookup=``/``index_quotes=`` wiring would
+    leave the other tests green while those reads became O(cohort). Count them
+    too.
+    """
+    for model in (
+        FakeQuote,
+        FakeFactor,
+        FakeSignal,
+        FakePrediction,
+        FakeIndustryClassification,
+        FakeIndustryMetrics,
+    ):
         original = model.objects.__func__
 
         def counting(cls, *args, _original=original, _name=model.__name__, **query):
@@ -666,6 +683,19 @@ def _count_model_queries(monkeypatch, counter):
             return _original(cls, *args, **query)
 
         monkeypatch.setattr(model, "objects", classmethod(counting))
+
+    # The component-level CSI300 fallback goes through the *real*
+    # StockDailyQuote, currently patched by the harness to the fake records.
+    # Wrap whatever is installed rather than replacing it.
+    from app.model.stock import StockDailyQuote as _RealQuoteModel
+
+    installed = _RealQuoteModel.objects
+
+    def counting_index(cls, *args, **query):
+        counter["CSI300"] += 1
+        return installed(*args, **query)
+
+    monkeypatch.setattr(_RealQuoteModel, "objects", classmethod(counting_index))
 
 
 def test_batch_reads_are_constant_in_cohort_size(batch_harness, monkeypatch):
@@ -696,11 +726,31 @@ def test_batch_reads_are_constant_in_cohort_size(batch_harness, monkeypatch):
     large_batch = measure(True)
     large_legacy = measure(False)
 
-    for model in ("FakeQuote", "FakeFactor", "FakeSignal", "FakePrediction"):
-        assert large_batch[model] == small_batch[model], (
+    for model in (
+        "FakeQuote",
+        "FakeFactor",
+        "FakeSignal",
+        "FakePrediction",
+        "FakeIndustryClassification",
+        "FakeIndustryMetrics",
+        "CSI300",
+    ):
+        assert large_batch.get(model, 0) == small_batch.get(model, 0), (
             f"{model} reads must not scale with cohort size "
-            f"({small_batch[model]} -> {large_batch[model]})"
+            f"({small_batch.get(model, 0)} -> {large_batch.get(model, 0)})"
         )
+    # The per-day caches are consumed on the batch path. The prefetch itself
+    # performs exactly one industry classification + one L1 metrics query for
+    # the whole day and no component-level CSI300 read at all, while the
+    # per-stock path re-reads industry classification and CSI300 once per stock.
+    assert small_batch["FakeIndustryClassification"] == 1
+    assert small_batch["FakeIndustryMetrics"] == 1
+    assert small_batch.get("CSI300", 0) == 0
+    assert (
+        large_legacy["FakeIndustryClassification"]
+        > small_legacy["FakeIndustryClassification"]
+    )
+    assert large_legacy["CSI300"] > small_legacy["CSI300"]
     for model in ("FakeQuote", "FakeFactor", "FakeSignal"):
         assert large_legacy[model] > small_legacy[model], (
             f"per-stock {model} reads should scale with cohort size"

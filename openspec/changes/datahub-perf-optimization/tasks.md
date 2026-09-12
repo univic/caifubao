@@ -71,9 +71,10 @@
   回归测试 `test_run_scoring_makes_one_call_covering_all_horizons`、
   `test_replay_backfill_makes_one_call_per_date_for_all_horizons` 断言「每日期只调
   一次」；all-horizons 单次调用的输出等价性由
-  `test_raw_all_horizons_batch_matches_per_stock` 保证。`datahub_job_runs.summary`
-  的 `results` 由「按 horizon 字符串分键的 dict」变为单次服务结果（backend 只读
-  `count_documents`，无外部消费者）。
+  `test_raw_all_horizons_batch_matches_per_stock` 保证。`run_scoring` 的返回值
+  （以及 stdout）由「按 horizon 字符串分键的 dict」变为单次服务结果；该值不会进入
+  `datahub_job_runs.summary`（`_run_with_tracking` 只投影
+  `horizons/pulled_total/written_total/has_verify`），且全库无其它消费者。
 - [x] 3.2 分量计算 pandas 化（保持各组件 raw_value/weight 逐股一致）
   注：数值内核仍是原 Python 实现（`statistics.pstdev`、逐项 `round` 逐位一致），
   改变的是输入装配——组件改吃 dict/DataFrame 回读的 `_Row`/`_HistoryWindow`

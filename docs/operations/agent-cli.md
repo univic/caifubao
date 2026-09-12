@@ -227,7 +227,8 @@ the production before/after (different cluster, and the research scoring Job is
 
 Never pass `--apply` against **production**: it rewrites that day's predictions
 with `replace=True`. For prod, collect the after numbers from
-`datahub_job_runs.elapsed_seconds` after deployment (perf task 5.3/5.4).
+`datahub_job_runs` (`completed_at - started_at`; the collection has no
+`elapsed_seconds` field) after deployment (perf task 5.3/5.4).
 
 ### Strategy (paper)
 

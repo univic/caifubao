@@ -57,12 +57,23 @@ class _Row:
 
     Batch scoring reads whole-market collections with ``as_pymongo()`` so no
     mongoengine Document is hydrated. Components keep their existing
-    ``getattr``/attribute code paths against these rows. For full-document
-    reads the prefetch completes every model field with the default
-    mongoengine would apply on load (``_field_skeleton``); projected reads
-    (the history/decay windows) keep only their whitelisted fields, so any
-    access outside that whitelist raises ``AttributeError`` like a Document
-    with an unknown attribute.
+    ``getattr``/attribute code paths against these rows.
+
+    Strictness depends on how the row was built, and only ONE of the three
+    paths is fail-loud:
+
+    * history window (``_row_from_frame``) rebuilds the dict from the frame
+      columns alone, so reading a de-projected field raises ``AttributeError``
+      like a Document with an unknown attribute;
+    * full-document and `.only()` reads (``_rows`` -> ``_row_from_doc``) merge
+      the complete model default skeleton (``_field_skeleton``), so a
+      de-projected field silently reads as the model default (usually
+      ``None``) instead of raising.
+
+    Adding a field to a component therefore requires adding it to the matching
+    whitelist (``_HISTORY_QUOTE_FIELDS`` / ``_SIGNAL_DECAY_FIELDS`` /
+    ``_INDUSTRY_*_FIELDS``); the batch/per-stock equivalence harness is the
+    safety net for the silent case.
     """
 
     __slots__ = ("_data",)

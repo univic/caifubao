@@ -10,7 +10,10 @@ import pytest
 from app.lib.scoring_engine.calibration_report import ScoreCalibrationReport
 from app.lib.scoring_engine.comparison_report import ExperimentComparisonReport
 from app.lib.scoring_engine.replay_service import ScoreReplayService
-from app.lib.scoring_engine.scoring_service import StockScoringService
+from app.lib.scoring_engine.scoring_service import (
+    StockScoringService,
+    normalize_date,
+)
 from app.lib.scoring_engine.verification_service import ScoreVerificationService
 from app.model.scoring import StockScorePrediction
 
@@ -413,6 +416,72 @@ def test_get_t_plus_n_day_boundary_semantics():
     assert service.get_t_plus_n_day(
         datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC), 2
     ) == datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC)
+
+
+def _legacy_get_t_plus_n_day(calendar, start_date, n):
+    """The pre-cache implementation, kept verbatim as the differential oracle.
+
+    ``get_t_plus_n_day`` is the highest-risk part of the perf change (it runs
+    once per stock per horizon), so the bisect rewrite is pinned against the
+    original linear scan rather than against a handful of hand-picked dates.
+    """
+    start_date = normalize_date(start_date)
+    if not calendar:
+        return start_date + datetime.timedelta(days=round(n * 1.5))
+    sorted_cal = sorted(normalize_date(day) for day in calendar)
+    try:
+        start_idx = sorted_cal.index(start_date)
+        target_idx = start_idx + n
+        if target_idx < len(sorted_cal):
+            return sorted_cal[target_idx]
+        return sorted_cal[-1]
+    except ValueError:
+        future_days = [day for day in sorted_cal if day > start_date]
+        if len(future_days) >= n:
+            return future_days[n - 1]
+        return sorted_cal[-1]
+
+
+def test_get_t_plus_n_day_matches_legacy_scan_on_random_calendars():
+    """Randomized differential test: bisect == legacy linear scan for n >= 1."""
+    import random
+
+    rng = random.Random(20260913)
+    service = StockScoringService.__new__(StockScoringService)
+    checked = 0
+    for _ in range(60):
+        size = rng.randint(1, 40)
+        calendar = []
+        day = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        for _ in range(size):
+            day += datetime.timedelta(days=rng.choice([1, 1, 1, 2, 3, 5, 9]))
+            # Occasionally a non-midnight stamp and/or a duplicated day.
+            hour = rng.choice([0, 0, 0, 0, 15])
+            calendar.append(day + datetime.timedelta(hours=hour))
+        if rng.random() < 0.5:
+            rng.shuffle(calendar)
+        if rng.random() < 0.25:
+            calendar.append(calendar[0])
+
+        service.calendar = calendar
+        service._calendar_cache = None
+        probes = [
+            datetime.datetime(2025, 12, 1, tzinfo=datetime.UTC),  # before range
+            datetime.datetime(2030, 1, 1, tzinfo=datetime.UTC),  # after range
+        ]
+        probes += [normalize_date(rng.choice(calendar)) for _ in range(4)]
+        # A day guaranteed absent from the calendar.
+        probes.append(datetime.datetime(2026, 6, 14, tzinfo=datetime.UTC))
+        for probe in probes:
+            for n in (1, 2, 5, 20, 60, 5000):
+                expected = _legacy_get_t_plus_n_day(calendar, probe, n)
+                assert service.get_t_plus_n_day(probe, n) == expected, (
+                    probe,
+                    n,
+                    calendar,
+                )
+                checked += 1
+    assert checked >= 1000
 
 
 def test_score_single_stock_creates_horizon_prediction(scoring_service):
