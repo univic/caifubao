@@ -54,6 +54,25 @@
 - [ ] 3.4 行业分类/行业指标/CSI300 按天缓存（省 4.5 万次/天）
 - [ ] 3.5 等价性验证：批量化路径与逐股路径对同一天全市场产出逐字段 diff 为空（score/rank/percentile/recommendation/explanation）
 
+**接缝定位（2026-09-12 复核 `scoring_service.py`，供 3.1–3.3 直接动手）**
+
+逐股路径每股票每 horizon 的取数点（N+1 的确切来源）：
+
+| 取数 | 行号 | 批量形态（design §3） |
+|---|---|---|
+| `_find_existing_prediction` | :421 | 当日 `(date, horizon, model_version)` 一次取回 |
+| `_get_quote_on_date` | :1310 | `StockDailyQuote.objects(date=d)` 全市场一次 |
+| `_get_factor_on_date` | :1315 | `StockFactorDaily.objects(date=d)` 全市场一次 |
+| `_get_signals_on_date` | :1320 | 近窗 `date__gte = d − signal_decay_max_days` 一次，把衰减回看（:1118-1151）合并进来 |
+| `_get_previous_quotes` | :1325 | 窗口 `date__gte = d − 120` 全市场一次 → `groupby("code")` |
+| `_build_components` 内：行业分类 ×2、CSI300 | components.py:353/365-374/575-579 | 按天缓存（3.4，省约 4.5 万次/天） |
+
+主流程在 `score_single_stock` :199-250（quote → target_date → missing_quote 的 blocked 分支 → factors/signals/history → `_build_components` → `_calculate_score` → `_recommendation` → `_build_input_snapshot` → `_build_explanation` → payload）。
+
+**硬约束**：3.2 把 `_build_components`/组件函数改为接受普通值或 DataFrame 时，`raw_value` 与 weight 必须与现状逐股一致，`input_snapshot["scoring_mode"]` 等字段语义不得变；3.3 的 payload 字段集必须与 `_persist_prediction` 完全一致，含 `existing` 分支的更新语义。
+
+**执行顺序强制**：先写 3.5 的 harness（红），再 3.1 → 3.2 → 3.3 → 3.4；任一步使逐字段 diff 非空即回退该步，不带病前进。
+
 ### 信号增量（G1）
 
 - [x] 3.6 引入信号 anchor：cross 信号只算 `date > anchor` 窗口（含 shift(1) lookback）；状态型信号只写最新交易日
