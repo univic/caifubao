@@ -24,6 +24,39 @@
 ```
 
 ## 进度记录
+### 2026-09-13 00:04 CST — research 恢复演练 13/13 通过；旧库仍被 dev 每日读取，清理顺序需调整
+
+- 状态：已完成（演练本身）；清理动作阻塞于 TASK-404
+- 已完成：
+  - **非破坏性恢复演练 13/13 通过**（私有 **#80**，新增
+    `k8s/jobs-internal/mongodb-restore-drill.{sh,job.yaml}` 与
+    `apply-mongodb-restore-drill.sh`）：逐集合把对象存储归档恢复到临时库，比对
+    `estimatedDocumentCount` 与索引名集合后 `dropDatabase`，再处理下一个。
+    53,803,009 篇文档逐集合与源库一致、索引名集合一致（含 `stock_daily_quote` 1860 万与
+    `stock_factor_daily` 1660 万两批最大数据），两个空集合按 `empty` 跳过。
+    源库 `caifubao-research` 全程未被写入；临时库每轮 drop，Job 与 ConfigMap 已清理。
+    整轮 10:50Z–16:03Z（约 5h15m），磁盘最低保持约 10.5 GiB 可用，MongoDB 内存峰值约
+    3.4 GiB（上限 4 GiB）。
+  - 「逐集合」而非整份恢复是实测约束，已写进脚本与运维文档：5700X 根盘仅约 13 GiB 可用，
+    整份恢复需约 11 GiB（2.7 GiB 归档 + 约 8.5 GB 还原数据），而该节点同时承载 research
+    与 dev 两个 MongoDB；单集合峰值约 6.5 GiB，并有 `DRILL_MIN_FREE_MB` 守卫。
+  - **发现旧 `caifubao` 库仍被每日读取**：dev 的 `caifubao-datahub-data-sync` CronJob
+    处于**启用**状态（工作日 19:15，`lastSuccessfulTime` 2026-09-11T11:16:46Z），
+    经 `mongodb-service.caifubao.svc.cluster.local` 直连旧库。旧库体积自迁移以来未增长，
+    但**并非无人使用**——先清理会直接打断 dev 的数据链路。
+- 验证：演练 Job `succeeded=1`；演练后复查临时库已消失、research 三服务与 mongodb 均 1/1、
+  七个 research CronJob 仍全部 `suspend=true`；旧库体积与迁移后一致（8449MB，未增长）。
+  演练同时暴露一条前提：它把归档文档数与**当时的 live 源库**比较，源库在备份后若继续写入
+  会报 `DIFF`；本轮 14:17Z 有一次 `flip_wide_paper` REPLAY 运行写入 research（4 条
+  `strategy_paper_runs` + 47 条 `stock_score_predictions`，并新建 `strategy_forward_windows`），
+  但落在对应集合核对之后，故结论有效；该前提已写入运维文档。
+- 下一步：按调整后的顺序推进——**TASK-404 先落地**（消除 dev 对 research/stable Mongo 的直连，
+  改为「research 快照导出 → dev 受控导入」；属数据所有权变更，按 `RULES.md` 先走 Spec Gate 与
+  设计评审，不做在线修改），之后经过稳定观察期，再单独审批清理旧库、旧身份与 staging 归档。
+  已定位的变更面：dev 的 `MONGODB_SRC_*`（backend-config + datahub-secret）、渲染契约断言、
+  `write-actions-env.sh`/`prepare-worktree.sh`；research 已有的 Parquet 导出可作为快照介质复用。
+- 阻塞：清理动作在 TASK-404 落地前不可执行（dev 每日同步依赖旧库）。演练与文档本身无阻塞。
+
 ### 2026-09-12 18:34 CST — dev 声明漂移已收敛；research data-lake export smoke 通过
 
 - 状态：已完成（TASK-302 smoke 闭环；所有 research CronJob 继续 suspended）
