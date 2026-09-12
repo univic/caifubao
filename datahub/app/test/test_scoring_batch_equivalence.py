@@ -970,3 +970,57 @@ def test_row_from_frame_normalises_pandas_values():
     assert rows[1].date is None  # NaT -> None
     assert rows[1].close is None
     assert rows[1].close_hfq == 8.0
+
+
+def test_signal_evidence_order_is_canonical_and_path_independent(batch_harness):
+    """Signal read order is a persisted field, so both paths must agree.
+
+    ``stock_signal_daily`` is unsorted and the batch path reads it with
+    ``stock_code__in`` while the per-stock path reads ``stock_code=X``. A real
+    database returned those rows in different orders, which diverged on 27 of
+    5,561 rows of ``explanation[].evidence.signals`` in the dev full-market
+    check. Seed the signals in reverse name order so an unsorted read is
+    detectable, then require both paths to persist the same, name-ordered list.
+    """
+    from app.lib.scoring_engine.scoring_service import _signal_order_key
+
+    seed_market()
+    # Deliberately reverse-alphabetical insertion order for one stock.
+    for name in ("PRICE_ABOVE_MA60", "MA20_ABOVE_MA60", "MA10_CROSS_MA20"):
+        FakeSignal.records.append(
+            FakeSignal(
+                stock_code="sh600000",
+                date=EVAL_DATE,
+                signal_name=name,
+                direction="BULLISH",
+                strength=1.0,
+                reason=name,
+            )
+        )
+
+    def names_for(batch: bool):
+        FakePrediction.records = []
+        batch_harness.batch_prefetch = batch
+        batch_harness.score_all_stocks(date=EVAL_DATE, horizon=20)
+        stored = [
+            p
+            for p in FakePrediction.records
+            if p.stock_code == "sh600000" and p.horizon == 20
+        ]
+        assert len(stored) == 1
+        components = stored[0].explanation["components"]
+        signal_component = next(c for c in components if c["id"] == "signal_strength")
+        return [s["name"] for s in signal_component["evidence"]["signals"]]
+
+    batch_names = names_for(True)
+    legacy_names = names_for(False)
+
+    assert batch_names == legacy_names
+    assert batch_names == sorted(batch_names)
+    # The three seeded names are present and, because they were inserted in
+    # reverse-alphabetical order, a raw (unsorted) read would have put
+    # PRICE_ABOVE_MA60 first.
+    for name in ("MA10_CROSS_MA20", "MA20_ABOVE_MA60", "PRICE_ABOVE_MA60"):
+        assert name in batch_names
+    assert batch_names.index("MA10_CROSS_MA20") < batch_names.index("PRICE_ABOVE_MA60")
+    assert _signal_order_key(type("S", (), {"signal_name": None})()) == ""
