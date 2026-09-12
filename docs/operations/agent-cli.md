@@ -168,6 +168,44 @@ make score-report
 ./scripts/caifubao score report 2026-04-01 2026-05-18
 ```
 
+### Strategy (paper)
+
+The paper strategy runner is invoked as a datahub module inside the datahub pod
+(there is no `./scripts/caifubao` wrapper yet). All of its commands are
+paper-only; the export below is read-only and never writes.
+
+#### `strategy_runner export --date DATE [--format csv|json] [--output PATH]`
+
+Export one COMPLETED paper run's target portfolio + rebalance list as a
+human-checkable checklist: `BUY` (added to the target), `SELL` (removed), `HOLD`
+(unchanged), with target weight, target amount, and the signal-date score.
+Amounts come from one reported base NAV. Output is **research-grade — not
+investment advice, not an order instruction**; the CSV artifact carries that
+label and disclaimer in its leading comment line.
+
+```bash
+# CSV to stdout, metadata/summary to stderr
+./scripts/caifubao system pod | xargs -I {} kubectl -n caifubao-dev exec {} -- \
+  python -m app.jobs.strategy_runner export --date 2026-09-11 > target.csv
+
+# Full JSON (metadata + rows)
+./scripts/caifubao system pod | xargs -I {} kubectl -n caifubao-dev exec {} -- \
+  python -m app.jobs.strategy_runner export --date 2026-09-11 --format json
+```
+
+Fails closed (exit 1) when there is no COMPLETED run for the date/model
+version/horizon, when the matching run is `SKIPPED`/`FAILED`/`RUNNING`, or when
+two COMPLETED runs under different `config_hash` values match — pass
+`--config-json` to disambiguate. `SELL` rows intentionally carry no quantity:
+the paper target is not your real account, so sizing sells belongs to
+reconciliation (roadmap 1.1/2.3).
+
+#### `strategy_runner run|nav|report|forward ...`
+
+Daily paper run, NAV recompute, run inspection, and the certified forward
+evidence window (`forward certify|close|progress`). See
+`docs/autoresearch/runs/h20-excess-alpha/task-4.4-paper-run-120d.md`.
+
 ### System
 
 #### `system health`

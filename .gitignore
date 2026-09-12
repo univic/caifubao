@@ -25,7 +25,9 @@ backend/app/tmp/
 backend/app/log/
 backend/venv
 backend/venv312
-**/.venv/
+# No trailing slash: also ignore a worktree's `datahub/.venv` symlink, which
+# Git does not treat as a directory.
+**/.venv
 datahub/.tools/
 .DS_Store
 .pytest_cache/

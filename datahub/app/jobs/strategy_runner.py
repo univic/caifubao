@@ -19,6 +19,7 @@ import argparse
 import datetime
 import json
 import logging
+import sys
 
 from app.lib.strategy_engine.config import (
     DEFAULT_HORIZON,
@@ -321,6 +322,132 @@ def run_strategy(
         "target_holdings_count": len(run.target_holdings or []),
         "rebalance": run.rebalance,
     }
+
+
+def _query_export_scores(date, horizon, model_version) -> dict[str, dict]:
+    """{stock_code: {score, percentile}} for the exported cohort (read-only)."""
+    from app.lib.scoring_engine.scoring_service import normalize_date
+    from app.model.scoring import StockScorePrediction
+
+    rows = StockScorePrediction.objects(
+        model_version=model_version,
+        date=normalize_date(date),
+        horizon=horizon,
+    ).only("stock_code", "score", "percentile")
+    return {
+        row.stock_code: {"score": row.score, "percentile": row.percentile}
+        for row in rows
+    }
+
+
+def _query_stock_names(codes) -> dict[str, str]:
+    """{stock_code: name} for human-readable rows; missing names stay absent."""
+    from app.model.stock import IndividualStock
+
+    if not codes:
+        return {}
+    return {
+        stock.code: stock.name
+        for stock in IndividualStock.objects(code__in=list(codes)).only("code", "name")
+        if stock.name
+    }
+
+
+def _run_view(doc) -> dict:
+    """Map a persisted paper run onto the pure exporter's plain-dict shape."""
+    return {
+        "strategy_name": doc.strategy_name,
+        "model_version": doc.model_version,
+        "horizon": doc.horizon,
+        "config_hash": doc.config_hash,
+        "date": doc.date,
+        "execution_date": doc.execution_date,
+        "decision_at": doc.decision_at,
+        "evidence_kind": doc.evidence_kind or "REPLAY",
+        "status": doc.status,
+        "target_holdings": doc.target_holdings or [],
+        "rebalance": doc.rebalance or {},
+        "nav_snapshot": doc.nav_snapshot or {},
+        "config": doc.config or {},
+    }
+
+
+def export_targets(
+    *,
+    date: datetime.datetime,
+    config: dict | None = None,
+    model_version: str | None = None,
+    horizon: int | None = None,
+    base_nav=None,
+) -> dict:
+    """Project one COMPLETED paper run into a target export (roadmap 2.1).
+
+    Read-only: never writes, never mutates the run, never touches forward
+    evidence. Fails closed when the requested run is missing, not COMPLETED, or
+    ambiguous across configurations (the persisted key includes config_hash).
+    """
+    from app.lib.strategy_engine.export import build_target_export, select_export_run
+    from app.model.strategy import StrategyPaperRun
+
+    date = datetime.datetime.combine(date.date(), datetime.time())
+    resolved = validate_strategy_config(config or DEFAULT_STRATEGY_CONFIG)
+    version = model_version or _resolve_model_version(resolved)
+    resolved_horizon = int(horizon or resolved.get("horizon", DEFAULT_HORIZON))
+
+    runs = [
+        _run_view(doc)
+        for doc in StrategyPaperRun.objects(
+            strategy_name=DEFAULT_STRATEGY_NAME,
+            date=date,
+            model_version=version,
+            horizon=resolved_horizon,
+            evidence_kind__in=["REPLAY", "FORWARD"],
+        ).order_by("-created_at")
+    ]
+    if not runs:
+        raise ValueError(
+            f"no completed paper run to export for {date.date()} "
+            f"model_version={version!r} horizon={resolved_horizon}; legacy rows "
+            "without evidence provenance stay outside the paper track"
+        )
+    wanted_hash = strategy_config_hash(resolved) if config is not None else None
+    run = select_export_run(runs, config_hash=wanted_hash)
+
+    codes = [
+        holding["stock_code"]
+        for holding in (run.get("target_holdings") or [])
+        if holding.get("stock_code")
+    ]
+    return build_target_export(
+        run=run,
+        scores=_query_export_scores(date, resolved_horizon, version),
+        names=_query_stock_names(codes),
+        base_nav=base_nav,
+    )
+
+
+def _write_text(text: str, output: str | None) -> None:
+    if output:
+        with open(output, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    else:
+        sys.stdout.write(text)
+
+
+def _emit_export(result: dict, *, fmt: str, output: str | None) -> None:
+    """Render an export. CSV rows go to stdout/PATH (led by the artifact's own
+    label/disclaimer comment line) while the full metadata block is echoed to
+    stderr; JSON carries both metadata and rows in one document."""
+    metadata = {key: value for key, value in result.items() if key != "rows"}
+    if fmt == "json":
+        _write_text(
+            json.dumps(result, ensure_ascii=False, indent=2, default=str), output
+        )
+        return
+    from app.lib.strategy_engine.export import render_csv
+
+    _write_text(render_csv(result), output)
+    print(json.dumps(metadata, ensure_ascii=False, default=str), file=sys.stderr)
 
 
 def _load_quotes_for_codes(
@@ -671,6 +798,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
     p_report.add_argument("--model-version", default=None)
 
+    p_export = sub.add_parser(
+        "export",
+        help="Export a COMPLETED run's target portfolio + rebalance list (roadmap 2.1)",
+    )
+    p_export.add_argument("--date", required=True, help="Signal date (YYYY-MM-DD)")
+    p_export.add_argument("--model-version", default=None)
+    p_export.add_argument("--horizon", type=int, choices=[5, 20, 60], default=None)
+    p_export.add_argument("--config-json", default=None)
+    p_export.add_argument("--format", choices=["csv", "json"], default="csv")
+    p_export.add_argument(
+        "--output", default=None, help="Write to PATH instead of stdout"
+    )
+    p_export.add_argument(
+        "--base-nav",
+        type=float,
+        default=None,
+        help="Override the base NAV used to derive target amounts",
+    )
+
     p_nav = sub.add_parser(
         "nav", help="Recompute paper NAV curve over COMPLETED runs in a range"
     )
@@ -784,6 +930,22 @@ def main(argv: list[str] | None = None) -> None:
                 model_version=args.model_version, horizon=args.horizon
             )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    elif args.command == "export":
+        # json.loads is inside the guard: a malformed --config-json is a
+        # JSONDecodeError (a ValueError) and must give the same structured
+        # fail-closed error, not a traceback.
+        try:
+            result = export_targets(
+                date=parse_date(args.date),
+                config=json.loads(args.config_json) if args.config_json else None,
+                model_version=args.model_version,
+                horizon=args.horizon,
+                base_nav=args.base_nav,
+            )
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+            raise SystemExit(1) from None
+        _emit_export(result, fmt=args.format, output=args.output)
     elif args.command == "report":
         from app.model.strategy import StrategyPaperRun
 
