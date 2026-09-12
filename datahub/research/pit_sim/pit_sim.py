@@ -34,6 +34,16 @@ import os
 import subprocess
 import sys
 
+
+def _assert_research_db() -> None:
+    """These scripts WRITE predictions/paper runs: refuse non-research targets."""
+    name = os.getenv("MONGODB_NAME", "")
+    if "research" not in name.lower():
+        raise SystemExit(
+            f"refusing to run: MONGODB_NAME={name!r} is not a research database"
+        )
+
+
 # 5-session rebalance cadence (the configured `rebalance.cadence_days`).
 DECISION_DATES = [
     "2026-08-03",
@@ -96,6 +106,7 @@ def run(cmd, label, env=None):
 
 
 def main() -> int:
+    _assert_research_db()
     failures = 0
     for label, model_version, mode in VARIANTS:
         env = dict(os.environ)

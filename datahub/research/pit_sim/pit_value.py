@@ -11,6 +11,7 @@ is taken here — this is valuation only.
 
 import datetime
 import json
+import os
 
 VARIANTS = [
     ("A_production_raw", "pit_baseline_h20_v1", "b9ce2434"),
@@ -22,10 +23,21 @@ VALUATION_DATE = datetime.datetime(2026, 9, 11)
 VALUATION_KEY = "2026-09-11"
 
 
+def _assert_research_db() -> None:
+    """Refuse to run against anything but the research database (read-only tool)."""
+    name = os.getenv("MONGODB_NAME", "")
+    if "research" not in name.lower():
+        raise SystemExit(
+            f"refusing to run: MONGODB_NAME={name!r} is not a research database"
+        )
+
+
 def main() -> int:
     from app.lib.db_watcher.mongoengine_tool import mongo_watcher
 
+    _assert_research_db()
     mongo_watcher.get_db_connection()
+    from app.lib.strategy_engine.nav import _tradable, _valid_price
     from app.jobs.strategy_runner import (
         _benchmark_returns_for_dates,
         _load_quotes_for_codes,
@@ -76,12 +88,17 @@ def main() -> int:
         marks = {}
         for code, shares in held.items():
             series = prices.get(code) or {}
+            # Match nav.py `_mark`: only a tradable row refreshes the mark, so a
+            # name suspended at the window end carries its last tradable close.
             quote = series.get(VALUATION_KEY)
-            if quote is None or quote.close is None:
-                # Suspended at the window end: carry the last tradable close.
+            if not _tradable(quote) or not _valid_price(getattr(quote, "close", None)):
                 earlier = sorted(k for k in series if k <= VALUATION_KEY)
-                quote = series[earlier[-1]] if earlier else None
-            marks[code] = float(quote.close) if quote and quote.close else None
+                quote = None
+                for key in reversed(earlier):
+                    if _tradable(series[key]) and _valid_price(series[key].close):
+                        quote = series[key]
+                        break
+            marks[code] = float(quote.close) if quote is not None else None
         missing = [c for c, m in marks.items() if m is None]
         final_nav = cash + sum(marks[c] * s for c, s in held.items() if marks[c])
 

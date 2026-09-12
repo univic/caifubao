@@ -21,8 +21,19 @@ scored 11 of the 30 window sessions).
 """
 
 import datetime
+import os
 import subprocess
 import sys
+
+
+def _assert_research_db() -> None:
+    """These scripts WRITE predictions: refuse non-research targets."""
+    name = os.getenv("MONGODB_NAME", "")
+    if "research" not in name.lower():
+        raise SystemExit(
+            f"refusing to run: MONGODB_NAME={name!r} is not a research database"
+        )
+
 
 SCRATCH_VERSION = "pit_baseline_h20_v1"
 PRODUCTION_VERSION = "score_v2_202605b"
@@ -33,6 +44,7 @@ HORIZON = 20
 def main() -> int:
     from app.lib.db_watcher.mongoengine_tool import mongo_watcher
 
+    _assert_research_db()
     mongo_watcher.get_db_connection()
     from app.model.scoring import StockScorePrediction
 
