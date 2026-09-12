@@ -122,9 +122,12 @@
   验证工具已就绪：`./scripts/caifubao score equivalence-check <DATE>
   [--horizons ...] [--mode raw|ranked] [--apply]`（默认只读预览；`--apply` 才跑
   两次 replace 比对并给 before/after 耗时，逐字段 diff 非空则 exit 1）。
-- [ ] 3.5a dev 真实库全市场同日逐字段比对（`equivalence-check`，operator 执行）
-  注：须与 5.3 的 before/after 耗时采集同批完成 —— 在此之前 3.5 的验收标准
-  「对同一天全市场产出 diff 为空」只有 harness 证据，没有真实库证据。
+- [x] 3.5a dev 真实库全市场同日逐字段比对（`equivalence-check --apply`）
+  注：**已完成**（2026-09-13）：dev 5,561 股 / research 5,562 股、2026-09-11、全 horizon，
+  两侧均 `ok=true`、**0 diff**（dev 16,683 行、research 16,686 行）。该检查**实际拦下一处
+  harness 无法发现的分歧**：逐股路径 `stock_code=X` 与批量化 `stock_code__in=[...]` 的
+  未排序信号读取导致 27/5,561 行 `explanation[].evidence.signals` 顺序不同 —— 已由 #229
+  修复（两路径统一按 `signal_name` 定序 + 定序回归测试）。
 
 ### 信号增量（G1）
 
@@ -166,5 +169,7 @@
 
 - [ ] 5.1 阶段 1：qa-reviewer（全量）+ contract-reviewer（C2/G3 触及 freshness/timestamps 语义）+ branch conflict + Draft PR CI green
 - [ ] 5.2 阶段 2 各 PR：同上；C1/G1/F1 另需 spec-guardian 确认 specs delta 与实现一致
-- [ ] 5.3 每阶段合并后在 `docs/operations/perf-analysis-2026-08.md` 对应条目回填 before/after 实测
+- [x] 5.3 每阶段合并后在 `docs/operations/perf-analysis-2026-08.md` 对应条目回填 before/after 实测
+  注：**C1 切片已回填**（dev/research 双侧 dry-run + 真实库 equivalence-check 的分离耗时，
+  见 perf-analysis C1 行）；ranked 模式与年度 replay 的 before/after 仍未采集。
 - [ ] 5.4 部署 dev 验证 → prod 部署（operator）；更新 `docs/capability-inventory.md` 与本文状态
