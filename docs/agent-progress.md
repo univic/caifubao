@@ -24,6 +24,35 @@
 ```
 
 ## 进度记录
+### 2026-09-12 16:21 CST — research 手工 backup smoke 通过；备份负载固定到 5700X
+
+- 状态：已完成（本切片；备份 CronJob 按决策仍保持 suspended）
+- 已完成：
+  - **TASK-302 契约里的「manual Mongo backup」验证通过**。方式是从备份 CronJob 派生一次性 Job
+    （`kubectl create job --from=cronjob/mongodb-s3-backup`），即跑生产备份路径本身；
+    research 库的 dump 与对象存储上传都成功。CronJob 全程保持 suspended，验证后再次确认。
+  - **备份负载固定到 5700X**：research MongoDB 在该节点，dump 先写该节点临时存储再上传，所以把备份
+    Job 模板固定到该节点（私有 overlay），并由私有 `verify-rendered-manifest.sh` 的 research 断言锁定。
+  - **修掉一个真实阻塞**：首次 smoke 的 dump 全部成功，但上传以
+    `Connect timeout on endpoint URL` 失败——集群 DNS 把对象存储域名解析成 VPC 内网
+    `169.254.0.x`（腾讯云 split-horizon DNS），该地址在云端节点可路由、在 5700X 上不可路由。
+    改为备份 Pod 用 `dnsPolicy: None` + 公网解析器（与迁移期 download Job 同一做法），并用
+    `hostAliases` 把 `mongodb-service` 指到 Service ClusterIP——公网解析器对集群内名字返回
+    NXDOMAIN 且不会回退到下一个服务器，所以不能只换解析器。两半都由 research 断言与运维文档的
+    前置校验保护。
+  - 顺带修掉渲染等价检查里一条只在过渡期成立、cutover 落到 baseline 之后必然失败的断言，以及一条
+    在 CI 固定的 yq 版本下会误判的取值写法。
+- 验证：smoke `status: succeeded`（19m14s，归档 2.7 GiB，object_key
+  `mongodb/research/caifubao-research/20260912T080013Z.archive.gz`），并用 `aws s3 ls` 独立确认
+  对象存在；期间 research 三服务 1/1、mongodb 1/1、节点无 Memory/Disk/PID 压力；私有 CI
+  `render-equivalence` 通过（新断言在 CI 的 yq 4.35 与本地 4.53 下分别验证）。
+- 下一步：是否解挂 `mongodb-s3-backup` 启用定时备份待用户决策；迁移遗留清理（staging PVC 上的
+  13 份归档、旧 `caifubao` 库与旧应用身份）待单独确认后执行。
+- 阻塞：无。**另有一处既有漂移需单独处理**（本切片未改动）：dev overlay 仍声明 MongoDB 在
+  `vm-4-12-ubuntu` 且 `claimName: mongodb-pvc`，而 live dev 的 MongoDB 与备份 CronJob 实际都在
+  `ubuntu-5700x`、挂 `mongodb-pvc-5700x`。按当前声明重新 apply 会把 dev 指回旧 PV/旧节点，属真实
+  风险，应作为独立变更修正。
+
 ### 2026-09-12 12:18 CST — research 集群迁移收尾：TASK-303 切换已合并；research 激活被 bootstrap 镜像 tag 不变量阻塞（交接 codex）
 
 - 状态：阻塞（research 的激活路径缺失，需先修下方第 1~4 点）
