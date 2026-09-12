@@ -24,6 +24,10 @@ platform via the unified CLI and Makefile.
 # Check backup and bootstrap readiness
 ./scripts/caifubao system backup status
 ./scripts/caifubao system bootstrap-check
+
+# Paper strategy + forward-evidence window (paper-only; no orders)
+# Full operator runbook: docs/operations/strategy-forward-window.md
+./scripts/caifubao strategy forward progress --model-version flip_wide_shadow_v1 --horizon 20
 ```
 
 ## Environment
