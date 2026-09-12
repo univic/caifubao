@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 
 # Score-source default: the flip_wide shadow version registered by task 3.3
 # tooling (construction-layer reversal at horizon 20). Configurable to any
@@ -51,7 +52,9 @@ DEFAULT_STRATEGY_CONFIG = {
         "exclude_st": True,
         "exclude_bse": True,
         "exclude_suspended": True,
-        "max_single_stock_pct": 0.05,  # ignored while equal-weight wide book
+        # Enforced by _bounded_weight: binds only for books narrower than
+        # 1/0.05 = 20 names; the wide book (~0.125% per name) is unaffected.
+        "max_single_stock_pct": 0.05,
         "min_trade_amount_cny": 0.0,  # liquidity floor; 0 = unenforced
     },
     "rebalance": {"cadence_days": DEFAULT_REBALANCE_CADENCE_DAYS},
@@ -84,6 +87,7 @@ _KNOWN_CONSTRAINT_KEYS = {
     "exclude_bse",
     "exclude_suspended",
     "max_single_stock_pct",
+    "max_industry_pct",
     "min_trade_amount_cny",
 }
 _KNOWN_REBALANCE_KEYS = {"cadence_days"}
@@ -208,13 +212,27 @@ def validate_strategy_config(config: dict) -> dict:
         or not 0 < float(max_pct) <= 1
     ):
         raise ValueError("constraints.max_single_stock_pct must be in (0, 1]")
+    max_industry = constraints.get("max_industry_pct")
+    if max_industry is not None and (
+        isinstance(max_industry, bool)
+        or not isinstance(max_industry, (int, float))
+        or not 0 < float(max_industry) <= 1
+    ):
+        raise ValueError("constraints.max_industry_pct must be in (0, 1]")
     min_amt = constraints.get("min_trade_amount_cny")
     if min_amt is not None and (
         isinstance(min_amt, bool)
         or not isinstance(min_amt, (int, float))
+        # NaN would pass `float(x) < 0` and then disable the floor everywhere
+        # (all comparisons against NaN are false) while still being hashed into
+        # config_hash — a silently ignored limit, the exact defect this slice
+        # exists to remove.
+        or not math.isfinite(float(min_amt))
         or float(min_amt) < 0
     ):
-        raise ValueError("constraints.min_trade_amount_cny must be >= 0")
+        raise ValueError(
+            "constraints.min_trade_amount_cny must be a finite number >= 0"
+        )
 
     rebalance = normalized.get("rebalance") or {}
     if not isinstance(rebalance, dict):

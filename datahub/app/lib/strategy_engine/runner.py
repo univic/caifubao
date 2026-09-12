@@ -11,6 +11,7 @@ unit-testable without a database.
 from __future__ import annotations
 
 import datetime
+import math
 
 from app.lib.strategy_engine.config import (
     DEFAULT_HORIZON,
@@ -46,6 +47,7 @@ def eligible_codes_from_flags(
         return bool(int(value))
 
     eligible = set()
+    min_trade_amount = float(constraints.get("min_trade_amount_cny") or 0.0)
     for code, row in flags.items():
         if constraints.get("exclude_st") and _truthy(row.get("is_st")):
             continue
@@ -55,8 +57,35 @@ def eligible_codes_from_flags(
             row.get("trade_status") != 1
         ):
             continue
+        # Liquidity floor: a name may only be selected when its traded amount on
+        # the signal date is known and meets the floor. Unknown or non-finite
+        # amount is not selectable, so missing evidence can never widen the
+        # tradable set (NaN would otherwise pass `nan < floor` and fail open).
+        if min_trade_amount > 0:
+            traded = row.get("trade_amount")
+            if (
+                isinstance(traded, bool)
+                or not isinstance(traded, (int, float))
+                or not math.isfinite(float(traded))
+                or float(traded) < min_trade_amount
+            ):
+                continue
         eligible.add(code)
     return eligible
+
+
+def _has_active_eligibility_constraint(config: dict) -> bool:
+    """True when the config asks for filtering that needs a universe flag map."""
+    constraints = config.get("constraints") or {}
+    if any(
+        constraints.get(flag)
+        for flag in ("exclude_st", "exclude_bse", "exclude_suspended")
+    ):
+        return True
+    try:
+        return float(constraints.get("min_trade_amount_cny") or 0.0) > 0
+    except (TypeError, ValueError):
+        return True
 
 
 def assemble_daily_plan(
@@ -66,6 +95,7 @@ def assemble_daily_plan(
     predictions,  # iterable of usable predictions for the configured version
     previous_holdings: list[dict] | None,
     flags: dict[str, dict] | None = None,
+    industry_by_code: dict[str, str] | None = None,
     horizon: int | None = None,
 ) -> dict:
     """Build one day's paper plan.
@@ -73,7 +103,8 @@ def assemble_daily_plan(
     Returns {"skipped": bool, "reason"?: str, "date", "horizon",
     "target_holdings": [...], "rebalance": {...}}. When no usable predictions
     exist for the configured model version, the plan is skipped (no empty
-    portfolio is written).
+    portfolio is written). industry_by_code is required only when the config
+    sets constraints.max_industry_pct.
     """
     config = validate_strategy_config(config)
     horizon = int(horizon or config.get("horizon", DEFAULT_HORIZON))
@@ -90,8 +121,21 @@ def assemble_daily_plan(
             "horizon": horizon,
         }
 
+    if flags is None and _has_active_eligibility_constraint(config):
+        raise ValueError(
+            "cannot assemble a plan without the universe flag map while an "
+            "eligibility constraint is active (exclusion flags or "
+            "min_trade_amount_cny); refusing to select from the whole "
+            "prediction set with the constraint silently skipped"
+        )
+
     eligible = eligible_codes_from_flags(flags, config) if flags is not None else None
-    target = select_target_holdings(prediction_list, config, eligible_codes=eligible)
+    target = select_target_holdings(
+        prediction_list,
+        config,
+        eligible_codes=eligible,
+        industry_by_code=industry_by_code,
+    )
     if not target:
         return {
             "skipped": True,

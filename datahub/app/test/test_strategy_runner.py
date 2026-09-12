@@ -344,10 +344,11 @@ def test_query_flags_reads_stock_daily_quote_excludes_missing(monkeypatch):
             )
 
     class FakeQuote:
-        def __init__(self, code, trade_status=1, isST=0):
+        def __init__(self, code, trade_status=1, isST=0, trade_amount=None):
             self.code = code
             self.trade_status = trade_status
             self.isST = isST
+            self.trade_amount = trade_amount
 
     class FakeQuoteModel:
         @classmethod

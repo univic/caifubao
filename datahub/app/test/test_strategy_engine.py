@@ -189,8 +189,11 @@ def test_top_percentile_selects_high_scores_within_band():
     holdings = select_target_holdings(preds, cfg)
     codes = [h["stock_code"] for h in holdings]
     assert codes == ["sh600001", "sh600002", "sh600003"]
-    # equal weight
-    assert sum(h["weight"] for h in holdings) == pytest.approx(1.0)
+    # Equal weight is capped by the default 0.05 single-position limit (a
+    # declared cap that roadmap 1.3 made actually bind for narrow books); the
+    # remainder stays in cash rather than being redistributed.
+    assert sum(h["weight"] for h in holdings) == pytest.approx(0.15)
+    assert {h["weight"] for h in holdings} == {0.05}
 
 
 def test_selection_respects_eligibility():
