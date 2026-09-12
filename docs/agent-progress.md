@@ -42,6 +42,9 @@
     前置校验保护。
   - 顺带修掉渲染等价检查里一条只在过渡期成立、cutover 落到 baseline 之后必然失败的断言，以及一条
     在 CI 固定的 yq 版本下会误判的取值写法。
+  - 本切片私有侧为 **私有 #77**（节点固定、DNS 覆盖、两条 research 断言、运维文档 smoke 小节）；
+    公共侧只有本条记录（#217）。集群上的 CronJob 是用**定向 JSON patch** 把该 overlay 变更前推落地的
+    ——manifest 变更正常只经 bootstrap 流程 apply；patch 后 live 与已合并的渲染内容一致，且全程 suspended。
 - 验证：smoke `status: succeeded`（19m14s，归档 2.7 GiB，object_key
   `mongodb/research/caifubao-research/20260912T080013Z.archive.gz`），并用 `aws s3 ls` 独立确认
   对象存在；期间 research 三服务 1/1、mongodb 1/1、节点无 Memory/Disk/PID 压力；私有 CI
