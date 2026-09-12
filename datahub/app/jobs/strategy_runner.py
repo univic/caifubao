@@ -407,7 +407,8 @@ def export_targets(
     if not runs:
         raise ValueError(
             f"no completed paper run to export for {date.date()} "
-            f"model_version={version!r} horizon={resolved_horizon}"
+            f"model_version={version!r} horizon={resolved_horizon}; legacy rows "
+            "without evidence provenance stay outside the paper track"
         )
     wanted_hash = strategy_config_hash(resolved) if config is not None else None
     run = select_export_run(runs, config_hash=wanted_hash)

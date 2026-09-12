@@ -11,7 +11,9 @@ that label MUST be applied unconditionally. Promotion MUST NOT be inferred from
 records, or any other proxy. Because no explicit promotion record exists yet
 (roadmap 0.3 is unmet for every model version), every export is research-grade,
 and an unpromoted model version MUST NOT be presented as tradable, actionable,
-or validated.
+or validated. The promotion-record source is not defined yet; it MUST be
+introduced by the roadmap 0.3 promotion flow, and until that record exists the
+label MUST NOT be derived from any other signal.
 
 #### Scenario: Research-grade label is unconditional
 
@@ -61,6 +63,14 @@ MUST NOT be described as actionable or tradable.
 - THEN the row carries the code and the reason
 - AND the export does not fabricate a sell quantity or amount from the paper
   target, because the operator's real account sits outside the paper track
+
+#### Scenario: BUY or HOLD without a target weight fails closed
+
+- GIVEN a run whose rebalance marks a code as added or unchanged while its
+  target holdings carry no weight for that code
+- WHEN the export builds its rows
+- THEN the export fails closed as inconsistent evidence
+- AND it does not emit a row with a guessed weight
 
 ### Requirement: Export MUST carry per-row score evidence without fabricating it
 
@@ -113,6 +123,15 @@ rather than silently selecting one.
 - THEN the command exits non-zero with an ambiguity error naming the config hashes
 - AND it prints no target rows
 
+#### Scenario: A named configuration with no matching run fails closed
+
+- GIVEN a request naming a configuration whose `config_hash` matches no run for
+  that date, model version, and horizon
+- WHEN the operator requests an export
+- THEN the command exits non-zero rather than exporting a different
+  configuration's run
+- AND it prints no target rows
+
 ### Requirement: Export MUST derive all amounts from one reported base NAV
 
 Amounts MUST be derived from a single base NAV resolved in this order: an
@@ -149,7 +168,8 @@ source, and MUST fail closed rather than substituting any other NAV.
 
 - GIVEN rows that carry a target weight
 - WHEN amounts are derived
-- THEN each such row's amount equals its target weight times the reported base NAV
+- THEN each such row's amount equals its target weight times the reported base
+  NAV, rounded to the nearest CNY 0.01
 - AND rows without a target weight carry no amount
 
 ### Requirement: Export MUST be read-only and MUST NOT be an execution instruction
