@@ -76,6 +76,16 @@
   code→行位置索引，逐股按需物化 `_Row`；读 existing predictions 只投影
   `stock_code/horizon/status`。新增字段读取须同步白名单，等价性 harness 是兜底
   （已实际拦下过 `buy_count` 漏投影）。
+  **内存实测修正（2026-09-13，research 2Gi pod，5,562 只全市场 2026-09-11）**：
+  tracemalloc 严重低估驻留内存——单份全市场窗口（674k 行）实测 RSS 峰值 **~1.06GiB**
+  （h20 单 horizon 窗口 364k 行 ~683MiB），远高于上面引用的 ~102MB；增量主要来自
+  pymongo 把 674k 条 BSON 解码成 Python dict 的分配器高水位，而非最终列式帧
+  （`memory_usage(deep=True)` 仅 ~82MB）。改游标 `batch_size`（1000/5000）只降 ~3%；
+  把每行 3 个 dict 改成 tuple 无实测收益（1026 → 1029MiB，已回退）。**结论**：dev
+  datahub 的 1Gi limit 会被 OOMKill（exit 137，已实测），生产 scoring CronJob 的
+  2Gi limit 可用但余量约 2×。根治办法是按 code 分组预取（每 ~900–1,000 code 一份
+  预取）：实测 6 组时 RSS 峰值 **~294MiB**、组间回落到 ~178MiB，见 tasks 3.1b
+  （本切片未实现，需独立验证）。
 - CSI300 不能整体按“当天窗口”下发：逐股路径按该股自身
   `[min(quote dates), d]` 取指数，稀疏股回退到窗口之前时若只给窗口内指数，会把
   评估日静默降级为 self-proxy。`index_quotes_for(code, history, quote)` 先按窗口
