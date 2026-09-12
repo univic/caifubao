@@ -115,3 +115,43 @@ qualify for a fast skip.
   that have new quotes since their last verification
 - **AND** SHALL load only the fields needed for verification
 - **AND** SHALL persist status/verification changes via bulk writes
+
+### Requirement: Per-Day Batch Scoring MUST Preserve Per-Stock Results
+
+Scoring a full cohort SHALL prefetch its inputs per day rather than per stock:
+the same-day quotes, factors and signals, the lookback quote window, the existing
+predictions for that date, and the per-day cached industry classification,
+industry metrics and benchmark series. Component computation MAY consume plain
+mappings and frames instead of hydrated documents, but every component's
+`raw_value` and weight SHALL be identical to the per-stock path, and the persisted
+payload SHALL carry the same field set as the per-stock path. Persistence SHALL
+use bulk upserts rather than one save per document.
+
+#### Scenario: Batch and per-stock paths agree field by field
+
+- GIVEN one scoring date and its full eligible cohort
+- WHEN that cohort is scored through the batch path and through the per-stock path
+- THEN `score`, `rank`, `percentile`, `recommendation` and `explanation` are
+  identical per stock for every horizon
+- AND the persisted field set is identical
+
+#### Scenario: Database round trips scale with dates, not with stocks
+
+- GIVEN a cohort of N stocks on one date
+- WHEN the batch path runs
+- THEN the number of database round trips does not grow with N
+- AND per-day caches are consulted instead of re-querying per stock
+
+#### Scenario: The ranked path shares the same batch inputs
+
+- GIVEN `DATAHUB_SCORING_MODE=ranked`
+- WHEN the cohort is scored
+- THEN it uses the same batch prefetch and the same component functions
+- AND only the two-stage rank normalization differs
+
+#### Scenario: An equivalence failure blocks the batch path
+
+- GIVEN the batch path and the per-stock path disagree on any field for any stock
+- WHEN the equivalence check runs
+- THEN the batch path is rejected
+- AND the disagreement is reported with the field and the stock identity
