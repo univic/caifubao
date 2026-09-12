@@ -75,6 +75,16 @@
   （以及 stdout）由「按 horizon 字符串分键的 dict」变为单次服务结果；该值不会进入
   `datahub_job_runs.summary`（`_run_with_tracking` 只投影
   `horizons/pulled_total/written_total/has_verify`），且全库无其它消费者。
+- [ ] 3.1b 按 code 分组预取以限制内存峰值（C1 收尾，**未实现**）
+  注：单份全市场窗口（674k 行）实测 RSS 峰值 ~1.06GiB（h20 单 horizon ~683MiB），
+  远高于 design 早期引用的 tracemalloc ~102MB；增量来自 pymongo 解码 674k 条 BSON
+  的分配器高水位，而非最终列式帧（deep 内存仅 ~82MB），改 `batch_size` 只降 ~3%、
+  dict→tuple 无收益。dev datahub 1Gi limit 已实测被 OOMKill（exit 137）；生产
+  scoring CronJob 2Gi 可用但余量仅 ~2×。按 ~900–1,000 code 一份预取分组后实测
+  RSS 峰值 ~294MiB（6 组）、组间回落 ~178MiB。实现需保持：ranked 的横截面排名仍
+  用跨组累积的 `raw_by_code`；每日期一次 persist 以保持失败语义不变；行业/CSI300
+  缓存变为每组一份（约 6×7 次查询/天，仍与 cohort 规模无关）。dev overlay 已临时
+  把 datahub limit 提到 2Gi（private#81）作为过渡。
 - [x] 3.2 分量计算 pandas 化（保持各组件 raw_value/weight 逐股一致）
   注：数值内核仍是原 Python 实现（`statistics.pstdev`、逐项 `round` 逐位一致），
   改变的是输入装配——组件改吃 dict/DataFrame 回读的 `_Row`/`_HistoryWindow`
