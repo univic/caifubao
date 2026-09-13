@@ -370,12 +370,14 @@ def holding_scan_panel(
 
     panel = _load_panel(path, horizons=horizons)
     signal = compute(panel, factor)
-    frames = {horizon: build_scan_input(panel, signal, horizon) for horizon in horizons}
     cells = []
     for horizon in sorted({int(h) for h in horizons}):
-        frame = frames.get(horizon)
-        if frame is None:
+        if f"fwd_h{horizon}" not in panel.columns:
             continue
+        # One horizon at a time: each scan frame is a few hundred MB on a
+        # full-history panel, and holding every horizon's copy at once
+        # OOMKilled the 6 GiB pod.
+        frame = build_scan_input(panel, signal, horizon)
         for buffer in sorted({float(b) for b in buffers}):
             cells.append(
                 scan_cell(
@@ -386,6 +388,7 @@ def holding_scan_panel(
                     portfolio_size=portfolio_size,
                 )
             )
+        del frame
     table = summary_table(cells)
     return {
         "panel": str(path),
