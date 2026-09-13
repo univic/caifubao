@@ -88,6 +88,42 @@ kubectl -n caifubao-research cp \
 #   -l job.caifubao.io/type=lab-runner
 ```
 
+## Holding-period x buffer scan
+
+`evaluate` answers "does this factor sort returns?". `holding-scan` answers the
+portfolio question that follows: **at which holding period does the edge survive
+round-trip friction, and what annual turnover does that cost?**
+
+```bash
+python -m app.jobs.factor_lab_runner holding-scan \
+  --panel /data/lab.parquet --factor reversal_20 \
+  --horizons 5,10,20,40,60 --buffers 1.0,1.5,2.0 \
+  --portfolio-size 800 --entry-pct 0.2 \
+  --output /data/holding-scan.json
+```
+
+Per cell it reports the net-of-cost excess over the same-date eligible
+equal-weight benchmark, the information ratio, annual turnover, drawdown and a
+turnover-penalised objective (`summary` in the JSON, one line per line on
+stdout). Semantics:
+
+- the signal is the **lowest** ranks of the chosen factor (`rank <= entry_pct`),
+  which is the reversal side — pass `--factor momentum_20` to scan the momentum
+  side directly;
+- `--buffers` is the hysteresis: a held name is only sold once its percentile
+  rises above `entry_pct * buffer`, so `1.0` is a full re-sort every rebalance;
+- a name is always sold when its holding period elapses, and turnover counts
+  **replacements** of the target book, not the mechanical re-buy of a name the
+  strategy would keep;
+- blocked labels (limit-up entry, suspension, …) are dropped from both the
+  basket and the benchmark, exactly as in `evaluate`.
+
+Caveat: the registered lab factors are simple price/volume expressions, not the
+production scoring engine's eight-component `flip_wide` construction. Use this
+command to find the holding-period/turnover trade-off of a *factor family*, then
+re-run the chosen cell against the production signal before quoting a number as
+the strategy's.
+
 ## Resources and caveats
 
 - **ReadWriteOnce.** Export and evaluate must not mount the claim at the same
