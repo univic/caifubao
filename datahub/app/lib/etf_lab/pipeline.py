@@ -458,6 +458,26 @@ def main(argv=None) -> int:
     panel.add_argument("--horizons", default="5,20,60")
     panel.add_argument("--output", required=True)
 
+    rotate = commands.add_parser(
+        "rotate", help="Multi-asset trend rotation backtest + current signal"
+    )
+    rotate.add_argument("--codes", required=True, help="comma-separated ETF codes")
+    rotate.add_argument("--from-date", required=True)
+    rotate.add_argument("--to-date", required=True)
+    rotate.add_argument("--lookback", type=int, default=250)
+    rotate.add_argument("--top-n", type=int, default=3)
+    rotate.add_argument("--ma", type=int, default=200)
+    rotate.add_argument("--cadence", type=int, default=20)
+    rotate.add_argument("--defensive", default="511010.SH")
+    rotate.add_argument(
+        "--target-vol",
+        type=float,
+        default=None,
+        help="annualised volatility target for exposure scaling",
+    )
+    rotate.add_argument("--vol-window", type=int, default=60)
+    rotate.add_argument("--output", default=None)
+
     measure = commands.add_parser("measure", help="IC and quantile spread per factor")
     measure.add_argument("--panel", required=True)
     measure.add_argument(
@@ -514,6 +534,78 @@ def main(argv=None) -> int:
                     "to": str(panel["date"].max().date()),
                     "label_coverage": coverage,
                     "output": args.output,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    if args.command == "rotate":
+        from app.lib.etf_lab.rotation import monthly_signal, simulate, summary
+
+        codes = [c.strip() for c in args.codes.split(",") if c.strip()]
+        prices = fetch_prices(pro, codes, args.from_date, args.to_date)
+        if prices.empty:
+            raise SystemExit("no prices fetched")
+        prices["date"] = pd.to_datetime(prices["trade_date"], format="%Y%m%d")
+        for column in ("close", "adj_factor"):
+            prices[column] = pd.to_numeric(prices[column], errors="coerce")
+        prices["close_hfq"] = prices["close"] * prices["adj_factor"]
+        close = prices.pivot(
+            index="date", columns="ts_code", values="close_hfq"
+        ).sort_index()
+        close = close.dropna(how="all")
+        result = simulate(
+            close,
+            lookback=args.lookback,
+            top_n=args.top_n,
+            ma=args.ma,
+            cadence=args.cadence,
+            defensive=args.defensive,
+            target_vol=args.target_vol,
+            vol_window=args.vol_window,
+        )
+        stats = summary(result)
+        report = {
+            "codes": codes,
+            "from": str(close.index[0].date()),
+            "to": str(close.index[-1].date()),
+            "lookback": args.lookback,
+            "top_n": args.top_n,
+            "ma": args.ma,
+            "cadence": args.cadence,
+            "target_vol": args.target_vol,
+            "summary": stats,
+            "yearly_returns": {str(k): v for k, v in result["yearly_returns"].items()},
+            "max_drawdown": result["max_drawdown"],
+            "drawdown_peak": str(result["drawdown_peak"].date()),
+            "drawdown_trough": str(result["drawdown_trough"].date()),
+            "total_trades": result["total_trades"],
+            "final_holdings": result["final_holdings"],
+            "signal": monthly_signal(
+                close,
+                lookback=args.lookback,
+                top_n=args.top_n,
+                ma=args.ma,
+                defensive=args.defensive,
+            ),
+        }
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as handle:
+                json.dump(report, handle, ensure_ascii=False, indent=2, default=str)
+        print(
+            json.dumps(
+                {k: v for k, v in report.items() if k != "signal"},
+                ensure_ascii=False,
+                default=str,
+            )
+        )
+        print(
+            "SIGNAL "
+            + json.dumps(
+                {
+                    "as_of": str(report["signal"]["as_of"].date()),
+                    "selected": report["signal"]["selected"],
                 },
                 ensure_ascii=False,
             )
