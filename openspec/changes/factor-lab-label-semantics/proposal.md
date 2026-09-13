@@ -22,20 +22,22 @@ research 结论若混用这几种口径，就会重复本项目已经踩过的�
 
 ## What Changes
 
-- 新增 `openspec/changes/factor-lab-label-semantics/specs/factor-lab-labels/spec.md`，
-  把因子实验室的两条约定写成可验证的 requirement：**位置化标签 + 丢弃不可交易**、
-  **board-aware 涨跌停**。
+- 新增两个 capability spec：
+  `specs/factor-lab-labels/spec.md`（**会话偏移标签 + 丢弃不可交易**、
+  **board-aware 涨跌停 + 开盘价判定**、镜像空头腿、日历校验）与
+  `specs/factor-lab-metrics/spec.md`（**净成本/闸门/t 统计量口径**：两腿各付一次
+  往返、profit_concentration 用单笔占正收益比、走查衰减带符号、按 horizon 计量换手、
+  Newey-West t 与 IC 的非净成本性质）。
 - 明确「哪套约定服务哪个消费者」，以及它们**不得共用标签**（尤其 roll-forward 与
   drop 不能混用）。
-- 把四条容易「看起来对、其实失效」的语义写成 requirement：日历校验（缺行不得悄悄
-  拉长持有期）、镜像空头腿、`previous_close`+开盘价判定涨跌停、以及净成本/闸门口径
-  （多空价差每腿各付一次往返、profit_concentration 用单笔占正收益比、走查衰减带符号）。
 - 不改动任何现有实现：本 change 只治理新增的研究链路；其余三套保持现状，未来若统一
   需另开 change。
 
 ## Impact
 
-- 受影响代码：`datahub/app/lib/factor_lab/panel.py`（新，已实现）。
+- 受影响代码：`datahub/app/lib/factor_lab/panel.py`（标签）、`metrics.py`（指标与闸门）、
+  `factors.py`（RSI 全涨窗口）、`datahub/app/jobs/factor_lab_runner.py`（字段投影、
+  交易日历、标签列裁剪）；全部为新增研究代码。
 - 不受影响：scoring engine、signals、replay、calibration、backend API、OpenClaw 合约。
 - 数据所有权：`factor_lab` 属 datahub，只读 Mongo、只写本地 parquet。
 

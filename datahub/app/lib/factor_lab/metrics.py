@@ -80,14 +80,12 @@ def newey_west_t(series: pd.Series, lag: int) -> float | None:
     return round(float(values.mean() / math.sqrt(variance / count)), 3)
 
 
-def ic_report(
-    panel: pd.DataFrame, factor: str, horizon: int, *, net: bool = True
-) -> dict:
+def ic_report(panel: pd.DataFrame, factor: str, horizon: int) -> dict:
     """Per-session cross-sectional IC plus its ICIR and t-statistic.
 
-    ``net=False`` measures the raw label; the default subtracts the round-trip
-    cost, which for rank IC only shifts levels (ranks are preserved), so the IC
-    itself is identical either way — it matters for the spread, not the IC.
+    The IC is a rank statistic on the gross label: a uniform round-trip cost
+    shifts every label by the same amount and preserves ranks, so there is no
+    ``net`` variant to report — the cost shows up in the spread, not the IC.
 
     ``t_stat`` is the naive i.i.d. t-statistic; ``t_stat_nw`` applies a Newey-West
     correction with ``lag = horizon - 1`` for the overlap the label creates.
@@ -143,19 +141,27 @@ def quantile_report(
     Quantiles are formed inside each session (cross-sectional), so a factor whose
     scale drifts over time is still evaluated on relative position.
 
+    Buckets are formed on the **union of the two legs' resolvable observations**,
+    so an entry that a long cannot buy but a short can still trades in the short
+    leg. Each leg's mean then skips the other leg's missing labels: the long leg
+    uses ``fwd_h{h}`` and the mirrored short leg uses ``fwd_short_h{h}`` (or the
+    negated long label when the panel has no short column, a statistical short
+    whose fills are not checked).
+
     ``avg_net_return`` is the long-only net return of a bucket (gross minus one
     round trip). ``top_minus_bottom`` is the **long-short** net spread: the long
     leg pays one round trip and the short leg pays one of its own, so the spread
-    is ``gross_spread - 2 * round_trip_cost()``, not ``gross_spread``. When the
-    panel carries the mirrored ``fwd_short_h{h}`` label the short leg is measured
-    on its own tradability-filtered sample; otherwise it is the negated long
-    label (a statistical short whose fills are not checked).
+    is ``gross_spread - 2 * round_trip_cost()``, not ``gross_spread``.
     """
     label = f"fwd_h{horizon}"
+    has_short = short_column is not None and short_column in panel.columns
     columns = ["date", factor, label]
-    if short_column is not None and short_column in panel.columns:
+    if has_short:
         columns.append(short_column)
-    work = panel.loc[panel[factor].notna() & panel[label].notna(), columns].copy()
+    resolvable = panel[label].notna()
+    if has_short:
+        resolvable = resolvable | panel[short_column].notna()
+    work = panel.loc[panel[factor].notna() & resolvable, columns].copy()
     if work.empty:
         return {"horizon": horizon, "quantiles": [], "monotonic": None}
     cost = round_trip_cost() if net else 0.0
@@ -171,14 +177,20 @@ def quantile_report(
     if work.empty:
         return {"horizon": horizon, "quantiles": [], "monotonic": None}
 
+    # `gross` is NaN where the long label is missing, and `mean` skips those, so
+    # the bucket statistics stay long-only even on the union universe.
     gross_means = work.groupby("bucket")["gross"].mean()
+    gross_means = gross_means.dropna()
+    if len(gross_means) < 2:
+        return {"horizon": horizon, "quantiles": [], "monotonic": None}
+    long_counts = work.loc[work[label].notna()].groupby("bucket").size()
     net_means = gross_means - cost
     entries = [
         {
             "quantile": int(bucket),
             "avg_net_return": round(float(net_means.loc[bucket]), 6),
             "avg_gross_return": round(float(gross_means.loc[bucket]), 6),
-            "observations": int((work["bucket"] == bucket).sum()),
+            "observations": int(long_counts.get(bucket, 0)),
         }
         for bucket in gross_means.index
     ]
@@ -189,9 +201,9 @@ def quantile_report(
     # Short leg: sell the bottom bucket at T+1's open and buy it back at the h-th
     # open -> gain -gross, and one round trip of its own. The gross spread uses the
     # same legs as the net spread, so `top_minus_bottom == gross - 2 * cost` holds
-    # exactly rather than only when both legs share one sample.
+    # exactly.
     short_sample = None
-    if short_column is not None and short_column in work.columns:
+    if has_short:
         short_sample = work.loc[work["bucket"] == bottom_bucket, short_column].dropna()
     if short_sample is not None and len(short_sample):
         short_leg_gross = float(short_sample.mean())
@@ -200,7 +212,7 @@ def quantile_report(
     else:
         short_leg_gross = -float(gross_means.loc[bottom_bucket])
         short_leg_source = f"negated {label}"
-        short_leg_observations = int((work["bucket"] == bottom_bucket).sum())
+        short_leg_observations = int(long_counts.get(bottom_bucket, 0))
     gross_spread = long_leg_gross + short_leg_gross
     spread = gross_spread - 2 * cost
     # Profit concentration mirrors `autoresearch/profile.yaml`: the best single
@@ -215,10 +227,8 @@ def quantile_report(
     return {
         "horizon": horizon,
         "quantiles": entries,
-        "top_minus_bottom": round(spread, 6) if len(gross_means) > 1 else None,
-        "gross_top_minus_bottom": (
-            round(gross_spread, 6) if len(gross_means) > 1 else None
-        ),
+        "top_minus_bottom": round(spread, 6),
+        "gross_top_minus_bottom": round(gross_spread, 6),
         "monotonic": _monotonic([entry["avg_net_return"] for entry in entries]),
         "profit_concentration": profit_concentration,
         "bottom_leg": {
@@ -229,7 +239,10 @@ def quantile_report(
         },
         "cost_per_leg": round(cost, 6),
         "cost_per_round_trip": round(round_trip_cost(), 6),
-        "n_observations": int(len(work)),
+        "n_observations": int(work[label].notna().sum()),
+        "n_short_observations": (
+            int(work[short_column].notna().sum()) if has_short else None
+        ),
     }
 
 
@@ -309,10 +322,12 @@ def walk_forward(panel: pd.DataFrame, factor: str, horizon: int, splits) -> dict
     ]
     decay = None
     if train not in (None, 0) and later:
-        # Signed decay, like `autoresearch_h20_excess_alpha._walk_forward_decay`:
-        # a factor that simply flips sign out of sample must score a *large*
-        # positive decay, not zero. Using |IC| here would let train +1.0 →
-        # validation/test −1.0 pass the gate with decay 0.0.
+        # Signed decay: a factor that flips sign out of sample must score a
+        # *large* positive decay, not the zero an |IC|-based decay would give
+        # (train +1.0 -> validation/test -1.0 must fail). The profile's
+        # `_walk_forward_decay` is signed too, but it uses validation only and
+        # clamps at 0; this variant averages validation+test and leaves an
+        # improving factor's decay negative.
         decay = round(1 - (sum(later) / len(later)) / train, 4)
     return {"per_split": per_split, "walk_forward_decay": decay}
 

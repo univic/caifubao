@@ -19,8 +19,7 @@ Each horizon SHALL also carry the mirrored short leg in `fwd_short_h{h}` with
 its own `blocked_short_h{h}`. The short leg sells the T+1 open and covers the
 h-th open, and is blocked on the opposite side of the book: `limit_down_entry`
 (cannot sell into a limit-down open) and `limit_up_exit` (cannot buy back to
-cover). A long-short spread SHALL NOT mix a long-filtered sample with an
-unfiltered short leg.
+cover).
 
 #### Scenario: Weekend inside the holding period
 
@@ -84,38 +83,15 @@ so that a limit session can never fabricate an entry.
 - WHEN the entry tradability is evaluated
 - THEN the entry is untradable, because the buy could not have filled there
 
+#### Scenario: Main-board ST name
+
+- GIVEN a main-board observation flagged `isST` whose T+1 session opens up 6 %
+- WHEN the entry tradability is evaluated
+- THEN the entry is untradable at the 5 % ST band
+- AND the same open on a ChiNext ST name stays tradable at the 20 % band
+
 #### Scenario: Unknown previous close
 
 - GIVEN an observation whose T+1 session has no resolvable previous close
 - WHEN the entry tradability is evaluated
 - THEN the entry is untradable with reason `missing_previous_close`
-
-### Requirement: Reported edges and gates are net and sign-aware
-
-The factor lab SHALL report a long-short spread that pays one round trip per leg:
-`top_minus_bottom` equals the gross spread minus `2 × round_trip_cost()`, and the
-per-quantile `avg_net_return` equals the gross bucket return minus one round
-trip. Subtracting the same cost from both legs SHALL NOT be used, because it
-cancels and reports a gross spread as net.
-
-The profit-concentration gate SHALL measure the best single trade's share of the
-long book's positive P&L — the quantity `autoresearch/profile.yaml` gates on —
-and SHALL NOT use bucket sizes, which are equal by construction.
-
-The walk-forward decay SHALL be signed: a factor that flips sign out of sample
-SHALL score a large positive decay, not zero.
-
-The IC report SHALL publish a Newey-West t-statistic with `lag = horizon - 1`
-alongside the i.i.d. one, because an h-day label makes h consecutive ICs overlap.
-
-#### Scenario: Zero-edge factor
-
-- GIVEN a factor uncorrelated with the forward label
-- WHEN its net long-short spread is computed
-- THEN the spread is `-2 × round_trip_cost()`, not zero
-
-#### Scenario: Out-of-sample sign flip
-
-- GIVEN a factor with positive train IC and negative validation/test IC
-- WHEN walk-forward decay is computed
-- THEN the decay exceeds the 0.2 gate and the factor fails

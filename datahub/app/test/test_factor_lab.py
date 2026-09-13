@@ -164,6 +164,29 @@ def test_limit_detection_uses_the_open_not_the_close():
     assert frame.loc[days[0], "blocked_h1"] is None
 
 
+def test_st_band_is_applied_end_to_end():
+    """`isST` must actually reach `build_panel` and tighten a main-board entry to
+    the 5 % band (a 6 % open is limit-up for an ST name but not for a normal one)."""
+    days = _sessions(3)
+    rows = [
+        _quote("sh600000", days[0], 10.0, previous_close=10.0, is_st=1),
+        _quote("sh600000", days[1], 10.6, previous_close=10.0, is_st=1),
+        _quote("sh600000", days[2], 10.6, previous_close=10.6, is_st=1),
+        # The same price path on a non-ST main-board name is tradable.
+        _quote("sh600001", days[0], 10.0, previous_close=10.0),
+        _quote("sh600001", days[1], 10.6, previous_close=10.0),
+        _quote("sh600001", days[2], 10.6, previous_close=10.6),
+        # A ChiNext ST name keeps the 20 % band: +6 % is not limit-up.
+        _quote("sz300001", days[0], 10.0, previous_close=10.0, is_st=1),
+        _quote("sz300001", days[1], 10.6, previous_close=10.0, is_st=1),
+        _quote("sz300001", days[2], 10.6, previous_close=10.6, is_st=1),
+    ]
+    frame = panel_mod.build_panel(rows, horizons=(1,)).set_index(["stock_code", "date"])
+    assert frame.loc[("sh600000", days[0]), "blocked_h1"] == "limit_up_entry"
+    assert frame.loc[("sh600001", days[0]), "blocked_h1"] is None
+    assert frame.loc[("sz300001", days[0]), "blocked_h1"] is None
+
+
 def test_short_leg_blocks_the_mirrored_side():
     days = _sessions(3)
     rows = [
@@ -249,6 +272,29 @@ def test_planted_factor_signal_is_recovered_with_the_expected_sign():
     assert abs(noise["ic_mean"]) < 0.2
 
 
+def test_newey_west_t_matches_the_naive_t_and_penalises_overlap():
+    """The Newey-West statistic is what makes the overlapping-label t honest, so it
+    needs its own known-answer test, not just a non-null assertion."""
+    rng = np.random.default_rng(20260913)
+    white = pd.Series(rng.normal(size=400))
+    naive = float(white.mean() / white.std(ddof=0) * np.sqrt(len(white)))
+    # `newey_west_t` rounds to 3 dp, so compare at that precision.
+    assert metrics.newey_west_t(white, 0) == pytest.approx(round(naive, 3), abs=1e-9)
+
+    # A strongly autocorrelated IC series keeps its sign but loses significance.
+    series = [0.0]
+    for _ in range(799):
+        series.append(0.5 + 0.7 * series[-1] + rng.normal(scale=0.5))
+    overlapping = pd.Series(series)
+    naive_overlap = float(
+        overlapping.mean() / overlapping.std(ddof=1) * np.sqrt(len(overlapping))
+    )
+    corrected = metrics.newey_west_t(overlapping, 19)
+    assert corrected is not None
+    assert np.sign(corrected) == np.sign(naive_overlap)
+    assert abs(corrected) < abs(naive_overlap)
+
+
 def test_long_short_spread_pays_one_round_trip_per_leg():
     """The spread must not cancel its own cost: a long-short book pays a round
     trip on each leg, so top_minus_bottom == gross_spread - 2 * cost."""
@@ -289,6 +335,37 @@ def test_long_short_spread_pays_one_round_trip_per_leg():
     assert mirrored["top_minus_bottom"] == pytest.approx(
         mirrored["gross_top_minus_bottom"] - 2 * cost, abs=1e-9
     )
+
+
+def test_long_blocked_but_short_tradable_observation_still_trades_short():
+    """Buckets are formed on the union of the legs, so an entry a long cannot buy
+    (limit-up) must still be able to trade the short leg."""
+    days = _sessions(4)
+    rows = []
+    for name_index in range(20):
+        code = f"sh60{name_index:04d}"
+        for day in days:
+            rows.append(_quote(code, day, 10.0 + name_index * 0.1))
+    frame = panel_mod.build_panel(rows, horizons=(1,))
+    frame["by_name"] = frame["stock_code"].str[-2:].astype(float)
+    names = sorted(frame["stock_code"].unique())
+    frame["fwd_h1"] = 0.0
+    frame["fwd_short_h1"] = 0.0
+    # The lowest-factor name cannot be bought (long label null) but can be shorted.
+    bottom = frame["stock_code"] == names[0]
+    frame.loc[bottom, "fwd_h1"] = np.nan
+    frame.loc[bottom, "fwd_short_h1"] = 0.05
+
+    report = metrics.quantile_report(
+        frame, "by_name", 1, quantiles=5, short_column="fwd_short_h1"
+    )
+    assert report["bottom_leg"]["source"] == "fwd_short_h1"
+    # All 4 bottom names x 4 sessions; only names[0] earns 0.05 on the short leg.
+    assert report["bottom_leg"]["observations"] == 16
+    assert report["bottom_leg"]["gross_return"] == pytest.approx(0.05 / 4)
+    # The long book still has no label for the blocked name.
+    assert report["n_observations"] == int(frame["fwd_h1"].notna().sum())
+    assert report["n_short_observations"] == len(frame)
 
 
 def test_profit_concentration_measures_pnl_not_bucket_balance():
@@ -377,12 +454,13 @@ def test_quantiles_and_turnover_are_cost_aware():
     turnover = metrics.turnover_report(frame, "by_name", 1, top_fraction=0.2)
     assert turnover["avg_one_way_turnover"] == 0.0  # ranking never changes
 
+    # A factor whose top set alternates completely every session must turn the
+    # whole book over (not merely land somewhere in [0, 1]).
     flipping = frame.copy()
-    flipping["flip"] = flipping.groupby("date")["by_name"].rank(ascending=False)
-    mixed = metrics.turnover_report(flipping, "flip", 1, top_fraction=0.2)
-    assert mixed["avg_one_way_turnover"] is None or (
-        0.0 <= mixed["avg_one_way_turnover"] <= 1.0
-    )
+    parity = flipping["date"].map({day: index % 2 for index, day in enumerate(days)})
+    flipping["rot"] = np.where(parity == 0, flipping["by_name"], -flipping["by_name"])
+    mixed = metrics.turnover_report(flipping, "rot", 1, top_fraction=0.2)
+    assert mixed["avg_one_way_turnover"] == pytest.approx(1.0)
 
 
 def test_turnover_is_measured_at_the_horizon_cadence():

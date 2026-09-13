@@ -16,10 +16,10 @@
 | 多空价差成本 | 两腿各扣同一笔成本 → 恰好抵消，报的是**毛**价差 | 每腿各付一次往返：`净 = 毛 − 2 × 0.35%` | §3 全部候选由「正」转「负」 |
 | `limit_up_entry` 判定 | 用收盘涨跌幅 ≥ 9.9% | 用**开盘价**相对前收盘 ≥ 板别阈值 | h1 覆盖率 91.6% → **99.3%**；误丢的 25 万个「收盘涨停但开盘可买」观测回到样本 |
 | `profit_concentration` 闸门 | 最大分位桶计数占比，恒 ≈1/quantiles，**永不触发** | 单笔最大正收益 / 正收益合计（对齐 `profile.yaml`） | 量级 ~1e-4，见 §5 局限 9 |
-| 走查衰减 | `\|IC\|`：train +1.0 / val −1.0 → 0.0 通过 | 带符号：变号 → >1.0 失败 | 例：`reversal_1` h5 衰减 −0.05 → **0.95**，由「通过」变「失败」 |
+| 走查衰减 | `\|IC\|`：train +1.0 / val −1.0 → 0.0 通过 | 带符号：变号 → >1.0 失败 | 例：`reversal_5` h5 衰减 1.09（train 正、样本外略负），由「通过」变「失败」 |
 | ST 5% 档 | `isST` 从未被 select，全部按非 ST 处理 | 投影 `isST`，主板 ST ±5%（创业板/科创 ST 仍 ±20%） | 面板实测 8,519 个 ST 股票日重新按 5% 判定 |
 | 缺行持有期 | 行位移，缺一根 K 线会**悄悄拉长**持有期 | 用市场交易日历校验偏移，缺行记 `missing_session_between` | h1 1,708 / h5 5,821 行被正确丢弃 |
-| 空头腿 | 只有多头可交易性过滤 | 新增镜像空头腿 `fwd_short_h{h}`（`limit_down_entry`/`limit_up_exit`） | 多空价差两腿样本一致 |
+| 空头腿 | 只有多头可交易性过滤 | 新增镜像空头腿 `fwd_short_h{h}`（`limit_down_entry`/`limit_up_exit`）；分位桶在**两腿可解析观测的并集**上形成 | 两腿各自按本方可交易性取样本，多头买不到但空头能卖的观测仍进空头腿 |
 | 换手 | 与 horizon 无关（h1==h5） | 每 h 个 session 比较一次 | `momentum_10` h1 0.26 / h5 0.61 |
 | t 统计量 | 只报 i.i.d. t（重叠标签高估显著性） | 同时报 Newey-West（lag=h−1） | `momentum_20` h20 −13.1 → **−3.04** |
 
@@ -66,9 +66,10 @@
   `no_exit_yet`/`suspended_exit`/`limit_down_exit`/`missing_session_between`）。
   paper/回测路径是「滚到下一个可成交日」，那回答的是「策略会怎么做」并且会**悄悄改变
   持有期**，两者不能共用标签。
-* **镜像空头腿**：`fwd_short_h{h}`（T+1 开盘卖出 → 第 h 个交易日开盘买回）与
-  `blocked_short_h{h}`（`limit_down_entry`/`limit_up_exit`）。多空价差的两条腿各用
-  自己方向的可交易性过滤，不再用「多头过滤后的样本」代表空头。
+* **镜像空头腿 + 并集分位**：`fwd_short_h{h}`（T+1 开盘卖出 → 第 h 个交易日开盘买回）与
+  `blocked_short_h{h}`（`limit_down_entry`/`limit_up_exit`）。多空价差的分位桶在**两条腿
+  可解析观测的并集**上形成，各腿均值各自跳过对方缺失的标签：多头买不到（涨停开盘）但
+  空头能卖的观测仍然进入空头腿，空头卖不出（跌停开盘）但多头能买的观测仍然进入多头腿。
 * **净成本口径**：滑点 10bp/边 + 佣金 2.5bp/边 + 卖出印花 10bp = **单次往返 0.35%**，
   与 `autoresearch/profile.yaml` 一致。单桶 `avg_net_return` 扣**一次**往返（纯多头），
   而 `top_minus_bottom` 是**多空**价差、两腿各扣一次，即 `毛价差 − 0.70%`。
@@ -78,14 +79,16 @@
 
 ### 2.1 标签覆盖率（实测，全面板 3,334,045 行）
 
-| horizon | 可用观测 | 覆盖率 | 主要丢弃原因 |
-|---|---:|---:|---|
-| h1 | 3,310,017 | **99.28%** | `limit_up_entry` 8,688、`no_next_session` 5,218、`no_exit_yet` 5,212、`limit_down_exit` 2,772、`missing_session_between` 1,708、`suspended_entry` 339、`suspended_exit` 91 |
-| h5 | 3,285,073 | **98.53%** | `no_exit_yet` 26,043（面板右端）、`limit_up_entry` 8,688、`missing_session_between` 5,821、`no_next_session` 5,218、`limit_down_exit` 2,655、`suspended_entry` 339、`suspended_exit` 208 |
+| horizon | 腿 | 可用观测 | 覆盖率 | 丢弃原因（全面板） |
+|---|---|---:|---:|---|
+| h1 | 多头 | 3,310,017 | **99.28%** | `limit_up_entry` 8,688、`no_next_session` 5,218、`no_exit_yet` 5,212、`limit_down_exit` 2,772、`missing_session_between` 1,708、`suspended_entry` 339、`suspended_exit` 91 |
+| h1 | 空头 | 3,309,954 | **99.28%** | `limit_up_exit` 8,629、`no_next_session` 5,218、`no_exit_yet` 5,214、`limit_down_entry` 3,002、`missing_session_between` 1,602、`suspended_entry` 339、`suspended_exit` 87 |
+| h5 | 多头 | 3,285,073 | **98.53%** | `no_exit_yet` 26,043（面板右端）、`limit_up_entry` 8,688、`missing_session_between` 5,821、`no_next_session` 5,218、`limit_down_exit` 2,655、`suspended_entry` 339、`suspended_exit` 208 |
+| h5 | 空头 | 3,285,091 | **98.53%** | `no_exit_yet` 26,074（面板右端）、`limit_up_exit` 8,559、`missing_session_between` 5,555、`no_next_session` 5,218、`limit_down_entry` 3,002、`suspended_entry` 339、`suspended_exit` 207 |
 
-空头腿覆盖率 h1 99.28% / h5 98.53%，丢弃结构是上表的镜像（`limit_up_exit` 8,629 /
-`limit_down_entry` 3,002）。`previous_close` 在面板内 0 缺失，故 `missing_previous_close`
-未触发。
+两条腿的丢弃结构互为镜像（多头 `limit_up_entry` 8,688 ↔ 空头 `limit_up_exit` 8,629；
+多头 `limit_down_exit` 2,772 ↔ 空头 `limit_down_entry` 3,002），覆盖率只是四舍五入后
+相同。`previous_close` 在面板内 0 缺失，故 `missing_previous_close` 未触发。
 
 `limit_up_entry` 从首版的 255,552（7.7%）降到 8,688（0.26%）：首版把「收盘涨停」当成
 「开盘涨停」，误丢了 25 万个实际可买的观测。真正因为**开盘买不进**而丢弃的比例是
@@ -98,15 +101,15 @@
 
 | 因子（方向） | h1 IC | h5 IC | h1/h5 衰减 | h1 毛多空 | h1 净多空 | h5 毛多空 | h5 净多空 | 闸门 h1/h5 |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `volatility_20`（做多低波） | −0.0402 | −0.0581 | 0.29 / 0.22 | −0.04% | **−0.74%** | −0.20% | **−0.90%** | decay / decay |
-| `reversal_1`（做多昨日跌） | +0.0185 | +0.0113 | 0.06 / 0.95 | +0.16% | **−0.54%** | +0.30% | **−0.40%** | PASS / decay |
-| `gap_1`（做多低开） | +0.0157 | +0.0159 | −0.49 / −0.43 | +0.17% | **−0.53%** | +0.35% | **−0.35%** | PASS / PASS |
-| `amihud_20`（做多非流动） | +0.0218 | +0.0471 | 0.23 / 0.33 | +0.11% | **−0.59%** | +0.50% | **−0.20%** | decay / decay |
-| `volume_zscore_60`（做空放量） | −0.0432 | −0.0549 | 0.23 / 0.38 | −0.10% | **−0.80%** | −0.56% | **−1.26%** | decay / decay |
-| `momentum_60`（做空强动量） | −0.0348 | −0.0621 | 0.23 / 0.34 | −0.10% | **−0.80%** | −0.57% | **−1.27%** | decay / decay |
+| `volatility_20`（做多低波） | −0.0402 | −0.0581 | 0.29 / 0.22 | −0.03% | **−0.73%** | −0.19% | **−0.89%** | decay / decay |
+| `reversal_1`（做多昨日跌） | +0.0185 | +0.0113 | 0.06 / 0.95 | +0.21% | **−0.49%** | +0.33% | **−0.37%** | PASS / decay |
+| `gap_1`（做多低开） | +0.0157 | +0.0159 | −0.49 / −0.43 | +0.19% | **−0.51%** | +0.37% | **−0.33%** | PASS / PASS |
+| `amihud_20`（做多非流动） | +0.0218 | +0.0471 | 0.23 / 0.33 | +0.11% | **−0.59%** | +0.51% | **−0.19%** | decay / decay |
+| `volume_zscore_60`（做空放量） | −0.0432 | −0.0549 | 0.23 / 0.38 | −0.09% | **−0.79%** | −0.55% | **−1.25%** | decay / decay |
+| `momentum_60`（做空强动量） | −0.0348 | −0.0621 | 0.23 / 0.34 | −0.08% | **−0.78%** | −0.55% | **−1.25%** | decay / decay |
 
 **结论：没有任何 h1/h5 因子在扣除两腿成本后有正的多空价差。** 更根本的是**毛**价差
-本身就太小（最大 `amihud_20` h5 +0.50%，低于 2×0.35%=0.70% 的门槛），所以这不是
+本身就太小（最大 `amihud_20` h5 +0.51%，低于 2×0.35%=0.70% 的门槛），所以这不是
 「差一点手续费」，而是短线信号在 2024–2026 这段样本里根本没有足够大的横截面区分度。
 首版「`volume_zscore_60` +0.46%、`volatility_20` +0.37%、`reversal_1` +0.25% 还有
 余量 / `volatility_20` 是最稳候选」的结论**作废**。
@@ -117,16 +120,17 @@
 
 ## 4. 读法（三条可执行的结论）
 
-1. **短线（h1/h5）在多空口径下不可交易**：毛价差 ≤0.50%，两腿成本 0.70%，净价差
+1. **短线（h1/h5）在多空口径下不可交易**：毛价差 ≤0.51%，两腿成本 0.70%，净价差
    全为负。`gap_1` 是唯一两个 horizon 都过闸门的因子，但其净价差 −0.53%/−0.35%。
 2. **h20 的负 IC 仍是唯一稳健的「已知答案」**：动量/趋势族 IC 全部为负、量级与审计
    一致；但按重叠标签修正后的 Newey-West t，`|t| ≥ 3.3`（Bonferroni）只有
    `volume_zscore_60`（−3.63）能过，`trend_60`（−3.30）正好卡在阈值上，
    `momentum_20`（−3.04）、`rsi_14`（−2.83）不再达标。也就是说**「反向」是真的，
    但显著性被首版高估**。
-3. **衰减闸门现在是真闸门**：首版用 |IC| 让「样本外变号」也能通过（`reversal_1`
-   h5 衰减 −0.05）；修正后 `reversal_1` h5 = 0.95、`momentum_*` 0.3–1.0，整族被
-   挡在门外 —— 这正是路线图要求「信号不能只在 train 段存在」的体现。
+3. **衰减闸门现在是真闸门**：首版用 |IC| 让样本外衰减/变号都能通过（`reversal_1`
+   h5 在旧面板上衰减 −0.05）；修正后 `reversal_1` h5 = 0.95、`reversal_5` h5 = 1.09
+   （train 为正、样本外略负，即真正的变号）、`momentum_*` 0.23–1.0，整族被挡在门外
+   —— 这正是路线图要求「信号不能只在 train 段存在」的体现。
 
 ## 5. 局限（必须与结论一起读）
 
@@ -143,8 +147,9 @@
 5. **ST 档已生效但依赖每日快照**：面板实测 8,519 个 ST 股票日（2024/2025/2026 分别
    2,387/3,064/3,068），主板按 ±5%、创业板/科创 ST 按 ±20% 判定。`isST` 是当日标记，
    不带 ST 起止区间，因此「ST 前后」的样本切换仍可能有噪声。
-6. **IC 是净成本但非净冲击**：面板口径为「标签减往返成本」，未含市场冲击、涨跌停排队、
-   整手约束、最低佣金。
+6. **IC 不是净成本口径，分位收益才是**：IC 是标签的秩相关，统一扣一笔往返成本只平移
+   标签、不改变排序，所以 IC 不变；净成本体现在分位收益与多空价差上。面板口径也未含
+   市场冲击、涨跌停排队、整手约束、最低佣金。
 7. 因子目前只用价量（`stock_daily_basic` 的估值/规模尚未并入；`industry_daily_metrics`
    仍为空）。
 8. **标签是 session 偏移且有日历校验，但入场仍理想化**：只要求开盘价存在且不在涨跌停，
@@ -152,26 +157,32 @@
 9. **`profit_concentration` 闸门在本面板不具区分度**：按 `profile.yaml` 口径（单笔最大
    正收益 / 正收益合计）实测 ~1e-4（最大 `reversal_1` h1 0.0023），远低于 0.4。它是
    尾部风险诊断，不是有效过滤器 —— 组合层的同一闸门作用在当日组合收益上才有意义。
-10. **多空价差是统计构造，不是可部署策略**：A 股散户几乎无法做空个股，空头腿的可交易性
-    过滤只是让两腿样本一致。真正的可部署性判断要等 §7 的组合层窄书验证。
+10. **多空价差是统计构造，不是可部署策略**：A 股散户几乎无法做空个股；两腿按各自方向
+    过滤可交易性只是让样本尽量干净。真正的可部署性判断要等 §7 的组合层窄书验证。
 11. **换手已按 horizon 节奏度量**（h5 每 5 个 session 重排），但它只报告、不设闸门；
     首版把 h1/h5 当同一换手率是错的。
 
 ## 6. 复现
 
 ```bash
+# 在 datahub 模块目录下运行（`scripts/caifubao` 尚未包装 factor-lab 子命令）：
+#   cd datahub && .venv/bin/python -m app.jobs.factor_lab_runner ...
+# 或从仓库根目录：
+#   PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.factor_lab_runner ...
+
 # 面板（只读 Mongo，写一个 parquet；按代码分块，峰值内存 ~1 块）
 # 交易日历由 CLI 自动注入（get_a_stock_market_trade_calendar）
-python -m app.jobs.factor_lab_runner export --from-date 2024-01-01 --to-date 2026-09-11 \
+PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.factor_lab_runner export \
+  --from-date 2024-01-01 --to-date 2026-09-11 \
   --horizons 1,5,20,60 --output /tmp/lab_v2.parquet
 
 # 单因子 / 全因子（按 horizon 分组跑，控制峰值内存）
-python -m app.jobs.factor_lab_runner list
-python -m app.jobs.factor_lab_runner evaluate --panel /tmp/lab_v2.parquet \
-  --factor momentum_10 --horizons 5,20,60
+PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.factor_lab_runner list
+PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.factor_lab_runner evaluate \
+  --panel /tmp/lab_v2.parquet --factor momentum_10 --horizons 5,20,60
 for h in 1 5 20; do
-  python -m app.jobs.factor_lab_runner evaluate --panel /tmp/lab_v2.parquet \
-    --all --horizons $h --output /tmp/sweep_h$h.json
+  PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.factor_lab_runner evaluate \
+    --panel /tmp/lab_v2.parquet --all --horizons $h --output /tmp/sweep_h$h.json
 done
 ```
 
