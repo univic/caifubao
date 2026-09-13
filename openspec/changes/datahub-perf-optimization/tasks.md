@@ -169,7 +169,7 @@
   按日期/代码分段评估（后续任务）。
   前向返回必须留出 `forward_window_days(horizons)` 的 overhang：逐股路径读
   `date <= d + int(h*1.5)` 且**不裁剪到 end**，frame 若止于 `end` 会静默丢掉尾部观测的
-  前向收益（reviewer 拦下的 P1）。CLI 因此按 `end + int(max(intersection)*1.5)` 载入
+  前向收益（reviewer 拦下的 P1）。CLI 因此按 `end + forward_window_days(请求 horizon ∪ decay horizon)` 载入
   frame，而因子输入仍严格止于 `end`。
 - [x] 3.20 tech_factor_runner 全市场 hydrate 改 `.only()` + as_pymongo/frame（C7/C8 内存项）
   注：`load_evaluation_quotes` 单次查询 `.only(*_FACTOR_QUOTE_FIELDS).order_by("date").as_pymongo()`，

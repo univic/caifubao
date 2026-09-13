@@ -51,6 +51,9 @@ class _QuerySet:
         self._only = fields
         return self
 
+    def filter(self, **query):
+        return _QuerySet([row for row in self.items if _matches(row, query)])
+
     def as_pymongo(self):
         return self
 
@@ -507,3 +510,60 @@ def test_loader_tolerates_fields_absent_from_the_stored_document():
     # A field outside the projection still fails loudly.
     with pytest.raises(AttributeError):
         _ = index_rows[0].not_a_projected_field
+
+
+def test_loader_requests_exactly_the_factor_projection():
+    """The `.only()` whitelist is the contract for what factors may read."""
+    from app.jobs.tech_factor_runner import (
+        _FACTOR_QUOTE_FIELDS,
+        load_evaluation_quotes,
+    )
+
+    day = datetime.datetime(2026, 6, 1)
+    rows = [{"code": "sh600000", "date": day, "close": 10.0, "close_hfq": 70.0}]
+    model = FakeQuoteModel(rows)
+
+    class RecordingManager:
+        def __init__(self, inner):
+            self.inner = inner
+            self.projection = None
+
+        def __call__(self, **query):
+            queryset = self.inner(**query)
+            original = queryset.only
+
+            def only(*fields):
+                self.projection = fields
+                return original(*fields)
+
+            queryset.only = only
+            return queryset
+
+    recorder = RecordingManager(model.objects)
+    model.objects = recorder
+    load_evaluation_quotes(model, day, day, [5])
+
+    assert recorder.projection == _FACTOR_QUOTE_FIELDS
+
+
+def test_loader_supports_the_single_stock_branch():
+    from app.jobs.tech_factor_runner import load_evaluation_quotes
+
+    day = datetime.datetime(2026, 6, 1)
+    rows = [
+        {"code": "sh600000", "date": day, "close": 10.0, "close_hfq": 70.0},
+        {
+            "code": "sh600000",
+            "date": day + datetime.timedelta(days=1),
+            "close": 11.0,
+            "close_hfq": 77.0,
+        },
+        {"code": "sz000001", "date": day, "close": 20.0, "close_hfq": 20.0},
+    ]
+    quotes_by_stock, quote_frame, count = load_evaluation_quotes(
+        FakeQuoteModel(rows), day, day, [5], stock_code="sh600000"
+    )
+
+    assert set(quotes_by_stock) == {"sh600000"}
+    assert set(quote_frame) == {"sh600000"}
+    assert count == 1  # only the row on `end`

@@ -6,8 +6,9 @@ runner:
 - **Most runners** (scoring, strategy, factor, quote, sync, industry-sync, model-registry,
   daily-basic, parquet-export, health-watcher, `tech_factor_runner`) connect through the
   shared `MONGODB_*` variables below, which is what the dev/research/prod deployments set.
-- `backtest_runner` and `sync_data` still read the legacy `MONGO_URI`
-  (default `mongodb://localhost:27017/caifubao`).
+- `backtest_runner` still reads the legacy `MONGO_URI`
+  (default `mongodb://localhost:27017/caifubao`); `sync_data` takes explicit
+  `--from-uri` / `--to-uri` arguments and reads no connection env var.
 
 Run from the repository root with the datahub virtual environment activated.
 
@@ -136,7 +137,7 @@ Most runners respect these environment variables (see the note above for the
 | `MONGODB_HOST` / `MONGODB_PORT` | - | MongoDB host and port |
 | `MONGODB_NAME` | - | Database name (`caifubao-dev`, `caifubao-research`, `caifubao`) |
 | `MONGODB_USER` / `MONGODB_PASS` | - | Credentials |
-| `MONGO_URI` | `mongodb://localhost:27017/caifubao` | Legacy connection string (`backtest_runner`, `sync_data`) |
+| `MONGO_URI` | `mongodb://localhost:27017/caifubao` | Legacy connection string (`backtest_runner` only) |
 | `APP_ENV` | - | Set to `test` for test environment |
 
 ## Prerequisites
