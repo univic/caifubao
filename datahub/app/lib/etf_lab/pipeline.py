@@ -165,24 +165,63 @@ def fetch_liquidity(pro, trade_date: str) -> pd.DataFrame:
     return pro.fund_daily(trade_date=trade_date)
 
 
-def fetch_prices(pro, codes, start_date: str, end_date: str, pause: float = 0.0):
+#: tushare caps ``fund_daily``/``fund_adj`` at 200 calls per minute, so calls
+#: are throttled to a configurable minimum interval and retried on a rate-limit
+#: reply. Both endpoints share the bucket, hence one brake for the pair.
+DEFAULT_CALL_PAUSE = 0.35
+RATE_LIMIT_RETRIES = 5
+
+
+def _throttled(call, *, pause: float, what: str):
+    """Run ``call()`` with a minimum interval and rate-limit backoff."""
+    for attempt in range(1, RATE_LIMIT_RETRIES + 1):
+        try:
+            value = call()
+            if pause:
+                time.sleep(pause)
+            return value
+        except Exception as exc:  # noqa: BLE001 - tushare raises bare Exception
+            message = str(exc)
+            if "频率" not in message and "limit" not in message.lower():
+                raise
+            wait = pause * (2**attempt) + 1.0
+            print(
+                f"  rate limited on {what}; retry {attempt} in {wait:.1f}s", flush=True
+            )
+            time.sleep(wait)
+    raise RuntimeError(f"rate limit persisted for {what}")
+
+
+def fetch_prices(
+    pro, codes, start_date: str, end_date: str, pause: float = DEFAULT_CALL_PAUSE
+):
     """HFQ OHLC + turnover for ``codes``; one call per code (tushare has no
     multi-code daily endpoint for funds)."""
     frames = []
     for index, code in enumerate(codes, start=1):
-        daily = pro.fund_daily(ts_code=code, start_date=start_date, end_date=end_date)
+        daily = _throttled(
+            lambda: pro.fund_daily(
+                ts_code=code, start_date=start_date, end_date=end_date
+            ),
+            pause=pause,
+            what=f"fund_daily {code}",
+        )
         if daily is None or daily.empty:
             continue
-        adj = pro.fund_adj(ts_code=code, start_date=start_date, end_date=end_date)
+        adj = _throttled(
+            lambda: pro.fund_adj(
+                ts_code=code, start_date=start_date, end_date=end_date
+            ),
+            pause=pause,
+            what=f"fund_adj {code}",
+        )
         frame = daily.merge(adj, on=["ts_code", "trade_date"], how="left")
         frame["adj_factor"] = (
             pd.to_numeric(frame["adj_factor"], errors="coerce").ffill().bfill()
         )
         frames.append(frame)
-        if pause:
-            time.sleep(pause)
-        if index % 20 == 0:
-            print(f"  prices {index}/{len(codes)}", flush=True)
+        if index % 25 == 0:
+            print(f"  prices {index}/{len(codes)} ({time.time():.0f})", flush=True)
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
