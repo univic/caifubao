@@ -17,6 +17,18 @@ from app.model.scoring import StockScorePrediction
 DECAY_HORIZONS = (1, 3, 5, 10, 20, 60)
 
 
+def forward_window_days(horizons) -> int:
+    """Calendar-day overhang a preloaded price frame needs for ``horizons``.
+
+    The forward read is ``date <= d + int(h * 1.5)`` with no clamp to the
+    evaluation end date, so a frame that stops at ``end`` cannot resolve the last
+    ``int(h * 1.5)`` calendar days of observations. A caller building a
+    ``quote_frame`` must load through ``end + forward_window_days(...)`` while
+    keeping the factor *inputs* inside ``[start, end]``.
+    """
+    return max((int(int(h) * 1.5) for h in horizons), default=0)
+
+
 def _row_price(row):
     """Evaluation price of one quote row: HFQ close, falling back to raw close.
 
@@ -210,6 +222,15 @@ class FactorEvaluationService:
           unique index), so de-duplication below is a no-op that only protects
           against a sloppy caller-supplied frame; it keeps the same row the
           legacy ``.first()`` would have returned.
+
+        Two divergences are reachable only with data the production index forbids,
+        and are accepted rather than papered over:
+
+        * duplicate ``(code, date)`` rows *after* an observation: the legacy
+          ``limit(h)`` counts duplicates toward the h-th row, this path de-dupes
+          first, so a duplicate-heavy frame can resolve one row earlier;
+        * a base price that is NaN rather than missing: the legacy appends the
+          observation with a NaN forward return, this path drops it.
         """
         rows = []
         for code, series in quote_frame.items():
@@ -240,10 +261,15 @@ class FactorEvaluationService:
             frame[f"_fwd_{h}"] = (shifted_price - frame["price"]) / frame["price"]
             frame[f"_ok_{h}"] = ok.fillna(False)
 
-        # Per-code date -> row-position maps plus column arrays: memory stays
-        # bounded to one stock's series per lookup (a whole-market year is ~1.3M
-        # rows, so a single global {(code, date): position} dict would hold every
-        # row), and the observation loop does no per-row pandas indexing.
+        # Per-code date -> row-position maps plus column arrays. Total entries
+        # still equal the row count (measured 1:1), but the keys are plain
+        # datetimes inside one dict per stock instead of one global dict keyed by
+        # (code, date) tuples -- the tuple keys and their string components are
+        # what make a global map expensive -- and the observation loop does no
+        # per-row pandas indexing. Measured on 200k rows: this function peaks
+        # ~107MB above the input frame (~540B/row, so ~700MB at a 1.3M-row year),
+        # which is why `tech_factor_runner` streams rather than materialising
+        # Documents.
         date_values_by_code = frame["date"].to_numpy()
         price_by_position = frame["price"].to_numpy()
         forward_by_horizon = {h: frame[f"_fwd_{h}"].to_numpy() for h in horizons}

@@ -23,6 +23,7 @@ from app.lib.scoring_engine.factor_eval import (
     DECAY_HORIZONS,
     FactorEvaluationService,
     _row_price,
+    forward_window_days,
 )
 
 HORIZONS = [5, 20, 60]
@@ -46,13 +47,23 @@ class _QuerySet:
     def limit(self, count):
         return _QuerySet(self.items[:count])
 
+    def only(self, *fields):
+        self._only = fields
+        return self
+
+    def as_pymongo(self):
+        return self
+
     def __iter__(self):
         return iter(self.items)
 
 
 def _matches(row, query):
     for key, value in query.items():
-        if key.endswith("__gt"):
+        if key.endswith("__gte"):
+            if not row[key[:-5]] >= value:
+                return False
+        elif key.endswith("__gt"):
             if not row[key[:-4]] > value:
                 return False
         elif key.endswith("__lte"):
@@ -162,8 +173,10 @@ def test_vectorised_dataset_matches_per_observation_path():
 
 
 def test_evaluate_report_matches_between_paths():
+    # A wide panel (many stocks per date) so ic_mean/icir/decay are REAL numbers:
+    # a narrow fixture yields None ICs and the equality assertion would be vacuous.
     rng = random.Random(7)
-    rows = _panel(rng)
+    rows = _panel(rng, codes=20, days=160)
     values = _factor_values(rng, rows)
     service = _service(rows)
     start, end = datetime.datetime(2026, 1, 1), datetime.datetime(2026, 4, 30)
@@ -179,6 +192,11 @@ def test_evaluate_report_matches_between_paths():
 
     assert legacy["observation_count"] > 0
     assert legacy == vectorised
+    # Guard against a vacuous comparison: the fixture must produce real ICs.
+    assert legacy["ic"]["5"]["ic_mean"] is not None
+    assert legacy["ic"]["20"]["ic_mean"] is not None
+    assert legacy["ic"]["60"]["ic_mean"] is not None
+    assert legacy["decay"]["60"] is not None
     # The decay curve must still be present and go through the same dataset.
     assert set(vectorised["decay"]) == {str(h) for h in DECAY_HORIZONS}
 
@@ -329,3 +347,163 @@ def test_randomised_differential_over_many_panels():
             values, start, end, horizons, quote_frame=_frame_from(rows)
         )
         assert legacy == vectorised, f"seed={seed} horizons={horizons}"
+
+
+def test_frame_must_extend_beyond_end_for_late_observations():
+    """A frame that stops at ``end`` silently drops late forward returns.
+
+    The DB-backed path reads forward quotes with ``date <= d + int(h*1.5)`` and
+    NO clamp to the evaluation end date, so it resolves observations in the last
+    ``int(h*1.5)`` calendar days of the range. A truncated frame cannot, which
+    was a real defect in the CLI: same inputs, different persisted report. This
+    test pins the requirement and the helper the CLI uses to satisfy it.
+    """
+    rng = random.Random(99)
+    rows = _panel(rng, codes=2, days=80)
+    values = _factor_values(rng, rows)
+    service = _service(rows)
+    start = datetime.datetime(2026, 1, 1)
+    end = datetime.datetime(2026, 2, 20)
+
+    # Observations exist inside [start, end] and the DB holds rows past `end`.
+    assert any(
+        start <= datetime.datetime.fromisoformat(d) <= end
+        for dates in values.values()
+        for d in dates
+        if d not in ("not-a-date",)
+    )
+    assert max(row["date"] for row in rows) > end
+
+    legacy = service._build_dataset(values, start, end, [20])
+
+    overhang = forward_window_days([20])
+    assert overhang == 30
+    full_frame = _frame_from(rows)
+    complete = service._build_dataset(values, start, end, [20], quote_frame=full_frame)
+    truncated = service._build_dataset(
+        values,
+        start,
+        end,
+        [20],
+        quote_frame={
+            code: [(d, p) for d, p in series if d <= end]
+            for code, series in full_frame.items()
+        },
+    )
+
+    assert complete == legacy
+    # Reverse control: without the overhang the dataset really does lose returns,
+    # so the test cannot pass by accident.
+    assert truncated != legacy
+    resolved_complete = sum(
+        1 for e in complete if e["forward_returns"]["20"] is not None
+    )
+    resolved_truncated = sum(
+        1 for e in truncated if e["forward_returns"]["20"] is not None
+    )
+    assert resolved_truncated < resolved_complete
+
+
+def test_forward_window_days_matches_the_legacy_rule():
+    assert forward_window_days([20]) == 30
+    assert forward_window_days([5, 20, 60]) == 90
+    assert forward_window_days(DECAY_HORIZONS) == 90
+    assert forward_window_days([]) == 0
+
+
+def test_cli_loader_extends_the_frame_past_end_but_bounds_the_inputs():
+    """The CLI's own loader must apply the overhang (the P1 fix).
+
+    Pins the wiring, not just the helper: if `load_evaluation_quotes` stops the
+    frame at `end`, the frame no longer reaches past it and this fails.
+    """
+    from app.jobs.tech_factor_runner import load_evaluation_quotes
+
+    rng = random.Random(1234)
+    rows = _panel(rng, codes=3, days=90)
+    values = _factor_values(rng, rows)
+    start = datetime.datetime(2026, 1, 1)
+    end = datetime.datetime(2026, 2, 20)
+    model = FakeQuoteModel(rows)
+
+    quotes_by_stock, quote_frame, quote_count = load_evaluation_quotes(
+        model, start, end, [20]
+    )
+
+    # Factor inputs stop at `end` (legacy behaviour).
+    assert quotes_by_stock
+    assert max(row.date for rs in quotes_by_stock.values() for row in rs) <= end
+    assert quote_count == sum(len(v) for v in quotes_by_stock.values())
+    # The frame reaches the overhang so late observations resolve: strictly past
+    # `end`, and never beyond the requested window. The overhang must cover the
+    # decay horizons too (h=60 -> 90 calendar days), not only the requested [20].
+    expected_overhang = datetime.timedelta(
+        days=forward_window_days(sorted({20} | set(DECAY_HORIZONS)))
+    )
+    frame_max = max(date for series in quote_frame.values() for date, _ in series)
+    assert end < frame_max <= end + expected_overhang
+
+    service = _service(rows)
+    legacy = service._build_dataset(values, start, end, [20])
+    vectorised = service._build_dataset(
+        values, start, end, [20], quote_frame=quote_frame
+    )
+    assert legacy, "fixture must produce observations"
+    assert vectorised == legacy
+
+
+def test_loader_tolerates_fields_absent_from_the_stored_document():
+    """Index rows store only OHLCV; projected *_hfq fields must read as None.
+
+    A hydrated Document returns None for a field the document does not contain,
+    so the raw-row loader must complete the projection the same way. Failing to
+    do so raised ``AttributeError: open_hfq`` on index rows (measured against the
+    dev database during the perf benchmark).
+    """
+    from app.jobs.tech_factor_runner import load_evaluation_quotes
+    from app.lib.scoring_engine.technical_factors import gap_ratio
+
+    day = datetime.datetime(2026, 6, 1)
+    rows = [
+        # index-like row: only OHLCV, no *_hfq fields at all
+        {"code": "sh000300", "date": day, "open": 100.0, "close": 101.0},
+        {
+            "code": "sh000300",
+            "date": day + datetime.timedelta(days=1),
+            "open": 102.0,
+            "close": 103.0,
+        },
+        # stock row with the HFQ fields present
+        {
+            "code": "sh600000",
+            "date": day,
+            "open": 10.0,
+            "open_hfq": 70.0,
+            "close": 10.5,
+            "close_hfq": 73.5,
+        },
+        {
+            "code": "sh600000",
+            "date": day + datetime.timedelta(days=1),
+            "open": 11.0,
+            "open_hfq": 77.0,
+            "close": 11.5,
+            "close_hfq": 80.5,
+        },
+    ]
+    quotes_by_stock, _, _ = load_evaluation_quotes(
+        FakeQuoteModel(rows), day, day + datetime.timedelta(days=1), [5]
+    )
+
+    index_rows = quotes_by_stock["sh000300"]
+    assert index_rows[0].open_hfq is None  # absent field -> None, not AttributeError
+    assert index_rows[0].close_hfq is None
+    # The factor functions therefore run unchanged on such rows.
+    assert gap_ratio(sorted(index_rows, key=lambda r: r.date)) == {
+        (day + datetime.timedelta(days=1)).isoformat(): pytest.approx(
+            (102.0 - 101.0) / 101.0
+        )
+    }
+    # A field outside the projection still fails loudly.
+    with pytest.raises(AttributeError):
+        _ = index_rows[0].not_a_projected_field
