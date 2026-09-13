@@ -24,6 +24,45 @@
 ```
 
 ## 进度记录
+### 2026-09-14 06:54 CST — 小资金（5~10 万）策略搜索：五族检验均无可外推 alpha；交付配置型结论 + 修 3 个实现缺陷
+
+- 状态：已完成（研究阶段）；前瞻验证需未来 ≥120 个交易日，只能交接
+- 已完成：
+  - **分支/PR**：`research/holding-buffer-scan` → **Draft PR #236**（HEAD `28a64fc`，CI 绿，**未转正式**）。
+  - **四个研究模块（35 个单测全绿）**：
+    `strategy_engine/holding_scan.py`（持有期 × 缓冲区扫描；8 测）、
+    `etf_lab/pipeline.py`（ETF 池 / 面板 / 单因子测量，含 `pool`/`panel`/`measure`/`rotate` CLI；8 测）、
+    `small_book/__init__.py`（8 分量评分重建；8 测）、
+    `etf_lab/rotation.py`（多资产轮动 + 波动率目标 + 月度信号 + `--ledger`；11 测）。
+  - **结论（五族检验，费后、无未来信息）**：个股 flip 窄账本（N=20 超额 −1.04%/期）、
+    ETF 主题动量（点内复核后多年为负）、多资产趋势轮动（13 年 +11.5%，被静态 40/30/30 追平）、
+    基本面价值/低换手（N=20 超额 −1.17%/期；低换手 −48%~−59%/年）**都没有优于等权池/静态配置的 alpha**。
+    数据支持的是**配置型规则**：4 只 ETF（沪深300/黄金/纳指/国债各 25%）月频再平衡，
+    2014-2026 +10.8%/年、Sharpe 1.13、最大回撤 −13.6%、负年 2/12；**其优势主要来自美股与黄金的样本期表现**
+    （换成恒生降到 +7.7%/Sharpe 0.60）。报告：`docs/autoresearch/runs/small-book/FINAL-small-account-strategy-2026-09-13.md`。
+  - **修掉本次自己写出的 3 个缺陷（均留回归测试）**：① 轮动调仓相位锚在"取数帧行号"上，
+    同一 2015 窗口取数到 2015 得 +33.9%、取数到 2026 得 +148.7%；② 调仓当日用新持仓赚当日收益（1 日未来信息）；
+    ③ 早期扫描把持有期总收益当单日收益、重叠 tranche 当独立样本。
+  - **两个仓库级发现（建议独立立项，本次未改生产代码）**：
+    ① `scoring_runner` 的 raw/ranked 路径由环境变量 `DATAHUB_SCORING_MODE` 决定，
+    **模型注册表的 `scoring_mode=ranked` 不参与判断** → 影子模型（如 `flip_wide_shadow_v1`）实验若不显式设置该变量，
+    `directions` 翻转会**静默失效**（实测 flip 与不翻转得到逐位相同的分数）；
+    ② `rebalance.cadence_days` 只被校验/记录，`assemble_daily_plan`/`strategy_runner` **不消费**它，实际是每日换仓。
+  - **前瞻账本已启动**：`docs/autoresearch/runs/small-book/forward-ledger.jsonl` 第一条记录
+    （as_of 2026-09-11 → 持 `513100`，`evidence_kind=REPLAY`；回溯记录不计入前瞻窗口）。
+  - 操作教训：**不要**在共享的 `caifubao-datahub` 服务 pod 里跑重活（本次把它 OOMKill 两次，已自愈）；
+    重活一律用独立 Job Pod（挂 PVC + ConfigMap 提供模块）。
+- 验证：`pytest` 35 项通过（`test_holding_scan` / `test_etf_lab` / `test_rotation` / `test_small_book`）；
+  `ruff check --select E4,E7,E9,F` 与 `ruff format --check` 通过；8 分量重建与引擎存储分数**秩相关 0.94~0.99**（三个日期）；
+  GitHub Actions CI **success @ 28a64fc**；ETF 池点内复核（2019 年 32 个主题 → 2026 年 305 个）已确认前视偏差幅度（2019 虚高 24pp）。
+- 下一步：① 若要让账本自动累积，需把 `rotation.py` 部署进 datahub 镜像 + 月度 CronJob（新授权范围）；
+  ② 补 QDII（`513100`/`513500`）溢价与限购核对、资产池按上市时间点内重建；
+  ③ 若要做**个股择时**，先建"择时评估台"（池化评价 + 买入持有对照 + 板块感知涨跌停执行语义），属 **Spec Gate**（新增策略语义），
+  不要直接改生产评分链。
+- 阻塞：无。
+
+---
+
 ### 2026-09-13 00:04 CST — research 恢复演练 13/13 通过；旧库仍被 dev 每日读取，清理顺序需调整
 
 - 状态：已完成（演练本身）；清理动作阻塞于 TASK-404
