@@ -209,3 +209,38 @@ def test_target_vol_scales_exposure_and_dampens_returns():
     # A 10 % vol target on a ~45 %-vol asset must de-risk and dampen the outcome.
     assert scaled["final_exposure"] <= 1.0
     assert scaled["final_equity"] < full["final_equity"] or full["final_equity"] < 1.0
+
+
+def test_rebalance_schedule_does_not_depend_on_fetched_history():
+    # Same simulation window, different amounts of leading history: the result
+    # must be identical, because the schedule is anchored to the window.
+    sessions = pd.date_range("2025-06-02", periods=200, freq="B")
+    prices = _flat_prices(["A", "BOND"], sessions)
+    prices["A"] = np.linspace(10, 20, len(sessions))
+    prices["BOND"] = np.linspace(10, 10.4, len(sessions))
+    window = (sessions[100], sessions[-1])
+    # Keep enough leading history that the indicators are defined at the window
+    # start in BOTH frames; otherwise the difference is data availability rather
+    # than the rebalance schedule.
+    trimmed = prices.loc[sessions[50] :]
+    result_trimmed = simulate(
+        trimmed,
+        lookback=5,
+        top_n=1,
+        ma=3,
+        cadence=20,
+        defensive="BOND",
+        start=window[0],
+        end=window[1],
+    )
+    result_full = simulate(
+        prices,
+        lookback=5,
+        top_n=1,
+        ma=3,
+        cadence=20,
+        defensive="BOND",
+        start=window[0],
+        end=window[1],
+    )
+    assert result_trimmed["final_equity"] == pytest.approx(result_full["final_equity"])

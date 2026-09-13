@@ -127,6 +127,15 @@ def simulate(
     lower = pd.Timestamp(start) if start is not None else close.index[0]
     upper = pd.Timestamp(end) if end is not None else close.index[-1]
 
+    # Anchor the rebalance schedule to the SIMULATION window, not to the fetched
+    # data: otherwise fetching more history silently shifts every rebalance date
+    # and the same period produces different results (verified: a 2015 run gave
+    # +33.9 % when fetched to 2015 and +148.7 % when fetched to 2026).
+    window_sessions = [day for day in close.index if lower <= day <= upper]
+    if not window_sessions:
+        raise ValueError("no sessions inside the requested window")
+    rebalance_days = set(window_sessions[::cadence])
+
     equity = 1.0
     current: list[str] = []
     previous: list[str] = []
@@ -141,7 +150,7 @@ def simulate(
         if not (lower <= day <= upper):
             continue
         picks = None
-        if index % cadence == 0:
+        if day in rebalance_days:
             row_momentum = momentum.loc[day].dropna()
             row_trend = trend.loc[day].dropna()
             allowed = eligible(day) if callable(eligible) else eligible
