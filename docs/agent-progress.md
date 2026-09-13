@@ -28,7 +28,7 @@
 
 - 状态：已完成（研究阶段）；前瞻验证需未来 ≥120 个交易日，只能交接
 - 已完成：
-  - **分支/PR**：`research/holding-buffer-scan` → **Draft PR #236**（HEAD `28a64fc`，CI 绿，**未转正式**）。
+  - **分支/PR**：`research/holding-buffer-scan` → **Draft PR #236**（最新**代码**提交 `8af547e`，CI 绿；其后仅本文件的文档追加，**未转正式**）。
   - **四个研究模块（37 个单测全绿）**：
     `strategy_engine/holding_scan.py`（持有期 × 缓冲区扫描；8 测）、
     `etf_lab/pipeline.py`（ETF 池 / 面板 / 单因子测量，含 `pool`/`panel`/`measure`/`rotate` CLI 与 `--ledger` 前瞻写账；10 测）、
@@ -54,7 +54,7 @@
     重活一律用独立 Job Pod（挂 PVC + ConfigMap 提供模块）。
 - 验证：`pytest` 37 项通过（`test_holding_scan` / `test_etf_lab` / `test_rotation` / `test_small_book`）；
   `ruff check --select E4,E7,E9,F` 与 `ruff format --check` 通过；8 分量重建与引擎存储分数**秩相关 0.94~0.99**（三个日期）；
-  GitHub Actions CI **success @ 28a64fc**；ETF 池点内复核（2019 年 32 个主题 → 2026 年 305 个）已确认前视偏差幅度（2019 虚高 24pp）。
+  GitHub Actions CI **success @ 8af547e**；ETF 池点内复核（2019 年 32 个主题 → 2026 年 305 个）已确认前视偏差幅度（2019 虚高 24pp）。
 - 下一步：① 若要让账本自动累积，需把 `rotation.py` 部署进 datahub 镜像 + 月度 CronJob（新授权范围）；
   ② 补 QDII（`513100`/`513500`）溢价与限购核对、资产池按上市时间点内重建；
   ③ 若要做**个股择时**，先建"择时评估台"（池化评价 + 买入持有对照 + 板块感知涨跌停执行语义），属 **Spec Gate**（新增策略语义），
