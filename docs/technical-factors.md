@@ -67,6 +67,19 @@ Each factor should be evaluated before integration into the scoring engine:
 4. **Integrate**: Add as a new component in `components.py`, re-run grid search for optimal weight
 5. **Validate**: Rolling cross-validation to confirm out-of-sample stability
 
+> **Environment**: `tech_factor_runner` connects through the shared `MONGODB_*`
+> variables (like the other datahub runners), so run it inside the environment you
+> mean to read. `evaluate --save` writes a `FactorEvalReport` into
+> `factor_eval_reports` **in whichever database `MONGODB_*` points at** — target dev
+> or research, never production.
+>
+> **Range vs forward returns**: `evaluate <name> <start> <end>` only *computes*
+> factor values from quotes inside `[start, end]`, but it resolves forward returns
+> up to `end + int(max_horizon * 1.5)` calendar days, so a range ending on the last
+> available data still scores the observations near its end. Pick `start` late
+> enough that each factor has warmed up (e.g. `volume_ratio` needs 20 prior quotes),
+> otherwise few or no observations are produced.
+
 ## Usage in OpenCode
 
 ```bash

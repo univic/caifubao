@@ -153,8 +153,35 @@
 
 ### factor_eval 与研究链路（C4）
 
-- [ ] 3.19 `evaluate` 接受预载 `quote_frame`；前向收益 `groupby+shift` 向量化；decay 复用数据集
-- [ ] 3.20 tech_factor_runner 全市场 hydrate 改 `.only()` + as_pymongo/frame（C7/C8 内存项）
+- [x] 3.19 `evaluate` 接受预载 `quote_frame`；前向收益 `groupby+shift` 向量化；decay 复用数据集
+  注：`evaluate(..., quote_frame=None)` / `_build_dataset(..., quote_frame=None)` 接受
+  `{code: [(date, price), ...]}`；有 frame 时前向收益由一次
+  `groupby("code").shift(-h)` + 显式 `int(h*1.5)` 日历窗判定得出，**零逐观测查询**；
+  无 frame 时逐股路径**行为未变**（读取顺序与判定逐字保留，但把 `close_hfq or close` 与日期归一化提成共享的 `_row_price`/`_normalise`，故不是字面意义上的“一字未改”）。`_compute_decay(dataset)` 改为复用 `evaluate` 已建的
+  数据集（horizon 取并集，只建一次）。`_row_price` 统一 `close_hfq or close` 语义。
+  **实测（dev，`gap_ratio` 2026-06-01…06-10，40,256 观测，`--horizon 20`）**：
+  旧 434.4 s（362,304 次往返）→ 新 **49.9 s**（**0** 次逐观测往返）= **8.7×**，
+  且 `observation_count` / `ic` / `icir` / `decay` / `quintiles` **逐字段完全一致**。
+  按全市场一年（~125 万观测）外推：~3.2 h → ~25 min；剩余成本是因子本身的逐股 Python
+  计算与建帧，不在本任务范围。
+  **内存**：frame 路径按 code 建位置映射，实测 200k 行 tracemalloc 峰值 ~107MB
+  （~540B/行）→ 全市场一年约 0.7GB，叠加 `quotes_by_stock` 会更接近 1GB+；研究链路应
+  按日期/代码分段评估（后续任务）。
+  前向返回必须留出 `forward_window_days(horizons)` 的 overhang：逐股路径读
+  `date <= d + int(h*1.5)` 且**不裁剪到 end**，frame 若止于 `end` 会静默丢掉尾部观测的
+  前向收益（reviewer 拦下的 P1）。CLI 因此按 `end + forward_window_days(请求 horizon ∪ decay horizon)` 载入
+  frame，而因子输入仍严格止于 `end`。
+- [x] 3.20 tech_factor_runner 全市场 hydrate 改 `.only()` + as_pymongo/frame（C7/C8 内存项）
+  注：`load_evaluation_quotes` 单次查询 `.only(*_FACTOR_QUOTE_FIELDS).order_by("date").as_pymongo()`，
+  行以 `_Row`（原始 dict 的属性视图）装配，不再逐行水合 Document（全市场一年 ~130 万行）；
+  投影内缺席字段按 mongoengine Document 语义补 `None`（指数行只有 OHLCV），投影外字段仍
+  `AttributeError` fail loud。投影字段经 AST 核对覆盖 9 个因子的全部读取
+  （`high/low/volume/turnover_rate` 走 `getattr(...,0)`，故新增因子字段必须同步此表）。
+- [x] 3.20a `tech_factor_runner._init_db` 改共享连接（顺带阻塞项修复）
+  注：原实现读私有 `MONGO_URI`（默认 `mongodb://localhost:27017/caifubao`）并把
+  `sys.path` 插到不存在的 `datahub/datahub/app`，因此该 CLI 在**任何已部署环境都无法
+  连接**，即使连上也会写错库。改用与 scoring/strategy/factor 等 runner 相同的
+  `mongo_watcher.get_db_connection()`（`backtest_runner` 仍用自己的 `MONGO_URI`）。
 
 ## 4. 阶段 3 — 研究链路与基建（不阻塞阶段 1/2 合并）
 
