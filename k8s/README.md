@@ -24,6 +24,17 @@ MongoDB backup examples are intentionally public-safe:
 - Real bucket names, endpoints, credentials, retention policy, and restore
   runbooks belong in `caifubao-private`.
 
+Factor-lab research panel examples are public-safe:
+
+- `base/factor-lab-panel.example.yaml` is the ReadWriteOnce claim that holds the
+  frozen factor-lab parquet; it is not in the base kustomization because the lab
+  is research-only.
+- `base/factor-lab-export.example.yaml` and
+  `base/factor-lab-evaluate.example.yaml` are the matching Jobs (kept separate so
+  an `apply -f` cannot start evaluate before export finishes). Real storage
+  classes, node pinning, and the operator runbook belong in `caifubao-private`;
+  the workflow is documented in `docs/operations/factor-lab.md`.
+
 Tailscale Kubernetes API server proxy examples are also public-safe:
 
 - `tailscale/api-server-proxy.proxygroup.example.yaml` defines the recommended
