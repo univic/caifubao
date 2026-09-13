@@ -29,11 +29,11 @@
 - 状态：已完成（研究阶段）；前瞻验证需未来 ≥120 个交易日，只能交接
 - 已完成：
   - **分支/PR**：`research/holding-buffer-scan` → **Draft PR #236**（HEAD `28a64fc`，CI 绿，**未转正式**）。
-  - **四个研究模块（35 个单测全绿）**：
+  - **四个研究模块（37 个单测全绿）**：
     `strategy_engine/holding_scan.py`（持有期 × 缓冲区扫描；8 测）、
-    `etf_lab/pipeline.py`（ETF 池 / 面板 / 单因子测量，含 `pool`/`panel`/`measure`/`rotate` CLI；8 测）、
+    `etf_lab/pipeline.py`（ETF 池 / 面板 / 单因子测量，含 `pool`/`panel`/`measure`/`rotate` CLI 与 `--ledger` 前瞻写账；10 测）、
     `small_book/__init__.py`（8 分量评分重建；8 测）、
-    `etf_lab/rotation.py`（多资产轮动 + 波动率目标 + 月度信号 + `--ledger`；11 测）。
+    `etf_lab/rotation.py`（多资产轮动 + 波动率目标 + 月度信号；11 测）。
   - **结论（五族检验，费后、无未来信息）**：个股 flip 窄账本（N=20 超额 −1.04%/期）、
     ETF 主题动量（点内复核后多年为负）、多资产趋势轮动（13 年 +11.5%，被静态 40/30/30 追平）、
     基本面价值/低换手（N=20 超额 −1.17%/期；低换手 −48%~−59%/年）**都没有优于等权池/静态配置的 alpha**。
@@ -52,7 +52,7 @@
     （as_of 2026-09-11 → 持 `513100`，`evidence_kind=REPLAY`；回溯记录不计入前瞻窗口）。
   - 操作教训：**不要**在共享的 `caifubao-datahub` 服务 pod 里跑重活（本次把它 OOMKill 两次，已自愈）；
     重活一律用独立 Job Pod（挂 PVC + ConfigMap 提供模块）。
-- 验证：`pytest` 35 项通过（`test_holding_scan` / `test_etf_lab` / `test_rotation` / `test_small_book`）；
+- 验证：`pytest` 37 项通过（`test_holding_scan` / `test_etf_lab` / `test_rotation` / `test_small_book`）；
   `ruff check --select E4,E7,E9,F` 与 `ruff format --check` 通过；8 分量重建与引擎存储分数**秩相关 0.94~0.99**（三个日期）；
   GitHub Actions CI **success @ 28a64fc**；ETF 池点内复核（2019 年 32 个主题 → 2026 年 305 个）已确认前视偏差幅度（2019 虚高 24pp）。
 - 下一步：① 若要让账本自动累积，需把 `rotation.py` 部署进 datahub 镜像 + 月度 CronJob（新授权范围）；

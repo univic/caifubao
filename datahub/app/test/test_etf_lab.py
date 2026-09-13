@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """ETF lab pipeline tests (pure functions, synthetic inputs)."""
 
+import datetime
+import json
+
 import pandas as pd
 import pytest
 
@@ -8,9 +11,11 @@ from app.lib.etf_lab.pipeline import (
     build_etf_panel,
     build_pool,
     benchmark_key,
+    append_ledger,
     etf_round_trip_cost,
     factor_values,
     ic_report,
+    ledger_entry,
     quantile_spread,
 )
 
@@ -227,3 +232,42 @@ def test_ic_and_spread_recover_a_planted_relationship():
 
 def test_etf_cost_has_no_stamp_duty():
     assert etf_round_trip_cost() == pytest.approx(0.0025)
+
+
+def test_ledger_entry_keeps_rule_signal_and_evidence_kind():
+    rule = {"codes": ["510300.SH"], "lookback": 250, "top_n": 1}
+    signal = {"as_of": "2026-09-11", "selected": ["513100.SH"]}
+    entry = ledger_entry(
+        rule,
+        signal,
+        [{"code": "513100.SH", "selected": True, "reason": None}],
+        now=datetime.datetime(2026, 9, 13, 21, 14, tzinfo=datetime.UTC),
+    )
+    assert entry["logged_at"] == "2026-09-13T21:14:00+00:00"
+    assert entry["rule"] == rule
+    assert entry["signal"] == signal
+    assert entry["evidence_kind"] == "REPLAY"
+    # The caller's dictionaries must not be retained, so a later mutation of the
+    # report cannot rewrite an already-emitted record.
+    rule["top_n"] = 99
+    assert entry["rule"]["top_n"] == 1
+
+
+def test_append_ledger_adds_one_line_per_signal_and_creates_parents(tmp_path):
+    path = tmp_path / "nested" / "forward-ledger.jsonl"
+    for as_of in ("2026-09-11", "2026-09-14"):
+        append_ledger(
+            path,
+            ledger_entry(
+                {"codes": ["510300.SH"]},
+                {"as_of": as_of, "selected": ["513100.SH"]},
+                [],
+                now=datetime.datetime(2026, 9, 14, tzinfo=datetime.UTC),
+            ),
+        )
+    lines = path.read_text(encoding="utf-8").strip().splitlines()
+    assert [json.loads(line)["signal"]["as_of"] for line in lines] == [
+        "2026-09-11",
+        "2026-09-14",
+    ]
+    assert all(json.loads(line)["evidence_kind"] == "REPLAY" for line in lines)

@@ -33,6 +33,7 @@ duty, which the CLI passes through as a zero ``sell_stamp_duty_rate``.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import math
 import re
@@ -330,6 +331,27 @@ def etf_round_trip_cost() -> float:
     return 2 * ETF_SLIPPAGE_PER_SIDE + 2 * ETF_COMMISSION_RATE + ETF_SELL_STAMP_DUTY
 
 
+def ledger_entry(rule: dict, signal: dict, diagnostics, now=None) -> dict:
+    """One immutable forward-paper record: the rule plus the signal it produced."""
+    moment = now or datetime.datetime.now(datetime.UTC)
+    return {
+        "logged_at": moment.isoformat(),
+        "rule": dict(rule),
+        "signal": dict(signal),
+        "diagnostics": list(diagnostics),
+        "evidence_kind": "REPLAY",
+    }
+
+
+def append_ledger(path, entry: dict) -> Path:
+    """Append one JSON line, creating the parent directory when needed."""
+    ledger = Path(path)
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    with ledger.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    return ledger
+
+
 def _price(frame: pd.DataFrame) -> pd.Series:
     hfq = pd.to_numeric(frame["close_hfq"], errors="coerce")
     raw = pd.to_numeric(frame["close"], errors="coerce")
@@ -477,6 +499,11 @@ def main(argv=None) -> int:
     )
     rotate.add_argument("--vol-window", type=int, default=60)
     rotate.add_argument("--output", default=None)
+    rotate.add_argument(
+        "--ledger",
+        default=None,
+        help="append today's signal as one JSON line (forward paper evidence)",
+    )
 
     measure = commands.add_parser("measure", help="IC and quantile spread per factor")
     measure.add_argument("--panel", required=True)
@@ -600,16 +627,29 @@ def main(argv=None) -> int:
                 default=str,
             )
         )
-        print(
-            "SIGNAL "
-            + json.dumps(
+        signal_payload = {
+            "as_of": str(report["signal"]["as_of"].date()),
+            "selected": report["signal"]["selected"],
+        }
+        print("SIGNAL " + json.dumps(signal_payload, ensure_ascii=False))
+        if args.ledger:
+            # Forward paper evidence: one immutable line per emitted signal, with
+            # the rule parameters, so the 120-session window can be counted later
+            # without trusting a rewritten backtest.
+            entry = ledger_entry(
                 {
-                    "as_of": str(report["signal"]["as_of"].date()),
-                    "selected": report["signal"]["selected"],
+                    "codes": codes,
+                    "lookback": args.lookback,
+                    "top_n": args.top_n,
+                    "ma": args.ma,
+                    "cadence": args.cadence,
+                    "defensive": args.defensive,
+                    "target_vol": args.target_vol,
                 },
-                ensure_ascii=False,
+                signal_payload,
+                report["signal"]["diagnostics"],
             )
-        )
+            print("LEDGER " + str(append_ledger(args.ledger, entry)))
         return 0
 
     panel = pd.read_parquet(args.panel)
