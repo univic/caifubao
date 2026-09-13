@@ -1,0 +1,87 @@
+# Factor-lab export Job (example).
+#
+# Reads Mongo and writes /data/lab.parquet on the factor-lab-panel PVC
+# (k8s/base/factor-lab-panel.example.yaml). Run this to completion *before* the
+# evaluate Job: the claim is ReadWriteOnce and the parquet footer only exists
+# once the writer closes.
+#
+# Prefer the one-off Job launcher in the private overlay, which copies the live
+# datahub Deployment's image and generated ConfigMap names; render this directly
+# only when that is not available.
+#
+# The Job has a fixed name so `kubectl apply` works; delete it
+# (`kubectl delete job factor-lab-export`) before running it again.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: factor-lab-export
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: factor-lab-export
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 7200
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app: caifubao-datahub
+        job.caifubao.io/type: factor-lab-export
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: factor-lab-export
+        image: caifubao-datahub:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "app.jobs.factor_lab_runner", "export"]
+        args:
+        - --from-date
+        - "2019-01-01"
+        - --to-date
+        - "2026-09-11"
+        - --horizons
+        - "1,5,20,60"
+        - --output
+        - /data/lab.parquet
+        env:
+        - name: MONGODB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_HOST
+        - name: MONGODB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_PORT
+        - name: MONGODB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_NAME
+        - name: MONGODB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_USER
+        - name: MONGODB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: datahub-secret
+              key: MONGODB_PASSWORD
+        volumeMounts:
+        - name: factor-lab-panel
+          mountPath: /data
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "3Gi"
+      volumes:
+      - name: factor-lab-panel
+        persistentVolumeClaim:
+          claimName: factor-lab-panel
+      imagePullSecrets:
+      - name: ccr-secret
