@@ -157,7 +157,7 @@
   注：`evaluate(..., quote_frame=None)` / `_build_dataset(..., quote_frame=None)` 接受
   `{code: [(date, price), ...]}`；有 frame 时前向收益由一次
   `groupby("code").shift(-h)` + 显式 `int(h*1.5)` 日历窗判定得出，**零逐观测查询**；
-  无 frame 时逐股路径逐字未变。`_compute_decay(dataset)` 改为复用 `evaluate` 已建的
+  无 frame 时逐股路径**行为未变**（读取顺序与判定逐字保留，但把 `close_hfq or close` 与日期归一化提成共享的 `_row_price`/`_normalise`，故不是字面意义上的“一字未改”）。`_compute_decay(dataset)` 改为复用 `evaluate` 已建的
   数据集（horizon 取并集，只建一次）。`_row_price` 统一 `close_hfq or close` 语义。
   **实测（dev，`gap_ratio` 2026-06-01…06-10，40,256 观测，`--horizon 20`）**：
   旧 434.4 s（362,304 次往返）→ 新 **49.9 s**（**0** 次逐观测往返）= **8.7×**，
@@ -177,9 +177,11 @@
   投影内缺席字段按 mongoengine Document 语义补 `None`（指数行只有 OHLCV），投影外字段仍
   `AttributeError` fail loud。投影字段经 AST 核对覆盖 9 个因子的全部读取
   （`high/low/volume/turnover_rate` 走 `getattr(...,0)`，故新增因子字段必须同步此表）。
-  同 PR 修掉 `_init_db` 的硬编码 `MONGO_URI`/`localhost:27017/caifubao`（该 CLI 在任何
-  已部署环境都无法连接，且即使连上也会写错库），改用与其它 runner 相同的
-  `mongo_watcher.get_db_connection()`。
+- [x] 3.20a `tech_factor_runner._init_db` 改共享连接（顺带阻塞项修复）
+  注：原实现读私有 `MONGO_URI`（默认 `mongodb://localhost:27017/caifubao`）并把
+  `sys.path` 插到不存在的 `datahub/datahub/app`，因此该 CLI 在**任何已部署环境都无法
+  连接**，即使连上也会写错库。改用与 scoring/strategy/factor 等 runner 相同的
+  `mongo_watcher.get_db_connection()`（`backtest_runner` 仍用自己的 `MONGO_URI`）。
 
 ## 4. 阶段 3 — 研究链路与基建（不阻塞阶段 1/2 合并）
 
