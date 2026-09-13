@@ -19,20 +19,37 @@ import argparse
 import datetime
 import json
 import logging
-import os
-import sys
 
 logger = logging.getLogger(__name__)
 
+#: Quote fields the technical factors read. Projecting exactly these keeps a
+#: full-market year (~1.3M rows) out of Document hydration (perf C7/C8) and makes
+#: a missing field fail loudly instead of silently reading as ``None``.
+_FACTOR_QUOTE_FIELDS = (
+    "code",
+    "date",
+    "open",
+    "open_hfq",
+    "high",
+    "low",
+    "close",
+    "close_hfq",
+    "volume",
+    "turnover_rate",
+)
+
 
 def _init_db() -> None:
-    sys.path.insert(
-        0, os.path.join(os.path.dirname(__file__), "..", "..", "datahub", "app")
-    )
-    from mongoengine import connect
+    """Connect exactly like every other datahub runner.
 
-    uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/caifubao")
-    connect(host=uri, db="caifubao")
+    This used to read a private ``MONGO_URI`` env var and default to
+    ``mongodb://localhost:27017/caifubao``, so the CLI could not connect in any
+    deployed environment (dev/research/prod set ``MONGODB_HOST/PORT/NAME/...``)
+    and would have targeted the wrong database even if it had.
+    """
+    from app.lib.db_watcher.mongoengine_tool import mongo_watcher
+
+    mongo_watcher.get_db_connection()
 
 
 def parse_date(value: str) -> datetime.datetime:
@@ -109,8 +126,14 @@ def cmd_compute(args) -> None:
 def cmd_evaluate(args) -> None:
     """Evaluate a factor's predictive power using IC/IR/quintile analysis."""
     _init_db()
+    from collections import defaultdict
+
+    from app.lib.scoring_engine.factor_eval import (
+        FactorEvaluationService,
+        _row_price,
+    )
+    from app.lib.scoring_engine.scoring_service import _Row as QuoteRow
     from app.lib.scoring_engine.technical_factors import ALL_TECHNICAL_FACTORS
-    from app.lib.scoring_engine.factor_eval import FactorEvaluationService
     from app.model.stock import StockDailyQuote
 
     factor_name = args.factor_name
@@ -132,20 +155,25 @@ def cmd_evaluate(args) -> None:
     else:
         quote_qs = StockDailyQuote.objects(date__gte=start, date__lte=end)
 
-    quotes = list(quote_qs.order_by("date"))
-    if not quotes:
+    # Stream projected raw rows instead of hydrating one Document per quote
+    # (a full-market year is ~1.3M rows). The same stream feeds the factor
+    # functions (attribute access through QuoteRow) and the evaluation price
+    # frame, so the service performs no per-observation reads.
+    quotes_by_stock = defaultdict(list)
+    quote_frame = defaultdict(list)
+    quote_count = 0
+    for raw in quote_qs.only(*_FACTOR_QUOTE_FIELDS).order_by("date").as_pymongo():
+        row = QuoteRow(raw)
+        quotes_by_stock[row.code].append(row)
+        quote_frame[row.code].append((row.date, _row_price(raw)))
+        quote_count += 1
+
+    if not quotes_by_stock:
         print("No quotes found")
         return
 
-    # Group quotes by stock_code, then compute factor values per stock
-    from collections import defaultdict
-
-    quotes_by_stock = defaultdict(list)
-    for q in quotes:
-        quotes_by_stock[q.code].append(q)
-
     print(
-        f"Evaluating {factor_name} on {len(quotes_by_stock)} stocks, {len(quotes)} quotes"
+        f"Evaluating {factor_name} on {len(quotes_by_stock)} stocks, {quote_count} quotes"
     )
     print(f"Date range: {start.date()} — {end.date()}")
     print("-" * 60)
@@ -168,6 +196,7 @@ def cmd_evaluate(args) -> None:
         start_date=start,
         end_date=end,
         forward_horizons=horizons,
+        quote_frame=dict(quote_frame),
     )
 
     print(json.dumps(report, default=str, ensure_ascii=False, indent=2))

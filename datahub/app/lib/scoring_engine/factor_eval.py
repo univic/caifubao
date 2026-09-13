@@ -2,11 +2,35 @@
 """Factor evaluation service — IC, ICIR, quintile analysis, correlation, decay."""
 
 import datetime
+import math
 from collections import defaultdict
 from statistics import correlation, mean, pstdev
 
+import pandas as pd
+
 from app.lib.market_regime import MarketRegimeService
 from app.model.scoring import StockScorePrediction
+
+#: Horizons the IC decay curve reports. ``evaluate`` builds ONE dataset covering
+#: the union of these and the requested horizons, because the decay curve used to
+#: re-run the whole (per-observation, DB-backed) forward-return lookup.
+DECAY_HORIZONS = (1, 3, 5, 10, 20, 60)
+
+
+def _row_price(row):
+    """Evaluation price of one quote row: HFQ close, falling back to raw close.
+
+    Single definition of the rule so the DB-backed path and a preloaded
+    ``quote_frame`` can never disagree about which series is being evaluated.
+    """
+    if isinstance(row, dict):
+        return row.get("close_hfq") or row.get("close")
+    return getattr(row, "close_hfq", None) or getattr(row, "close", None)
+
+
+def _normalise(value):
+    """Midnight-normalised ``datetime`` (Mongo stores quote dates that way)."""
+    return value.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 class FactorEvaluationService:
@@ -34,10 +58,19 @@ class FactorEvaluationService:
         end_date,
         forward_horizons=None,
         regime_split=False,
+        quote_frame=None,
     ):
         """Run full evaluation pipeline on a factor.
 
         factor_values format: {stock_code: {date.isoformat(): float_value}}
+
+        quote_frame: optional preloaded price series
+        ``{stock_code: [(date, price), ...]}`` (ascending by date, price =
+        ``close_hfq or close``). When supplied, forward returns are resolved
+        positionally against those series with no per-observation queries; when
+        omitted the legacy ``code + date`` / ``code + date range`` reads run
+        unchanged. ``tech_factor_runner evaluate`` passes one frame for the whole
+        universe, which removes ~13M round trips from a full-market year.
 
         If regime_split=True, compute IC separately for bull/bear/sideways
         regimes using MarketRegimeService.  Adds a "regime_ic" key to the
@@ -46,10 +79,16 @@ class FactorEvaluationService:
         if forward_horizons is None:
             forward_horizons = [5, 20, 60]
 
-        # Build aligned dataset: for each (stock, date) with a factor value,
-        # get the forward return at each horizon
+        # One dataset serves the requested ICs AND the decay curve (whose
+        # horizons are a superset): the decay step used to rebuild the entire
+        # dataset, doubling the dominant cost of an evaluation.
+        all_horizons = sorted({int(h) for h in forward_horizons} | set(DECAY_HORIZONS))
         dataset = self._build_dataset(
-            factor_values, start_date, end_date, forward_horizons
+            factor_values,
+            start_date,
+            end_date,
+            all_horizons,
+            quote_frame=quote_frame,
         )
 
         ic_results = self._compute_ic(dataset, forward_horizons)
@@ -57,7 +96,7 @@ class FactorEvaluationService:
         correlation_results = self._compute_component_correlation(
             factor_values, start_date, end_date
         )
-        decay_results = self._compute_decay(factor_values, start_date, end_date)
+        decay_results = self._compute_decay(dataset)
 
         results = {
             "ic": ic_results,
@@ -82,11 +121,19 @@ class FactorEvaluationService:
 
         return results
 
-    def _build_dataset(self, factor_values, start_date, end_date, horizons):
+    def _build_dataset(
+        self, factor_values, start_date, end_date, horizons, quote_frame=None
+    ):
         """Build list of {factor_value, {horizon: forward_return}} dicts."""
+        date_start = _normalise(start_date)
+        date_end = _normalise(end_date)
+
+        if quote_frame is not None:
+            return self._build_dataset_from_frame(
+                factor_values, date_start, date_end, horizons, quote_frame
+            )
+
         dataset = []
-        date_start = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        date_end = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
 
         for stock_code, date_values in factor_values.items():
             for date_str, factor_val in date_values.items():
@@ -94,7 +141,7 @@ class FactorEvaluationService:
                     date = datetime.datetime.fromisoformat(date_str)
                 except (ValueError, TypeError):
                     continue
-                date = date.replace(hour=0, minute=0, second=0, microsecond=0)
+                date = _normalise(date)
                 if date < date_start or date > date_end:
                     continue
                 if factor_val is None:
@@ -106,7 +153,7 @@ class FactorEvaluationService:
                 ).first()
                 if not base_quote:
                     continue
-                base_close = base_quote.close_hfq or base_quote.close
+                base_close = _row_price(base_quote)
                 if not base_close or base_close <= 0:
                     continue
 
@@ -125,13 +172,121 @@ class FactorEvaluationService:
                     )
                     if len(future_quotes) >= h:
                         target_quote = future_quotes[-1]
-                        target_close = target_quote.close_hfq or target_quote.close
+                        target_close = _row_price(target_quote)
                         if target_close and target_close > 0:
                             forward_returns[str(h)] = (
                                 target_close - base_close
                             ) / base_close
                             continue
                     forward_returns[str(h)] = None
+
+                dataset.append(
+                    {
+                        "stock_code": stock_code,
+                        "date": date,
+                        "factor_value": float(factor_val),
+                        "forward_returns": forward_returns,
+                    }
+                )
+
+        return dataset
+
+    def _build_dataset_from_frame(
+        self, factor_values, date_start, date_end, horizons, quote_frame
+    ):
+        """Vectorised dataset build from a preloaded price frame.
+
+        Equivalent to the per-observation path above, by construction:
+
+        * the legacy read is ``code + date > d + date <= d + int(h*1.5)``,
+          ``order_by("date")``, ``limit(h)`` and takes the last row — i.e. the
+          h-th subsequent trading day, *provided* that day falls inside the
+          calendar window. ``groupby("code").shift(-h)`` gives the same h-th
+          subsequent row and the window test is applied explicitly.
+        * a missing, non-positive or unresolvable price yields ``None`` exactly
+          like the legacy ``continue`` / ``forward_returns[h] = None`` branches,
+          and such observations are dropped or nulled in the same places.
+        * ``(code, date)`` is unique in production (the ``StockDailyQuote``
+          unique index), so de-duplication below is a no-op that only protects
+          against a sloppy caller-supplied frame; it keeps the same row the
+          legacy ``.first()`` would have returned.
+        """
+        rows = []
+        for code, series in quote_frame.items():
+            for entry in series:
+                date, price = entry[0], entry[1]
+                if date is None:
+                    continue
+                rows.append((code, date, price))
+        if not rows:
+            return []
+
+        frame = pd.DataFrame(rows, columns=["code", "date", "price"])
+        frame["date"] = pd.to_datetime(frame["date"])
+        frame = frame.sort_values(["code", "date"], kind="stable")
+        frame = frame.drop_duplicates(["code", "date"], keep="first")
+        frame = frame.reset_index(drop=True)
+
+        grouped = frame.groupby("code", sort=False)
+        for h in horizons:
+            shifted_price = grouped["price"].shift(-h)
+            shifted_date = grouped["date"].shift(-h)
+            window = pd.Timedelta(days=int(h * 1.5))
+            ok = (
+                shifted_price.notna()
+                & (shifted_price > 0)
+                & (shifted_date - frame["date"] <= window)
+            )
+            frame[f"_fwd_{h}"] = (shifted_price - frame["price"]) / frame["price"]
+            frame[f"_ok_{h}"] = ok.fillna(False)
+
+        # Per-code date -> row-position maps plus column arrays: memory stays
+        # bounded to one stock's series per lookup (a whole-market year is ~1.3M
+        # rows, so a single global {(code, date): position} dict would hold every
+        # row), and the observation loop does no per-row pandas indexing.
+        date_values_by_code = frame["date"].to_numpy()
+        price_by_position = frame["price"].to_numpy()
+        forward_by_horizon = {h: frame[f"_fwd_{h}"].to_numpy() for h in horizons}
+        ok_by_horizon = {h: frame[f"_ok_{h}"].to_numpy() for h in horizons}
+        positions_by_code = {
+            code: {
+                pd.Timestamp(date_values_by_code[position]): position
+                for position in positions
+            }
+            for code, positions in frame.groupby("code", sort=False).indices.items()
+        }
+
+        dataset = []
+        for stock_code, code_date_values in factor_values.items():
+            positions = positions_by_code.get(stock_code)
+            if not positions:
+                continue
+            for date_str, factor_val in code_date_values.items():
+                try:
+                    date = datetime.datetime.fromisoformat(date_str)
+                except (ValueError, TypeError):
+                    continue
+                date = _normalise(date)
+                if date < date_start or date > date_end:
+                    continue
+                if factor_val is None:
+                    continue
+
+                position = positions.get(pd.Timestamp(date))
+                if position is None:
+                    continue
+                base_close = price_by_position[position]
+                if base_close is None or not base_close > 0:
+                    continue
+
+                forward_returns = {}
+                for h in horizons:
+                    value = None
+                    if ok_by_horizon[h][position]:
+                        raw = forward_by_horizon[h][position]
+                        if raw is not None and not math.isnan(raw):
+                            value = float(raw)
+                    forward_returns[str(h)] = value
 
                 dataset.append(
                     {
@@ -303,15 +458,15 @@ class FactorEvaluationService:
 
         return correlations
 
-    def _compute_decay(self, factor_values, start_date, end_date):
-        """IC decay curve over horizons 1, 3, 5, 10, 20, 60."""
-        decay_horizons = [1, 3, 5, 10, 20, 60]
-        dataset = self._build_dataset(
-            factor_values, start_date, end_date, decay_horizons
-        )
-        ic_results = self._compute_ic(dataset, decay_horizons)
+    def _compute_decay(self, dataset):
+        """IC decay curve over ``DECAY_HORIZONS`` from an already-built dataset.
+
+        The dataset is built once by ``evaluate`` with the union of the
+        requested horizons and these, so this no longer re-queries anything.
+        """
+        ic_results = self._compute_ic(dataset, list(DECAY_HORIZONS))
         return {
-            str(h): ic_results.get(str(h), {}).get("ic_mean") for h in decay_horizons
+            str(h): ic_results.get(str(h), {}).get("ic_mean") for h in DECAY_HORIZONS
         }
 
     # ------------------------------------------------------------------
