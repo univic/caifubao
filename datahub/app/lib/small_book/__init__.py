@@ -156,9 +156,16 @@ def components_at(
 
     # risk penalty stays a raw penalty: stdev / 0.06, +1 when untradeable
     raw = frame["vol"].fillna(0.0) / 0.06
-    abnormal = (frame.get("trade_status", 1).fillna(1) != 1) | (
-        frame.get("is_st", 0).fillna(0) == 1
-    )
+
+    def _flag(column: str, default) -> pd.Series:
+        value = (
+            frame[column]
+            if column in frame.columns
+            else pd.Series(default, index=frame.index)
+        )
+        return pd.to_numeric(value, errors="coerce").fillna(default)
+
+    abnormal = (_flag("trade_status", 1) != 1) | (_flag("is_st", 0) == 1)
     frame["risk_penalty"] = raw + abnormal.astype(float)
     return frame
 
