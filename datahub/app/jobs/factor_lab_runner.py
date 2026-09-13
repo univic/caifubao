@@ -30,6 +30,10 @@ Design notes
   reason recorded), because this measures a factor's edge. The paper path rolls a
   blocked order forward instead — a different question with a different holding
   period, so the two must not share labels.
+* **Four conventions coexist** (this lab, the h20 snapshot, the backtest service,
+  `scoring_engine/factor_eval`'s calendar window). `panel.py`'s module docstring
+  tabulates them and `openspec/changes/factor-lab-label-semantics/` records which
+  one is authoritative for which consumer.
 """
 
 import argparse
@@ -167,12 +171,16 @@ def _load_panel(path, horizons=None):
     import pandas as pd
 
     frame = pd.read_parquet(path)
-    for column in frame.columns:
-        if column not in ("date", "stock_code"):
-            frame[column] = pd.to_numeric(frame[column], errors="coerce").astype(
-                "float32"
-            )
     frame["stock_code"] = frame["stock_code"].astype("category")
+    for column in list(frame.columns):
+        # `blocked_h{h}` holds short reason strings, not numbers: coercing them
+        # would erase every reason before the category cast below (measured:
+        # "limit_up_entry" -> NaN), silently emptying the coverage diagnostics.
+        if column == "stock_code" or column.startswith("blocked_h"):
+            continue
+        if column == "date":
+            continue
+        frame[column] = pd.to_numeric(frame[column], errors="coerce").astype("float32")
     if horizons:
         keep = {int(h) for h in horizons}
         dropped = [

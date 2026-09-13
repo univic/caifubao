@@ -248,3 +248,31 @@ def test_evaluate_factor_reports_gates_and_sample_sizes():
     )
     assert "passed" in entry["gates"]
     assert report["cost_per_round_trip"] == pytest.approx(metrics.round_trip_cost())
+
+
+def test_loader_round_trip_preserves_blocked_reasons(tmp_path):
+    """Reasons must survive the parquet round trip used by `evaluate`.
+
+    A regression here silently empties the coverage diagnostics rather than
+    failing loudly: `pd.to_numeric` on the reason strings turns every entry into
+    NaN before the categorical cast.
+    """
+    from app.jobs.factor_lab_runner import _load_panel
+
+    days = _sessions(3)
+    rows = [
+        _quote("sh600000", days[0], 10.0),
+        _quote("sh600000", days[1], 10.0, change_rate=10.0),  # limit-up entry
+        _quote("sh600000", days[2], 10.0),
+    ]
+    frame = panel_mod.build_panel(rows, horizons=(1,))
+    path = tmp_path / "panel.parquet"
+    frame.to_parquet(path)
+
+    loaded = _load_panel(str(path), horizons=[1])
+
+    assert loaded["blocked_h1"].tolist()[0] == "limit_up_entry"
+    assert loaded["fwd_h1"].isna().tolist()[0]
+    # Numeric columns are still downcast for memory, and labels survive.
+    assert loaded["close"].dtype == "float32"
+    assert loaded["fwd_h1"].isna().sum() >= 1

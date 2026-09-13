@@ -1,13 +1,27 @@
 # -*- coding: utf-8 -*-
 """Factor-research panel: multi-horizon labels from raw daily quote rows.
 
-Relationship to the existing h20 harness
----------------------------------------
-`autoresearch_h20_snapshot_runner` already exports a frozen parquet, but it is
-shaped for one thing: the 8 scoring components of a *single* horizon, with only
-four price columns per evaluation day, flat ±9.9 % price-limit detection and
-roll-forward entry/exit resolution. A short/medium-horizon factor lab needs the
-opposite emphases:
+Four label conventions now coexist in this repository
+----------------------------------------------------
+| # | location | label / tradability rule | consumer |
+|---|----------|--------------------------|----------|
+| 1 | `autoresearch_h20_snapshot_runner._executable` | flat ±9.9 %, roll a blocked order forward | h20 autoresearch snapshot |
+| 2 | `backend/app/services/backtest_service._can_trade` | flat ±9.9 %, roll forward | backtest service |
+| 3 | `scoring_engine/factor_eval._build_dataset` | forward row = the h-th row inside an `int(h*1.5)` *calendar* window | `tech_factor_runner evaluate` |
+| 4 | this module | board-aware limits, drop-on-untradable, positional trading-day offsets | the factor lab |
+
+They must not share labels. Roll-forward answers "what would the strategy do" and
+silently changes the holding period, so it cannot be used for IC statistics; a
+calendar window cannot even resolve a Friday `h=1` observation (it needs three
+calendar days); and a flat ±9.9 % limit misreads a ChiNext +15 % session as
+limit-up. `openspec/changes/factor-lab-label-semantics/` records the decision and
+the per-consumer authority.
+
+Why not reuse the h20 snapshot
+-----------------------------
+It is shaped for one thing: the 8 scoring components of a *single* horizon, with
+only four price columns per evaluation day. A short/medium-horizon factor lab
+needs the opposite emphases:
 
 * **labels at trading-day offsets**, for several horizons at once, with no
   calendar-window approximation (the legacy `int(h*1.5)` rule cannot resolve
