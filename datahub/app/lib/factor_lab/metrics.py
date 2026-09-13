@@ -179,10 +179,19 @@ def quantile_report(
 
     # `gross` is NaN where the long label is missing, and `mean` skips those, so
     # the bucket statistics stay long-only even on the union universe.
-    gross_means = work.groupby("bucket")["gross"].mean()
-    gross_means = gross_means.dropna()
-    if len(gross_means) < 2:
+    long_means = work.groupby("bucket")["gross"].mean().dropna()
+    buckets = sorted(int(value) for value in work["bucket"].unique())
+    bottom_bucket, top_bucket = buckets[0], buckets[-1]
+    if (
+        top_bucket not in long_means.index
+        or bottom_bucket not in long_means.index
+        or len(long_means) < 2
+    ):
+        # A whole edge bucket with no long label (all short-only) makes the
+        # long-short spread unmeasurable; returning early beats silently shifting
+        # the leg onto the neighbouring bucket.
         return {"horizon": horizon, "quantiles": [], "monotonic": None}
+    gross_means = long_means
     long_counts = work.loc[work[label].notna()].groupby("bucket").size()
     net_means = gross_means - cost
     entries = [
@@ -194,8 +203,6 @@ def quantile_report(
         }
         for bucket in gross_means.index
     ]
-    bottom_bucket = int(gross_means.index.min())
-    top_bucket = int(gross_means.index.max())
     # Long leg: buy the top bucket, sell at the h-th open -> one round trip.
     long_leg_gross = float(gross_means.loc[top_bucket])
     # Short leg: sell the bottom bucket at T+1's open and buy it back at the h-th

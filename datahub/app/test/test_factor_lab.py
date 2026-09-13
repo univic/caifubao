@@ -368,6 +368,55 @@ def test_long_blocked_but_short_tradable_observation_still_trades_short():
     assert report["n_short_observations"] == len(frame)
 
 
+def test_all_long_blocked_edge_bucket_is_not_silently_shifted():
+    """If a whole edge decile has no long label the spread is unmeasurable; the
+    short leg must not silently slide onto the neighbouring bucket."""
+    days = _sessions(4)
+    rows = []
+    for name_index in range(20):
+        code = f"sh60{name_index:04d}"
+        for day in days:
+            rows.append(_quote(code, day, 10.0 + name_index * 0.1))
+    frame = panel_mod.build_panel(rows, horizons=(1,))
+    frame["by_name"] = frame["stock_code"].str[-2:].astype(float)
+    names = sorted(frame["stock_code"].unique())
+    frame["fwd_h1"] = 0.0
+    frame["fwd_short_h1"] = 0.0
+    bottom = frame["stock_code"].isin(names[:4])
+    frame.loc[bottom, "fwd_h1"] = np.nan
+    frame.loc[bottom, "fwd_short_h1"] = 0.09
+
+    report = metrics.quantile_report(
+        frame, "by_name", 1, quantiles=5, short_column="fwd_short_h1"
+    )
+    assert report["quantiles"] == []
+    assert report.get("top_minus_bottom") is None
+
+
+def test_ic_report_wires_the_newey_west_lag_from_the_horizon():
+    """The h-horizon IC report must publish a Newey-West t at lag h-1 that is
+    smaller in absolute value than the i.i.d. one on an autocorrelated series."""
+    rng = np.random.default_rng(7)
+    factor = rng.normal(size=20)
+    rows = []
+    common = 0.0
+    for day in _sessions(60):
+        common = 0.7 * common + rng.normal(scale=0.6)
+        label = factor * (1 + common) + 0.3 * rng.normal(size=20)
+        for index, (value, target) in enumerate(zip(factor, label)):
+            rows.append(
+                {
+                    "date": day,
+                    "stock_code": f"sh60{index:04d}",
+                    "factor": value,
+                    "fwd_h5": target,
+                }
+            )
+    report = metrics.ic_report(pd.DataFrame(rows), "factor", 5)
+    assert report["t_stat"] is not None and report["t_stat_nw"] is not None
+    assert abs(report["t_stat_nw"]) < abs(report["t_stat"])
+
+
 def test_profit_concentration_measures_pnl_not_bucket_balance():
     """The gate must read the best trade's share of positive P&L, not the bucket
     sizes (which are equal by construction and can never trip 0.4)."""
