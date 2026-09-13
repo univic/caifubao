@@ -29,6 +29,7 @@ from __future__ import annotations
 import math
 from statistics import pstdev
 
+import numpy as np
 import pandas as pd
 
 #: H20 config values from `scoring_engine/config.py`.
@@ -45,9 +46,16 @@ WEIGHTS = {
     "real_relative_strength": 10.0,
     "risk_penalty": 15.0,
 }
-#: Components this module does not rebuild, with their H20 weights, so a report
-#: can state exactly what fraction of the model is missing.
-UNAVAILABLE = {"signal_strength": 15.0, "industry_momentum": 5.0}
+#: Components this module rebuilds, with their H20 weights. All eight are now
+#: available; `signal_strength` reproduces the engine's persistence decay and
+#: `industry_momentum` the industry-level aggregate.
+WEIGHTS.update({"signal_strength": 15.0, "industry_momentum": 5.0})
+#: Kept for callers that still want to state what is missing (now empty).
+UNAVAILABLE: dict[str, float] = {}
+
+#: Signal decay parameters from the H20 config.
+SIGNAL_DECAY_FACTOR = 0.7
+SIGNAL_DECAY_MAX_DAYS = 10
 
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -168,6 +176,79 @@ def components_at(
     abnormal = (_flag("trade_status", 1) != 1) | (_flag("is_st", 0) == 1)
     frame["risk_penalty"] = raw + abnormal.astype(float)
     return frame
+
+
+def attach_signal_strength(features: pd.DataFrame, signals: pd.DataFrame) -> pd.Series:
+    """Bullish signal strength with the engine's persistence decay.
+
+    Mirrors ``components.signal_strength_component``: on a session with bullish
+    signals the value is ``clamp(mean(strength))``; otherwise the most recent
+    bullish value within ``signal_decay_max_days`` decays by
+    ``signal_decay_factor ** days_since_signal``; with nothing in the window it
+    is 0. ``signals`` needs ``stock_code, date, direction, strength``.
+    """
+    base = pd.Series(np.nan, index=features.index)
+    if signals is not None and not signals.empty:
+        bullish = signals.loc[signals["direction"].astype(str).str.upper() == "BULLISH"]
+        if not bullish.empty:
+            bullish = bullish.assign(
+                strength=pd.to_numeric(bullish["strength"], errors="coerce").fillna(1.0)
+            )
+            grouped = bullish.groupby(["stock_code", "date"])["strength"].mean()
+            grouped = grouped.clip(0.0, 1.0).rename("signal_base")
+            keyed = features[["stock_code", "date"]].merge(
+                grouped.reset_index(), on=["stock_code", "date"], how="left"
+            )
+            base = pd.Series(keyed["signal_base"].to_numpy(), index=features.index)
+
+    frame = features[["stock_code", "date"]].copy()
+    frame["session"] = frame.groupby("stock_code", sort=False).cumcount()
+    has_signal = base.notna()
+    frame["signal_base"] = base
+    frame["signal_session"] = frame["session"].where(has_signal)
+    grouped = frame.groupby("stock_code", sort=False)
+    frame["last_base"] = grouped["signal_base"].ffill()
+    frame["last_session"] = grouped["signal_session"].ffill()
+    days_since = frame["session"] - frame["last_session"]
+    decayed = frame["last_base"] * (SIGNAL_DECAY_FACTOR**days_since)
+    fresh = has_signal & frame["signal_base"].notna()
+    value = pd.Series(0.0, index=features.index)
+    value = value.mask(fresh, frame["signal_base"].fillna(0.0))
+    within = (~fresh) & days_since.notna() & (days_since <= SIGNAL_DECAY_MAX_DAYS)
+    value = value.mask(within, decayed.fillna(0.0))
+    return value.clip(0.0, 1.0)
+
+
+def attach_industry_momentum(
+    features: pd.DataFrame, industry: pd.DataFrame
+) -> pd.Series:
+    """Industry momentum: cross-industry rank of each industry's mean momentum.
+
+    The engine aggregates the day's scores per L1 industry and lets a later run
+    read them with a one-day lag. This uses the same-date cross-section instead
+    (still strictly as-of the signal date), which is the closest faithful
+    reproduction without a second scoring pass; the difference is a one-session
+    lag on a 5/110-weight component.
+
+    ``features`` must be the **components** frame (it needs ``momentum``);
+    ``industry`` needs ``stock_code, industry_code_sw_l1``.
+    """
+    result = pd.Series(0.0, index=features.index)
+    if industry is None or industry.empty:
+        return result
+    mapping = dict(zip(industry["stock_code"], industry["industry_code_sw_l1"]))
+    frame = features.loc[:, ["stock_code", "date", "momentum"]].copy()
+    frame["industry"] = frame["stock_code"].map(mapping)
+    frame = frame.loc[frame["industry"].notna()]
+    if frame.empty:
+        return result
+    industry_mean = frame.groupby(["date", "industry"])["momentum"].mean()
+    industry_rank = industry_mean.groupby("date").rank(pct=True).rename("industry_rank")
+    keyed = frame.loc[:, ["date", "industry"]].merge(
+        industry_rank.reset_index(), on=["date", "industry"], how="left"
+    )
+    result.loc[frame.index] = keyed["industry_rank"].to_numpy()
+    return result.fillna(0.0)
 
 
 def flip_score(components: pd.DataFrame) -> pd.Series:

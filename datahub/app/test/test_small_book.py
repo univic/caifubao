@@ -7,6 +7,8 @@ import pytest
 from app.lib.small_book import (
     UNAVAILABLE,
     WEIGHTS,
+    attach_industry_momentum,
+    attach_signal_strength,
     build_features,
     clamp,
     components_at,
@@ -127,7 +129,11 @@ def test_flip_score_prefers_the_weak_side():
     ] == pytest.approx(1.0)
 
 
-def test_missing_components_are_declared_and_renormalised():
+def test_weights_cover_all_eight_components_and_renormalise():
+    # Every component the engine scores is now rebuilt, so nothing is declared
+    # missing and the H20 weights sum to the engine's 110.
+    assert UNAVAILABLE == {}
+    assert sum(WEIGHTS.values()) == pytest.approx(110.0)
     frame = pd.DataFrame(
         {
             "date": pd.to_datetime(["2024-01-02"]),
@@ -136,8 +142,63 @@ def test_missing_components_are_declared_and_renormalised():
         }
     )
     score = flip_score(frame)
-    # renormalised over the present components (momentum 15 + penalty 15) -> -0.5
+    # A partial frame still renormalises over the components it carries
+    # (momentum 15 + penalty 15) -> -0.5.
     assert score.iloc[0] == pytest.approx(-0.5)
-    assert "signal_strength" in UNAVAILABLE
-    assert sum(UNAVAILABLE.values()) == pytest.approx(20.0)
-    assert sum(WEIGHTS.values()) == pytest.approx(90.0)
+
+
+def test_signal_strength_live_decay_and_expiry():
+    # One stock over 15 sessions with a single bullish signal on session 0.
+    days = pd.date_range("2024-01-01", periods=15)
+    rows = [["sh600000", d, 10.0, 10.0, 10.0, 1e7, 1, 0] for d in days]
+    factor_rows = [["sh600000", d, 10.0, 10.0, 10.0] for d in days]
+    features = build_features(_quotes(rows), _factors(factor_rows))
+    signals = pd.DataFrame(
+        [["sh600000", days[0], "BULLISH", 0.8, "MA_CROSS"]],
+        columns=["stock_code", "date", "direction", "strength", "signal_name"],
+    )
+    value = attach_signal_strength(features, signals)
+    assert value.iloc[0] == pytest.approx(0.8)
+    assert value.iloc[1] == pytest.approx(0.8 * 0.7)
+    assert value.iloc[10] == pytest.approx(0.8 * 0.7**10)
+    # beyond the 10-session window the signal is dead
+    assert value.iloc[11] == pytest.approx(0.0)
+    # a bearish-only day leaves the value untouched (no live bullish signal)
+    bearish = pd.DataFrame(
+        [["sh600000", days[3], "BEARISH", 0.9, "MA_CROSS"]],
+        columns=["stock_code", "date", "direction", "strength", "signal_name"],
+    )
+    combined = attach_signal_strength(features, pd.concat([signals, bearish]))
+    assert combined.iloc[3] == pytest.approx(0.8 * 0.7**3)
+
+
+def test_industry_momentum_ranks_industries_cross_sectionally():
+    # 15 sessions so the 10-session momentum lookback actually resolves.
+    days = pd.date_range("2024-01-01", periods=15)
+    rows, factor_rows = [], []
+    # two industries: bank names fall, tech names rise -> tech ranks higher
+    for index, day in enumerate(days):
+        rows.append(["sh600000", day, 10.0 - index, 10.0, 9.0, 1e7, 1, 0])
+        factor_rows.append(["sh600000", day, 20.0, 30.0, 40.0])
+        rows.append(["sh600001", day, 10.0 - index, 10.0, 9.0, 1e7, 1, 0])
+        factor_rows.append(["sh600001", day, 20.0, 30.0, 40.0])
+        rows.append(["sz000001", day, 10.0 + index, 11.0, 10.0, 1e7, 1, 0])
+        factor_rows.append(["sz000001", day, 5.0, 4.0, 3.0])
+    components = components_at(build_features(_quotes(rows), _factors(factor_rows)))
+    industry = pd.DataFrame(
+        [["sh600000", "BANK"], ["sh600001", "BANK"], ["sz000001", "TECH"]],
+        columns=["stock_code", "industry_code_sw_l1"],
+    )
+    value = attach_industry_momentum(components, industry)
+    last = components["date"] == days[-1]
+    by_code = dict(zip(components.loc[last, "stock_code"], value[last]))
+    assert by_code["sz000001"] > by_code["sh600000"]
+    assert by_code["sh600000"] == by_code["sh600001"]
+    # unknown industries fall back to the neutral zero
+    assert (
+        attach_industry_momentum(
+            components, pd.DataFrame(columns=["stock_code", "industry_code_sw_l1"])
+        )
+        .eq(0.0)
+        .all()
+    )
