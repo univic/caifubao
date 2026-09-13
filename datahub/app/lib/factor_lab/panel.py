@@ -8,7 +8,7 @@ Four label conventions now coexist in this repository
 | 1 | `autoresearch_h20_snapshot_runner._executable` | flat ±9.9 %, roll a blocked order forward | h20 autoresearch snapshot |
 | 2 | `backend/app/services/backtest_service._can_trade` | flat ±9.9 %, roll forward | backtest service |
 | 3 | `scoring_engine/factor_eval._build_dataset` | forward row = the h-th row inside an `int(h*1.5)` *calendar* window | `tech_factor_runner evaluate` |
-| 4 | this module | board-aware limits, drop-on-untradable, positional trading-day offsets | the factor lab |
+| 4 | this module | board-aware limits, drop-on-untradable, position-checked trading-day offsets | the factor lab |
 
 They must not share labels. Roll-forward answers "what would the strategy do" and
 silently changes the holding period, so it cannot be used for IC statistics; a
@@ -29,8 +29,9 @@ needs the opposite emphases:
 * **volume/liquidity features**, so turnover and Amihud-style factors are
   computable;
 * **board-aware price limits** (main ±10 %, ChiNext/STAR ±20 %, BSE ±30 %,
-  ST ±5 %), because on short horizons a limit-up open is the difference between
-  a tradable and a fictive entry;
+  ST ±5 % on the main board), resolved from the *open against the previous
+  close* — the price an order would actually fill at — not from the session's
+  close-to-close change;
 * **drop-on-untradable** labelling: this measures a factor's predictive power.
   The paper/backtest path instead rolls a blocked order forward, which answers a
   different question ("what would the strategy do") and silently changes the
@@ -47,9 +48,10 @@ import pandas as pd
 
 from app.lib.utilities.data_capability_helper import is_bse_stock_code
 
-#: Percent daily price limits by board. ``st`` overrides to 5 %; the window the
-#: project can currently score has no ``isST`` flag at all (see the pit-50k
-#: report), so callers should treat the ST band as best-effort.
+#: Percent daily price limits by board. ``st`` only tightens the **main** board
+#: to 5 %; ChiNext/STAR ST names keep their 20 % band. The window the project can
+#: currently score has no ``isST`` flag for 2026+ (see the pit-50k report), so
+#: callers should treat the ST band as best-effort.
 LIMIT_MAIN = 10.0
 LIMIT_GROWTH = 20.0
 LIMIT_BSE = 30.0
@@ -71,33 +73,40 @@ _PANEL_COLUMNS = (
     "volume",
     "trade_amount",
     "change_rate",
+    "previous_close",
     "trade_status",
     "is_bse",
+    "is_st",
     "limit_up",
     "limit_down",
     "board_limit",
 )
 
+#: Label column families written per horizon. `fwd_h{h}`/`blocked_h{h}` are the
+#: long leg; `fwd_short_h{h}`/`blocked_short_h{h}` the mirrored short leg.
+LABEL_FAMILIES = ("fwd_h", "blocked_h", "fwd_short_h", "blocked_short_h")
+
 
 def price_limit(stock_code: str, *, is_st: bool = False) -> float:
     """Percent daily price limit for one A-share code."""
-    if is_st:
-        return LIMIT_ST
-    code = (stock_code or "").lower()
-    if is_bse_stock_code(code):
+    code = (stock_code or "").strip().lower()
+    # `is_bse_stock_code` also matches the bare `[489]\\d{5}` form, which catches
+    # Shanghai B-shares (900xxx). An exchange-prefixed sh/sz code is never BSE.
+    if is_bse_stock_code(code) and not code.startswith(("sh", "sz", "900")):
         return LIMIT_BSE
-    if code.startswith(("sh688", "sh689", "sz300", "sz301")):
+    # Accept both exchange-prefixed (`sz300750`) and bare (`300750`) codes.
+    if code.startswith(
+        ("sh688", "sh689", "sz300", "sz301", "688", "689", "300", "301")
+    ):
         return LIMIT_GROWTH
-    return LIMIT_MAIN
+    return LIMIT_ST if is_st else LIMIT_MAIN
 
 
-def _eval_price(open_price, open_hfq):
-    """Tradable price used for labels: HFQ open, falling back to the raw open."""
-    if open_hfq:
-        return float(open_hfq)
-    if open_price:
-        return float(open_price)
-    return None
+def _series_price(raw, hfq) -> pd.Series:
+    """Tradable price used for labels: HFQ price, falling back to the raw one."""
+    values = pd.to_numeric(hfq, errors="coerce")
+    fallback = pd.to_numeric(raw, errors="coerce")
+    return values.where(values > 0, fallback)
 
 
 def _frame_from_rows(rows) -> pd.DataFrame:
@@ -119,6 +128,7 @@ def _frame_from_rows(rows) -> pd.DataFrame:
                 "volume": row.get("volume"),
                 "trade_amount": row.get("trade_amount"),
                 "change_rate": row.get("change_rate"),
+                "previous_close": row.get("previous_close"),
                 "trade_status": row.get("trade_status", 1),
                 "is_bse": bool(row.get("is_bse", is_bse_stock_code(code))),
                 "is_st": bool(row.get("is_st", row.get("isST", 0))),
@@ -138,6 +148,7 @@ def _frame_from_rows(rows) -> pd.DataFrame:
             "volume",
             "trade_amount",
             "change_rate",
+            "previous_close",
             "trade_status",
             "is_bse",
             "is_st",
@@ -145,33 +156,75 @@ def _frame_from_rows(rows) -> pd.DataFrame:
     )
 
 
-def build_panel(rows, horizons) -> pd.DataFrame:
+def _session_positions(frame: pd.DataFrame, sessions):
+    """Map each row's session to its index in the trading calendar.
+
+    ``sessions`` is the market calendar for the export window (usually
+    ``trading_day_helper.get_a_stock_market_trade_calendar()``). When it is not
+    supplied the panel derives one from its own distinct dates — exact for a
+    multi-code export, but a single-stock export cannot see market sessions on
+    which that stock has no quote row.
+    """
+    if sessions is None:
+        calendar = sorted(pd.to_datetime(pd.Series(frame["date"].unique())))
+    else:
+        calendar = sorted({pd.Timestamp(value).normalize() for value in sessions})
+    lookup = {value: index for index, value in enumerate(calendar)}
+    return frame["date"].map(lookup), lookup
+
+
+def _blocked_series(frame: pd.DataFrame, checks) -> pd.Series:
+    """First matching reason per row, in the order given.
+
+    ``checks`` is a list of ``(reason, mask)``; the first true mask wins, so the
+    order encodes priority (a non-existent session before a missing price, an
+    unknown price limit before a limit verdict, …).
+    """
+    blocked = pd.Series([None] * len(frame), index=frame.index, dtype="object")
+    for reason, mask in checks:
+        blocked = blocked.mask(blocked.isna() & mask, reason)
+    return blocked
+
+
+def build_panel(rows, horizons, sessions=None) -> pd.DataFrame:
     """Build a factor-research panel from raw quote rows.
 
     ``rows``: iterable of raw dicts for one or more stocks, any date order.
     ``horizons``: trading-day holding periods, e.g. ``(1, 5, 20, 60)``.
+    ``sessions``: optional market trading calendar for the export window.
 
     Returns one row per ``(stock_code, date)`` with the raw features plus, per
     horizon ``h``:
 
-    * ``fwd_h{h}`` — gross return from the T+1 open to the open ``h`` sessions
-      later, **NaN** when either session is missing or untradable (the reason is
-      in ``blocked_h{h}``; NaN rather than None because the column is float64 and
-      must survive a parquet round trip);
-    * ``blocked_h{h}`` — why the label is missing
-      (``missing_price``/``suspended_entry``/``limit_up_entry``/
-      ``suspended_exit``/``limit_down_exit``/``no_exit_yet``).
+    * ``fwd_h{h}`` — long-leg gross return from the T+1 open to the open ``h``
+      sessions later, **NaN** when either session is missing or untradable (the
+      reason is in ``blocked_h{h}``; NaN rather than None because the column is
+      float64 and must survive a parquet round trip);
+    * ``blocked_h{h}`` — why the long label is missing
+      (``no_next_session``/``missing_price``/``suspended_entry``/
+      ``missing_previous_close``/``limit_up_entry``/``no_exit_yet``/
+      ``suspended_exit``/``limit_down_exit``/``missing_session_between``);
+    * ``fwd_short_h{h}`` / ``blocked_short_h{h}`` — the mirrored **short** leg
+      (sell the T+1 open, cover the h-th open), blocked on the opposite side:
+      ``limit_down_entry`` and ``limit_up_exit``.
 
-    Labels are positional (the h-th subsequent session), never calendar-based.
+    Labels are positional offsets in *trading sessions*, and a label is dropped
+    when a missing quote row would make the offset land on a different session
+    than the calendar prescribes — otherwise a data gap would silently lengthen
+    the holding period.
     """
     frame = _frame_from_rows(rows)
     horizons = sorted({int(h) for h in horizons})
     if frame.empty:
-        return frame.assign(
-            **{f"fwd_h{h}": pd.Series(dtype="float64") for h in horizons}
-        )
+        columns = {}
+        for horizon in horizons:
+            columns[f"fwd_h{horizon}"] = pd.Series(dtype="float64")
+            columns[f"blocked_h{horizon}"] = pd.Series(dtype="object")
+            columns[f"fwd_short_h{horizon}"] = pd.Series(dtype="float64")
+            columns[f"blocked_short_h{horizon}"] = pd.Series(dtype="object")
+        return frame.assign(**columns)
 
-    frame["date"] = pd.to_datetime(frame["date"])
+    frame["date"] = pd.to_datetime(frame["date"]).dt.normalize()
     frame = frame.sort_values(["stock_code", "date"], kind="stable")
     frame = frame.drop_duplicates(["stock_code", "date"], keep="first")
     frame = frame.reset_index(drop=True)
@@ -180,85 +233,127 @@ def build_panel(rows, horizons) -> pd.DataFrame:
         price_limit(code, is_st=bool(st))
         for code, st in zip(frame["stock_code"], frame["is_st"])
     ]
+
+    open_price = pd.to_numeric(frame["open"], errors="coerce")
+    close_price = pd.to_numeric(frame["close"], errors="coerce")
     change = pd.to_numeric(frame["change_rate"], errors="coerce")
-    # No change_rate (a gap in the feed) must not silently look tradable: treat
-    # it as untradable so a limit session can never fabricate an entry.
-    frame["limit_up"] = change.isna() | (change >= frame["board_limit"] - LIMIT_EPSILON)
-    frame["limit_down"] = change.isna() | (
-        change <= -(frame["board_limit"] - LIMIT_EPSILON)
-    )
+    # Prefer the quoted previous close; derive it from close/change_rate when the
+    # feed omits it. Either way the limit verdict is "did the *open* sit at the
+    # limit", which is what an order would face — not the close-to-close change.
+    previous = pd.to_numeric(frame["previous_close"], errors="coerce")
+    previous = previous.where(previous > 0)
+    derived = (close_price / (1 + change / 100)).where(lambda values: values > 0)
+    frame["previous_close"] = previous.fillna(derived)
+
+    usable = frame["previous_close"].notna() & (open_price > 0)
+    upper = frame["previous_close"] * (1 + (frame["board_limit"] - LIMIT_EPSILON) / 100)
+    lower = frame["previous_close"] * (1 - (frame["board_limit"] - LIMIT_EPSILON) / 100)
+    # `boolean` (not bool) so an underivable previous close stays visibly unknown
+    # instead of silently reading as "tradable".
+    frame["limit_up"] = pd.Series(pd.NA, index=frame.index, dtype="boolean")
+    frame["limit_down"] = pd.Series(pd.NA, index=frame.index, dtype="boolean")
+    frame.loc[usable, "limit_up"] = open_price[usable] >= upper[usable]
+    frame.loc[usable, "limit_down"] = open_price[usable] <= lower[usable]
+
+    positions, session_lookup = _session_positions(frame, sessions)
 
     grouped = frame.groupby("stock_code", sort=False)
-    entry_price = grouped["open_hfq"].shift(-1)
     entry_raw = grouped["open"].shift(-1)
+    entry_hfq = grouped["open_hfq"].shift(-1)
     entry_status = grouped["trade_status"].shift(-1)
-    entry_limit_up = grouped["limit_up"].shift(-1)
+    entry_limit_up = grouped["limit_up"].shift(-1).astype("boolean")
+    entry_limit_down = grouped["limit_down"].shift(-1).astype("boolean")
+    entry_exists = grouped["date"].shift(-1).notna()
+    entry_gap = pd.Series(False, index=frame.index)
+    if session_lookup:
+        entry_pos = grouped["date"].shift(-1).map(session_lookup)
+        entry_gap = entry_exists & (positions + 1 != entry_pos)
+
+    entry = _series_price(entry_raw, entry_hfq)
 
     for horizon in horizons:
-        exit_price = grouped["open_hfq"].shift(-(1 + horizon))
         exit_raw = grouped["open"].shift(-(1 + horizon))
+        exit_hfq = grouped["open_hfq"].shift(-(1 + horizon))
         exit_status = grouped["trade_status"].shift(-(1 + horizon))
-        exit_limit_down = grouped["limit_down"].shift(-(1 + horizon))
+        exit_limit_up = grouped["limit_up"].shift(-(1 + horizon)).astype("boolean")
+        exit_limit_down = grouped["limit_down"].shift(-(1 + horizon)).astype("boolean")
+        exit_date = grouped["date"].shift(-(1 + horizon))
+        exit_exists = exit_date.notna()
 
-        entry = [_eval_price(raw, hfq) for raw, hfq in zip(entry_raw, entry_price)]
-        exit_ = [_eval_price(raw, hfq) for raw, hfq in zip(exit_raw, exit_price)]
-        entry = pd.Series(entry, index=frame.index, dtype="float64")
-        exit_ = pd.Series(exit_, index=frame.index, dtype="float64")
-
-        blocked = pd.Series([None] * len(frame), index=frame.index, dtype="object")
-        blocked = blocked.mask(entry.isna() | (entry <= 0), "missing_price")
-        blocked = blocked.mask(blocked.isna() & (entry_status != 1), "suspended_entry")
-        blocked = blocked.mask(
-            blocked.isna() & entry_limit_up.astype("boolean").fillna(True),
-            "limit_up_entry",
-        )
-        blocked = blocked.mask(blocked.isna() & exit_.isna(), "no_exit_yet")
-        blocked = blocked.mask(
-            blocked.isna() & ((exit_ <= 0) | (exit_status != 1)), "suspended_exit"
-        )
-        blocked = blocked.mask(
-            blocked.isna() & exit_limit_down.astype("boolean").fillna(True),
-            "limit_down_exit",
-        )
+        exit_ = _series_price(exit_raw, exit_hfq)
+        gap = entry_gap.copy()
+        if session_lookup:
+            exit_pos = exit_date.map(session_lookup)
+            gap = gap | (exit_exists & (positions + 1 + horizon != exit_pos))
 
         gross = (exit_ - entry) / entry
-        frame[f"fwd_h{horizon}"] = gross.where(blocked.isna())
-        frame[f"blocked_h{horizon}"] = blocked
+
+        long_blocked = _blocked_series(
+            frame,
+            [
+                ("no_next_session", ~entry_exists),
+                ("missing_price", entry.isna() | (entry <= 0)),
+                ("suspended_entry", entry_status != 1),
+                ("missing_previous_close", entry_limit_up.isna()),
+                ("limit_up_entry", entry_limit_up.fillna(False)),
+                ("no_exit_yet", ~exit_exists),
+                ("missing_price", exit_.isna() | (exit_ <= 0)),
+                ("suspended_exit", exit_status != 1),
+                ("missing_previous_close", exit_limit_down.isna()),
+                ("limit_down_exit", exit_limit_down.fillna(False)),
+                ("missing_session_between", gap),
+            ],
+        )
+        frame[f"fwd_h{horizon}"] = gross.where(long_blocked.isna())
+        frame[f"blocked_h{horizon}"] = long_blocked
+
+        short_blocked = _blocked_series(
+            frame,
+            [
+                ("no_next_session", ~entry_exists),
+                ("missing_price", entry.isna() | (entry <= 0)),
+                ("suspended_entry", entry_status != 1),
+                ("missing_previous_close", entry_limit_down.isna()),
+                ("limit_down_entry", entry_limit_down.fillna(False)),
+                ("no_exit_yet", ~exit_exists),
+                ("missing_price", exit_.isna() | (exit_ <= 0)),
+                ("suspended_exit", exit_status != 1),
+                ("missing_previous_close", exit_limit_up.isna()),
+                ("limit_up_exit", exit_limit_up.fillna(False)),
+                ("missing_session_between", gap),
+            ],
+        )
+        frame[f"fwd_short_h{horizon}"] = (-gross).where(short_blocked.isna())
+        frame[f"blocked_short_h{horizon}"] = short_blocked
 
     keep = [c for c in _PANEL_COLUMNS if c in frame.columns]
     keep += [
         c
         for h in horizons
-        for c in (f"fwd_h{h}", f"blocked_h{h}")
+        for c in (
+            f"fwd_h{h}",
+            f"blocked_h{h}",
+            f"fwd_short_h{h}",
+            f"blocked_short_h{h}",
+        )
         if c in frame.columns
     ]
     return frame.loc[:, keep]
 
 
-def forward_returns(panel: pd.DataFrame, horizon: int) -> pd.Series:
-    """Net-of-cost label series for ``horizon`` (gross minus a round trip).
-
-    Costs are applied at label level with the profile's rates
-    (``slippage_per_side`` 10 bp, ``commission_rate`` 2.5 bp, ``sell_stamp_duty``
-    10 bp) so a decile spread is directly comparable to the paper path. The
-    minimum-commission floor and board lots are portfolio-level effects and are
-    handled where positions are sized, not here.
-    """
-    from app.lib.factor_lab.metrics import round_trip_cost
-
-    return panel[f"fwd_h{horizon}"] - round_trip_cost()
-
-
-def coverage(panel: pd.DataFrame, horizon: int) -> dict:
-    """Label coverage and the blocking-reason histogram for one horizon."""
-    column = f"blocked_h{horizon}"
+def coverage(panel: pd.DataFrame, horizon: int, *, leg: str = "long") -> dict:
+    """Label coverage and the blocking-reason histogram for one horizon/leg."""
+    prefix = "blocked_short_h" if leg == "short" else "blocked_h"
+    label_column = f"fwd_short_h{horizon}" if leg == "short" else f"fwd_h{horizon}"
+    column = f"{prefix}{horizon}"
     total = len(panel)
-    resolved = int(panel[f"fwd_h{horizon}"].notna().sum())
+    resolved = int(panel[label_column].notna().sum()) if label_column in panel else 0
     reasons: dict = defaultdict(int)
     if column in panel.columns:
         counts = panel[column].value_counts(dropna=True)
         reasons.update({str(k): int(v) for k, v in counts.items()})
     return {
+        "leg": leg,
         "rows": total,
         "resolved": resolved,
         "coverage": round(resolved / total, 4) if total else 0.0,

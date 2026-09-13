@@ -127,7 +127,9 @@ def rsi(panel: pd.DataFrame, window: int = 14) -> pd.Series:
         .reset_index(level=0, drop=True)
     )
     relative = average_gain / average_loss.where(average_loss > 0)
-    return 100 - 100 / (1 + relative)
+    rsi = 100 - 100 / (1 + relative)
+    # A window with no losses has nothing to divide by; RSI is 100 by definition.
+    return rsi.mask((average_loss == 0) & (average_gain > 0), 100.0)
 
 
 #: name -> (callable(panel) -> Series, description)

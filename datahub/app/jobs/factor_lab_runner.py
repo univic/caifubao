@@ -46,7 +46,10 @@ import sys
 logger = logging.getLogger(__name__)
 
 #: Quote fields the lab needs. Projected explicitly so a full-history export
-#: never hydrates Documents and a missing field is obvious.
+#: never hydrates Documents and a missing field is obvious. ``previous_close``
+#: is what the *open*-vs-limit verdict needs; ``isST`` is projected so the 5 %
+#: main-board ST band is actually reachable (it previously read a field that was
+#: never selected, so every name looked non-ST).
 QUOTE_FIELDS = (
     "code",
     "date",
@@ -59,8 +62,14 @@ QUOTE_FIELDS = (
     "volume",
     "trade_amount",
     "change_rate",
+    "previous_close",
     "trade_status",
+    "isST",
 )
+
+#: Label column families, longest prefix first so `fwd_short_h5` is not read as
+#: `fwd_h` + `_short_h5`.
+LABEL_FAMILIES = ("blocked_short_h", "blocked_h", "fwd_short_h", "fwd_h")
 
 #: Codes per export chunk. Chunking by code keeps every stock's history whole
 #: while bounding memory to one chunk of the panel frame.
@@ -87,6 +96,17 @@ def iter_code_chunks(all_codes, size):
         yield codes[index : index + size]
 
 
+def split_label_column(column):
+    """Return ``(family, horizon)`` for a label column, else ``None``."""
+    for family in LABEL_FAMILIES:
+        if column.startswith(family):
+            try:
+                return family, int(column[len(family) :])
+            except ValueError:
+                return None
+    return None
+
+
 def export_panel(
     *,
     from_date,
@@ -98,8 +118,14 @@ def export_panel(
     stock_code=None,
     quote_model=None,
     dry_run=False,
+    sessions=None,
 ) -> dict:
-    """Freeze a factor-research panel to ``output`` (parquet)."""
+    """Freeze a factor-research panel to ``output`` (parquet).
+
+    ``sessions`` is the market trading calendar; the CLI passes
+    ``trading_day_helper.get_a_stock_market_trade_calendar()`` so a missing quote
+    row cannot silently lengthen a holding period.
+    """
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -133,7 +159,7 @@ def export_panel(
             .order_by("date")
             .as_pymongo()
         )
-        panel = build_panel(list(queryset), horizons)
+        panel = build_panel(list(queryset), horizons, sessions=sessions)
         rows_written += len(panel)
         if not dry_run and not panel.empty:
             if writer is None:
@@ -156,42 +182,90 @@ def export_panel(
         "codes": len(codes),
         "chunks": len(chunks),
         "rows": rows_written,
+        "calendar_sessions": len(sessions) if sessions else 0,
         "dry_run": bool(dry_run),
     }
+
+
+#: Raw columns every registered factor consumes. The export writes more (limit
+#: flags, ST/BSE markers) for audit; evaluation does not read them.
+_EVAL_COLUMNS = (
+    "date",
+    "stock_code",
+    "open",
+    "open_hfq",
+    "close",
+    "close_hfq",
+    "high_hfq",
+    "low_hfq",
+    "volume",
+    "trade_amount",
+    "change_rate",
+    "previous_close",
+    "trade_status",
+)
+
+
+def _panel_is_grouped(frame) -> bool:
+    """True when each stock's rows are adjacent and ascending by date.
+
+    The export writes chunks of sorted codes, so this holds; the check exists so
+    a differently-ordered parquet is re-sorted explicitly instead of being fed to
+    the rolling windows in the wrong order.
+    """
+    import pandas as pd
+
+    codes = frame["stock_code"].cat.codes
+    if len(codes) == 0:
+        return True
+    if not codes.is_monotonic_increasing:
+        return False
+    boundary = codes.diff().ne(0)
+    boundary.iloc[0] = True
+    deltas = frame["date"].diff().where(~boundary, pd.Timedelta(0))
+    return bool((deltas >= pd.Timedelta(0)).all())
 
 
 def _load_panel(path, horizons=None):
     """Load a frozen panel, trimmed to the horizons being evaluated.
 
-    A 2024-2026 panel is ~3.3M rows; carrying every horizon's label AND its
-    blocking-reason string would be hundreds of MB of object columns for nothing.
-    Non-requested horizons are dropped, and the reason columns are read as
-    ``category`` (short repeated strings) instead of Python objects.
+    A 2024-2026 panel is ~3.3M rows and ~34 columns; the blocking-reason strings
+    alone are hundreds of MB of object columns. Only the columns an evaluation
+    reads are projected at *read* time (``pd.read_parquet(columns=...)``), so the
+    peak never includes the other horizons' labels or the export-only limit flags
+    — which is what let the 3.3M-row sweep fit inside the 2Gi pod limit.
     """
     import pandas as pd
+    import pyarrow.parquet as pq
 
-    frame = pd.read_parquet(path)
+    available = set(pq.ParquetFile(path).schema.names)
+    wanted = [column for column in _EVAL_COLUMNS if column in available]
+    selected = {int(h) for h in horizons} if horizons else None
+    for column in sorted(available):
+        parsed = split_label_column(column)
+        if parsed and (selected is None or parsed[1] in selected):
+            wanted.append(column)
+
+    frame = pd.read_parquet(path, columns=wanted)
     frame["stock_code"] = frame["stock_code"].astype("category")
+    if not _panel_is_grouped(frame):
+        frame.sort_values(
+            ["stock_code", "date"], kind="stable", ignore_index=True, inplace=True
+        )
     for column in list(frame.columns):
-        # `blocked_h{h}` holds short reason strings, not numbers: coercing them
-        # would erase every reason before the category cast below (measured:
-        # "limit_up_entry" -> NaN), silently emptying the coverage diagnostics.
-        if column == "stock_code" or column.startswith("blocked_h"):
+        # `blocked_*` columns hold short reason strings, not numbers: coercing
+        # them would erase every reason before the category cast below
+        # (measured: "limit_up_entry" -> NaN), silently emptying the coverage
+        # diagnostics.
+        parsed = split_label_column(column)
+        if column == "stock_code" or column == "date":
             continue
-        if column == "date":
+        if parsed and parsed[0].startswith("blocked"):
             continue
         frame[column] = pd.to_numeric(frame[column], errors="coerce").astype("float32")
-    if horizons:
-        keep = {int(h) for h in horizons}
-        dropped = [
-            column
-            for column in frame.columns
-            if column.startswith(("fwd_h", "blocked_h"))
-            and int(column.rsplit("h", 1)[1]) not in keep
-        ]
-        frame = frame.drop(columns=dropped)
     for column in list(frame.columns):
-        if column.startswith("blocked_h"):
+        parsed = split_label_column(column)
+        if parsed and parsed[0].startswith("blocked"):
             frame[column] = frame[column].astype("category")
     return frame
 
@@ -241,7 +315,7 @@ def _summary(report: dict) -> str:
             quantiles = stats["quantiles"]
             walk = stats["walk_forward"].get("walk_forward_decay")
             lines.append(
-                "%-18s h%-3s ic=%+0.4f icir=%s t=%s pos=%s n_dates=%-5d "
+                "%-18s h%-3s ic=%+0.4f icir=%s t=%s tnw=%s pos=%s n_dates=%-5d "
                 "top-bottom=%s decay=%s gates=%s"
                 % (
                     name,
@@ -249,6 +323,7 @@ def _summary(report: dict) -> str:
                     ic["ic_mean"] if ic["ic_mean"] is not None else float("nan"),
                     ic["icir"],
                     ic["t_stat"],
+                    ic.get("t_stat_nw"),
                     ic["positive_share"],
                     ic["n_dates"],
                     quantiles.get("top_minus_bottom"),
@@ -301,6 +376,10 @@ def main(argv=None) -> int:
 
     if args.command == "export":
         _init_db()
+        from app.lib.utilities.trading_day_helper import (
+            get_a_stock_market_trade_calendar,
+        )
+
         result = export_panel(
             from_date=parse_date(args.from_date),
             to_date=parse_date(args.to_date),
@@ -310,6 +389,7 @@ def main(argv=None) -> int:
             limit_codes=args.limit_codes,
             stock_code=args.stock_code,
             dry_run=args.dry_run,
+            sessions=get_a_stock_market_trade_calendar(),
         )
         print(json.dumps(result, sort_keys=True))
         return 0

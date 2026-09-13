@@ -6,6 +6,17 @@ cost, and reports the sample size next to every statistic — the failure mode t
 project already hit twice is believing a number whose denominator was tiny
 ("30-name book", "single-year window", "all-None IC"). Callers should read
 ``n_dates``/``n_observations`` before reading the sign.
+
+Cost conventions, stated once:
+
+* ``avg_net_return`` per quantile is a **long-only** net return (gross − 1 round
+  trip); it is what the paper path would realise on that bucket.
+* ``top_minus_bottom`` is a **long-short** net spread. Each leg pays its own
+  round trip, so it equals ``gross_spread − 2 * round_trip_cost()``. Subtracting
+  the same cost from both legs (the previous implementation) cancels exactly and
+  reports the gross spread as if it were net.
+* ``t_stat`` is i.i.d.; ``t_stat_nw`` is Newey-West with ``lag = horizon - 1``,
+  because an h-day label makes h consecutive ICs overlap.
 """
 
 import math
@@ -22,7 +33,7 @@ SELL_STAMP_DUTY_RATE = 0.001
 #: where an analogue exists.
 MIN_DATES = 120
 MAX_WALK_FORWARD_DECAY = 0.2
-MAX_ABS_SPREAD_CONCENTRATION = 0.4
+MAX_PROFIT_CONCENTRATION = 0.4
 
 
 def round_trip_cost() -> float:
@@ -41,6 +52,34 @@ def _rank_ic(frame: pd.DataFrame, factor: str, label: str) -> float | None:
     return float(ranked[factor].corr(ranked[label]))
 
 
+def newey_west_t(series: pd.Series, lag: int) -> float | None:
+    """t-statistic of a mean that is robust to ``lag``-order autocorrelation.
+
+    An h-day forward label is observed on h consecutive sessions, so consecutive
+    ICs share up to ``h-1`` holding days. The plain ``mean/std*sqrt(n)`` t-stat
+    treats them as independent and overstates significance; the usual fix is a
+    Bartlett-weighted Newey-West long-run variance with ``lag = h-1``.
+    """
+    values = pd.Series(series, dtype="float64").dropna()
+    count = len(values)
+    if count < 3:
+        return None
+    demeaned = values - values.mean()
+    gamma_0 = float((demeaned**2).sum() / count)
+    variance = gamma_0
+    for order in range(1, max(0, int(lag)) + 1):
+        if order >= count:
+            break
+        weight = 1.0 - order / (lag + 1.0)
+        covariance = float(
+            (demeaned.iloc[order:] * demeaned.iloc[:-order]).sum() / count
+        )
+        variance += 2.0 * weight * covariance
+    if variance <= 0:
+        return None
+    return round(float(values.mean() / math.sqrt(variance / count)), 3)
+
+
 def ic_report(
     panel: pd.DataFrame, factor: str, horizon: int, *, net: bool = True
 ) -> dict:
@@ -49,6 +88,9 @@ def ic_report(
     ``net=False`` measures the raw label; the default subtracts the round-trip
     cost, which for rank IC only shifts levels (ranks are preserved), so the IC
     itself is identical either way — it matters for the spread, not the IC.
+
+    ``t_stat`` is the naive i.i.d. t-statistic; ``t_stat_nw`` applies a Newey-West
+    correction with ``lag = horizon - 1`` for the overlap the label creates.
     """
     label = f"fwd_h{horizon}"
     if factor not in panel.columns or label not in panel.columns:
@@ -66,6 +108,7 @@ def ic_report(
             "ic_std": None,
             "icir": None,
             "t_stat": None,
+            "t_stat_nw": None,
             "positive_share": None,
             "n_dates": 0,
             "n_observations": int(work[factor].notna().sum()),
@@ -79,6 +122,7 @@ def ic_report(
         "ic_std": round(std, 6),
         "icir": round(mean / std, 4) if std > 0 else None,
         "t_stat": round(mean / std * math.sqrt(len(series)), 3) if std > 0 else None,
+        "t_stat_nw": newey_west_t(series, horizon - 1),
         "positive_share": round(float((series > 0).mean()), 4),
         "n_dates": int(len(series)),
         "n_observations": int(work[factor].notna().sum()),
@@ -92,20 +136,30 @@ def quantile_report(
     *,
     quantiles: int = 10,
     net: bool = True,
+    short_column: str | None = None,
 ) -> dict:
     """Average net return per factor quantile, per session then pooled.
 
     Quantiles are formed inside each session (cross-sectional), so a factor whose
     scale drifts over time is still evaluated on relative position.
+
+    ``avg_net_return`` is the long-only net return of a bucket (gross minus one
+    round trip). ``top_minus_bottom`` is the **long-short** net spread: the long
+    leg pays one round trip and the short leg pays one of its own, so the spread
+    is ``gross_spread - 2 * round_trip_cost()``, not ``gross_spread``. When the
+    panel carries the mirrored ``fwd_short_h{h}`` label the short leg is measured
+    on its own tradability-filtered sample; otherwise it is the negated long
+    label (a statistical short whose fills are not checked).
     """
     label = f"fwd_h{horizon}"
-    work = panel.loc[
-        panel[factor].notna() & panel[label].notna(), ["date", factor, label]
-    ].copy()
+    columns = ["date", factor, label]
+    if short_column is not None and short_column in panel.columns:
+        columns.append(short_column)
+    work = panel.loc[panel[factor].notna() & panel[label].notna(), columns].copy()
     if work.empty:
         return {"horizon": horizon, "quantiles": [], "monotonic": None}
     cost = round_trip_cost() if net else 0.0
-    work["net"] = work[label] - cost
+    work["gross"] = work[label]
 
     # Equal-count buckets by cross-sectional rank, computed without a per-date
     # Python callback (a groupby-apply here is both slower and deprecated).
@@ -117,25 +171,64 @@ def quantile_report(
     if work.empty:
         return {"horizon": horizon, "quantiles": [], "monotonic": None}
 
-    means = work.groupby("bucket")["net"].mean()
+    gross_means = work.groupby("bucket")["gross"].mean()
+    net_means = gross_means - cost
     entries = [
         {
             "quantile": int(bucket),
-            "avg_net_return": round(float(value), 6),
+            "avg_net_return": round(float(net_means.loc[bucket]), 6),
+            "avg_gross_return": round(float(gross_means.loc[bucket]), 6),
             "observations": int((work["bucket"] == bucket).sum()),
         }
-        for bucket, value in means.items()
+        for bucket in gross_means.index
     ]
-    spread = round(float(means.iloc[-1] - means.iloc[0]), 6) if len(means) > 1 else None
-    counts = [entry["observations"] for entry in entries]
-    top_share = round(max(counts) / sum(counts), 4) if counts and sum(counts) else None
+    bottom_bucket = int(gross_means.index.min())
+    top_bucket = int(gross_means.index.max())
+    # Long leg: buy the top bucket, sell at the h-th open -> one round trip.
+    long_leg_gross = float(gross_means.loc[top_bucket])
+    # Short leg: sell the bottom bucket at T+1's open and buy it back at the h-th
+    # open -> gain -gross, and one round trip of its own. The gross spread uses the
+    # same legs as the net spread, so `top_minus_bottom == gross - 2 * cost` holds
+    # exactly rather than only when both legs share one sample.
+    short_sample = None
+    if short_column is not None and short_column in work.columns:
+        short_sample = work.loc[work["bucket"] == bottom_bucket, short_column].dropna()
+    if short_sample is not None and len(short_sample):
+        short_leg_gross = float(short_sample.mean())
+        short_leg_source = short_column
+        short_leg_observations = int(len(short_sample))
+    else:
+        short_leg_gross = -float(gross_means.loc[bottom_bucket])
+        short_leg_source = f"negated {label}"
+        short_leg_observations = int((work["bucket"] == bottom_bucket).sum())
+    gross_spread = long_leg_gross + short_leg_gross
+    spread = gross_spread - 2 * cost
+    # Profit concentration mirrors `autoresearch/profile.yaml`: the best single
+    # trade's share of the long book's positive net P&L. (Bucket sizes are equal
+    # by construction, so "max bucket count / total" would be a constant 1/quantiles
+    # and could never trip the gate.)
+    top_returns = work.loc[work["bucket"] == top_bucket, "gross"] - cost
+    positive = top_returns[top_returns > 0]
+    profit_concentration = (
+        round(float(positive.max() / positive.sum()), 6) if positive.sum() > 0 else 0.0
+    )
     return {
         "horizon": horizon,
         "quantiles": entries,
-        "top_minus_bottom": spread,
+        "top_minus_bottom": round(spread, 6) if len(gross_means) > 1 else None,
+        "gross_top_minus_bottom": (
+            round(gross_spread, 6) if len(gross_means) > 1 else None
+        ),
         "monotonic": _monotonic([entry["avg_net_return"] for entry in entries]),
-        "concentration": top_share,
-        "cost_per_round_trip": round(cost, 6),
+        "profit_concentration": profit_concentration,
+        "bottom_leg": {
+            "source": short_leg_source,
+            "gross_return": round(short_leg_gross, 6),
+            "net_return": round(short_leg_gross - cost, 6),
+            "observations": short_leg_observations,
+        },
+        "cost_per_leg": round(cost, 6),
+        "cost_per_round_trip": round(round_trip_cost(), 6),
         "n_observations": int(len(work)),
     }
 
@@ -155,18 +248,24 @@ def _monotonic(values: list[float]) -> float | None:
 def turnover_report(
     panel: pd.DataFrame, factor: str, horizon: int, *, top_fraction: float = 0.1
 ) -> dict:
-    """Average one-way turnover of the factor's top bucket, per session.
+    """Average one-way turnover of the factor's top bucket, per rebalance.
 
-    Means "what fraction of the long book has to be replaced at each rebalance";
-    multiplied by the round-trip cost it is the friction a factor must clear.
+    An h-day book is only re-formed every ``h`` sessions, so consecutive sessions
+    of an h>1 factor must not be compared: the names picked on t and t+1 are
+    largely the same trade, not a new rebalance. ``avg_one_way_turnover`` is
+    measured between the books ``horizon`` sessions apart, and multiplied by the
+    round-trip cost it is the friction a factor must clear at that cadence.
     """
     label = f"fwd_h{horizon}"
     work = panel.loc[panel[factor].notna() & panel[label].notna()]
     if work.empty:
         return {"horizon": horizon, "avg_one_way_turnover": None, "n_dates": 0}
+    step = max(1, int(horizon))
     previous: set | None = None
     turnovers = []
-    for _, session in work.groupby("date", sort=True):
+    for index, (_, session) in enumerate(work.groupby("date", sort=True)):
+        if index % step:
+            continue
         size = max(1, int(len(session) * top_fraction))
         top = set(session.nlargest(size, factor)["stock_code"])
         if previous is not None and previous:
@@ -178,6 +277,7 @@ def turnover_report(
     return {
         "horizon": horizon,
         "avg_one_way_turnover": round(avg, 4),
+        "rebalance_sessions": step,
         "per_rebalance_cost": round(avg * round_trip_cost(), 6),
         "n_dates": len(turnovers),
     }
@@ -209,9 +309,11 @@ def walk_forward(panel: pd.DataFrame, factor: str, horizon: int, splits) -> dict
     ]
     decay = None
     if train not in (None, 0) and later:
-        # Absolute-value decay: a factor that flips sign is as broken as one that
-        # fades, so decay is measured on |IC|.
-        decay = round(1 - (sum(abs(v) for v in later) / len(later)) / abs(train), 4)
+        # Signed decay, like `autoresearch_h20_excess_alpha._walk_forward_decay`:
+        # a factor that simply flips sign out of sample must score a *large*
+        # positive decay, not zero. Using |IC| here would let train +1.0 →
+        # validation/test −1.0 pass the gate with decay 0.0.
+        decay = round(1 - (sum(later) / len(later)) / train, 4)
     return {"per_split": per_split, "walk_forward_decay": decay}
 
 
@@ -245,37 +347,47 @@ def evaluate_factor(
     }
     for horizon in horizons:
         label = f"fwd_h{horizon}"
-        work = pd.DataFrame(
-            {
-                "date": panel["date"],
-                "stock_code": panel["stock_code"],
-                "factor": values,
-                label: panel[label],
-            }
-        )
+        short_label = f"fwd_short_h{horizon}"
+        columns = {
+            "date": panel["date"],
+            "stock_code": panel["stock_code"],
+            "factor": values,
+            label: panel[label],
+        }
+        if short_label in panel.columns:
+            columns[short_label] = panel[short_label]
+        work = pd.DataFrame(columns)
         coverage_info = coverage(panel, horizon)
         ic = ic_report(work, "factor", horizon)
-        quantiles_info = quantile_report(work, "factor", horizon, quantiles=quantiles)
+        quantiles_info = quantile_report(
+            work,
+            "factor",
+            horizon,
+            quantiles=quantiles,
+            short_column=short_label if short_label in work.columns else None,
+        )
         turnover = turnover_report(work, "factor", horizon, top_fraction=top_fraction)
         walk = walk_forward(work, "factor", horizon, splits) if splits else {}
         report["horizons"][str(horizon)] = {
             "coverage": coverage_info,
+            "coverage_short": coverage(panel, horizon, leg="short"),
             "ic": ic,
             "quantiles": quantiles_info,
             "turnover": turnover,
             "walk_forward": walk,
-            "gates": gate_report(ic, quantiles_info, turnover, walk),
+            "gates": gate_report(ic, quantiles_info, walk),
         }
         del work
     return report
 
 
-def gate_report(ic: dict, quantiles: dict, turnover: dict, walk: dict) -> dict:
+def gate_report(ic: dict, quantiles: dict, walk: dict) -> dict:
     """Hard gates from the roadmap, applied to one factor/horizon.
 
     Mirrors `autoresearch/profile.yaml`: enough sessions, no walk-forward decay,
-    a top-bottom spread that is not driven by one bucket, and enough observations
-    for the IC to mean anything.
+    a top-bottom spread that is not driven by one trade, and enough observations
+    for the IC to mean anything. ``turnover`` is deliberately *not* a gate: the
+    profile scores it with a penalty, it does not fail the candidate.
     """
     failures = []
     if (ic.get("n_dates") or 0) < MIN_DATES:
@@ -283,8 +395,8 @@ def gate_report(ic: dict, quantiles: dict, turnover: dict, walk: dict) -> dict:
     decay = walk.get("walk_forward_decay") if walk else None
     if decay is not None and decay > MAX_WALK_FORWARD_DECAY:
         failures.append("performance_decay")
-    concentration = quantiles.get("concentration")
-    if concentration is not None and concentration > MAX_ABS_SPREAD_CONCENTRATION:
+    concentration = quantiles.get("profit_concentration")
+    if concentration is not None and concentration > MAX_PROFIT_CONCENTRATION:
         failures.append("profit_concentration")
     if not ic.get("ic_mean"):
         failures.append("no_ic")
@@ -301,8 +413,7 @@ def gate_report(ic: dict, quantiles: dict, turnover: dict, walk: dict) -> dict:
                 ),
                 (
                     "profit_concentration",
-                    concentration is None
-                    or concentration <= MAX_ABS_SPREAD_CONCENTRATION,
+                    concentration is None or concentration <= MAX_PROFIT_CONCENTRATION,
                 ),
                 ("non_zero_ic", bool(ic.get("ic_mean"))),
             )
