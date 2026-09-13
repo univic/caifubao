@@ -163,7 +163,8 @@
   旧 434.4 s（362,304 次往返）→ 新 **49.9 s**（**0** 次逐观测往返）= **8.7×**，
   且 `observation_count` / `ic` / `icir` / `decay` / `quintiles` **逐字段完全一致**。
   按全市场一年（~125 万观测）外推：~3.2 h → ~25 min；剩余成本是因子本身的逐股 Python
-  计算与建帧，不在本任务范围。
+  计算与建帧，不在本任务范围。**部署后复测**（image `sha-aa1d9b2`，无任何 pod 内改动）：
+  dev 48.8 s、research 6.4 s，`observation_count`/`ic`/`decay`/`quintiles` 与补丁验证运行一致。
   **内存**：frame 路径按 code 建位置映射，实测 200k 行 tracemalloc 峰值 ~107MB
   （~540B/行）→ 全市场一年约 0.7GB，叠加 `quotes_by_stock` 会更接近 1GB+；研究链路应
   按日期/代码分段评估（后续任务）。
