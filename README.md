@@ -480,6 +480,15 @@ web_server (API)
 前端应用
 ```
 
+## 文档
+
+完整文档索引见 [`docs/README.md`](docs/README.md)。常用入口：
+
+- 规则与工作流：[`RULES.md`](RULES.md)、[`AGENTS.md`](AGENTS.md)、[`.project-rules.md`](.project-rules.md)
+- 运维 CLI：[`docs/operations/agent-cli.md`](docs/operations/agent-cli.md)
+- 系统能力与数据：[`docs/capability-inventory.md`](docs/capability-inventory.md)
+- 历史/研究记录：[`docs/autoresearch/`](docs/autoresearch/)，已过期文档见 [`docs/archive/`](docs/archive/README.md)
+
 ## 开发指南
 
 ### 代码规范

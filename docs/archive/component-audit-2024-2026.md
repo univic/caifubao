@@ -1,7 +1,10 @@
 # H20 分量级隔离审计 —— 2024-2026 阶段结论（多 regime 扩展进行中）
 
+> ⚠️ **已归档**（2026-09-14）。原始路径：`docs/autoresearch/runs/h20-excess-alpha/component-audit-2024-2026.md`；
+> 归档原因见 [`docs/archive/README.md`](./README.md)。
+
 > ⚠️ 已由完整跨 regime 版本取代：见
-> [`component-audit-2019-2026.md`](./component-audit-2019-2026.md)
+> [`component-audit-2019-2026.md`](../autoresearch/runs/h20-excess-alpha/component-audit-2019-2026.md)
 > （2019-2023 导出完成后，结论升级为「恒反向、非 regime 依赖」）。本文保留 2024-2026
 > 阶段的原始记录。
 
