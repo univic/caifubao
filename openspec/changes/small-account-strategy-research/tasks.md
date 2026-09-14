@@ -20,4 +20,4 @@
 - [x] 3.1 Run focused and full datahub tests plus Ruff.
 - [x] 3.2 Run `openspec validate --all --strict`.
 - [x] 3.3 Complete spec-guardian and qa-reviewer gates; resolve P1/P2 findings.
-- [ ] 3.4 Rebase/conflict check, Draft CI green, then mark ready and merge.
+- [x] 3.4 Rebase/conflict check, Draft CI green, then mark ready and merge.
