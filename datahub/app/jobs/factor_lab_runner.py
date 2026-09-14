@@ -42,6 +42,7 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -336,6 +337,106 @@ def _summary(report: dict) -> str:
     return "\n".join(lines)
 
 
+def holding_scan_panel(
+    *,
+    path,
+    factor,
+    horizons,
+    buffers,
+    portfolio_size,
+    entry_pct,
+    start=None,
+    end=None,
+) -> dict:
+    """Holding-period x buffer scan of one registered factor on a frozen panel.
+
+    This is the bridge between the factor lab's labels and the portfolio-level
+    question ("how often can I afford to rebalance before friction eats the
+    edge?"). The label semantics stay the lab's: a blocked entry/exit is dropped,
+    never rolled forward, so every cell is measured on the same frozen panel.
+    """
+    import pandas as pd
+
+    from app.lib.factor_lab.factors import REGISTRY, compute
+    from app.lib.factor_lab.panel import session_span
+
+    # Imported here (not at module import time) to keep the lab's module graph
+    # free of a load-time edge into the strategy engine.
+    from app.lib.strategy_engine.holding_scan import (
+        build_scan_input,
+        scan_cell,
+        summary_table,
+    )
+
+    if factor not in REGISTRY:
+        raise KeyError(
+            f"unknown factor {factor!r}; known: {', '.join(sorted(REGISTRY))}"
+        )
+
+    panel = _load_panel(path, horizons=horizons)
+    missing = [
+        int(horizon)
+        for horizon in sorted(set(horizons))
+        if f"fwd_h{int(horizon)}" not in panel.columns
+    ]
+    if missing:
+        raise ValueError(f"panel is missing requested horizon labels: {missing}")
+    signal = compute(panel, factor)
+    cells = []
+    for horizon in sorted({int(h) for h in horizons}):
+        # One horizon at a time: each scan frame is a few hundred MB on a
+        # full-history panel, and holding every horizon's copy at once
+        # OOMKilled the 6 GiB pod.
+        frame = build_scan_input(panel, signal, horizon)
+        for buffer in sorted({float(b) for b in buffers}):
+            cells.append(
+                scan_cell(
+                    frame,
+                    horizon=horizon,
+                    buffer=buffer,
+                    entry_pct=entry_pct,
+                    portfolio_size=portfolio_size,
+                    start=start,
+                    end=end,
+                )
+            )
+        del frame
+    table = summary_table(cells)
+    dates = panel["date"]
+    evaluation_start = pd.Timestamp(start) if start is not None else dates.min()
+    evaluation_end = pd.Timestamp(end) if end is not None else dates.max()
+    return {
+        "panel": str(path),
+        "span": session_span(panel),
+        "evaluation_window": {
+            "from": str(evaluation_start.date()),
+            "to": str(evaluation_end.date()),
+        },
+        "factor": factor,
+        "entry_pct": entry_pct,
+        "portfolio_size": portfolio_size,
+        "cells": cells,
+        "summary": table.to_dict(orient="records") if not table.empty else [],
+    }
+
+
+def _scan_summary(report: dict) -> str:
+    lines = [
+        "%-18s h%-3s buffer=%s ir=%s ann_excess=%s turnover=%s rebalances=%s"
+        % (
+            report["factor"],
+            row.get("horizon"),
+            row.get("buffer"),
+            row.get("information_ratio"),
+            row.get("annualized_net_excess_return"),
+            row.get("annual_turnover"),
+            row.get("rebalances"),
+        )
+        for row in report["summary"]
+    ]
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Factor research lab")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -358,6 +459,20 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--quantiles", type=int, default=10)
     evaluate.add_argument("--top-fraction", type=float, default=0.1)
     evaluate.add_argument("--output", default=None)
+
+    scan = commands.add_parser(
+        "holding-scan",
+        help="Holding-period x buffer scan of one factor (portfolio rotation)",
+    )
+    scan.add_argument("--panel", required=True)
+    scan.add_argument("--factor", required=True)
+    scan.add_argument("--horizons", default="5,10,20,40,60")
+    scan.add_argument("--buffers", default="1.0,1.5,2.0")
+    scan.add_argument("--portfolio-size", type=int, default=800)
+    scan.add_argument("--entry-pct", type=float, default=0.2)
+    scan.add_argument("--from-date", default=None)
+    scan.add_argument("--to-date", default=None)
+    scan.add_argument("--output", default=None)
 
     commands.add_parser("list", help="List registered factors")
     return parser
@@ -392,6 +507,24 @@ def main(argv=None) -> int:
             sessions=get_a_stock_market_trade_calendar(),
         )
         print(json.dumps(result, sort_keys=True))
+        return 0
+
+    if args.command == "holding-scan":
+        report = holding_scan_panel(
+            path=args.panel,
+            factor=args.factor,
+            horizons=parse_horizons(args.horizons),
+            buffers=[float(part) for part in args.buffers.split(",") if part.strip()],
+            portfolio_size=args.portfolio_size,
+            entry_pct=args.entry_pct,
+            start=args.from_date,
+            end=args.to_date,
+        )
+        if args.output:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+            with open(args.output, "w", encoding="utf-8") as handle:
+                json.dump(report, handle, ensure_ascii=False, indent=2, default=str)
+        print(_scan_summary(report))
         return 0
 
     if not args.factor and not args.all:

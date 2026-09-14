@@ -69,14 +69,13 @@ gaps.
 You have `bash: allow` permission. Proactively run the smallest relevant check
 to verify your findings. Do not just read code — execute these where applicable:
 
-| Change area | Command |
-|-------------|---------|
-| Python (backend/datahub) | `ruff check <paths>` and `ruff format --check <paths>` |
-| Backend API | `cd backend && python -m pytest app/test/ -x -q` |
-| Datahub | `ruff check datahub/` + datahub tests if available |
-| Frontend | `cd frontend && npm run lint` (skip `npm run build` for review — too slow) |
-| k8s | `kubectl kustomize k8s/overlays/example-development` |
-| OpenSpec | `openspec validate mvp-quant-demo --strict` |
+| Change area    | Command                                                                    |
+| -------------- | -------------------------------------------------------------------------- |
+| Backend Python | CI-pinned `ruff` checks plus tests via `backend/venv312/bin/python`        |
+| Datahub Python | CI-pinned `ruff` checks plus tests via `datahub/.venv/bin/python`          |
+| Frontend       | `cd frontend && npm run lint` (skip `npm run build` for review — too slow) |
+| k8s            | `kubectl kustomize k8s/overlays/example-development`                       |
+| OpenSpec       | `openspec validate --all --strict`                                         |
 
 If a check cannot be run (e.g., missing dependencies), state exactly why. Always
 report the command output — never guess whether validation would pass.
