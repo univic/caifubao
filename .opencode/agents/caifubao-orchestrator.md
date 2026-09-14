@@ -11,6 +11,7 @@ task; do not preload the entire archive.
 
 For OpenClaw work, also load:
 
+- `.opencode/openclaw-development-workflow.md`
 - `docs/integrations/openclaw.md`
 - `openspec/archive/mvp-quant-demo/specs/openclaw-data-access/spec.md`
 - `skills/openclaw-integration/SKILL.md`
