@@ -27,4 +27,4 @@ npm run build
 npm run lint
 ```
 
-See `docs/DESIGN.md` for the visual design system (Linear dark theme).
+See [`../DESIGN.md`](../DESIGN.md) for the visual design system (Linear dark theme).
