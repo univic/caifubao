@@ -61,8 +61,8 @@
 | Factor Lab（冻结面板 + 单因子评估） | ✅ 已实现 | `datahub/app/lib/factor_lab/`（panel/factors/metrics）+ `jobs/factor_lab_runner` export/evaluate/list：parquet 面板冻结、多 horizon 交易日偏移标签（含 short 腿）、IC/ICIR、净分层价差、换手、walk-forward、硬门；面板落 PVC，Job 示例见 `k8s/base/factor-lab-*.example.yaml`（#232–#235） |
 | 真实相对强弱 | ✅ 已实现 | 对标沪深 300/中证 500 指数的 alpha；已注册并接入评分管道（权重 10/10/8），依赖 index_quotes/alpha_map 输入 |
 | 基本面估值因子（EP/BP/DV 等） | 📋 已规划 | `stock_daily_basic` 已入库、研究审计已完成（估值正 IC 且 size 中性后不消失）；结论为作独立/regime 分量，**未注册为评分分量**，也未混入 flip_wide（`docs/autoresearch/runs/h20-excess-alpha/fundamental-factor-audit-2019-2026.md`） |
-| 持有期 × buffer 扫描 | 📋 已规划 | 因子面板的持有期扫描脚本与实测报告只存在于未合并分支 `research/holding-buffer-scan`（`datahub/app/lib/strategy_engine/holding_scan.py`、`docs/autoresearch/runs/factor-lab/holding-period-scan-2026-09-13.md`），develop 上不存在 |
-| ETF lab / 小账户研究模块 | 📋 已规划 | `datahub/app/lib/etf_lab`（pool/panel/measure + rotation）与 `datahub/app/lib/small_book` 同样只在未合并分支 `research/holding-buffer-scan`；ETF 研究结论为负结果，未进入 develop |
+| 持有期 × buffer 扫描 | ✅ 已实现 | `datahub/app/lib/strategy_engine/holding_scan.py` + `factor_lab_runner holding-scan`（#236）；持有期扫描已合并并附实测报告。注意 `--buffers` 轴被 QA 判定**结构性无效**（每期硬到期先清空账本，滞回永不生效），实际等价于纯持有期扫描 |
+| ETF lab / 小账户研究模块 | ✅ 已实现 | `datahub/app/lib/etf_lab`（pool/panel/measure + 多资产 rotation）与 `datahub/app/lib/small_book`（8 分量评分重建）已随 #236 合入；研究结论为负结果/配置型，不构成 alpha |
 | 不可变研究工件契约 | 📋 已规划 | `openspec/changes/artifact-contract/` 已定义 artifact_id/artifact_hash/`input_snapshot` 契约，但 0/13 任务实现；当前各报告/导出的哈希与溯源语义尚未统一 |
 
 ---
@@ -257,7 +257,9 @@
 
 | 问题 | 严重程度 | 处置 |
 |--------|----------|------|
-| Factor Lab 持有期扫描 / ETF lab / 小账户研究未合并 | 中 | 仅存在于未合并分支 `research/holding-buffer-scan`（`holding_scan.py`、`etf_lab`、`small_book`）；ETF 搜索为负结果，是否合并待决策 |
+| 小账户研究前瞻验证未完成 | 中 | 需 ≥120 交易日前瞻样本；`docs/autoresearch/runs/small-book/forward-ledger.jsonl` 已启动（首条为 REPLAY，不计入前瞻窗口），自动累积需把 `rotation.py` 部署进 datahub 镜像并加月度 CronJob（属新授权范围） |
+| `scoring_runner` 的 raw/ranked 选择由环境变量决定 | 中 | `DATAHUB_SCORING_MODE` 决定路径，模型注册表的 `scoring_mode=ranked` 不参与判断；影子模型未显式设置该变量时 `directions` 翻转会**静默失效**（#236 实测：翻转与不翻转得到逐位相同分数） |
+| `rebalance.cadence_days` 未被消费 | 中 | 该字段只被校验/记录，`assemble_daily_plan` / `strategy_runner` 不消费它，实际是每日换仓（#236 发现） |
 | 模型治理 promote/rollback 流程缺失 | 中 | roadmap 1.4：已有 config_hash 与 ACTIVE/RETIRED，缺审批/回滚/停用记录 |
 | FAILED 验证状态实际判定 | 低 | `verification_service` 无 FAILED 终态判定逻辑 |
 | 稳定性检验（权重扰动） | 低 | 17.4：小权重扰动是否导致大结果变化，未实现 |
@@ -273,9 +275,9 @@
 | 层级 | 已实现 | 已规划 | 未实现 | 完成率 |
 |------|--------|--------|--------|--------|
 | 第一层 基础数据 | 12 | 0 | 4 | 75% |
-| 第二层 派生数据与因子 | 22 | 4 | 0 | 85% |
+| 第二层 派生数据与因子 | 24 | 2 | 0 | 92% |
 | 第三层 分析引擎 | 35 | 0 | 4 | 90% |
 | 第四层 用户界面 | 21 | 2 | 0 | 91% |
 | 第五层 集成与运维 | 19 | 0 | 3 | 86% |
 | 第六层 数据管道 | 21 | 0 | 1 | 95% |
-| **总计** | **130** | **6** | **12** | **88%** |
+| **总计** | **132** | **4** | **12** | **89%** |
