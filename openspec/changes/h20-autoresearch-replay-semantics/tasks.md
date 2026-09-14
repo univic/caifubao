@@ -8,14 +8,14 @@
 
 ## 2. Bootstrap implementation
 
-- [ ] 2.1 Export an immutable, resource-bounded full-universe H20 snapshot.
-- [ ] 2.2 Record requested/actual entry and exit labels plus blocked-session counts.
-- [ ] 2.3 Prove component inputs are dated no later than the scoring date.
-- [ ] 2.4 Run exactly one baseline before entering the experiment loop.
+- [x] 2.1 Export an immutable, resource-bounded full-universe H20 snapshot.
+- [x] 2.2 Record requested/actual entry and exit labels plus blocked-session counts.
+- [x] 2.3 Prove component inputs are dated no later than the scoring date.
+- [x] 2.4 Run exactly one baseline before entering the experiment loop.
 
 ## 3. Validation and review
 
-- [ ] 3.1 Run focused exporter/evaluator tests and ruff checks.
-- [ ] 3.2 Run `openspec validate --all --strict`.
-- [ ] 3.3 Run spec-guardian and qa-reviewer; resolve every P1 finding.
-- [ ] 3.4 Complete branch-conflict, draft-PR, and CI gates.
+- [x] 3.1 Run focused exporter/evaluator tests and ruff checks.
+- [x] 3.2 Run `openspec validate --all --strict`.
+- [x] 3.3 Run spec-guardian and qa-reviewer; resolve every P1 finding.
+- [x] 3.4 Complete branch-conflict, draft-PR, and CI gates.

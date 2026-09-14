@@ -21,7 +21,7 @@
 
 ## 3. Gates
 
-- [ ] 3.1 spec-guardian / contract-reviewer / qa-reviewer 审阅
-- [ ] 3.2 branch-conflict vs develop；Draft PR CI green
-- [ ] 3.3 agent-progress 回填；本交接不授权合并后续代码 PR、operator 写库、
+- [x] 3.1 spec-guardian / contract-reviewer / qa-reviewer 审阅
+- [x] 3.2 branch-conflict vs develop；Draft PR CI green
+- [x] 3.3 agent-progress 回填；本交接不授权合并后续代码 PR、operator 写库、
       promote 或真实下单

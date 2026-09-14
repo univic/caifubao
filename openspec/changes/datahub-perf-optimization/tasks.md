@@ -16,9 +16,9 @@
 ### 同步（S1）
 
 - [ ] 2.1 sync_engine 增加每集合水位线（meta 集合记录上次同步最大 date/count），默认增量
-- [ ] 2.2 CLI `data sync` 默认带最近交易日；全量需显式 `--allow-full-sync`（复用 sync_data.py 闸门思路）
+- [x] 2.2 CLI `data sync` 默认带最近交易日；全量需显式 `--allow-full-sync`（复用 sync_data.py 闸门思路）
 - [ ] 2.3 每周低峰全量对账 CronJob（或 runbook 手动步骤）；冷启动 runbook 改 mongodump/mongorestore
-- [ ] 2.4 sync 幂等回归测试：重复增量运行零重复写、全量显式路径可用、dev_only signal 规则不变
+- [x] 2.4 sync 幂等回归测试：重复增量运行零重复写、全量显式路径可用、dev_only signal 规则不变
 
 ### 评分写路径（C5/C6/C2）
 
@@ -138,7 +138,7 @@
 ### FQ 回填改造（F1/Q5）
 
 - [ ] 3.9 回填/历史修复改按交易日 `adj_factor_by_trade_date` 快照（250 次/年）+ 令牌桶 2–4 并发
-- [ ] 3.10 `build_fq_factor_frame` 的 adj_factor 对齐向量化（`to_datetime+reindex+ffill/bfill`，语义不变）
+- [x] 3.10 `build_fq_factor_frame` 的 adj_factor 对齐向量化（`to_datetime+reindex+ffill/bfill`，语义不变）
 - [ ] 3.11 `update_code` 支持 anchor/`date_gt` 增量；状态刷新复用批量路径
 - [ ] 3.12 用改造后路径执行交接文档待办 5.2 全市场 FQ 重算（operator），记录实测耗时
 

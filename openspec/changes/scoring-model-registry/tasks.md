@@ -22,5 +22,5 @@
   unregistered fallback / db-error fallback).
 - [x] 3.2 ACTIVE filter at query level asserted; hash order-insensitivity.
 - [x] 3.3 Registration validation tests.
-- [ ] 3.4 spec-guardian / qa-reviewer on the diff.
-- [ ] 3.5 branch-conflict check against develop; merge.
+- [x] 3.4 spec-guardian / qa-reviewer on the diff.
+- [x] 3.5 branch-conflict check against develop; merge.
