@@ -35,4 +35,4 @@
 - [x] 4.1 Focused backend/datahub tests, then full affected suites.
 - [x] 4.2 Ruff check/format and `openspec validate --all --strict`.
 - [x] 4.3 Spec-guardian, contract-reviewer, and qa-reviewer after validation.
-- [ ] 4.4 Branch conflict check, Draft PR, CI green, then ready for review.
+- [x] 4.4 Branch conflict check, Draft PR, CI green, then ready for review.
