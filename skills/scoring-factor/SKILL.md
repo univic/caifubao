@@ -14,17 +14,17 @@ Adding or modifying a scoring factor in the caifubao A-share quant scoring engin
 
 ## File map (touch in order)
 
-| Step | File | What to do |
-|------|------|------------|
-| 1. Component | `datahub/app/lib/scoring_engine/components.py` | Add the component function (build_component / build_penalty pattern) |
-| 2. Config | `datahub/app/lib/scoring_engine/config.py` | Add weight + lookback to all 3 horizon configs (5/20/60) |
-| 3. Service | `datahub/app/lib/scoring_engine/scoring_service.py` | Import component, add to `_build_components`, update `max()` history limit if needed |
-| 4. Tests | `datahub/app/test/test_scoring_service.py` | Cover: normal case, fallback/missing-data case, edge case. Use FakeQuote with relevant fields |
-| 5. Spec (optional) | `openspec/archive/mvp-quant-demo/specs/stock-scoring/spec.md` | Only if the change alters a public scoring contract: add a Requirement with GIVEN/WHEN/THEN Scenario |
-| 6. Tasks (optional) | `openspec/archive/mvp-quant-demo/tasks.md` | Only for contract-changing work: add task item (check as [x]) |
-| 7. Frontend types | `frontend/src/api/scores.ts` | Add TypeScript interface if exposing new fields |
-| 8. Frontend display | `frontend/src/views/` | Wire into MarketView.vue or QuoteDetailView.vue |
-| 9. Validation | Terminal | `ruff check && ruff format --check` on datahub, `make test-backend` |
+| Step                 | File                                                                                           | What to do                                                                                                                                                     |
+| -------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Component         | `datahub/app/lib/scoring_engine/components.py`                                                 | Add the component function (build_component / build_penalty pattern)                                                                                           |
+| 2. Config            | `datahub/app/lib/scoring_engine/config.py`                                                     | Add weight + lookback to all 3 horizon configs (5/20/60)                                                                                                       |
+| 3. Service           | `datahub/app/lib/scoring_engine/scoring_service.py`                                            | Import component, add to `_build_components`, update `max()` history limit if needed                                                                           |
+| 4. Tests             | `datahub/app/test/test_scoring_service.py`                                                     | Cover: normal case, fallback/missing-data case, edge case. Use FakeQuote with relevant fields                                                                  |
+| 5. Spec gate         | `RULES.md#spec-gate`                                                                           | Scoring semantics trigger the gate; create or update an active change under `openspec/changes/` before implementation. Never edit the archived ledger in place |
+| 6. Active spec/tasks | `openspec/changes/<change-name>/`                                                              | Record the requirement, scenarios, design impact, and executable tasks for contract-changing work                                                              |
+| 7. Frontend types    | `frontend/src/api/scores.ts`                                                                   | Add TypeScript interface if exposing new fields                                                                                                                |
+| 8. Frontend display  | `frontend/src/views/Market/MarketView.vue` or `frontend/src/views/History/QuoteDetailView.vue` | Wire in new fields only when the public response changes                                                                                                       |
+| 9. Validation        | Terminal                                                                                       | Run focused datahub lint/tests via `datahub/.venv`; validate OpenSpec when the gate applies                                                                    |
 
 ## Component pattern
 
@@ -49,10 +49,10 @@ def my_component(quote, ...) -> dict:
 
 Short horizons (Score5) emphasize signal + momentum + volume. Long horizons (Score60) emphasize trend + relative_strength + valuation. Pick weights accordingly:
 
-| Horizon | Priority factors |
-|---------|-----------------|
-| Score5  | signal_strength, momentum, volume_ratio |
-| Score20 | trend_alignment, relative_strength, momentum |
+| Horizon | Priority factors                              |
+| ------- | --------------------------------------------- |
+| Score5  | signal_strength, momentum, volume_ratio       |
+| Score20 | trend_alignment, relative_strength, momentum  |
 | Score60 | trend_alignment, relative_strength, valuation |
 
 New factor weight should start small (5–15) and be adjusted after calibration.
@@ -73,9 +73,9 @@ After implementation, verify:
 
 - [ ] `ruff check datahub/app/lib/scoring_engine/` passes
 - [ ] `ruff format --check datahub/app/lib/scoring_engine/` passes
-- [ ] `make test-backend` from repo root passes
+- [ ] Focused scoring tests pass via `datahub/.venv/bin/python -m pytest`
 - [ ] New component has an id matching a config weight key
 - [ ] All 3 horizon configs include the new weight
 - [ ] Component handles missing data gracefully (returns 0.0 or 0.5 contribution)
-- [ ] spec.md has at least one Scenario
+- [ ] When the spec gate applies, the active spec has at least one Scenario and `openspec validate --all --strict` passes
 - [ ] Frontend types reflect new fields if exposed

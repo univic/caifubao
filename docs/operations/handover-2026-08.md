@@ -14,7 +14,7 @@
 - **目标**：大 A 量化研究/教学/演示 MVP（非投资建议）。
 - **技术栈**：Python Flask backend + datahub 数据服务 + Vue 3/Vite/Element Plus
   前端 + MongoDB + K3s + GitHub Actions。
-- **模块边界**（`RULES.md#P2`）：
+- **模块边界**（`RULES.md#module-boundaries`）：
   - `datahub/` — 行情/因子/信号/评分/新鲜度/质量数据
   - `backend/` — Flask API、鉴权、轻聚合
   - `frontend/` — Vue UI，只消费 backend API

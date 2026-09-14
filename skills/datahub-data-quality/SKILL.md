@@ -12,7 +12,7 @@ metadata:
 
 datahub 拥有行情/因子/信号/评分/freshness/数据质量的生产逻辑：`datahub/app/jobs/*_runner.py`（入口 CLI）、`datahub/app/lib/utilities/`（状态计算）、`datahub/app/lib/factor_factory|signal_factory/`、`datahub/app/lib/datahub/processors/china_a_stock.py`（quote 落库与校验）。
 
-外部契约是 API 响应（`backend/app/api/v1/` 的 data_quality、datahub_status、integrations/openclaw/*），Mongo 集合形状不是。`DataAssetStatus` 的 docstring 明确它是 `data_freshness_meta` 的目标替代品，迁移期内两者共存；新质量/读取路径应优先读 `data_asset_status`。
+外部契约是 API 响应（`backend/app/api/v1/` 的 data_quality、datahub_status、integrations/openclaw/\*），Mongo 集合形状不是。`DataAssetStatus` 的 docstring 明确它是 `data_freshness_meta` 的目标替代品，迁移期内两者共存；新质量/读取路径应优先读 `data_asset_status`。
 
 数据依赖链（docs/operations/agent-cli.md）：quote → FQ factor → MA factor → signal → scoring → verification。
 
@@ -21,6 +21,7 @@ datahub 拥有行情/因子/信号/评分/freshness/数据质量的生产逻辑�
 状态常量（`datahub/app/model/data_asset_status.py`）：`OK` / `STALE` / `AHEAD` / `NO_DATA` / `NOT_APPLICABLE`。`data_asset_status` 集合唯一索引 `(code, object_type, asset_type, asset_name)`，字段含 `first/latest_data_date`、`data_count`、`expected_count`、`coverage_rate`、`status_reason`、`last_success_at`（仅 OK 时写）。
 
 行情判定 `classify_quote_status`（`datahub/app/lib/utilities/data_asset_status_helper.py`）：
+
 - `data_count <= 0` 或 `latest_data_date` 为空 → `NO_DATA` / `no_source_data`
 - 无 `expected_latest_date` → `OK`
 - `latest < expected` → `STALE` / `behind_expected_quote_date`
@@ -31,7 +32,7 @@ datahub 拥有行情/因子/信号/评分/freshness/数据质量的生产逻辑�
 
 `data sync` 不更新 `data_asset_status`，必须随后 `./scripts/caifubao data refresh-status`。
 
-API 侧：OpenClaw 响应经 `wrap_response` 带 `data_as_of`/`generated_at`（`backend/app/api/v1/integrations/openclaw/utils.py`）。已核实缺口：capability-inventory.md 的 P0 记录 data_as_of「从未填充」（10.3），各响应为 None —— 修好前下游不能依赖该字段。
+API 侧：OpenClaw 数据响应经 `wrap_response` 暴露 `generated_at`，并在调用方传入有效日期时暴露 `data_as_of`（`backend/app/api/v1/integrations/openclaw/utils.py`）。不要把某次空库或旧环境中的 `None` 观测写成永久契约；变更 freshness 语义前先核对当前 endpoint、测试与运行数据，并触发 Spec Gate。
 
 ## 3. 范围与排除
 
@@ -51,6 +52,7 @@ BSE 排除（`datahub/app/lib/utilities/data_capability_helper.py`）：`BSE_COD
 ## 5. 确定性引导（bootstrap）
 
 docs/operations/mongodb-resilience.md 的确定性 quote bootstrap gate：
+
 - 选一个已完成交易日作为逻辑 run 的冻结 `as_of_date`；quote CronJob 保持 suspend；一次性 Job 用 `backoffLimit: 0` + `restartPolicy: Never`。
 - 每次续跑/重放都用同一 `--as-of-date`；quote 持久化按 `(code, date)` 幂等。
 - 不 resume 旧镜像创建的 Job；源失败与 NO_DATA 视为 fatal（仅临时停牌导致的缺行可豁免）。
@@ -63,10 +65,12 @@ docs/operations/mongodb-resilience.md 的确定性 quote bootstrap gate：
 ## 6. 命令地图
 
 统一 CLI（scripts/caifubao）：
+
 - `data sync [FROM_DATE] [COLLECTIONS]` / `data refresh-status [LIMIT]` / `data status <STOCK>`
 - `system cron [status|trigger|suspend|resume] <name>` / `system bootstrap-check` / `system backup|restore ...`
 
 runner CLI（datahub pod 内 `python -m app.jobs.*`）：
+
 - `quote_runner --target index|stock|all [--include-factors] [--as-of-date YYYY-MM-DD] [--job-* --scheduled-*]`（核实：parse_args 无 `--dry-run`；capability-inventory 声称含 dry-run，未在代码中核实到）
 - `factor_runner --factor fq|ma|all --mode stale|force [--code --limit --dry-run --market ChinaAStock]`
 - `signal_runner --signal ma-cross|all --mode stale|force [--code --limit --dry-run]`
@@ -95,5 +99,5 @@ runner CLI（datahub pod 内 `python -m app.jobs.*`）：
 - [ ] 是否误把 BSE 代码（bj/4/8 开头）当普通股票处理？
 - [ ] 回测/评分输入的最后交易日是否有 close_hfq？HFQ 链是否完整？
 - [ ] 新质量路径是否优先读 `data_asset_status` 而非 `data_freshness_meta`？
-- [ ] OpenClaw 响应 data_as_of 为 None 是已知缺口，是否被误判为「没有数据」？
+- [ ] OpenClaw 的 `data_as_of` 是否由当前 endpoint 正确计算，并与真实数据的新鲜度一致？
 - [ ] 信号 run 前是否确认 quote_daily 当日 SUCCESS（datahub_job_runs）？

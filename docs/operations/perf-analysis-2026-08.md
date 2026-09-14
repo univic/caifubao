@@ -182,4 +182,4 @@ research（5,562 股）：h20 **87.0 s → 12.6 s（6.9×）**、全部 horizon 
   抽公共骨架（`wide_frame_bulk_writer` / `select_stale_codes`）统一 factor/signal 同构实现。
 
 涉及评分语义、freshness/generated timestamps、数据所有权的实现改动（阶段 1 的 C2/G3、
-阶段 2 全部）按 `RULES.md#P3` 需过 Spec Gate——本 change 即其载体。
+阶段 2 全部）按 `RULES.md#spec-gate` 需过 Spec Gate——本 change 即其载体。
