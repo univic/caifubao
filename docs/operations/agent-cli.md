@@ -268,6 +268,34 @@ Daily paper run, NAV recompute, run inspection, and the certified forward
 evidence window (`forward certify|close|progress`). See
 `docs/autoresearch/runs/h20-excess-alpha/task-4.4-paper-run-120d.md`.
 
+### Stock timing pool (research-only)
+
+`timing-pool` aggregates an explicit frozen cohort of already-computed timing
+and same-stock buy-and-hold result pairs. It never discovers current active
+stocks, selects a winner, creates an order, or persists a backtest.
+
+```bash
+datahub/.venv/bin/python -m app.jobs.backtest_runner \
+  timing-pool /path/to/frozen-cohort-pairs.json \
+  --output /path/to/timing-pool-report.json
+```
+
+The input JSON must pin `cohort`, UTC `cohort_as_of`, `cohort_source`,
+`model_version`, `config`, `window`, and `delisted_completeness` (`VERIFIED`,
+`NOT_VERIFIED`, or `UNKNOWN`). `results` is keyed by stock code and each value
+must contain separate `timing` and `buy_hold` objects produced under identical
+cash, date, board-lot, friction, and next-open assumptions. Missing pairs remain
+failed rows and reduce coverage. Both objects must repeat their `stock_code` and
+the same `assumptions` object with `initial_cash`, `window`,
+`execution_timing=next_trading_day_open`, `valuation_timing=last_close`, positive
+`board_lot`, and a `friction` object containing `commission_rate`,
+`minimum_commission`, `stamp_duty_rate`, and `slippage_rate`. Output always carries
+`research_only=true` and `validation_status=UNVALIDATED`, even if the mechanical
+evidence gates pass. Every `daily_values` observation must include an in-window
+date and finite non-negative `equity`; only timing-side SELL records with
+`status=FILLED`, positive quantity, positive execution price, and an in-window
+trade date count toward the completed-trade gate.
+
 ### System
 
 #### `system health`

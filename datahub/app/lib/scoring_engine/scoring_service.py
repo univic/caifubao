@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 #: by the batch/per-stock equivalence harness).
 BATCH_SCORING_ENV = "DATAHUB_SCORING_BATCH"
 _BATCH_FALSY = {"0", "false", "no", "off"}
+SCORING_MODE_ENV = "DATAHUB_SCORING_MODE"
+_SCORING_MODES = {"raw", "ranked"}
 
 
 def batch_scoring_default() -> bool:
@@ -621,6 +623,7 @@ class StockScoringService:
         industry_model=StockIndustryClassification,
         industry_metrics_model=IndustryDailyMetrics,
         batch_prefetch: bool | None = None,
+        scoring_mode: str | None = None,
     ):
         self.stock_model = stock_model
         self.quote_model = quote_model
@@ -630,6 +633,28 @@ class StockScoringService:
         self.industry_model = industry_model
         self.industry_metrics_model = industry_metrics_model
         self.model_version = model_version
+        # Resolve registry metadata once so config and mode come from the same
+        # ACTIVE record.  A named model must not run when the registry cannot
+        # be consulted: its construction and mode cannot be proven.
+        registered = self._registered_model(model_version)
+        self._registry_scoring_mode = self._normalize_scoring_mode(
+            getattr(registered, "scoring_mode", None), source="registry"
+        )
+        self._runtime_scoring_mode = self._normalize_scoring_mode(
+            scoring_mode, source="runtime"
+        )
+        if (
+            self._registry_scoring_mode is not None
+            and self._runtime_scoring_mode is not None
+            and self._registry_scoring_mode != self._runtime_scoring_mode
+        ):
+            raise ValueError(
+                "runtime scoring mode "
+                f"{self._runtime_scoring_mode!r} conflicts with registered "
+                f"mode {self._registry_scoring_mode!r} for model "
+                f"{model_version!r}"
+            )
+        self._refresh_scoring_mode()
         # C1: default to the per-day batch path; DATAHUB_SCORING_BATCH=0
         # restores the legacy per-stock read/write path.
         self.batch_prefetch = (
@@ -639,37 +664,83 @@ class StockScoringService:
         # registered ScoreModelVersion config > built-in SCORING_CONFIG.
         # A registered version makes the run reproducible from the registry
         # alone (scoring_runner passes only model_version today).
-        if scoring_config:
+        if scoring_config is not None:
             self.scoring_config = scoring_config
         else:
-            self.scoring_config = self._registered_config(model_version)
+            self.scoring_config = dict(getattr(registered, "config", {}) or {})
         self.market = FinanceMarket.objects(name="ChinaAStock").first()
         self.calendar = self.market.trade_calendar if self.market else []
         # (calendar_list, ascending_normalized_calendar); see _sorted_calendar.
         self._calendar_cache = None
 
     @staticmethod
-    def _registered_config(model_version: str) -> dict:
-        """Look up an ACTIVE registered model version's per-horizon override.
+    def _normalize_scoring_mode(mode: str | None, *, source: str) -> str | None:
+        """Normalize and validate a registry or runtime scoring mode."""
+        if mode is None:
+            return None
+        if not isinstance(mode, str):
+            raise ValueError(f"{source} scoring mode must be 'raw' or 'ranked'")
+        normalized = mode.strip().lower()
+        if normalized not in _SCORING_MODES:
+            raise ValueError(
+                f"unsupported {source} scoring mode {mode!r}; "
+                "expected 'raw' or 'ranked'"
+            )
+        return normalized
 
-        Returns {} when the version is not registered (falls back to built-in
-        SCORING_CONFIG) or is retired. Registry lookup is best-effort: a DB
-        error must never break scoring, but it is logged for observability.
+    @staticmethod
+    def _legacy_scoring_mode() -> str:
+        """Resolve the pre-registry environment/default scoring mode."""
+        return (
+            "ranked"
+            if os.getenv(SCORING_MODE_ENV, "raw").strip().lower() == "ranked"
+            else "raw"
+        )
+
+    def _refresh_scoring_mode(self) -> str:
+        """Refresh only the legacy fallback while retaining pinned modes."""
+        self.scoring_mode = (
+            self._registry_scoring_mode
+            or self._runtime_scoring_mode
+            or self._legacy_scoring_mode()
+        )
+        return self.scoring_mode
+
+    @staticmethod
+    def _registered_model(model_version: str):
+        """Look up one ACTIVE registered model version.
+
+        Retired and unknown versions return ``None``. Registry lookup remains
+        best-effort for the built-in default model for backward compatibility;
+        a named model fails closed when its registry state cannot be proven.
         """
         try:
             registered = ScoreModelVersion.objects(
                 model_version=model_version, status="ACTIVE"
             ).first()
-        except Exception:  # noqa: BLE001 - registry is best-effort
+        except Exception as exc:  # noqa: BLE001 - registry boundary
             logger.warning(
-                "model registry lookup failed for %r; falling back to built-in config",
+                "model registry lookup failed for %r",
                 model_version,
                 exc_info=True,
             )
-            return {}
-        if registered is None:
-            return {}
-        return dict(registered.config or {})
+            if model_version != DEFAULT_MODEL_VERSION:
+                raise RuntimeError(
+                    f"model registry lookup failed for named model {model_version!r}"
+                ) from exc
+            return None
+        return registered
+
+    @staticmethod
+    def _registered_config(model_version: str) -> dict:
+        """Return an ACTIVE registered model's config, if available.
+
+        Kept as a small compatibility helper for callers that only need the
+        configuration. The constructor uses ``_registered_model`` directly so
+        config and scoring mode are read from one registry record.
+        """
+        registered = StockScoringService._registered_model(model_version)
+        return dict(getattr(registered, "config", {}) or {})
 
     def _sorted_calendar(self) -> list:
         """Ascending, time-normalized trading calendar, computed once.
@@ -760,15 +831,18 @@ class StockScoringService:
     ) -> dict:
         """Run scoring for all active stocks on one evaluation date.
 
-        When env DATAHUB_SCORING_MODE=ranked, delegates to the
-        cross-sectional rank-normalized path (score_all_stocks_ranked).
-        Default (raw) keeps the legacy component-weighted path.
+        The effective scoring mode resolves from the ACTIVE registry, an
+        explicit runtime mode, or the legacy environment/default. Ranked mode
+        delegates to the cross-sectional rank-normalized path
+        (score_all_stocks_ranked); raw keeps the legacy component-weighted
+        path.
 
         With ``batch_prefetch`` (default, perf C1) every horizon shares one
         per-day prefetch and writes through a single bulk upsert per horizon;
         ``DATAHUB_SCORING_BATCH=0`` restores the per-stock path.
         """
-        if os.getenv("DATAHUB_SCORING_MODE", "raw").strip().lower() == "ranked":
+        self._refresh_scoring_mode()
+        if self.scoring_mode == "ranked":
             return self.score_all_stocks_ranked(
                 date=date, horizon=horizon, dry_run=dry_run, replace=replace
             )
@@ -787,7 +861,7 @@ class StockScoringService:
                 not dry_run
                 and not replace
                 and self._is_complete_cohort(
-                    stocks, date, current_horizon, scoring_mode="raw"
+                    stocks, date, current_horizon, scoring_mode=self.scoring_mode
                 )
             ):
                 skipped_complete_horizons.append(current_horizon)
@@ -870,10 +944,21 @@ class StockScoringService:
         replace: bool = False,
     ):
         """Calculate one horizon-specific prediction for a stock."""
+        self._refresh_scoring_mode()
+        if self.scoring_mode == "ranked":
+            raise RuntimeError(
+                "single-stock scoring requires raw mode; ranked models "
+                "require complete-cohort scoring"
+            )
         date = normalize_date(date)
         config = self._get_horizon_config(horizon)
         existing = self._find_existing_prediction(stock.code, date, horizon)
         if existing is not None and not replace and not dry_run:
+            if not self._prediction_matches_mode(existing, self.scoring_mode):
+                raise RuntimeError(
+                    "existing prediction scoring mode does not match the "
+                    f"effective {self.scoring_mode!r} mode"
+                )
             return existing
 
         payload = self._build_raw_prediction_payload(stock, date, horizon, config)
@@ -892,6 +977,9 @@ class StockScoringService:
         Shared by score_single_stock (legacy per-stock reads) and the batched
         score_all_stocks loop so both produce byte-identical payloads.
         """
+        self._refresh_scoring_mode()
+        if self.scoring_mode != "raw":
+            raise RuntimeError("raw prediction construction requires raw scoring mode")
         if prefetch is not None:
             quote = prefetch.quote(stock.code)
         else:
@@ -904,6 +992,7 @@ class StockScoringService:
                 horizon=horizon,
                 target_date=target_date,
                 reason="missing_quote",
+                scoring_mode=self.scoring_mode,
             )
 
         if prefetch is not None:
@@ -937,7 +1026,7 @@ class StockScoringService:
             config=config,
             blocked_reason=None,
         )
-        input_snapshot["scoring_mode"] = "raw"
+        input_snapshot["scoring_mode"] = self.scoring_mode
         explanation = self._build_explanation(
             horizon=horizon,
             score=score,
@@ -1380,6 +1469,16 @@ class StockScoringService:
            normalized to sum to 1. This makes scores cross-sectionally
            comparable regardless of absolute score drift.
         """
+        # Keep the legacy direct ranked helper usable for unregistered
+        # services, but never let it override a pinned/runtime raw mode.
+        if self._registry_scoring_mode not in (None, "ranked") or (
+            self._runtime_scoring_mode is not None
+            and self._runtime_scoring_mode != "ranked"
+        ):
+            raise ValueError(
+                "ranked scoring conflicts with the effective scoring mode "
+                f"{self.scoring_mode!r}"
+            )
         if date is None:
             date = trading_day_helper.determine_closest_trading_date(self.calendar)
         date = normalize_date(date)

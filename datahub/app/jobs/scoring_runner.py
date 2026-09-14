@@ -145,7 +145,9 @@ def run_equivalence_check_cmd(args) -> int:
         from app.lib.scoring_engine.scoring_service import StockScoringService
 
         return StockScoringService(
-            model_version=args.model_version, batch_prefetch=batch_prefetch
+            model_version=args.model_version,
+            batch_prefetch=batch_prefetch,
+            scoring_mode=args.mode,
         )
 
     if args.apply:

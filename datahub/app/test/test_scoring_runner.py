@@ -323,3 +323,36 @@ def test_run_scoring_passes_a_single_horizon_through_unchanged(monkeypatch):
     assert calls[0]["replace"] is True
     assert summary["horizons"] == [20]
     assert summary["pulled_total"] == 7
+
+
+def test_equivalence_runner_pins_requested_scoring_mode(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+    from app.lib.scoring_engine import equivalence_check, scoring_service
+
+    constructed = []
+
+    class _FakeService:
+        def __init__(self, **kwargs):
+            constructed.append(kwargs)
+
+    def _fake_check(factory, **kwargs):
+        factory(False)
+        factory(True)
+        assert kwargs["mode"] == "raw"
+        return {"applied": False, "ok": None}
+
+    monkeypatch.setattr(scoring_runner, "_init_db_connection", lambda: None)
+    monkeypatch.setattr(scoring_service, "StockScoringService", _FakeService)
+    monkeypatch.setattr(equivalence_check, "run_equivalence_check", _fake_check)
+    args = scoring_runner.argparse.Namespace(
+        model_version="ranked-v1",
+        horizons="5,20",
+        date="2026-09-01",
+        mode="raw",
+        apply=False,
+        max_diffs=20,
+        report=None,
+    )
+
+    assert scoring_runner.run_equivalence_check_cmd(args) == 0
+    assert [item["scoring_mode"] for item in constructed] == ["raw", "raw"]

@@ -338,6 +338,190 @@ def test_stock_score_prediction_model_shape():
     assert type(StockScorePrediction._fields["input_snapshot"]).__name__ == "DictField"
 
 
+def _service_with_registry(registration=None, **kwargs):
+    """Build a scoring service with a deterministic registry fake."""
+    registry_query = MagicMock()
+    registry_query.first.return_value = registration
+    with (
+        patch(
+            "app.lib.scoring_engine.scoring_service.ScoreModelVersion.objects",
+            return_value=registry_query,
+        ),
+        patch("app.lib.scoring_engine.scoring_service.FinanceMarket.objects") as market,
+    ):
+        market.return_value.first.return_value = MagicMock(trade_calendar=[])
+        service = StockScoringService(
+            stock_model=FakeStock,
+            quote_model=FakeQuote,
+            factor_model=FakeFactor,
+            signal_model=FakeSignal,
+            prediction_model=FakePrediction,
+            **kwargs,
+        )
+    service.calendar = []
+    return service
+
+
+def test_registered_ranked_mode_overrides_legacy_environment(monkeypatch):
+    monkeypatch.setenv("DATAHUB_SCORING_MODE", "raw")
+    service = _service_with_registry(
+        SimpleNamespace(config={}, scoring_mode="ranked"),
+        model_version="registered_ranked",
+    )
+    called = {}
+
+    def fake_ranked(self_obj, **kwargs):
+        called["hit"] = True
+        return {"scored_count": 0}
+
+    monkeypatch.setattr(type(service), "score_all_stocks_ranked", fake_ranked)
+
+    service.score_all_stocks()
+
+    assert service.scoring_mode == "ranked"
+    assert called["hit"] is True
+
+
+def test_runtime_mode_applies_when_registry_mode_is_unpinned(monkeypatch):
+    monkeypatch.setenv("DATAHUB_SCORING_MODE", "raw")
+    service = _service_with_registry(
+        SimpleNamespace(config={}, scoring_mode=None),
+        model_version="registered_unpinned",
+        scoring_mode="ranked",
+    )
+    called = {}
+
+    def fake_ranked(self_obj, **kwargs):
+        called["hit"] = True
+        return {"scored_count": 0}
+
+    monkeypatch.setattr(type(service), "score_all_stocks_ranked", fake_ranked)
+
+    service.score_all_stocks()
+
+    assert service.scoring_mode == "ranked"
+    assert called["hit"] is True
+
+
+def test_runtime_mode_conflict_with_registry_fails_before_scoring():
+    with pytest.raises(ValueError, match="conflicts with registered"):
+        _service_with_registry(
+            SimpleNamespace(config={}, scoring_mode="ranked"),
+            model_version="registered_ranked",
+            scoring_mode="raw",
+        )
+
+
+def test_explicit_config_wins_while_registry_mode_remains_pinned():
+    explicit = {"20": {"directions": {"momentum": -1}}}
+    service = _service_with_registry(
+        SimpleNamespace(
+            config={"20": {"directions": {"momentum": 1}}},
+            scoring_mode="ranked",
+        ),
+        model_version="registered_ranked",
+        scoring_config=explicit,
+    )
+
+    assert service.scoring_config == explicit
+    assert service.scoring_mode == "ranked"
+
+
+def test_named_registry_lookup_failure_fails_closed():
+    with (
+        patch(
+            "app.lib.scoring_engine.scoring_service.ScoreModelVersion.objects",
+            side_effect=RuntimeError("db down"),
+        ),
+        patch("app.lib.scoring_engine.scoring_service.FinanceMarket.objects") as market,
+        pytest.raises(RuntimeError, match="registry lookup failed"),
+    ):
+        market.return_value.first.return_value = MagicMock(trade_calendar=[])
+        StockScoringService(model_version="named_model")
+
+
+def test_default_registry_lookup_failure_keeps_legacy_mode(monkeypatch):
+    monkeypatch.setenv("DATAHUB_SCORING_MODE", "ranked")
+    with (
+        patch(
+            "app.lib.scoring_engine.scoring_service.ScoreModelVersion.objects",
+            side_effect=RuntimeError("db down"),
+        ),
+        patch("app.lib.scoring_engine.scoring_service.FinanceMarket.objects") as market,
+    ):
+        market.return_value.first.return_value = MagicMock(trade_calendar=[])
+        service = StockScoringService()
+
+    assert service.scoring_mode == "ranked"
+
+
+def test_ranked_single_stock_fails_closed_before_write():
+    service = _service_with_registry(
+        SimpleNamespace(config={}, scoring_mode="ranked"),
+        model_version="registered_ranked",
+    )
+    stock = FakeStock(code="sh600000", name="浦发银行", active_status=0)
+
+    with pytest.raises(RuntimeError, match="single-stock scoring requires raw"):
+        service.score_single_stock(
+            stock, datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC), 5
+        )
+
+    assert FakePrediction.records == []
+
+
+def test_direct_ranked_path_cannot_override_pinned_raw_mode():
+    service = _service_with_registry(
+        SimpleNamespace(config={}, scoring_mode="raw"),
+        model_version="registered_raw",
+    )
+
+    with pytest.raises(ValueError, match="conflicts with the effective"):
+        service.score_all_stocks_ranked(
+            date=datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC), horizon=5
+        )
+
+    assert FakePrediction.records == []
+
+
+def test_explicit_raw_mode_controls_snapshot_over_legacy_environment(monkeypatch):
+    monkeypatch.setenv("DATAHUB_SCORING_MODE", "ranked")
+    service = _service_with_registry(
+        None,
+        model_version="unregistered_model",
+        scoring_mode="raw",
+    )
+    stock = FakeStock(code="sh699999", name="无行情测试", active_status=0)
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+
+    prediction = service.score_single_stock(stock, date, 5)
+
+    assert service.scoring_mode == "raw"
+    assert prediction.status == "BLOCKED"
+    assert prediction.input_snapshot["scoring_mode"] == "raw"
+
+
+def test_single_stock_rejects_existing_ranked_snapshot_in_raw_mode():
+    service = _service_with_registry(
+        SimpleNamespace(config={}, scoring_mode="raw"),
+        model_version="registered_raw",
+    )
+    stock = FakeStock(code="sh688888", name="模式冲突", active_status=0)
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records.append(
+        FakePrediction(
+            stock_code=stock.code,
+            date=date,
+            horizon=5,
+            model_version="registered_raw",
+            input_snapshot={"scoring_mode": "ranked"},
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="does not match"):
+        service.score_single_stock(stock, date, 5)
+
+
 def test_get_t_plus_n_day(scoring_service):
     start = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
     assert scoring_service.get_t_plus_n_day(start, 5) == datetime.datetime(

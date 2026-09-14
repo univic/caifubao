@@ -263,10 +263,10 @@ def _can_trade(quote, side: str) -> bool:
     - BUY  when the stock is limit-up   (``change_rate >= 9.9``) or suspended.
     - SELL when the stock is limit-down (``change_rate <= -9.9``) or suspended.
     """
-    trade_status = getattr(quote, "trade_status", 1)  # 1 = normal, 0 = suspended
+    trade_status = getattr(quote, "trade_status", None)
     change_rate = getattr(quote, "change_rate", 0) or 0
 
-    if trade_status == 0:
+    if trade_status != 1:
         return False
     if side == "BUY" and change_rate >= 9.9:
         return False
@@ -1278,6 +1278,7 @@ def _simulate(
     total_commission = 0.0
     total_stamp_duty = 0.0
     total_slippage = 0.0
+    pending_stop_loss = False
 
     num_days = len(trading_days)
 
@@ -1616,6 +1617,7 @@ def _simulate(
     elif strategy == "SCORE_THRESHOLD":
         stop_loss_price: Optional[float] = None
         pending_signal: Optional[str] = None  # "BUY" or "SELL" blocked by limits
+        pending_stop_loss = False
 
         for i, day in enumerate(trading_days):
             quote = quote_map[day]
@@ -1627,56 +1629,15 @@ def _simulate(
             # Get today's score (only use data from this day or earlier — look-ahead guard)
             curr_score = score_doc.score if score_doc else None
 
-            # Check stop-loss for existing position
-            if shares > 0 and stop_loss_price is not None and price <= stop_loss_price:
-                if _can_trade(quote, "SELL"):
-                    exec_price, comm, duty, slip = _apply_friction(
-                        price, shares, "SELL"
-                    )
-                    proceeds = exec_price * shares - comm - duty
-                    cash += proceeds
-                    total_commission += comm
-                    total_stamp_duty += duty
-                    total_slippage += slip
-
-                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
-                    sell_amounts = sum(
-                        t["amount"] for t in trades if t["side"] == "SELL"
-                    )
-                    buy_comm = sum(
-                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
-                    )
-                    sell_comm = sum(
-                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
-                    )
-                    pnl = (proceeds - comm - duty) - (
-                        buy_amounts - sell_amounts + buy_comm - sell_comm
-                    )
-                    trades.append(
-                        {
-                            "date": day.isoformat(),
-                            "side": "SELL",
-                            "price": round(price, 4),
-                            "exec_price": round(exec_price, 4),
-                            "quantity": shares,
-                            "amount": round(proceeds, 4),
-                            "commission": round(comm, 4),
-                            "stamp_duty": round(duty, 4),
-                            "slippage": round(slip, 4),
-                            "pnl": round(pnl, 4),
-                            "reason": f"Stop loss triggered at {round(price, 4)}",
-                        }
-                    )
-                    shares = 0.0
-                    stop_loss_price = None
-                    pending_signal = None
-
             # If a score-based signal fires, it overrides any pending signal
             if curr_score is not None:
                 if shares == 0 and curr_score >= entry_threshold:
                     pending_signal = "BUY"
                 elif shares > 0 and curr_score < exit_threshold:
                     pending_signal = "SELL"
+
+            if shares > 0 and pending_stop_loss and pending_signal != "SELL":
+                pending_signal = "STOP_LOSS_SELL"
 
             # Try to execute pending signal
             action_taken = False
@@ -1736,7 +1697,11 @@ def _simulate(
                     )
                     action_taken = True
 
-            if not action_taken and pending_signal == "SELL" and shares > 0:
+            if (
+                not action_taken
+                and pending_signal in ("SELL", "STOP_LOSS_SELL")
+                and shares > 0
+            ):
                 if execution_price is not None and _can_trade(quote, "SELL"):
                     exec_price, comm, duty, slip = _apply_friction(
                         execution_price, shares, "SELL"
@@ -1760,11 +1725,16 @@ def _simulate(
                     pnl = (proceeds - comm - duty) - (
                         buy_amounts - sell_amounts + buy_comm - sell_comm
                     )
+                    is_stop_exit = pending_signal == "STOP_LOSS_SELL"
                     reason = (
-                        f"SCORE_THRESHOLD exit: Score{horizon}={round(curr_score, 1)}"
-                        f" < {round(exit_threshold, 1)}"
-                        if curr_score is not None
-                        else "SCORE_THRESHOLD exit"
+                        "Stop loss triggered at prior session close"
+                        if is_stop_exit
+                        else (
+                            f"SCORE_THRESHOLD exit: Score{horizon}="
+                            f"{round(curr_score, 1)} < {round(exit_threshold, 1)}"
+                            if curr_score is not None
+                            else "SCORE_THRESHOLD exit"
+                        )
                     )
                     trades.append(
                         {
@@ -1783,6 +1753,7 @@ def _simulate(
                     )
                     shares = 0.0
                     stop_loss_price = None
+                    pending_stop_loss = False
                     pending_signal = None
                 else:
                     reason = (
@@ -1798,6 +1769,10 @@ def _simulate(
                             "price": round(price, 4),
                         }
                     )
+
+            # A close-observed breach can only execute on a later session open.
+            if shares > 0 and stop_loss_price is not None and price <= stop_loss_price:
+                pending_stop_loss = True
 
             # Liquidation at end if still holding (with limit check)
             if i == num_days - 1 and shares > 0:
@@ -1866,6 +1841,7 @@ def _simulate(
         prev_score: Optional[float] = None
         stop_loss_price: Optional[float] = None
         pending_signal: Optional[str] = None  # "BUY" or "SELL" blocked by limits
+        pending_stop_loss = False
 
         for i, day in enumerate(trading_days):
             quote = quote_map[day]
@@ -1877,50 +1853,6 @@ def _simulate(
             # Get today's score (only use data from this day or earlier — look-ahead guard)
             curr_score = score_doc.score if score_doc else None
 
-            # Check stop-loss for existing position
-            if shares > 0 and stop_loss_price is not None and price <= stop_loss_price:
-                if _can_trade(quote, "SELL"):
-                    exec_price, comm, duty, slip = _apply_friction(
-                        price, shares, "SELL"
-                    )
-                    proceeds = exec_price * shares - comm - duty
-                    cash += proceeds
-                    total_commission += comm
-                    total_stamp_duty += duty
-                    total_slippage += slip
-
-                    buy_amounts = sum(t["amount"] for t in trades if t["side"] == "BUY")
-                    sell_amounts = sum(
-                        t["amount"] for t in trades if t["side"] == "SELL"
-                    )
-                    buy_comm = sum(
-                        t.get("commission", 0) for t in trades if t["side"] == "BUY"
-                    )
-                    sell_comm = sum(
-                        t.get("commission", 0) for t in trades if t["side"] == "SELL"
-                    )
-                    pnl = (proceeds - comm - duty) - (
-                        buy_amounts - sell_amounts + buy_comm - sell_comm
-                    )
-                    trades.append(
-                        {
-                            "date": day.isoformat(),
-                            "side": "SELL",
-                            "price": round(price, 4),
-                            "exec_price": round(exec_price, 4),
-                            "quantity": shares,
-                            "amount": round(proceeds, 4),
-                            "commission": round(comm, 4),
-                            "stamp_duty": round(duty, 4),
-                            "slippage": round(slip, 4),
-                            "pnl": round(pnl, 4),
-                            "reason": f"Stop loss triggered at {round(price, 4)}",
-                        }
-                    )
-                    shares = 0.0
-                    stop_loss_price = None
-                    pending_signal = None
-
             # Detect score momentum signals
             if i > 0 and prev_score is not None and curr_score is not None:
                 score_change = curr_score - prev_score
@@ -1928,6 +1860,9 @@ def _simulate(
                     pending_signal = "BUY"
                 elif shares > 0 and score_change <= -score_delta:
                     pending_signal = "SELL"
+
+            if shares > 0 and pending_stop_loss and pending_signal != "SELL":
+                pending_signal = "STOP_LOSS_SELL"
 
             # Try to execute pending signal
             action_taken = False
@@ -1987,7 +1922,11 @@ def _simulate(
                     )
                     action_taken = True
 
-            if not action_taken and pending_signal == "SELL" and shares > 0:
+            if (
+                not action_taken
+                and pending_signal in ("SELL", "STOP_LOSS_SELL")
+                and shares > 0
+            ):
                 if execution_price is not None and _can_trade(quote, "SELL"):
                     exec_price, comm, duty, slip = _apply_friction(
                         execution_price, shares, "SELL"
@@ -2011,11 +1950,16 @@ def _simulate(
                     pnl = (proceeds - comm - duty) - (
                         buy_amounts - sell_amounts + buy_comm - sell_comm
                     )
+                    is_stop_exit = pending_signal == "STOP_LOSS_SELL"
                     reason = (
-                        f"SCORE_MOMENTUM exit: Score{horizon} Δ={round(score_change, 1)}"
-                        f" <= {-round(score_delta, 1)}"
-                        if curr_score is not None and prev_score is not None
-                        else "SCORE_MOMENTUM exit"
+                        "Stop loss triggered at prior session close"
+                        if is_stop_exit
+                        else (
+                            f"SCORE_MOMENTUM exit: Score{horizon} "
+                            f"Δ={round(score_change, 1)} <= {-round(score_delta, 1)}"
+                            if curr_score is not None and prev_score is not None
+                            else "SCORE_MOMENTUM exit"
+                        )
                     )
                     trades.append(
                         {
@@ -2034,6 +1978,7 @@ def _simulate(
                     )
                     shares = 0.0
                     stop_loss_price = None
+                    pending_stop_loss = False
                     pending_signal = None
                 else:
                     reason = (
@@ -2049,6 +1994,10 @@ def _simulate(
                             "price": round(price, 4),
                         }
                     )
+
+            # A close-observed breach can only execute on a later session open.
+            if shares > 0 and stop_loss_price is not None and price <= stop_loss_price:
+                pending_stop_loss = True
 
             # Liquidation at end if still holding (with limit check)
             if i == num_days - 1 and shares > 0:
@@ -2119,6 +2068,7 @@ def _simulate(
         sc_maps = score_maps or {}
         stop_loss_price: Optional[float] = None
         pending_signal: Optional[str] = None
+        pending_stop_loss = False
 
         # Merge user-supplied thresholds with documented defaults
         entry_defaults = {5: 60.0, 20: 55.0, 60: 50.0}
@@ -2166,9 +2116,8 @@ def _simulate(
                     }
                 )
 
-            # Check stop-loss unconditionally (regardless of score availability)
-            if shares > 0 and stop_loss_price is not None and price <= stop_loss_price:
-                pending_signal = "SELL"
+            if shares > 0 and pending_stop_loss and pending_signal != "SELL":
+                pending_signal = "STOP_LOSS_SELL"
 
             # Execute pending signal (reuse pattern from SCORE_THRESHOLD)
             action_taken = False
@@ -2228,7 +2177,11 @@ def _simulate(
                     )
                     action_taken = True
 
-            if not action_taken and pending_signal == "SELL" and shares > 0:
+            if (
+                not action_taken
+                and pending_signal in ("SELL", "STOP_LOSS_SELL")
+                and shares > 0
+            ):
                 if execution_price is not None and _can_trade(quote, "SELL"):
                     exec_price, comm, duty, slip = _apply_friction(
                         execution_price, shares, "SELL"
@@ -2257,9 +2210,9 @@ def _simulate(
                         for h in available_horizons
                     )
                     reason = (
-                        f"CONSENSUS exit: {score_strs}"
-                        if price > (stop_loss_price or price * 2)
-                        else f"Stop loss triggered at {round(price, 4)}"
+                        "Stop loss triggered at prior session close"
+                        if pending_signal == "STOP_LOSS_SELL"
+                        else f"CONSENSUS exit: {score_strs}"
                     )
                     trades.append(
                         {
@@ -2278,6 +2231,7 @@ def _simulate(
                     )
                     shares = 0.0
                     stop_loss_price = None
+                    pending_stop_loss = False
                     pending_signal = None
                 else:
                     reason = (
@@ -2293,6 +2247,10 @@ def _simulate(
                             "price": round(price, 4),
                         }
                     )
+
+            # A close-observed breach can only execute on a later session open.
+            if shares > 0 and stop_loss_price is not None and price <= stop_loss_price:
+                pending_stop_loss = True
 
             # Liquidation at end if still holding
             if i == num_days - 1 and shares > 0:
@@ -2368,6 +2326,7 @@ def _simulate(
         "total_slippage": round(total_slippage, 4),
         "skipped_trades": skipped_trades,
         "skipped_consensus": skipped_consensus,  # MULTI_HORIZON_CONSENSUS only
+        "pending_stop_loss": pending_stop_loss,
     }
 
 
@@ -2502,6 +2461,7 @@ def _simulate_multi(
     total_slippage = 0.0
     pending_target_stocks: List[str] | None = None
     pending_scores: Dict[str, float] = {}
+    pending_stop_stocks: set[str] = set()
 
     # --------------------------------------------------------------------
     # TOP_N_ROTATION
@@ -2559,6 +2519,22 @@ def _simulate_multi(
                     pending_target_stocks = None
                     pending_scores = {}
 
+            # Stop losses observed at a prior close execute at today's open.
+            # A rebalance sell above has priority for names leaving the target.
+            for stock_code in sorted(pending_stop_stocks):
+                pos = positions.get(stock_code)
+                if pos is None:
+                    pending_stop_stocks.discard(stock_code)
+                    continue
+                trade = _liquidate_position(
+                    stock_code, pos, day, execution_at_open=True
+                )
+                if trade is not None:
+                    trade["reason"] = "Stop loss triggered at prior session close"
+                    trades.append(trade)
+                    del positions[stock_code]
+                    pending_stop_stocks.discard(stock_code)
+
             # -- Check stop-loss for all held positions ------------------------
             for stock_code in list(positions.keys()):
                 pos = positions[stock_code]
@@ -2566,43 +2542,7 @@ def _simulate_multi(
                 if quote:
                     price = _closing_price(quote)
                     if price <= pos["stop_loss_price"]:
-                        # Stop-loss triggered – override trade reason
-                        exec_price, comm, stamp, slip = _apply_friction(
-                            price, pos["shares"], "SELL"
-                        )
-                        if _can_trade(quote, "SELL"):
-                            proceeds = exec_price * pos["shares"] - comm - stamp
-                            cash += proceeds
-                            total_commission += comm
-                            total_stamp_duty += stamp
-                            total_slippage += slip
-                            realized_pnl = proceeds - (pos["avg_cost"] * pos["shares"])
-                            if stock_code not in per_stock_contributions:
-                                per_stock_contributions[stock_code] = {
-                                    "realized_pnl": 0.0,
-                                    "trades": 0,
-                                }
-                            per_stock_contributions[stock_code]["realized_pnl"] += (
-                                realized_pnl
-                            )
-                            per_stock_contributions[stock_code]["trades"] += 1
-                            trades.append(
-                                {
-                                    "date": day.isoformat(),
-                                    "side": "SELL",
-                                    "stock_code": stock_code,
-                                    "price": round(price, 4),
-                                    "exec_price": round(exec_price, 4),
-                                    "quantity": pos["shares"],
-                                    "amount": round(exec_price * pos["shares"], 4),
-                                    "commission": round(comm, 4),
-                                    "stamp_duty": round(stamp, 4),
-                                    "slippage": round(slip, 4),
-                                    "pnl": round(realized_pnl, 4),
-                                    "reason": f"Stop loss triggered at {round(price, 4)}",
-                                }
-                            )
-                            del positions[stock_code]
+                        pending_stop_stocks.add(stock_code)
 
             # Form a new ranking after today's close for next-day execution.
             if i % rebalance_interval == 0:
@@ -2691,6 +2631,7 @@ def _simulate_multi(
         "total_commission": round(total_commission, 4),
         "total_stamp_duty": round(total_stamp_duty, 4),
         "total_slippage": round(total_slippage, 4),
+        "pending_stop_losses": sorted(pending_stop_stocks),
     }
 
 
@@ -2874,10 +2815,12 @@ def _compute_information_ratio(
 
 def _blocked_reason(quote, side: str) -> str:
     """Return a human-readable reason why a trade is blocked."""
-    trade_status = getattr(quote, "trade_status", 1)
+    trade_status = getattr(quote, "trade_status", None)
     change_rate = getattr(quote, "change_rate", 0) or 0
     if trade_status == 0:
         return "suspended"
+    if trade_status != 1:
+        return "unknown_trade_status"
     if side == "BUY" and change_rate >= 9.9:
         return "limit_up_blocked"
     if side == "SELL" and change_rate <= -9.9:
@@ -2915,7 +2858,10 @@ def _adjusted_open_price(quote: StockDailyQuote) -> float | None:
     value = getattr(quote, "open_hfq", None)
     if value is None:
         return None
-    value = float(value)
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
     if value <= 0 or not math.isfinite(value):
         return None
     return value

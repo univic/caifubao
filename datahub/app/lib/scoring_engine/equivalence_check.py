@@ -164,6 +164,8 @@ def run_equivalence_check(
     }
 
     probe = service_factory(False)
+    if mode == "raw" and getattr(probe, "scoring_mode", None) != "raw":
+        raise ValueError("the scoring service effective mode contradicts --mode 'raw'")
     codes = [stock.code for stock in probe.stock_model.objects(active_status=0)]
     report["active_codes"] = len(codes)
     report["market"] = {
@@ -229,11 +231,19 @@ def run_equivalence_check(
     all_diffs: list[str] = []
     for horizon in horizons:
         legacy_service = service_factory(False)
+        if mode == "raw" and getattr(legacy_service, "scoring_mode", None) != "raw":
+            raise ValueError(
+                "the scoring service effective mode contradicts --mode 'raw'"
+            )
         legacy_result, legacy_seconds = _run_pass(legacy_service, date, horizon, mode)
         legacy = snapshot_predictions(
             _day_predictions(legacy_service, date, horizon, codes)
         )
         batch_service = service_factory(True)
+        if mode == "raw" and getattr(batch_service, "scoring_mode", None) != "raw":
+            raise ValueError(
+                "the scoring service effective mode contradicts --mode 'raw'"
+            )
         batch_result, batch_seconds = _run_pass(batch_service, date, horizon, mode)
         batch = snapshot_predictions(
             _day_predictions(batch_service, date, horizon, codes)
