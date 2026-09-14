@@ -11,3 +11,7 @@ Backend owns user-facing Flask APIs, authentication, and light aggregation.
 Scheduled data collection, factors, scoring, and backfills belong to
 `../datahub/`. Use `venv312` and validate only the paths and tests affected by
 the task.
+
+Tool-specific conventions: maximum line length 120, type annotations on new
+functions, keep import order consistent with the surrounding modules, and go
+through the model/service layer instead of using PyMongo directly.

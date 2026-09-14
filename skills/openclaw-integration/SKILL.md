@@ -57,9 +57,10 @@ Source of truth: `docs/integrations/openclaw.md`, `docs/operations/service-token
 
 > Unresolved contract discrepancy: `/scores` accepts `openclaw:score-read`, but
 > `/recommendations/*` currently require `openclaw:data-read` in code while the
-> archived OpenSpec contract grants recommendation access to `score-read`. Do not
-> assume either behavior is intended; reconcile it through a new active OpenSpec
-> change before modifying or relying on this scope boundary.
+> archived OpenSpec contract grants recommendation access to `score-read`. Treat
+> the **code as authoritative** until the spec is updated, and reconcile the two
+> through a new active OpenSpec change before modifying or relying on this scope
+> boundary.
 
 ## 3. Response envelope & errors
 

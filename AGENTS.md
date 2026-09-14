@@ -28,8 +28,9 @@ For non-trivial work:
 4. Implement the smallest sufficient change and validate until green.
 5. Run the required read-only reviewers from
    [`RULES.md`](./RULES.md#review-gates).
-6. Check conflicts against the target base and report results using the
-   [task-note fields](./RULES.md#task-notes).
+6. Check conflicts against the target base, then close with the
+   [task-note fields](./RULES.md#task-notes) and the
+   [gate checklist](./RULES.md#gate-checklist).
 7. Create or update a PR only when requested or already part of the task's
    delivery scope.
 

@@ -11,3 +11,7 @@ Before frontend work, follow the repository authorities:
 Frontend consumes backend APIs and must not depend on MongoDB collection
 shapes. Follow the existing Vue/TypeScript patterns and run focused tests when
 applicable, followed by lint and build.
+
+Tool-specific conventions: route all HTTP through `src/api/`, use
+`<script setup lang="ts">`, keep TypeScript strict (no `any`), and follow the
+existing Pinia store and Element Plus patterns.

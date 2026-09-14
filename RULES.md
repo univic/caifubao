@@ -53,7 +53,11 @@ implementation details, or small behavior-preserving fixes.
 - State assumptions and a verifiable success criterion before editing.
 - Make the smallest change that satisfies the request; avoid speculative
   features, one-use abstractions, and unrelated cleanup.
-- Match existing style. Clean up only artifacts introduced by the change.
+- Match existing style (quotes, naming, patterns); do not reformat untouched
+  code.
+- Clean up only the imports and variables your change orphaned; do not remove
+  pre-existing dead code unless asked.
+- Every changed line must trace directly to the request.
 - For bugs, reproduce the failure with a test first when practical.
 - Loop on the smallest useful validation until it passes.
 
@@ -99,15 +103,28 @@ trivial. When uncertain, use the non-trivial workflow.
 ## Review gates
 
 Implement, validate, review, check branch conflicts, then publish. Reviewers are
-read-only and run after local validation:
+read-only and run after local validation. Schedule the required reviewers in the
+task plan BEFORE implementation starts; they do not self-activate.
 
-| Reviewer            | Required when                                                                                      |
-| ------------------- | -------------------------------------------------------------------------------------------------- |
-| `spec-guardian`     | The P3 gate may apply                                                                              |
-| `contract-reviewer` | API contracts, auth, freshness metadata, or OpenClaw integration are touched                       |
-| `qa-reviewer`       | Any non-trivial code, CI, data-model, or deployment change; not docs/comments/formatting-only work |
+| Reviewer            | Required when                                                                                                                      |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `spec-guardian`     | New or changed API endpoint, auth change, scoring-semantics change, freshness change, boundary shift, or the P3 gate may apply     |
+| `contract-reviewer` | API contracts, auth, freshness metadata, or OpenClaw integration are touched                                                       |
+| `qa-reviewer`       | Any non-trivial code, CI, data-model, or deployment change; not docs/comments/formatting-only work                                 |
 
 Resolve and re-review P1 findings. Acknowledge P2 findings and remaining risk.
+
+### Gate checklist
+
+Every non-trivial change MUST close with this checklist in its final summary:
+
+```text
+[ ] spec-guardian:     triggered / not triggered
+[ ] contract-reviewer: triggered / not triggered
+[ ] qa-reviewer:       triggered / not triggered
+[ ] branch-conflict:   clean / conflicts resolved
+[ ] draft-pr-ci:       created as draft / CI passed / converted to regular
+```
 
 <a id="branch-and-pr"></a>
 
@@ -116,7 +133,10 @@ Resolve and re-review P1 findings. Acknowledge P2 findings and remaining risk.
 - Use a dedicated branch based on current `origin/develop`; never mix unrelated
   work or edit `main`/`develop` directly. Use a descriptive type prefix such as
   `feature/`, `fix/`, `docs/`, `chore/`, or `codex/`.
-- Before handoff, verify the branch is conflict-free with the target base.
+- Before handoff, verify the branch is conflict-free with the target base. If
+  the check output contains conflict markers (`<<<<<<<` / `>>>>>>>`), resolve
+  them before completing. If the check cannot run (no remote, no network), state
+  exactly why in the summary.
 - When the requested delivery includes a PR, create it as Draft, wait for every
   CI job to pass, then mark it ready. Do not push or change PR state without the
   authority needed for that external action.
