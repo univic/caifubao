@@ -1,7 +1,10 @@
 # H20 Excess Alpha Runs
 
+> ⚠️ **已归档**（2026-09-14）。原始路径：`docs/autoresearch/runs/h20-excess-alpha/summary.md`；
+> 归档原因见 [`docs/archive/README.md`](./README.md)。
+
 > ⚠️ **本文为早期记录（2026-08，验证窗口 = 2025 单年、评估器默认 top5%/30只口径）。**
-> 完整现状见 [`research-progress-2026-09-04.md`](./research-progress-2026-09-04.md)。
+> 完整现状见 [`research-progress-2026-09-04.md`](../autoresearch/runs/h20-excess-alpha/research-progress-2026-09-04.md)。
 > 关键更正：本页「full_reversal 无效」结论受 **30 只小样本噪声 + 单年（2025）验证窗口**
 > 限制——在多 regime 合并快照（2019-2026）+ 宽书（top-800）口径下，构造层全翻转候选
 > `flip_wide` 全窗口 IR 为正（train +0.485 / val2024 +0.975 / val2025 +0.385 / test2026H1

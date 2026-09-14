@@ -1,5 +1,8 @@
 # Caifubao 开发交底文档（2026-08-28）
 
+> ⚠️ **已归档**（2026-09-14）。原始路径：`docs/operations/handover-2026-08.md`；
+> 归档原因见 [`docs/archive/README.md`](./README.md)。
+
 > 本文档面向后续接手开发的 AI 代理（含 Codex）与协作者，总结截至 2026-08-28
 > 的近期进展、当前主要问题、OpenSpec 状态与工作流指引。交接后请以本文档为
 > 起点，配合 `AGENTS.md` / `RULES.md` / `skills/` 一起阅读。
@@ -14,7 +17,7 @@
 - **目标**：大 A 量化研究/教学/演示 MVP（非投资建议）。
 - **技术栈**：Python Flask backend + datahub 数据服务 + Vue 3/Vite/Element Plus
   前端 + MongoDB + K3s + GitHub Actions。
-- **模块边界**（`RULES.md#P2`）：
+- **模块边界**（`RULES.md#module-boundaries`）：
   - `datahub/` — 行情/因子/信号/评分/新鲜度/质量数据
   - `backend/` — Flask API、鉴权、轻聚合
   - `frontend/` — Vue UI，只消费 backend API
@@ -137,7 +140,7 @@ signal 无增量全历史重算（~3,000 万级写/晚）、scoring 逐股 N+1 �
 双跑、FQ 全历史回填被 tushare pacing 钉死（**阻塞上面 §3.1 待办 5.2 的
 全市场 FQ 重算——先落地 `datahub-perf-optimization` 的 3.9–3.12 再执行重算**）。
 完整发现清单（S/Q/F/G/C/W 编号 + file:line + 量级 + 修复）见
-[`perf-analysis-2026-08.md`](./perf-analysis-2026-08.md)；分阶段任务清单见
+[`perf-analysis-2026-08.md`](../operations/perf-analysis-2026-08.md)；分阶段任务清单见
 `openspec/changes/datahub-perf-optimization/tasks.md`，后续性能工作以该
 change 为准。
 
