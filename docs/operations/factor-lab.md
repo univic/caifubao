@@ -88,6 +88,62 @@ kubectl -n caifubao-research cp \
 #   -l job.caifubao.io/type=lab-runner
 ```
 
+## Holding-period x buffer scan
+
+`evaluate` answers "does this factor sort returns?". `holding-scan` answers the
+portfolio question that follows: **at which holding period does the edge survive
+round-trip friction, and what annual turnover does that cost?**
+
+```bash
+python -m app.jobs.factor_lab_runner holding-scan \
+  --panel /data/lab.parquet --factor reversal_20 \
+  --from-date 20190102 --to-date 20260911 \
+  --horizons 5,10,20,40,60 --buffers 1.0,1.5,2.0 \
+  --portfolio-size 800 --entry-pct 0.2 \
+  --output /data/holding-scan.json
+```
+
+Per cell it reports the net-of-cost excess over the same-date eligible
+equal-weight benchmark, the information ratio, annual turnover, drawdown and a
+turnover-penalised objective (`summary` in the JSON, one line per line on
+stdout). Semantics:
+
+- the signal is the **lowest** ranks of the chosen factor (`rank <= entry_pct`),
+  which is the reversal side — pass `--factor momentum_20` to scan the momentum
+  side directly;
+- `--from-date` / `--to-date` anchor the evaluation schedule; leading indicator
+  history can remain in the panel without shifting rebalance dates;
+- `--buffers` is the hysteresis: a held name is only sold once its percentile
+  rises above `entry_pct * buffer`, so `1.0` is a full re-sort every rebalance;
+- the holding period sets the rebalance cadence; a name inside the wider exit
+  band carries into the next tranche, and friction is charged only to the
+  **replaced fraction** of the target book;
+- blocked labels (limit-up entry, suspension, …) are dropped from both the
+  basket and the benchmark, exactly as in `evaluate`.
+
+Caveat: the registered lab factors are simple price/volume expressions, not the
+production scoring engine's eight-component `flip_wide` construction. Use this
+command to find the holding-period/turnover trade-off of a *factor family*, then
+re-run the chosen cell against the production signal before quoting a number as
+the strategy's.
+
+## ETF and small-book replay boundary
+
+The `app.lib.etf_lab` and `app.lib.small_book` helpers are operator-only research
+surfaces. They do not write MongoDB, promote a model, schedule themselves, or
+emit executable orders. `etf_lab rotate --ledger` appends local JSONL records
+labelled `evidence_kind=REPLAY`; these rows never count toward the immutable
+120-session forward-evidence gate.
+
+The ETF `pool` command builds membership from one explicitly supplied liquidity
+snapshot. The `rotate` CLI does **not** reconstruct historical membership,
+delisted instruments, or a survivorship-complete point-in-time cohort. A
+historical run using today's pool is a current-snapshot replay and must not be
+described as verified PIT. Likewise, ETF labels currently shift across each
+instrument's observed quote rows rather than an exchange calendar; gaps are
+guarded heuristically, not proven complete. A trustworthy replay requires a
+separate frozen cohort/calendar adapter with auditable as-of provenance.
+
 ## Resources and caveats
 
 - **ReadWriteOnce.** Export and evaluate must not mount the claim at the same
