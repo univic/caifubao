@@ -10,10 +10,12 @@ Usage:
 
 import argparse
 import datetime
+import importlib.util
 import json
 import logging
-import sys
 import os
+from pathlib import Path
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +220,76 @@ def run_compare(args) -> dict:
         )
 
     return results
+
+
+def run_timing_pool(args, evaluator=None) -> dict:
+    """Aggregate an explicit, precomputed timing/buy-hold cohort artifact.
+
+    This research-only command deliberately does not discover a cohort, run a
+    live scan, or persist backtests. The input owns both normalized sides for
+    every requested stock so the same-stock baseline cannot be replaced by an
+    index benchmark accidentally.
+    """
+    payload = json.loads(Path(args.input_json).read_text(encoding="utf-8"))
+    results = payload.get("results")
+    if not isinstance(results, dict):
+        raise ValueError("timing-pool input requires a results object keyed by code")
+    cohort = payload.get("cohort")
+    if not isinstance(cohort, list) or not cohort:
+        raise ValueError("timing-pool input requires an explicit non-empty cohort")
+    if evaluator is None:
+        try:
+            # The image workflow copies this dependency-free module into the
+            # datahub package so the deployed CLI has the same implementation.
+            from app.services.timing_evaluator import evaluate_timing_pool
+
+            evaluator = evaluate_timing_pool
+        except ModuleNotFoundError as exc:
+            if exc.name not in {"app.services", "app.services.timing_evaluator"}:
+                raise
+            # Source-tree fallback: backend and datahub both expose a top-level
+            # ``app`` package, so load the backend module without importing Flask.
+            module_path = (
+                Path(__file__).resolve().parents[3]
+                / "backend"
+                / "app"
+                / "services"
+                / "timing_evaluator.py"
+            )
+            spec = importlib.util.spec_from_file_location(
+                "_caifubao_timing_evaluator", module_path
+            )
+            if spec is None or spec.loader is None:
+                raise RuntimeError("cannot load timing evaluator")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            evaluator = module.evaluate_timing_pool
+
+    def _paired_runner(stock_code, **_kwargs):
+        pair = results.get(stock_code)
+        if pair is None:
+            return {
+                "status": "FAILED",
+                "reason_code": "MISSING_RESULT_PAIR",
+            }
+        return pair
+
+    report = evaluator(
+        cohort,
+        _paired_runner,
+        cohort_as_of=payload.get("cohort_as_of"),
+        cohort_source=payload.get("cohort_source"),
+        model_version=payload.get("model_version"),
+        config=payload.get("config"),
+        window=payload.get("window"),
+        delisted_completeness=payload.get("delisted_completeness", "UNKNOWN"),
+        initial_cash=payload.get("initial_cash", 100000.0),
+    )
+    rendered = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+    if args.output:
+        Path(args.output).write_text(rendered + "\n", encoding="utf-8")
+    print(rendered)
+    return report
 
 
 def run_optimize(args) -> dict:
@@ -546,6 +618,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_walk_forward.add_argument("--initial-cash", default=100000)
     p_walk_forward.add_argument("--model-version")
 
+    # --- timing-pool (research-only, explicit cohort) ---
+    p_timing_pool = subparsers.add_parser(
+        "timing-pool",
+        help="Aggregate explicit same-stock timing/buy-hold result pairs",
+    )
+    p_timing_pool.add_argument("input_json", help="Versioned explicit-cohort JSON")
+    p_timing_pool.add_argument("--output", help="Optional report JSON path")
+
     return parser
 
 
@@ -568,6 +648,8 @@ def main():
             run_scan(args)
         elif args.command == "walk-forward":
             run_walk_forward(args)
+        elif args.command == "timing-pool":
+            run_timing_pool(args)
         else:
             parser.print_help()
     except ValueError as exc:

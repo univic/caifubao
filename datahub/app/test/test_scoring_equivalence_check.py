@@ -147,6 +147,22 @@ def test_mode_contradicting_env_fails_closed(fake_service_factory, monkeypatch):
     assert report["ok"] is True
 
 
+def test_raw_mode_rejects_a_registry_pinned_ranked_service(fake_service_factory):
+    seed_market()
+
+    def ranked_factory(batch_prefetch):
+        service = fake_service_factory(batch_prefetch)
+        service._registry_scoring_mode = "ranked"
+        service._runtime_scoring_mode = None
+        service._refresh_scoring_mode()
+        return service
+
+    with pytest.raises(ValueError, match="effective mode contradicts"):
+        run_equivalence_check(
+            ranked_factory, date=EVAL_DATE, horizons=[20], mode="raw", apply=True
+        )
+
+
 def test_partial_ranked_cohort_repair_matches(fake_service_factory):
     """The check must also pass when the date already holds stored rows: both
     passes use replace=True, so pre-existing state cannot leak into the diff."""

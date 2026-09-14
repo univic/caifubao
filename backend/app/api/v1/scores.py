@@ -271,7 +271,21 @@ def generate_scores():
     # --- Dependency check: quote data must exist for the target date ---
     from app.lib.scoring_engine.scoring_service import StockScoringService  # noqa: E402
 
-    service = StockScoringService(model_version=model_version)
+    try:
+        service = StockScoringService(model_version=model_version)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).exception("Score service initialization failed")
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "message": f"评分生成失败: {str(exc)}",
+                }
+            ),
+            500,
+        )
     eval_date = requested_date
     if eval_date is None:
         from app.lib.utilities import trading_day_helper  # noqa: E402
@@ -280,9 +294,7 @@ def generate_scores():
     eval_date = eval_date.replace(hour=0, minute=0, second=0, microsecond=0)
 
     if stock_code:
-        quote_count = StockDailyQuote.objects(
-            stock_code=stock_code, date=eval_date
-        ).count()
+        quote_count = StockDailyQuote.objects(code=stock_code, date=eval_date).count()
     else:
         quote_count = StockDailyQuote.objects(date=eval_date).count()
 

@@ -375,6 +375,316 @@ class TestScoreExecutionTiming:
         assert buy["date"] == days[2].isoformat()
         assert buy["price"] == 11.0
 
+    @pytest.mark.parametrize("strategy", ["SCORE_THRESHOLD", "MULTI_HORIZON_CONSENSUS"])
+    def test_close_stop_loss_executes_at_following_open(self, strategy):
+        from app.services.backtest_service import _simulate
+
+        days = [_day(f"2026-09-{1 + i:02d}") for i in range(5)]
+        kwargs = {
+            "score_map": {days[0]: SimpleNamespace(score=80.0)},
+            "horizon": 5,
+        }
+        if strategy == "MULTI_HORIZON_CONSENSUS":
+            kwargs = {
+                "score_maps": {
+                    horizon: {days[0]: SimpleNamespace(score=80.0)}
+                    for horizon in (5, 20, 60)
+                }
+            }
+        result = _simulate(
+            strategy=strategy,
+            trading_days=days,
+            quote_map={
+                days[0]: _quote(100.0, 100.0),
+                days[1]: _quote(100.0, 100.0),
+                days[2]: _quote(90.0, 99.0),
+                days[3]: _quote(85.0, 80.0),
+                days[4]: _quote(84.0, 82.0),
+            },
+            factor_map={},
+            initial_cash=100000.0,
+            stop_loss_pct=-5.0,
+            **kwargs,
+        )
+
+        stop_sell = next(t for t in result["trades"] if "Stop loss" in t["reason"])
+        assert stop_sell["date"] == days[3].isoformat()
+        assert stop_sell["price"] == 80.0
+
+    def test_momentum_close_stop_loss_executes_at_following_open(self):
+        from app.services.backtest_service import _simulate
+
+        days = [_day(f"2026-09-{1 + i:02d}") for i in range(6)]
+        result = _simulate(
+            strategy="SCORE_MOMENTUM",
+            trading_days=days,
+            quote_map={
+                day: _quote(close, open_price)
+                for day, close, open_price in zip(
+                    days,
+                    (100.0, 100.0, 100.0, 90.0, 85.0, 84.0),
+                    (100.0, 100.0, 100.0, 99.0, 80.0, 82.0),
+                )
+            },
+            factor_map={},
+            initial_cash=100000.0,
+            score_map={
+                days[0]: SimpleNamespace(score=50.0),
+                days[1]: SimpleNamespace(score=70.0),
+            },
+            horizon=5,
+            score_delta=10.0,
+            stop_loss_pct=-5.0,
+        )
+
+        stop_sell = next(t for t in result["trades"] if "Stop loss" in t["reason"])
+        assert stop_sell["date"] == days[4].isoformat()
+        assert stop_sell["price"] == 80.0
+
+    @pytest.mark.parametrize("strategy", ["SCORE_THRESHOLD", "MULTI_HORIZON_CONSENSUS"])
+    def test_blocked_stop_loss_retries_at_later_open(self, strategy):
+        from app.services.backtest_service import _simulate
+
+        days = [_day(f"2026-09-{1 + i:02d}") for i in range(6)]
+        kwargs = {
+            "score_map": {days[0]: SimpleNamespace(score=80.0)},
+            "horizon": 5,
+        }
+        if strategy == "MULTI_HORIZON_CONSENSUS":
+            kwargs = {
+                "score_maps": {
+                    horizon: {days[0]: SimpleNamespace(score=80.0)}
+                    for horizon in (5, 20, 60)
+                }
+            }
+        result = _simulate(
+            strategy=strategy,
+            trading_days=days,
+            quote_map={
+                days[0]: _quote(100.0, 100.0),
+                days[1]: _quote(100.0, 100.0),
+                days[2]: _quote(90.0, 99.0),
+                days[3]: _quote(85.0, 80.0, trade_status=0),
+                days[4]: _quote(84.0, 82.0),
+                days[5]: _quote(83.0, 81.0),
+            },
+            factor_map={},
+            initial_cash=100000.0,
+            stop_loss_pct=-5.0,
+            **kwargs,
+        )
+
+        stop_sell = next(t for t in result["trades"] if "Stop loss" in t["reason"])
+        assert stop_sell["date"] == days[4].isoformat()
+        assert stop_sell["price"] == 82.0
+
+    def test_momentum_blocked_stop_loss_retries_at_later_open(self):
+        from app.services.backtest_service import _simulate
+
+        days = [_day(f"2026-09-{1 + i:02d}") for i in range(7)]
+        result = _simulate(
+            strategy="SCORE_MOMENTUM",
+            trading_days=days,
+            quote_map={
+                day: _quote(close, open_price, trade_status)
+                for day, close, open_price, trade_status in zip(
+                    days,
+                    (100.0, 100.0, 100.0, 90.0, 85.0, 84.0, 83.0),
+                    (100.0, 100.0, 100.0, 99.0, 80.0, 82.0, 81.0),
+                    (1, 1, 1, 1, 0, 1, 1),
+                )
+            },
+            factor_map={},
+            initial_cash=100000.0,
+            score_map={
+                days[0]: SimpleNamespace(score=50.0),
+                days[1]: SimpleNamespace(score=70.0),
+            },
+            horizon=5,
+            score_delta=10.0,
+            stop_loss_pct=-5.0,
+        )
+
+        stop_sell = next(t for t in result["trades"] if "Stop loss" in t["reason"])
+        assert stop_sell["date"] == days[5].isoformat()
+        assert stop_sell["price"] == 82.0
+
+    def test_top_n_blocked_stop_loss_retries_at_later_open(self):
+        from app.services.backtest_service import _simulate_multi
+
+        days = [_day(f"2026-09-{1 + i:02d}") for i in range(6)]
+        code = "sh600000"
+        result = _simulate_multi(
+            strategy="TOP_N_ROTATION",
+            trading_days=days,
+            quote_maps={
+                code: {
+                    days[0]: _quote(100.0, 100.0),
+                    days[1]: _quote(100.0, 100.0),
+                    days[2]: _quote(90.0, 99.0),
+                    days[3]: _quote(85.0, 80.0, trade_status=0),
+                    days[4]: _quote(84.0, 82.0),
+                    days[5]: _quote(83.0, 81.0),
+                }
+            },
+            factor_maps={},
+            score_maps={code: {days[0]: SimpleNamespace(score=90.0)}},
+            stock_names={},
+            initial_cash=100000.0,
+            top_n=1,
+            rebalance_interval=99,
+            stop_loss_pct=-5.0,
+        )
+
+        stop_sell = next(t for t in result["trades"] if "Stop loss" in t["reason"])
+        assert stop_sell["date"] == days[4].isoformat()
+        assert stop_sell["price"] == 82.0
+
+    def test_pending_score_exit_has_priority_over_pending_stop_loss(self):
+        from app.services.backtest_service import _simulate
+
+        days = [_day(f"2026-09-{1 + i:02d}") for i in range(5)]
+        result = _simulate(
+            strategy="SCORE_THRESHOLD",
+            trading_days=days,
+            quote_map={
+                days[0]: _quote(100.0, 100.0),
+                days[1]: _quote(100.0, 100.0),
+                days[2]: _quote(90.0, 99.0),
+                days[3]: _quote(85.0, 80.0),
+                days[4]: _quote(84.0, 82.0),
+            },
+            factor_map={},
+            initial_cash=100000.0,
+            score_map={
+                days[0]: SimpleNamespace(score=80.0),
+                days[2]: SimpleNamespace(score=40.0),
+            },
+            horizon=5,
+            stop_loss_pct=-5.0,
+        )
+
+        sell = next(t for t in result["trades"] if t["side"] == "SELL")
+        assert sell["date"] == days[3].isoformat()
+        assert sell["reason"].startswith("SCORE_THRESHOLD exit")
+
+    def test_top_n_close_stop_loss_executes_at_following_open(self):
+        from app.services.backtest_service import _simulate_multi
+
+        days = [_day(f"2026-09-{1 + i:02d}") for i in range(5)]
+        code = "sh600000"
+        result = _simulate_multi(
+            strategy="TOP_N_ROTATION",
+            trading_days=days,
+            quote_maps={
+                code: {
+                    days[0]: _quote(100.0, 100.0),
+                    days[1]: _quote(100.0, 100.0),
+                    days[2]: _quote(90.0, 99.0),
+                    days[3]: _quote(85.0, 80.0),
+                    days[4]: _quote(84.0, 82.0),
+                }
+            },
+            factor_maps={},
+            score_maps={code: {days[0]: SimpleNamespace(score=90.0)}},
+            stock_names={},
+            initial_cash=100000.0,
+            top_n=1,
+            rebalance_interval=99,
+            stop_loss_pct=-5.0,
+        )
+
+        stop_sell = next(t for t in result["trades"] if "Stop loss" in t["reason"])
+        assert stop_sell["date"] == days[3].isoformat()
+        assert stop_sell["price"] == 80.0
+
+    @pytest.mark.parametrize("strategy", ["SCORE_THRESHOLD", "MULTI_HORIZON_CONSENSUS"])
+    def test_final_close_stop_loss_is_reported_unexecuted(self, strategy):
+        from app.services.backtest_service import _simulate
+
+        days = [_day(f"2026-09-{1 + i:02d}") for i in range(3)]
+        kwargs = {
+            "score_map": {days[0]: SimpleNamespace(score=80.0)},
+            "horizon": 5,
+        }
+        if strategy == "MULTI_HORIZON_CONSENSUS":
+            kwargs = {
+                "score_maps": {
+                    horizon: {days[0]: SimpleNamespace(score=80.0)}
+                    for horizon in (5, 20, 60)
+                }
+            }
+        result = _simulate(
+            strategy=strategy,
+            trading_days=days,
+            quote_map={
+                days[0]: _quote(100.0, 100.0),
+                days[1]: _quote(100.0, 100.0),
+                days[2]: _quote(90.0, 99.0),
+            },
+            factor_map={},
+            initial_cash=100000.0,
+            stop_loss_pct=-5.0,
+            **kwargs,
+        )
+
+        assert not any("Stop loss" in t["reason"] for t in result["trades"])
+        assert result["pending_stop_loss"] is True
+
+    def test_momentum_final_close_stop_loss_is_reported_unexecuted(self):
+        from app.services.backtest_service import _simulate
+
+        days = [_day(f"2026-09-{1 + i:02d}") for i in range(4)]
+        result = _simulate(
+            strategy="SCORE_MOMENTUM",
+            trading_days=days,
+            quote_map={
+                days[0]: _quote(100.0, 100.0),
+                days[1]: _quote(100.0, 100.0),
+                days[2]: _quote(100.0, 100.0),
+                days[3]: _quote(90.0, 99.0),
+            },
+            factor_map={},
+            initial_cash=100000.0,
+            score_map={
+                days[0]: SimpleNamespace(score=50.0),
+                days[1]: SimpleNamespace(score=70.0),
+            },
+            horizon=5,
+            score_delta=10.0,
+            stop_loss_pct=-5.0,
+        )
+
+        assert not any("Stop loss" in t["reason"] for t in result["trades"])
+        assert result["pending_stop_loss"] is True
+
+    def test_top_n_final_close_stop_loss_is_reported_unexecuted(self):
+        from app.services.backtest_service import _simulate_multi
+
+        days = [_day(f"2026-09-{1 + i:02d}") for i in range(3)]
+        code = "sh600000"
+        result = _simulate_multi(
+            strategy="TOP_N_ROTATION",
+            trading_days=days,
+            quote_maps={
+                code: {
+                    days[0]: _quote(100.0, 100.0),
+                    days[1]: _quote(100.0, 100.0),
+                    days[2]: _quote(90.0, 99.0),
+                }
+            },
+            factor_maps={},
+            score_maps={code: {days[0]: SimpleNamespace(score=90.0)}},
+            stock_names={},
+            initial_cash=100000.0,
+            top_n=1,
+            rebalance_interval=99,
+            stop_loss_pct=-5.0,
+        )
+
+        assert not any("Stop loss" in t["reason"] for t in result["trades"])
+        assert result["pending_stop_losses"] == [code]
+
 
 class TestScoreLoadingIntegrity:
     def test_service_filters_version_and_unusable_statuses_and_records_timing(

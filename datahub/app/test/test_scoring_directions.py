@@ -172,6 +172,9 @@ class TestRankedDirectionFlip:
                 "app.lib.scoring_engine.scoring_service.FinanceMarket.objects"
             ) as mock_market_objs,
             patch(
+                "app.lib.scoring_engine.scoring_service.ScoreModelVersion.objects"
+            ) as mock_registry,
+            patch(
                 "app.lib.scoring_engine.scoring_service.industry_momentum_component",
                 return_value={
                     "id": "industry_momentum",
@@ -190,6 +193,7 @@ class TestRankedDirectionFlip:
                 return_value=[],
             ),
         ):
+            mock_registry.return_value.first.return_value = None
             mock_market = MagicMock()
             mock_market.trade_calendar = calendar
             mock_market_objs.return_value.first.return_value = mock_market

@@ -1,4 +1,6 @@
 import datetime
+import sys
+import types
 from types import SimpleNamespace
 
 
@@ -137,3 +139,105 @@ def test_list_scores_rejects_unsupported_horizon(client):
 
     assert response.status_code == 400
     assert response.get_json()["message"] == "Unsupported horizon"
+
+
+def test_generate_single_score_queries_quote_by_canonical_code(
+    app, client, monkeypatch
+):
+    from flask_jwt_extended import create_access_token
+
+    from app.api.v1 import scores
+    from app.model import stock as stock_model
+
+    captured = {}
+
+    class _CountQuery:
+        def count(self):
+            return 1
+
+    def _quote_objects(**filters):
+        captured.update(filters)
+        return _CountQuery()
+
+    prediction = SimpleNamespace(
+        stock_code="sh600000", score=80.0, recommendation="BUY"
+    )
+    service = SimpleNamespace(
+        calendar=None,
+        score_single_stock=lambda *args, **kwargs: prediction,
+    )
+    config_module = types.ModuleType("app.lib.scoring_engine.config")
+    config_module.DEFAULT_MODEL_VERSION = "score-v1"
+    service_module = types.ModuleType("app.lib.scoring_engine.scoring_service")
+    service_module.StockScoringService = lambda **kwargs: service
+    monkeypatch.setitem(
+        sys.modules, "app.lib.scoring_engine", types.ModuleType("scoring_engine")
+    )
+    monkeypatch.setitem(sys.modules, "app.lib.scoring_engine.config", config_module)
+    monkeypatch.setitem(
+        sys.modules, "app.lib.scoring_engine.scoring_service", service_module
+    )
+    monkeypatch.setattr(
+        scores, "StockDailyQuote", SimpleNamespace(objects=_quote_objects)
+    )
+    monkeypatch.setattr(
+        stock_model,
+        "IndividualStock",
+        SimpleNamespace(
+            objects=lambda **kwargs: SimpleNamespace(
+                first=lambda: SimpleNamespace(code="sh600000")
+            )
+        ),
+    )
+    with app.app_context():
+        token = create_access_token(identity="test-user")
+
+    response = client.post(
+        "/api/scores/generate",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "date": "2026-04-13",
+            "horizon": 5,
+            "stock_code": "sh600000",
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "code": "sh600000",
+        "date": datetime.datetime(2026, 4, 13),
+    }
+
+
+def test_generate_score_wraps_service_initialization_failure(app, client, monkeypatch):
+    from flask_jwt_extended import create_access_token
+
+    config_module = types.ModuleType("app.lib.scoring_engine.config")
+    config_module.DEFAULT_MODEL_VERSION = "score-v1"
+    service_module = types.ModuleType("app.lib.scoring_engine.scoring_service")
+
+    def _raise_registry_failure(**_kwargs):
+        raise RuntimeError("model registry unavailable")
+
+    service_module.StockScoringService = _raise_registry_failure
+    monkeypatch.setitem(
+        sys.modules, "app.lib.scoring_engine", types.ModuleType("scoring_engine")
+    )
+    monkeypatch.setitem(sys.modules, "app.lib.scoring_engine.config", config_module)
+    monkeypatch.setitem(
+        sys.modules, "app.lib.scoring_engine.scoring_service", service_module
+    )
+    with app.app_context():
+        token = create_access_token(identity="test-user")
+
+    response = client.post(
+        "/api/scores/generate",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"date": "2026-04-13", "stock_code": "sh600000"},
+    )
+
+    assert response.status_code == 500
+    assert response.get_json() == {
+        "success": False,
+        "message": "评分生成失败: model registry unavailable",
+    }

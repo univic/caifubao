@@ -6,6 +6,8 @@ These tests use synthetic data / SimpleNamespace objects — no MongoDB required
 
 from datetime import datetime
 
+import pytest
+
 from types import SimpleNamespace
 
 
@@ -101,6 +103,14 @@ class TestLimitConstraints:
         assert _can_trade(q, "BUY") is False
         assert _can_trade(q, "SELL") is False
 
+    @pytest.mark.parametrize("trade_status", [None, 2, "unknown"])
+    def test_missing_or_unknown_trade_status_fails_closed(self, trade_status):
+        from app.services.backtest_service import _can_trade
+
+        q = SimpleNamespace(trade_status=trade_status, change_rate=0.0)
+        assert _can_trade(q, "BUY") is False
+        assert _can_trade(q, "SELL") is False
+
     def test_none_change_rate(self):
         """None change_rate is treated as 0 (no limit)."""
         from app.services.backtest_service import _can_trade
@@ -121,6 +131,13 @@ class TestLimitConstraints:
 
         q = SimpleNamespace(trade_status=1, change_rate=-9.9)
         assert _can_trade(q, "SELL") is False
+
+
+@pytest.mark.parametrize("value", [None, "bad-price", float("nan"), 0, -1])
+def test_adjusted_open_invalid_values_fail_closed(value):
+    from app.services.backtest_service import _adjusted_open_price
+
+    assert _adjusted_open_price(SimpleNamespace(open_hfq=value)) is None
 
 
 # ============================================================================

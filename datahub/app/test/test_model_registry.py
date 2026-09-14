@@ -89,17 +89,17 @@ def test_unregistered_version_falls_back_to_builtin():
     assert service.scoring_config == {}
 
 
-def test_registry_db_error_falls_back_cleanly():
+def test_registry_db_error_for_named_model_fails_closed():
     with (
         patch(
             "app.model.scoring.ScoreModelVersion.objects",
             side_effect=RuntimeError("db down"),
         ),
         patch("app.lib.scoring_engine.scoring_service.FinanceMarket.objects") as market,
+        pytest.raises(RuntimeError, match="registry lookup failed"),
     ):
         market.return_value.first.return_value = MagicMock(trade_calendar=[])
-        service = StockScoringService(model_version="flip_v1")
-    assert service.scoring_config == {}
+        StockScoringService(model_version="flip_v1")
 
 
 class TestRegistryValidation:
@@ -221,9 +221,15 @@ class TestRegistryRunnerFunctions:
         # retired version no longer loads as active config
         from app.lib.scoring_engine.scoring_service import StockScoringService
 
-        with patch(
-            "app.lib.scoring_engine.scoring_service.FinanceMarket.objects"
-        ) as market:
+        with (
+            patch(
+                "app.lib.scoring_engine.scoring_service.FinanceMarket.objects"
+            ) as market,
+            patch(
+                "app.lib.scoring_engine.scoring_service.ScoreModelVersion.objects",
+                return_value=_RegistryQS([]),
+            ),
+        ):
             market.return_value.first.return_value = MagicMock(trade_calendar=[])
             service = StockScoringService(model_version="v1")
         assert service.scoring_config == {}
