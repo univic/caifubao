@@ -13,11 +13,12 @@ world except for the parquet files it writes:
     2k near-duplicates.
 
 ``panel``
-    Freeze an ETF price panel with the factor lab's label semantics: labels are
-    positional trading-session offsets from the T+1 open to the open h sessions
-    later, and a name whose entry or exit is untradable is dropped with a reason
-    (never rolled forward). Prices are HFQ (raw × ``fund_adj``) so distributions
-    cannot masquerade as reversal.
+    Freeze an exploratory ETF price panel. Labels are offsets over each
+    instrument's observed quote rows from the next open to the open h rows later.
+    Without an exchange calendar this is not equivalent to the stock factor
+    lab's session-complete labels; missing rows are only guarded heuristically.
+    Prices are HFQ (raw × ``fund_adj``) so distributions cannot masquerade as
+    reversal.
 
 ``measure``
     Cross-sectional information coefficients and quantile spreads on the panel,
@@ -33,6 +34,7 @@ duty, which the CLI passes through as a zero ``sell_stamp_duty_rate``.
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime
 import json
 import math
@@ -47,11 +49,11 @@ import pandas as pd
 ETF_LIMIT = 10.0
 LIMIT_EPSILON = 0.1
 
-#: Round-trip friction for ETFs: no stamp duty, same commission floor and
-#: slippage as the paper model.
+#: Percentage-only ETF friction used by the exploratory replay. The 5 CNY
+#: broker minimum is not modelled here and must be handled by an account-level
+#: adapter before quoting small-notional results.
 ETF_SLIPPAGE_PER_SIDE = 0.001
 ETF_COMMISSION_RATE = 0.00025
-ETF_MIN_COMMISSION_CNY = 5.0
 ETF_SELL_STAMP_DUTY = 0.0
 
 #: Fund types kept in the pool: on-exchange equity products only.
@@ -229,14 +231,14 @@ def fetch_prices(
 
 
 def build_etf_panel(prices: pd.DataFrame, horizons) -> pd.DataFrame:
-    """Panel with the factor lab's session-offset labels.
+    """Exploratory panel with per-instrument observed-row-offset labels.
 
     Columns mirror ``factor_lab.panel`` where they overlap (raw + HFQ OHLC,
     volume, amount, change_rate, previous_close, trade_status) and add
     ``fwd_h{h}`` / ``blocked_h{h}`` per horizon. Unlike the stock lab there is
-    no board-aware limit band: an ETF entry is dropped only when the session is
-    missing or the price is unusable, which is the correct rule for a pool whose
-    limit bands differ by product type and which the pool stage already filters.
+    no exchange-calendar completeness check or product-specific limit band. A
+    price sanity check rejects obvious gaps, but callers must not present this
+    helper as a production-grade or session-complete execution replay.
     """
     frame = prices.copy()
     frame["date"] = pd.to_datetime(frame["trade_date"], format="%Y%m%d")
@@ -269,7 +271,22 @@ def build_etf_panel(prices: pd.DataFrame, horizons) -> pd.DataFrame:
 
     grouped = frame.groupby("stock_code", sort=False)
     entry_open = grouped["open_hfq"].shift(-1)
-    entry_exists = grouped["date"].shift(-1).notna()
+    entry_date = grouped["date"].shift(-1)
+    market_sessions = pd.DatetimeIndex(sorted(frame["date"].unique()))
+    session_positions = frame["date"].map(
+        {day: index for index, day in enumerate(market_sessions)}
+    )
+
+    def expected_session(offset: int) -> pd.Series:
+        positions = session_positions + offset
+        values = pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns]")
+        valid = positions < len(market_sessions)
+        values.loc[valid] = market_sessions.take(positions.loc[valid].astype(int))
+        return values
+
+    expected_entry = expected_session(1)
+    entry_exists = expected_entry.notna()
+    entry_consecutive = entry_date.eq(expected_entry)
     entry_close = grouped["close_hfq"].shift(-1)
     entry_change = grouped["change_rate"].shift(-1)
     # A next session exists but the stock's own next row may be a gap; without a
@@ -286,7 +303,10 @@ def build_etf_panel(prices: pd.DataFrame, horizons) -> pd.DataFrame:
     for horizon in sorted({int(h) for h in horizons}):
         exit_open = grouped["open_hfq"].shift(-(1 + horizon))
         exit_close = grouped["close_hfq"].shift(-(1 + horizon))
-        exit_exists = grouped["date"].shift(-(1 + horizon)).notna()
+        exit_date = grouped["date"].shift(-(1 + horizon))
+        expected_exit = expected_session(1 + horizon)
+        exit_exists = expected_exit.notna()
+        exit_consecutive = exit_date.eq(expected_exit)
         exit_change = grouped["change_rate"].shift(-(1 + horizon))
         exit_valid = (
             exit_exists
@@ -298,8 +318,14 @@ def build_etf_panel(prices: pd.DataFrame, horizons) -> pd.DataFrame:
         gross = (exit_open - entry_open) / entry_open
         blocked = pd.Series(pd.NA, index=frame.index, dtype="object")
         blocked = blocked.mask(~entry_exists, "no_next_session")
+        blocked = blocked.mask(
+            blocked.isna() & ~entry_consecutive, "missing_session_between"
+        )
         blocked = blocked.mask(blocked.isna() & ~entry_valid, "missing_price")
         blocked = blocked.mask(blocked.isna() & ~exit_exists, "no_exit_yet")
+        blocked = blocked.mask(
+            blocked.isna() & ~exit_consecutive, "missing_session_between"
+        )
         blocked = blocked.mask(blocked.isna() & ~exit_valid, "missing_price")
         frame[f"fwd_h{horizon}"] = gross.where(blocked.isna())
         frame[f"blocked_h{horizon}"] = blocked
@@ -332,13 +358,13 @@ def etf_round_trip_cost() -> float:
 
 
 def ledger_entry(rule: dict, signal: dict, diagnostics, now=None) -> dict:
-    """One immutable forward-paper record: the rule plus the signal it produced."""
+    """One replay-only research record: the rule plus its reconstructed signal."""
     moment = now or datetime.datetime.now(datetime.UTC)
     return {
         "logged_at": moment.isoformat(),
-        "rule": dict(rule),
-        "signal": dict(signal),
-        "diagnostics": list(diagnostics),
+        "rule": copy.deepcopy(rule),
+        "signal": copy.deepcopy(signal),
+        "diagnostics": copy.deepcopy(list(diagnostics)),
         "evidence_kind": "REPLAY",
     }
 
@@ -502,7 +528,7 @@ def main(argv=None) -> int:
     rotate.add_argument(
         "--ledger",
         default=None,
-        help="append today's signal as one JSON line (forward paper evidence)",
+        help="append today's signal as replay-only research JSONL",
     )
 
     measure = commands.add_parser("measure", help="IC and quantile spread per factor")
@@ -518,16 +544,19 @@ def main(argv=None) -> int:
         parser.print_help()
         return 2
 
-    import os
+    pro = None
+    if args.command in {"pool", "panel", "rotate"}:
+        import os
 
-    import tushare as ts
+        import tushare as ts
 
-    pro = ts.pro_api(os.environ["TUSHARE_TOKEN"])
+        pro = ts.pro_api(os.environ["TUSHARE_TOKEN"])
 
     if args.command == "pool":
         basic = fetch_basic(pro)
         daily = fetch_liquidity(pro, args.trade_date)
         pool = build_pool(basic, daily, min_amount_kyuan=args.min_amount_kyuan)
+        pool["liquidity_snapshot_date"] = str(args.trade_date)
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
         pool.to_parquet(args.output, index=False)
         summary = {
@@ -618,6 +647,7 @@ def main(argv=None) -> int:
             ),
         }
         if args.output:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
             with open(args.output, "w", encoding="utf-8") as handle:
                 json.dump(report, handle, ensure_ascii=False, indent=2, default=str)
         print(
@@ -633,9 +663,8 @@ def main(argv=None) -> int:
         }
         print("SIGNAL " + json.dumps(signal_payload, ensure_ascii=False))
         if args.ledger:
-            # Forward paper evidence: one immutable line per emitted signal, with
-            # the rule parameters, so the 120-session window can be counted later
-            # without trusting a rewritten backtest.
+            # Historical/current-as-of reconstruction is always REPLAY. This
+            # local JSONL must never count toward the immutable 120-session gate.
             entry = ledger_entry(
                 {
                     "codes": codes,
@@ -670,6 +699,7 @@ def main(argv=None) -> int:
             "spread": {str(h): quantile_spread(panel, factor, h) for h in horizons},
         }
     if args.output:
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
         with open(args.output, "w", encoding="utf-8") as handle:
             json.dump(report, handle, ensure_ascii=False, indent=2, default=str)
     for factor, entry in report["factors"].items():

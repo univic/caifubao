@@ -7,6 +7,7 @@ import json
 import pandas as pd
 import pytest
 
+import app.lib.etf_lab.pipeline as pipeline
 from app.lib.etf_lab.pipeline import (
     build_etf_panel,
     build_pool,
@@ -173,6 +174,21 @@ def test_panel_applies_adjustment_factor_and_drops_gaps():
     assert panel.iloc[0]["blocked_h1"] == "missing_price"
 
 
+def test_panel_blocks_a_missing_market_session_in_one_etf():
+    rows = [
+        ["A", "20260101", 10.0, 10.0, 10.0, 10.0, 10.0, 1e6, 1e5, 0.0, 1.0],
+        ["A", "20260103", 10.1, 10.1, 10.1, 10.1, 10.0, 1e6, 1e5, 1.0, 1.0],
+        ["A", "20260104", 10.2, 10.2, 10.2, 10.2, 10.1, 1e6, 1e5, 1.0, 1.0],
+        ["B", "20260101", 10.0, 10.0, 10.0, 10.0, 10.0, 1e6, 1e5, 0.0, 1.0],
+        ["B", "20260102", 10.0, 10.0, 10.0, 10.0, 10.0, 1e6, 1e5, 0.0, 1.0],
+        ["B", "20260103", 10.0, 10.0, 10.0, 10.0, 10.0, 1e6, 1e5, 0.0, 1.0],
+        ["B", "20260104", 10.0, 10.0, 10.0, 10.0, 10.0, 1e6, 1e5, 0.0, 1.0],
+    ]
+    panel = build_etf_panel(_prices(rows), [1])
+    first_a = panel.loc[panel["stock_code"] == "A"].iloc[0]
+    assert first_a["blocked_h1"] == "missing_session_between"
+
+
 def test_factors_are_backward_looking():
     rows = []
     for index in range(25):
@@ -251,6 +267,8 @@ def test_ledger_entry_keeps_rule_signal_and_evidence_kind():
     # report cannot rewrite an already-emitted record.
     rule["top_n"] = 99
     assert entry["rule"]["top_n"] == 1
+    signal["selected"].append("510300.SH")
+    assert entry["signal"]["selected"] == ["513100.SH"]
 
 
 def test_append_ledger_adds_one_line_per_signal_and_creates_parents(tmp_path):
@@ -271,3 +289,36 @@ def test_append_ledger_adds_one_line_per_signal_and_creates_parents(tmp_path):
         "2026-09-14",
     ]
     assert all(json.loads(line)["evidence_kind"] == "REPLAY" for line in lines)
+
+
+def test_measure_cli_is_local_and_does_not_require_tushare_token(monkeypatch, capsys):
+    panel = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-01-05"]),
+            "stock_code": ["510300.SH"],
+        }
+    )
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.setattr(pipeline.pd, "read_parquet", lambda _: panel)
+    monkeypatch.setattr(pipeline, "ic_report", lambda *args: {"ic_mean": None})
+    monkeypatch.setattr(
+        pipeline,
+        "quantile_spread",
+        lambda *args: {"gross_top_minus_bottom": None},
+    )
+
+    assert (
+        pipeline.main(
+            [
+                "measure",
+                "--panel",
+                "frozen.parquet",
+                "--factors",
+                "momentum_20",
+                "--horizons",
+                "20",
+            ]
+        )
+        == 0
+    )
+    assert "momentum_20    h20" in capsys.readouterr().out

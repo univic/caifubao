@@ -46,9 +46,8 @@ def test_simulate_does_not_hand_the_new_book_the_rebalance_gain():
     prices = pd.DataFrame(index=sessions, columns=["A", "BOND"], dtype=float)
     prices["A"] = 10.0
     prices["BOND"] = 10.0
-    # build momentum so that A qualifies on session 20 and is bought
-    prices.loc[sessions[0], "A"] = 5.0
-    prices.loc[sessions[20], "A"] = 10.0
+    # Build positive 5-session momentum so A genuinely qualifies at session 20.
+    prices.loc[sessions[15] : sessions[20], "A"] = np.linspace(6.0, 10.0, 6)
     # the jump happens on session 21
     prices.loc[sessions[21] :, "A"] = 15.0
     prices["A"] = prices["A"].ffill()
@@ -63,8 +62,7 @@ def test_simulate_does_not_hand_the_new_book_the_rebalance_gain():
         end=sessions[-1],
     )
     curve = result["curve"]
-    # session 20 -> 21 is +50% only for a holder of A coming into 21; the book
-    # bought on 20 starts on 21, so it earns 21 -> 22 (flat), not 20 -> 21.
+    # The close-20 signal fills at close 21. It cannot earn close 20 -> close 21.
     r20_21 = curve.loc[sessions[21]] / curve.loc[sessions[20]] - 1.0
     assert abs(r20_21) < 0.01
 
@@ -91,6 +89,33 @@ def test_simulate_charges_turnover_only_on_replacements():
     assert result["final_equity"] > 1.0
 
 
+def test_reentry_after_cash_pays_a_new_round_trip(monkeypatch):
+    from app.lib.etf_lab import rotation
+
+    sessions = pd.date_range("2026-01-01", periods=6, freq="B")
+    prices = _flat_prices(["A", "BOND"], sessions)
+    selections = iter([["A"], [], ["A"]])
+    monkeypatch.setattr(
+        rotation,
+        "select_targets",
+        lambda *_args, **_kwargs: next(selections),
+    )
+
+    result = simulate(
+        prices,
+        lookback=1,
+        top_n=1,
+        ma=2,
+        cadence=2,
+        cost=0.10,
+        cash_daily=0.0,
+        defensive="BOND",
+    )
+
+    assert result["final_equity"] == pytest.approx(0.81)
+    assert result["total_trades"] == 2
+
+
 def test_simulate_holds_the_defensive_asset_when_nothing_qualifies():
     sessions = pd.date_range("2026-01-01", periods=40, freq="B")
     prices = _flat_prices(["A", "BOND"], sessions)
@@ -108,6 +133,23 @@ def test_simulate_holds_the_defensive_asset_when_nothing_qualifies():
     )
     assert result["final_holdings"] == ["BOND"]
     assert result["final_equity"] > 1.0
+
+
+def test_simulate_fails_closed_when_a_held_asset_loses_a_quote():
+    sessions = pd.date_range("2026-01-01", periods=8, freq="B")
+    prices = _flat_prices(["A", "BOND"], sessions)
+    prices["A"] = np.linspace(10.0, 12.0, len(sessions))
+    prices.loc[sessions[4], "A"] = np.nan
+
+    with pytest.raises(ValueError, match="missing close-to-close return"):
+        simulate(
+            prices,
+            lookback=1,
+            top_n=1,
+            ma=2,
+            cadence=2,
+            defensive="BOND",
+        )
 
 
 def test_yearly_returns_and_summary():

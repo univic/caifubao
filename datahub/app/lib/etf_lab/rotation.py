@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Multi-asset ETF trend rotation: pure selection + simulation + signal.
 
-The structure a 5-10万 account can actually run: a handful of liquid broad
-ETFs, one rebalance a month, one to three positions, so each position is
-15k-50k CNY and the 5 CNY minimum commission never binds.
+The structure is a handful of liquid broad ETFs, one rebalance a month, and one
+to three positions. The exploratory simulator uses percentage-only friction;
+an account-level replay must apply the 5 CNY broker minimum to actual notionals.
 
 Rule
 ----
@@ -14,11 +14,11 @@ hold the defensive (bond) ETF.
 
 No look-ahead
 -------------
-The signal uses the rebalance session's own close, so that session's return must
-be earned by the **previous** book; the newly selected book only starts on the
-next session, and its round-trip cost is charged then. ``simulate`` enforces
-this ordering and ``test_rotation.py`` pins it with a price path that would
-otherwise hand the new book a large same-session gain.
+The signal uses the rebalance session's own close. With close-only input, the
+first causal fill proxy is the **next session's close**: the previous book earns
+the return into that close, the target change and cost are applied there, and
+the new book first earns the following close-to-close return. ``simulate``
+enforces this conservative convention.
 
 Costs
 -----
@@ -119,7 +119,7 @@ def simulate(
     if not isinstance(prices.index, pd.DatetimeIndex):
         raise TypeError("prices must be indexed by session timestamps")
     close = prices.sort_index()
-    rets = close.pct_change().fillna(0.0)
+    rets = close.pct_change(fill_method=None)
     momentum = close / close.shift(lookback) - 1.0
     trend = close > close.rolling(ma).mean()
     vol = realised_vol(close, vol_window) if target_vol else None
@@ -138,9 +138,9 @@ def simulate(
 
     equity = 1.0
     current: list[str] = []
-    previous: list[str] = []
     exposure = 1.0
-    pending_cost = 0.0
+    pending_target: list[str] | None = None
+    pending_exposure = 1.0
     sessions: list = []
     curve: list[float] = []
     trades = 0
@@ -161,34 +161,46 @@ def simulate(
                 defensive=defensive,
                 eligible=allowed,
             )
-        # The session's return belongs to the book held coming into it. With a
-        # volatility target the uninvested share earns the cash leg instead.
+        # The session's close-to-close return belongs to the book held coming
+        # into it. A signal from the preceding close fills only at this close.
         if not current:
             daily = cash_daily
         else:
-            book_return = float(rets.loc[day, current].mean())
+            held_returns = rets.loc[day, current]
+            if held_returns.isna().any() or not all(
+                math.isfinite(float(value)) for value in held_returns
+            ):
+                missing = held_returns.index[held_returns.isna()].tolist()
+                raise ValueError(
+                    f"missing close-to-close return for held assets on "
+                    f"{day.date()}: {missing}"
+                )
+            book_return = float(held_returns.mean())
             daily = exposure * book_return + (1.0 - exposure) * cash_daily
-        daily -= pending_cost
-        pending_cost = 0.0
+        if pending_target is not None:
+            daily -= _turnover(current, pending_target) * cost
+            trades += len(set(pending_target) - set(current))
+            current = pending_target
+            exposure = pending_exposure
+            pending_target = None
         equity *= 1 + daily
         sessions.append(day)
         curve.append(equity)
         holdings_log[day] = list(current)
         if picks is not None:
             if picks:
-                pending_cost = _turnover(previous, picks) * cost
-                trades += len(set(picks) - set(previous))
-                previous = picks
                 if target_vol and vol is not None:
                     book_vol = float(vol.loc[day, picks].mean())
-                    exposure = (
+                    pending_exposure = (
                         min(1.0, max(0.0, target_vol / book_vol))
                         if book_vol and math.isfinite(book_vol) and book_vol > 0
                         else 1.0
                     )
                 else:
-                    exposure = 1.0
-            current = picks
+                    pending_exposure = 1.0
+            else:
+                pending_exposure = 1.0
+            pending_target = picks
 
     series = pd.Series(curve, index=pd.DatetimeIndex(sessions))
     if series.empty:

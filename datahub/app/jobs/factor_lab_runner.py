@@ -42,6 +42,7 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +345,8 @@ def holding_scan_panel(
     buffers,
     portfolio_size,
     entry_pct,
+    start=None,
+    end=None,
 ) -> dict:
     """Holding-period x buffer scan of one registered factor on a frozen panel.
 
@@ -352,6 +355,8 @@ def holding_scan_panel(
     edge?"). The label semantics stay the lab's: a blocked entry/exit is dropped,
     never rolled forward, so every cell is measured on the same frozen panel.
     """
+    import pandas as pd
+
     from app.lib.factor_lab.factors import REGISTRY, compute
     from app.lib.factor_lab.panel import session_span
 
@@ -369,11 +374,16 @@ def holding_scan_panel(
         )
 
     panel = _load_panel(path, horizons=horizons)
+    missing = [
+        int(horizon)
+        for horizon in sorted(set(horizons))
+        if f"fwd_h{int(horizon)}" not in panel.columns
+    ]
+    if missing:
+        raise ValueError(f"panel is missing requested horizon labels: {missing}")
     signal = compute(panel, factor)
     cells = []
     for horizon in sorted({int(h) for h in horizons}):
-        if f"fwd_h{horizon}" not in panel.columns:
-            continue
         # One horizon at a time: each scan frame is a few hundred MB on a
         # full-history panel, and holding every horizon's copy at once
         # OOMKilled the 6 GiB pod.
@@ -386,13 +396,22 @@ def holding_scan_panel(
                     buffer=buffer,
                     entry_pct=entry_pct,
                     portfolio_size=portfolio_size,
+                    start=start,
+                    end=end,
                 )
             )
         del frame
     table = summary_table(cells)
+    dates = panel["date"]
+    evaluation_start = pd.Timestamp(start) if start is not None else dates.min()
+    evaluation_end = pd.Timestamp(end) if end is not None else dates.max()
     return {
         "panel": str(path),
         "span": session_span(panel),
+        "evaluation_window": {
+            "from": str(evaluation_start.date()),
+            "to": str(evaluation_end.date()),
+        },
         "factor": factor,
         "entry_pct": entry_pct,
         "portfolio_size": portfolio_size,
@@ -451,6 +470,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--buffers", default="1.0,1.5,2.0")
     scan.add_argument("--portfolio-size", type=int, default=800)
     scan.add_argument("--entry-pct", type=float, default=0.2)
+    scan.add_argument("--from-date", default=None)
+    scan.add_argument("--to-date", default=None)
     scan.add_argument("--output", default=None)
 
     commands.add_parser("list", help="List registered factors")
@@ -496,8 +517,11 @@ def main(argv=None) -> int:
             buffers=[float(part) for part in args.buffers.split(",") if part.strip()],
             portfolio_size=args.portfolio_size,
             entry_pct=args.entry_pct,
+            start=args.from_date,
+            end=args.to_date,
         )
         if args.output:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
             with open(args.output, "w", encoding="utf-8") as handle:
                 json.dump(report, handle, ensure_ascii=False, indent=2, default=str)
         print(_scan_summary(report))

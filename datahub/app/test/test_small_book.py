@@ -68,8 +68,7 @@ def test_components_match_engine_formulas():
     assert last["relative_strength"] == pytest.approx(1.0)
     # new high -> range position pinned to 1.0
     assert last["breakout_or_position"] == pytest.approx(1.0)
-    # risk penalty is raw (not clamped) and positive for a volatile series
-    assert last["risk_penalty"] > 0
+    assert 0 < last["risk_penalty"] <= 1.0
 
 
 def test_flat_series_has_no_momentum_and_mid_range_position():
@@ -170,6 +169,21 @@ def test_signal_strength_live_decay_and_expiry():
     )
     combined = attach_signal_strength(features, pd.concat([signals, bearish]))
     assert combined.iloc[3] == pytest.approx(0.8 * 0.7**3)
+
+
+def test_signal_strength_decay_uses_calendar_days_over_a_weekend():
+    days = pd.to_datetime(["2024-01-05", "2024-01-08"])
+    rows = [["sh600000", d, 10.0, 10.0, 10.0, 1e7, 1, 0] for d in days]
+    factor_rows = [["sh600000", d, 10.0, 10.0, 10.0] for d in days]
+    features = build_features(_quotes(rows), _factors(factor_rows))
+    signals = pd.DataFrame(
+        [["sh600000", days[0], "BULLISH", 0.8, "MA_CROSS"]],
+        columns=["stock_code", "date", "direction", "strength", "signal_name"],
+    )
+
+    value = attach_signal_strength(features, signals)
+
+    assert value.iloc[1] == pytest.approx(0.8 * 0.7**3)
 
 
 def test_industry_momentum_ranks_industries_cross_sectionally():

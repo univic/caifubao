@@ -36,9 +36,9 @@ Buffer semantics (hysteresis)
 * exit: a held name is only sold once its percentile rises above
   ``entry_pct * buffer`` — so ``buffer == 1.0`` is a full re-sort every
   rebalance, ``1.5``/``2.0`` let winners sit until they leave the wider band;
-* a name is always sold when its label's holding period has elapsed, whether or
-  not the buffer would have kept it; the next rebalance re-enters if it still
-  qualifies.
+* ``horizon`` defines the rebalance cadence.  It does not force liquidation:
+  an existing name that remains inside the exit band carries into the next
+  tranche without paying another round trip.
 
 Turnover
 --------
@@ -92,16 +92,20 @@ def build_scan_input(
             ),
         }
     )
-    frame["rank"] = frame.groupby("date", sort=False)["signal"].rank(
-        method="first", pct=True
+    eligible = frame["label"].notna() & frame["signal"].notna()
+    frame["rank"] = math.nan
+    frame.loc[eligible, "rank"] = (
+        frame.loc[eligible]
+        .groupby("date", sort=False)["signal"]
+        .rank(method="first", pct=True)
     )
     # pct=True gives (i+1)/n for the i-th of n names, so the floor band is
     # (0, entry_pct]; shift to the 0..1 convention the caller expects (0 = the
     # lowest signal value) without inventing a percentile for a 1-name session.
-    counts = frame.groupby("date")["signal"].transform("count")
-    frame["rank"] = (frame["rank"] * counts - 1.0) / (counts - 1.0).where(
-        counts > 1, 1.0
-    )
+    counts = frame.loc[eligible].groupby("date")["signal"].transform("count")
+    frame.loc[eligible, "rank"] = (frame.loc[eligible, "rank"] * counts - 1.0) / (
+        counts - 1.0
+    ).where(counts > 1, 1.0)
     return frame.loc[:, ["date", "stock_code", "label", "rank"]]
 
 
@@ -119,6 +123,8 @@ def scan_cell(
     entry_pct: float = 0.20,
     portfolio_size: int = 800,
     friction: float = ROUND_TRIP_COST,
+    start=None,
+    end=None,
 ) -> dict:
     """Scan one (holding period, buffer) cell of the rotation rule."""
     if horizon < 1:
@@ -132,8 +138,17 @@ def scan_cell(
     if portfolio_size < 1:
         raise ValueError("portfolio_size must be >= 1")
 
+    working = frame.copy()
+    working["date"] = pd.to_datetime(working["date"])
+    lower = pd.Timestamp(start) if start is not None else working["date"].min()
+    upper = pd.Timestamp(end) if end is not None else working["date"].max()
+    window = working.loc[working["date"].between(lower, upper)]
+    sessions = sorted(window["date"].dropna().unique())
+    if not sessions:
+        return _empty_cell(horizon, buffer, entry_pct, portfolio_size)
+
     exit_pct = min(1.0, entry_pct * buffer)
-    usable = frame.loc[frame["label"].notna() & frame["rank"].notna()]
+    usable = window.loc[window["label"].notna() & window["rank"].notna()]
     if usable.empty:
         return _empty_cell(horizon, buffer, entry_pct, portfolio_size)
 
@@ -144,11 +159,9 @@ def scan_cell(
         )
         for day, group in usable.groupby("date", sort=True)
     }
-    benchmark = usable.groupby("date")["label"].mean().sub(friction).sort_index()
-    sessions = sorted(by_date)
-
-    book: dict[str, int] = {}
+    book: set[str] = set()
     previous_target: set[str] = set()
+    previous_benchmark: set[str] = set()
     tranche_excess: list[float] = []
     turnovers: list[float] = []
     basket_returns: list[float] = []
@@ -157,17 +170,23 @@ def scan_cell(
     for index, day in enumerate(sessions):
         if index % horizon:
             continue
+        if day not in by_date:
+            # A fully blocked date still consumes its scheduled cadence slot;
+            # execution is never shifted to the next measurable date.
+            book = set()
+            previous_target = set()
+            previous_benchmark = set()
+            continue
         ranks, labels = by_date[day]
-        # 1) holding period elapsed -> sold regardless of the buffer
-        for code in list(book):
-            if book[code] <= index:
-                book.pop(code)
-        # 2) buffer: sell only once the name leaves the wider band
-        for code in list(book):
-            rank = ranks.get(code)
-            if rank is not None and rank > exit_pct:
-                book.pop(code)
-        # 3) fill vacancies from the entry band, best (lowest) rank first
+        # Keep only measurable holdings that remain inside the wider exit band.
+        # A blocked/unresolved label is excluded on its original date, never
+        # rolled to a later session.
+        book = {
+            code
+            for code in book
+            if code in labels and ranks.get(code, math.inf) <= exit_pct
+        }
+        # Fill vacancies from the entry band, best (lowest) rank first.
         vacancies = portfolio_size - len(book)
         if vacancies > 0:
             candidates = [
@@ -179,7 +198,7 @@ def scan_cell(
             ]
             candidates.sort()
             for _, code in candidates[:vacancies]:
-                book[code] = index + horizon
+                book.add(code)
                 if code not in previous_target:
                     entries += 1
         target = set(book)
@@ -189,11 +208,20 @@ def scan_cell(
         # Turnover is replacement of the target book, not the mechanical churn of
         # re-buying a name whose holding period elapsed: a strategy that keeps
         # selecting the same name does not pay a round trip for it again.
-        turnovers.append(_basket_turnover(previous_target, target))
+        turnover = _basket_turnover(previous_target, target)
+        turnovers.append(turnover)
         previous_target = target
-        basket = sum(labels[code] for code in target) / len(target) - friction
+        basket = (
+            sum(labels[code] for code in target) / len(target) - friction * turnover
+        )
         basket_returns.append(basket)
-        tranche_excess.append(basket - float(benchmark.get(day, math.nan)))
+        benchmark_target = set(labels)
+        benchmark_turnover = _basket_turnover(previous_benchmark, benchmark_target)
+        previous_benchmark = benchmark_target
+        benchmark_return = (
+            sum(labels.values()) / len(labels) - friction * benchmark_turnover
+        )
+        tranche_excess.append(basket - benchmark_return)
 
     clean = [value for value in tranche_excess if math.isfinite(value)]
     periods_per_year = 252.0 / horizon

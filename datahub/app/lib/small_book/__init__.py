@@ -15,10 +15,10 @@ Scope and honesty
   (change+0.05)/0.15; trend alignment = share of MA checks true; breakout =
   (close-low)/(high-low) over the breakout lookback; real relative strength =
   CSI300 alpha; risk penalty = stdev(returns)/0.06 (+1 when ST/suspended)).
-* **Not reconstructed**: ``signal_strength`` (needs the signal decay chain) and
-  ``industry_momentum`` (needs the industry daily-metrics aggregate). Callers
-  must **renormalise over the components they have** and report which are
-  missing; the two omitted components are 20 of 110 weight in H20.
+* ``signal_strength`` reproduces the engine's persistence decay.
+  ``industry_momentum`` uses a same-date industry cross-section instead of the
+  production engine's prior-run/one-session-lag aggregate. Reports must disclose
+  that approximation and must not claim exact production-score parity.
 * Direction is applied per call: the ``flip`` side negates every alpha
   component and keeps the penalty's standard sign, matching the registry entry
   for ``flip_wide_shadow_v1``.
@@ -103,7 +103,10 @@ def build_features(quotes: pd.DataFrame, factors: pd.DataFrame) -> pd.DataFrame:
             frame["close_lag_mom"] = grouped["close"].shift(window)
         elif name == "risk_lookback":
             frame["vol"] = (
-                grouped["ret_1"].rolling(window).std().reset_index(level=0, drop=True)
+                grouped["ret_1"]
+                .rolling(window)
+                .std(ddof=0)
+                .reset_index(level=0, drop=True)
             )
     # `min_periods=1` mirrors the engine, which slices whatever history exists
     # up to the lookback (`history_quotes[:breakout_lookback]`) rather than
@@ -174,7 +177,7 @@ def components_at(
         return pd.to_numeric(value, errors="coerce").fillna(default)
 
     abnormal = (_flag("trade_status", 1) != 1) | (_flag("is_st", 0) == 1)
-    frame["risk_penalty"] = raw + abnormal.astype(float)
+    frame["risk_penalty"] = (raw + abnormal.astype(float)).clip(0.0, 1.0)
     return frame
 
 
@@ -202,14 +205,13 @@ def attach_signal_strength(features: pd.DataFrame, signals: pd.DataFrame) -> pd.
             base = pd.Series(keyed["signal_base"].to_numpy(), index=features.index)
 
     frame = features[["stock_code", "date"]].copy()
-    frame["session"] = frame.groupby("stock_code", sort=False).cumcount()
     has_signal = base.notna()
     frame["signal_base"] = base
-    frame["signal_session"] = frame["session"].where(has_signal)
+    frame["signal_date"] = frame["date"].where(has_signal)
     grouped = frame.groupby("stock_code", sort=False)
     frame["last_base"] = grouped["signal_base"].ffill()
-    frame["last_session"] = grouped["signal_session"].ffill()
-    days_since = frame["session"] - frame["last_session"]
+    frame["last_date"] = grouped["signal_date"].ffill()
+    days_since = (frame["date"] - frame["last_date"]).dt.days
     decayed = frame["last_base"] * (SIGNAL_DECAY_FACTOR**days_since)
     fresh = has_signal & frame["signal_base"].notna()
     value = pd.Series(0.0, index=features.index)

@@ -79,7 +79,15 @@ def _ascending(count: int, code_position: int) -> dict[int, dict[str, float]]:
 
 
 def test_rank_is_zero_based_and_flat_for_single_name_session():
-    panel = _panel(2, [3, 1], {"sz000001": [0.01, 0.01]})
+    panel = _panel(
+        2,
+        [3, 1],
+        {
+            "sz000001": [0.01, 0.01],
+            "sz000002": [0.02, None],
+            "sz000003": [0.03, None],
+        },
+    )
     signal = _signal(
         panel,
         {
@@ -149,6 +157,30 @@ def test_blocked_label_is_excluded_from_basket_and_benchmark():
     assert cell["excess_returns"][0] == pytest.approx(0.0)
 
 
+def test_blocked_low_signal_does_not_change_tradable_cross_section_rank():
+    panel = _panel(
+        1,
+        [3],
+        {
+            "sz000001": [None],
+            "sz000002": [0.04],
+            "sz000003": [0.02],
+        },
+    )
+    signal = _signal(
+        panel,
+        {
+            0: {"sz000001": 1.0, "sz000002": 2.0, "sz000003": 3.0},
+        },
+    )
+
+    frame = build_scan_input(panel, signal, 1).set_index("stock_code")
+
+    assert pd.isna(frame.loc["sz000001", "rank"])
+    assert frame.loc["sz000002", "rank"] == pytest.approx(0.0)
+    assert frame.loc["sz000003", "rank"] == pytest.approx(1.0)
+
+
 def test_empty_input_returns_an_empty_cell_rather_than_a_number():
     frame = pd.DataFrame(
         {
@@ -198,3 +230,147 @@ def test_grid_skips_missing_horizons_and_sorts_the_summary():
 
 def test_round_trip_cost_matches_the_factor_lab_convention():
     assert ROUND_TRIP_COST == pytest.approx(0.0035)
+
+
+def test_wider_buffer_retains_name_and_reduces_replacement_turnover():
+    counts = [4] * 4
+    panel = _panel(
+        1,
+        counts,
+        {f"sz{position:06d}": [0.02] * 4 for position in range(1, 5)},
+    )
+    signal = _signal(
+        panel,
+        {
+            0: {
+                "sz000001": 1.0,
+                "sz000002": 2.0,
+                "sz000003": 3.0,
+                "sz000004": 4.0,
+            },
+            **{
+                index: {
+                    "sz000002": 1.0,
+                    "sz000001": 2.0,
+                    "sz000003": 3.0,
+                    "sz000004": 4.0,
+                }
+                for index in range(1, 4)
+            },
+        },
+    )
+    frame = build_scan_input(panel, signal, 1)
+
+    tight = scan_cell(frame, horizon=1, buffer=1.0, entry_pct=0.25, portfolio_size=1)
+    wide = scan_cell(frame, horizon=1, buffer=2.0, entry_pct=0.25, portfolio_size=1)
+
+    assert wide["annual_turnover"] < tight["annual_turnover"]
+    assert wide["entries"] == 1
+    assert tight["entries"] == 2
+
+
+def test_unchanged_book_only_pays_round_trip_friction_on_initial_entry():
+    panel = _panel(
+        1,
+        [2, 2],
+        {"sz000001": [0.20, 0.20], "sz000002": [0.10, 0.10]},
+    )
+    signal = _signal(
+        panel,
+        {index: {"sz000001": 1.0, "sz000002": 2.0} for index in range(2)},
+    )
+    frame = build_scan_input(panel, signal, 1)
+
+    cell = scan_cell(
+        frame,
+        horizon=1,
+        buffer=1.0,
+        entry_pct=0.5,
+        portfolio_size=1,
+        friction=0.10,
+    )
+
+    assert cell["basket_returns"] == pytest.approx([0.10, 0.20])
+    assert cell["avg_one_way_turnover"] == pytest.approx(0.5)
+
+
+def test_unresolved_held_label_is_excluded_without_rolling_or_crashing():
+    panel = _panel(
+        1,
+        [2, 2],
+        {"sz000001": [0.20, None], "sz000002": [0.10, 0.10]},
+    )
+    signal = _signal(
+        panel,
+        {
+            0: {"sz000001": 1.0, "sz000002": 2.0},
+            1: {"sz000001": 1.0, "sz000002": 2.0},
+        },
+    )
+    frame = build_scan_input(panel, signal, 1)
+
+    cell = scan_cell(frame, horizon=1, buffer=2.0, entry_pct=1.0, portfolio_size=1)
+
+    assert cell["rebalances"] == 2
+    assert cell["entries"] == 2
+    assert cell["basket_returns"][1] == pytest.approx(0.10 - ROUND_TRIP_COST)
+
+
+def test_requested_window_anchor_is_invariant_to_leading_history():
+    panel = _panel(
+        1,
+        [2] * 6,
+        {"sz000001": [0.20] * 6, "sz000002": [0.10] * 6},
+    )
+    signal = _signal(
+        panel,
+        {
+            index: {"sz000001": float(index), "sz000002": float(10 - index)}
+            for index in range(6)
+        },
+    )
+    frame = build_scan_input(panel, signal, 1)
+    sessions = sorted(frame["date"].unique())
+
+    full = scan_cell(
+        frame,
+        horizon=2,
+        buffer=1.0,
+        entry_pct=0.5,
+        portfolio_size=1,
+        start=sessions[2],
+        end=sessions[-1],
+    )
+    trimmed = scan_cell(
+        frame.loc[frame["date"] >= sessions[2]],
+        horizon=2,
+        buffer=1.0,
+        entry_pct=0.5,
+        portfolio_size=1,
+        start=sessions[2],
+        end=sessions[-1],
+    )
+
+    assert full["basket_returns"] == pytest.approx(trimmed["basket_returns"])
+    assert full["annual_turnover"] == pytest.approx(trimmed["annual_turnover"])
+
+
+def test_all_blocked_session_consumes_its_scheduled_cadence_slot():
+    panel = _panel(
+        1,
+        [2] * 4,
+        {
+            "sz000001": [None, 0.20, 0.20, 0.20],
+            "sz000002": [None, 0.10, 0.10, 0.10],
+        },
+    )
+    signal = _signal(
+        panel,
+        {index: {"sz000001": 1.0, "sz000002": 2.0} for index in range(4)},
+    )
+    frame = build_scan_input(panel, signal, 1)
+
+    cell = scan_cell(frame, horizon=2, buffer=1.0, entry_pct=0.5, portfolio_size=1)
+
+    assert cell["rebalances"] == 1
+    assert cell["entries"] == 1
