@@ -51,5 +51,5 @@
 
 - [x] 3.1 spec-guardian **GATE_OK**（`12f893d` 后按 P3 收口注释与勾选）；qa-reviewer 审阅。
       contract-reviewer 不触发：不改 API/鉴权/freshness/OpenClaw
-- [ ] 3.2 branch-conflict vs develop；Draft PR CI green
+- [x] 3.2 branch-conflict vs develop；Draft PR CI green
 - [ ] 3.3 agent-progress 回填；本切片不授权合并、写库、promote 或真实下单

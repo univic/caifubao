@@ -17,6 +17,6 @@
 - [x] 3.1 Run focused backend tests and Ruff checks.
 - [x] 3.2 Run frontend lint and production build.
 - [x] 3.3 Run `openspec validate --all --strict`.
-- [ ] 3.4 Complete contract and QA reviews plus branch-conflict check.
+- [x] 3.4 Complete contract and QA reviews plus branch-conflict check.
 - [ ] 3.5 Complete Draft PR/CI gate and deploy to dev.
 - [ ] 3.6 Run one dev single-stock score-driven smoke test without claiming strategy validity.

@@ -12,7 +12,7 @@
 - [x] P0.1 **causal replay integrity — MERGED #202 (`87a0ca2`)**：完成 `paper_causal_v1` 可用分数
       消费、实际 UTC `decision_at`、下一个交易日 `execution_date`、完整 config hash
       隔离、开盘信息定量和 `evidence_kind=REPLAY` 标记；本切片产物不进入 120 日计数。
-- [ ] NEXT.1 **immutable forward capture/count — NEXT**：在 P0 完成后由独立 change 设计
+- [x] NEXT.1 **immutable forward capture/count — NEXT**：在 P0 完成后由独立 change 设计
       不可变前瞻捕获和 120-session counter；不得把历史 replay、backfill、replacement、
       NAV recompute 或 job SUCCESS 当作前瞻证据。
 - [ ] 0.1 task 4.4 纸面 ≥120 交易日 operator 窗口：`2026-06-10` 和 `2026-09-04` 均为
@@ -30,7 +30,7 @@
 
 ## 1. 决策与治理地基
 
-- [ ] 1.1 DecisionJournal：推荐 → 是否执行 → 成交 → 盈亏 全链持久化（capability P2 高项）
+- [x] 1.1 DecisionJournal：推荐 → 是否执行 → 成交 → 盈亏 全链持久化（capability P2 高项）
 - [ ] 1.2 持久化审计日志（RequestAudit/操作审计链）+ service token 限流（capability P0 中项）
 - [ ] 1.3 组合/风控规则引擎落 paper 路径：单票/行业/总仓上限、ST/退市/停牌/流动性过滤、
       换手与再平衡预算、可用预算校验；每日产出「目标持仓 + 调仓清单」供人工核对
@@ -38,7 +38,7 @@
 
 ## 2. 执行能力（默认关闭、人工确认优先）
 
-- [ ] 2.1 目标组合导出（csv/报告，含权重/预算/理由）——最小实盘路径的第一步（人工下单）
+- [x] 2.1 目标组合导出（csv/报告，含权重/预算/理由）——最小实盘路径的第一步（人工下单）
 - [ ] 2.2 券商 API 适配器以 default-off 标志接入（QMT/Ptrade 或等价通道）；执行路径
       paper/audit-first + 显式环境授权
 - [ ] 2.3 对账：成交回报 vs 目标、资金/持仓对账、下单幂等去重

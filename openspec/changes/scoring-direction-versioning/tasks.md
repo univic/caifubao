@@ -57,4 +57,4 @@
   spec-guardian/qa-reviewer/contract-reviewer all GATE_OK on the 3.2 full-chain
   (config-resolved percentile basis), P2 empty-config registry fallback fixed in 518eb48.
 - [x] 4.3 branch-conflict check against develop before merge.
-- [ ] 4.4 CI green; merge.
+- [x] 4.4 CI green; merge.

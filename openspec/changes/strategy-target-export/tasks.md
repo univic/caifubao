@@ -58,6 +58,6 @@
       **无未决 P1/P2**（首提交的 config 回退缺陷已在 `f162344` 修复），5 项 P3 已全部
       收口（见 1b.4/1b.5）。contract-reviewer 不触发：本切片不改 API/鉴权/freshness/
       OpenClaw，且不在 backend/OpenClaw 暴露
-- [ ] 3.2 branch-conflict vs develop；Draft PR CI green
+- [x] 3.2 branch-conflict vs develop；Draft PR CI green
 - [ ] 3.3 operator 文档（`docs/operations/agent-cli.md` 策略小节）回填；
       agent-progress 回填；本切片不授权合并、写库、promote 或真实下单
