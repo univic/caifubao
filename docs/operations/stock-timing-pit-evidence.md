@@ -26,16 +26,20 @@ revision. `score-pit-artifacts` reconstructs ranked predictions offline, from
 the artifact rows only, and emits the per-horizon Merkle handoff that P1
 (`timing-replay`) requires.
 
-Every command refuses to overwrite an existing output path. A re-run therefore
-needs a new path; never silently replace a captured artifact.
+Every command refuses to overwrite an existing output path, but that is only a
+per-path guard: nothing prevents a second, differently hashed artifact for the
+same session under another name. Treat one artifact per session and phase as an
+operator rule, and never re-capture a session whose window has closed.
 
 ## 2. Durable artifact store
 
 Artifacts live on the `stock-timing-artifacts` PVC mounted at `/artifacts`
 (example: [`k8s/base/stock-timing-artifacts.example.yaml`](../../k8s/base/stock-timing-artifacts.example.yaml)).
 
-This is **not** a cache. The capture instant is part of the artifact hash, so a
-lost file cannot be regenerated, and the session it covers becomes a permanent
+This is **not** a cache. The universe artifact hashes its capture instant
+(`as_of`), so it can never be reproduced; the inputs artifact hashes the session
+close instead, so it can be re-captured with the same hash only while its
+capture window is still open. Once a window closes, a lost file is a permanent
 gap in the forward window. Use a StorageClass with a `Retain` reclaim policy and
 never write artifacts to a pod filesystem.
 
@@ -43,29 +47,53 @@ The claim is `ReadWriteOnce`: the two capture phases must not overlap.
 
 ## 3. Daily sequence
 
-Run each phase as a Job
-([`k8s/base/stock-timing-capture.example.yaml`](../../k8s/base/stock-timing-capture.example.yaml)),
-which mounts the claim and carries the deployment's `MONGODB_*` environment.
+Each phase is one Job and one file:
+
+| Phase | Example Job |
+|:---|:---|
+| universe | [`k8s/base/stock-timing-universe.example.yaml`](../../k8s/base/stock-timing-universe.example.yaml) |
+| inputs | [`k8s/base/stock-timing-inputs.example.yaml`](../../k8s/base/stock-timing-inputs.example.yaml) |
+| score (dry-run) | [`k8s/base/stock-timing-score.example.yaml`](../../k8s/base/stock-timing-score.example.yaml) |
+
+The capture Jobs mount the claim and read `MONGODB_*`; the score Job
+deliberately has none, because the default dry run performs no database access.
+
 `CAIFUBAO_BUILD_REVISION` must equal the immutable revision of the image that
-executes the command; the P2a/P2b CLIs fail closed on a missing or hand-written
-value.
+executes the command. The published image bakes it; the CLIs reject an empty
+value but cannot detect a wrong one, so never hand-write a placeholder.
+
+Before each session, update the Job's session date, its output path, and — for
+the inputs phase — the universe artifact path. Jobs have fixed names and
+immutable pod templates, and outputs are exclusive, so re-running a phase means
+deleting the Job and using the new session's paths:
 
 ```bash
 # 1. pre-open, for session 2026-09-16
-kubectl apply -f k8s/base/stock-timing-capture.example.yaml   # stock-timing-universe Job only
+kubectl apply -f k8s/base/stock-timing-universe.example.yaml
 kubectl -n <namespace> wait --for=condition=complete job/stock-timing-universe --timeout=30m
 
-# 2. post-close on 2026-09-16: stock-timing-inputs Job
-# 3. offline dry-run scoring: stock-timing-score Job
+# 2. post-close on 2026-09-16
+kubectl apply -f k8s/base/stock-timing-inputs.example.yaml
+kubectl -n <namespace> wait --for=condition=complete job/stock-timing-inputs --timeout=60m
+
+# 3. offline dry-run scoring
+kubectl apply -f k8s/base/stock-timing-score.example.yaml
+kubectl -n <namespace> wait --for=condition=complete job/stock-timing-score --timeout=30m
+
+# before the next session
+kubectl -n <namespace> delete job stock-timing-universe stock-timing-inputs stock-timing-score
 ```
+
+`capture-pit-inputs` requires the named model version to be registered and
+`ACTIVE` with `scoring_mode=ranked`; it fails closed otherwise, so confirm the
+registry pin before the session rather than after.
 
 The same three commands can be run by hand with the datahub virtualenv and
 `PYTHONPATH=datahub`; see `agent-cli.md` for the exact invocation.
 
 Because the phases have different legal windows, a scheduler must run phase 1
 at the next pre-open and phase 2 after the close. A missed window is not
-recoverable by re-running later: the capture would be rejected, or would bind
-post-open data and forfeit its forward status.
+recoverable by re-running later: the capture is rejected.
 
 ## 4. Verification
 
@@ -74,8 +102,9 @@ After each phase:
 1. Confirm the Job reached `Complete` and the command printed an
    `artifact_id`; record it against the session.
 2. Confirm the file exists on the claim and record its `sha256sum`.
-3. Confirm one artifact per session and phase — duplicates for the same session
-   are an operator error, not extra evidence.
+3. Confirm the session has exactly one artifact for that phase. The CLI only
+   guards the output path, so a duplicate under another name is possible and is
+   an operator error, not extra evidence.
 
 `score-pit-artifacts` output carries the exact result-file SHA-256 and the
 per-horizon Merkle root/proof over the frozen cohort. P1 accepts a prediction
@@ -103,7 +132,9 @@ mechanical gates pass.
 
 - **No publication without explicit authorisation.** `score-pit-artifacts`
   defaults to dry-run; `--apply` writes `StockScorePrediction` and needs a
-  separate, explicit operator decision.
+  separate, explicit operator decision. The score Job has no `MONGODB_*` env by
+  design, so `--apply` also requires adding the same env vars the capture Jobs
+  use.
 - **Forward-only.** REPLAY rows, backfills and `--replace` re-runs never count
   as forward evidence, no matter how green the Job was.
 - **A single-stock baseline is not alpha evidence.** Promotion-level claims need

@@ -3,10 +3,11 @@
 # The stock-timing forward evidence chain writes immutable JSON artifacts
 # (`capture-pit-universe` -> `capture-pit-inputs` -> `score-pit-artifacts`, see
 # docs/operations/stock-timing-pit-evidence.md). Unlike the factor-lab panel
-# these files are NOT regenerable: the capture instant is part of the artifact
-# hash, so a lost file cannot be recreated and the session it covers becomes a
-# permanent gap in the forward window. Keep them on a claim, never on the pod
-# filesystem, and prefer a StorageClass whose reclaim policy is Retain.
+# these files are NOT regenerable: the universe artifact hashes its capture
+# instant, and the inputs artifact can only be re-captured while its session
+# window is still open. A lost file therefore becomes a permanent gap in the
+# forward window. Keep them on a claim, never on the pod filesystem, and prefer
+# a StorageClass whose reclaim policy is Retain.
 #
 # Research-only: nothing in the deployed datahub service reads this claim, so it
 # is deliberately kept out of k8s/base/kustomization.yaml. Apply it by hand in
