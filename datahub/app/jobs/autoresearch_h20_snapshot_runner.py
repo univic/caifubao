@@ -30,9 +30,9 @@ from app.lib.scoring_engine.config import (
     DEFAULT_MODEL_VERSION,
     get_effective_horizon_config,
 )
+from app.lib.scoring_engine.industry_pit import classification_in_effect_on
 from app.lib.scoring_engine.technical_factors import real_relative_strength
 from app.lib.utilities.data_capability_helper import is_bse_stock_code
-from app.model.industry import classification_in_effect_on
 
 COMPONENT_IDS = (
     "signal_strength",

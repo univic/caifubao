@@ -4,11 +4,8 @@ import math
 from statistics import pstdev
 
 from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
-from app.model.industry import (
-    IndustryDailyMetrics,
-    StockIndustryClassification,
-    classification_in_effect_on,
-)
+from app.lib.scoring_engine.industry_pit import classification_in_effect_on
+from app.model.industry import IndustryDailyMetrics, StockIndustryClassification
 
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:

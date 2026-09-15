@@ -158,7 +158,7 @@ def _classification_in_effect_on(row, as_of_date) -> bool:
     industry metric aggregation all use one point-in-time rule
     (industry-classification-code-normalization).
     """
-    from app.model.industry import classification_in_effect_on
+    from app.lib.scoring_engine.industry_pit import classification_in_effect_on
 
     return classification_in_effect_on(row, as_of_date)
 

@@ -29,9 +29,12 @@
       lookup and persistence.
 - [ ] 3.2 Add the idempotent `normalize_stock_codes` migration helper in the
       industry handler (no `save()`, so `last_synced_at` is untouched).
-- [ ] 3.3 Move the point-in-time guard to `app.model.industry` and apply it in
-      `scoring_service._load_industry`, `industry_momentum_component` and
-      `aggregate_industry_metrics`; keep `strategy_runner` delegating to it.
+- [ ] 3.3 Move the point-in-time guard to `app.lib.scoring_engine.industry_pit`
+      (a datahub-only module, because the image copies `backend/app/model/`
+      over `datahub/app/model/`) and apply it in
+      `scoring_service._load_industry`, `industry_momentum_component`,
+      `aggregate_industry_metrics` and the H20 snapshot helper; keep
+      `strategy_runner` delegating to it.
 - [ ] 3.4 Expose the migration as an operator command in `industry_sync_runner`
       with `--dry-run` and job-run tracking.
 - [ ] 3.5 Update the operator docs with the canonical-key contract, the

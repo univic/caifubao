@@ -28,12 +28,9 @@ from app.lib.scoring_engine.config import (
     SUPPORTED_HORIZONS,
     get_effective_horizon_config,
 )
+from app.lib.scoring_engine.industry_pit import classification_in_effect_on
 from app.model.factor import StockFactorDaily
-from app.model.industry import (
-    IndustryDailyMetrics,
-    StockIndustryClassification,
-    classification_in_effect_on,
-)
+from app.model.industry import IndustryDailyMetrics, StockIndustryClassification
 from app.model.scoring import ScoreModelVersion, StockScorePrediction
 from app.model.signal import StockSignalDaily
 from app.model.stock import FinanceMarket, IndividualStock, StockDailyQuote

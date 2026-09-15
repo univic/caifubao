@@ -37,10 +37,11 @@ wrong; they were fed a lookup that could not match.
   activates a look-ahead risk: the classification store keeps one current row
   per stock, so replaying an old date would attribute today's industry to it.
   The point-in-time guard already used by the paper strategy moves to
-  `app.model.industry` (and now accepts the plain row mappings the research
-  exporters use) and is applied by the per-day industry prefetch, the
-  `industry_momentum` component, `aggregate_industry_metrics`, and the H20
-  autoresearch snapshot export.
+  `app.lib.scoring_engine.industry_pit` — a datahub-only module, because the
+  image copies `backend/app/model/` over `datahub/app/model/` — and now accepts
+  the plain row mappings the research exporters use. It is applied by the
+  per-day industry prefetch, the `industry_momentum` component,
+  `aggregate_industry_metrics`, and the H20 autoresearch snapshot export.
 - **Contract made explicit.** The industry classification spec records that
   `stock_industry.stock_code` uses the same canonical code as quotes, factors,
   signals and predictions, and the stock-scoring replay requirement records the
