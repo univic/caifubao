@@ -155,6 +155,29 @@ new row is top-level `PENDING`, while its `input_snapshot` is `RANKED` and
 the frozen cohort. `FRESH` proves causal input provenance only—it does not mean
 the future outcome is verified or that the strategy is profitable.
 
+## Industry Sync Runner
+
+`python -m app.jobs.industry_sync_runner <command> [options]`
+
+```bash
+# Monthly CSRC sync (baostock). Codes are stored canonically (sh600036).
+python -m app.jobs.industry_sync_runner run [--dry-run] [--force-update]
+
+# One-time migration: rewrite legacy separated keys (sh.600036) to canonical.
+python -m app.jobs.industry_sync_runner normalize-codes --dry-run
+python -m app.jobs.industry_sync_runner normalize-codes
+```
+
+`stock_industry.stock_code` MUST use the same canonical code as quotes,
+factors, signals and predictions. `normalize-codes` rewrites only keys matching
+the baostock shape `^[a-z]{2}\.\d{6}$`; keys matching neither shape are listed
+under `unrecognized` in the JSON summary and left untouched. It is idempotent,
+writes nothing in `--dry-run`, and does not touch `last_synced_at`.
+
+Roll out owning-environment first: `stock_industry` is a full prod-to-dev
+snapshot upserted by `stock_code`, so migrating dev before the environment that
+owns the collection would reintroduce separated keys on the next data sync.
+
 ## Technical Factor Runner
 
 `python -m app.jobs.tech_factor_runner <command> [options]`

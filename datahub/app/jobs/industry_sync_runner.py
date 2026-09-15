@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 SYNC_JOB_FAMILY = "industry_sync"
 SYNC_JOB_NAME = "datahub_industry_sync"
+NORMALIZE_JOB_NAME = "datahub_industry_code_normalize"
 SYNC_JOB_TRIGGER = "cron"
 SYNC_JOB_SOURCE = "k8s-cronjob"
 SYNC_JOB_HOUR = 12
@@ -42,6 +43,14 @@ def run_sync(dry_run: bool = False, force_update: bool = False) -> dict:
         force_update=force_update,
     )
     return result
+
+
+def run_normalize(dry_run: bool = False) -> dict:
+    from app.lib.datahub.data_integrity_keeper.handler.industry_classification import (
+        normalize_stock_codes,
+    )
+
+    return normalize_stock_codes(dry_run=dry_run)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -98,10 +107,22 @@ def main(argv: list[str] | None = None) -> None:
         help="Optional explicit scheduled_at timestamp in ISO format.",
     )
 
+    p_normalize = subparsers.add_parser(
+        "normalize-codes",
+        help="Rewrite legacy separated industry stock codes to canonical form",
+    )
+    p_normalize.add_argument("--dry-run", action="store_true", help="Preview only")
+    p_normalize.add_argument("--job-name", default=NORMALIZE_JOB_NAME)
+    p_normalize.add_argument("--job-family", default=SYNC_JOB_FAMILY)
+    p_normalize.add_argument("--trigger", default=SYNC_JOB_TRIGGER)
+    p_normalize.add_argument("--source", default=SYNC_JOB_SOURCE)
+
     args = parser.parse_args(argv)
 
     if args.command == "run":
         _run_with_tracking(args)
+    elif args.command == "normalize-codes":
+        _run_normalize_with_tracking(args)
     else:
         parser.print_help()
 
@@ -158,6 +179,43 @@ def _run_with_tracking(args) -> None:
 
     except Exception as exc:
         logger.exception("Industry sync run failed")
+        job_run_helper.finish_job_run(
+            job_run,
+            status="FAILED",
+            summary={},
+            error_message=str(exc),
+        )
+        raise
+
+
+def _run_normalize_with_tracking(args) -> None:
+    _init_db_connection()
+
+    context = job_run_helper.JobRunContext(
+        job_name=args.job_name,
+        job_family=args.job_family,
+        trigger=args.trigger,
+        source=args.source,
+        scheduled_at=job_run_helper.utc_now_naive(),
+        extra={"dry_run": args.dry_run},
+    )
+    job_run = job_run_helper.create_job_run(context)
+
+    try:
+        result = run_normalize(dry_run=args.dry_run)
+        status = "SUCCESS" if result.get("status") == "GOOD" else "FAILED"
+        job_run_helper.finish_job_run(
+            job_run,
+            status=status,
+            summary={
+                "scanned": result.get("scanned", 0),
+                "renamed": result.get("renamed", 0),
+                "merged": result.get("merged", 0),
+            },
+        )
+        print(json.dumps(result, default=str, ensure_ascii=False, indent=2))
+    except Exception as exc:
+        logger.exception("Industry code normalization failed")
         job_run_helper.finish_job_run(
             job_run,
             status="FAILED",

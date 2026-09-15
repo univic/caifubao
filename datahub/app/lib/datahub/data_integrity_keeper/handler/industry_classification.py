@@ -9,11 +9,27 @@ on the model are kept for compatibility even though the data is CSRC, not Shenwa
 """
 
 import datetime
+import json
 import logging
+import re
 
 from app.model.industry import StockIndustryClassification
 
 logger = logging.getLogger(__name__)
+
+# Baostock returns industry codes as ``sh.600036``; every other collection and
+# every scoring lookup uses ``sh600036``. Persisting the baostock form made all
+# canonical lookups miss, so ingestion normalizes to the canonical form and a
+# migration rewrites the legacy rows (industry-classification-code-normalization).
+CANONICAL_CODE_PATTERN = re.compile(r"^(sh|sz|bj)\d{6}$")
+LEGACY_CODE_PATTERN = re.compile(r"^([a-z]{2})\.(\d{6})$")
+#: How many unrecognized keys a migration summary reports verbatim.
+UNRECOGNIZED_SAMPLE_LIMIT = 20
+
+
+def canonical_stock_code(code: str) -> str:
+    """Return the canonical stock code shared with quotes and predictions."""
+    return str(code or "").strip().replace(".", "")
 
 
 def sync_industry_classification(
@@ -51,7 +67,7 @@ def sync_industry_classification(
             if len(row) < 4 or not row[1]:
                 continue
 
-            code = row[1].strip()
+            code = canonical_stock_code(row[1])
             name = row[2].strip() if len(row) > 2 else ""
             industry_raw = row[3].strip() if len(row) > 3 else ""
 
@@ -139,6 +155,108 @@ def sync_industry_classification(
         return {"status": "FAILED", "error": str(exc)}
     finally:
         bs.logout()
+
+
+def normalize_stock_codes(dry_run: bool = False) -> dict:
+    """Rewrite legacy separated ``stock_industry`` keys to the canonical form.
+
+    Only keys matching the baostock shape ``xx.NNNNNN`` are rewritten; a key
+    that is neither canonical nor that legacy shape is reported in
+    ``unrecognized`` and left untouched rather than guessed at.
+
+    Idempotent, and ``dry_run`` performs no write. The rewrite uses
+    collection-level updates rather than ``save()``, so ``last_synced_at`` is
+    not refreshed and ``assigned_at`` / ``industry_change_log`` keep their
+    point-in-time meaning. A merge deliberately appends no change-log entry:
+    the key changed, not the classification.
+    """
+    counts = {"scanned": 0, "renamed": 0, "merged": 0, "skipped": 0}
+    unrecognized: list[str] = []
+
+    for doc in StockIndustryClassification.objects():
+        counts["scanned"] += 1
+        code = str(getattr(doc, "stock_code", "") or "")
+        legacy_match = LEGACY_CODE_PATTERN.match(code)
+        if not legacy_match:
+            if CANONICAL_CODE_PATTERN.match(code):
+                counts["skipped"] += 1
+            else:
+                unrecognized.append(code)
+            continue
+
+        canonical = canonical_stock_code(code)
+        existing = StockIndustryClassification.objects(stock_code=canonical).first()
+        if existing is None:
+            if not dry_run:
+                StockIndustryClassification.objects(stock_code=code).update_one(
+                    set__stock_code=canonical
+                )
+            counts["renamed"] += 1
+        else:
+            if not dry_run:
+                _merge_legacy_into_canonical(existing, doc)
+            counts["merged"] += 1
+
+    summary = {
+        "status": "GOOD",
+        "scanned": counts["scanned"],
+        "renamed": counts["renamed"],
+        "merged": counts["merged"],
+        "skipped": counts["skipped"],
+        "unrecognized_count": len(unrecognized),
+        "unrecognized": unrecognized[:UNRECOGNIZED_SAMPLE_LIMIT],
+        "dry_run": dry_run,
+    }
+    logger.info("Industry code normalization completed: %s", summary)
+    return summary
+
+
+def _merge_legacy_into_canonical(canonical_doc, legacy_doc) -> None:
+    """Fold a legacy separated-key record into its canonical record.
+
+    The surviving record keeps the canonical classification and its own
+    ``assigned_at``: attaching an earlier legacy anchor to a later
+    classification would let a historical date inherit a classification that
+    did not exist yet. The legacy anchor is adopted only when the canonical
+    record has no classification to anchor.
+    """
+    updates = {}
+    if not canonical_doc.industry_code_sw_l1 and legacy_doc.industry_code_sw_l1:
+        updates["set__industry_code_sw_l1"] = legacy_doc.industry_code_sw_l1
+        updates["set__industry_name_sw_l1"] = legacy_doc.industry_name_sw_l1
+        updates["set__industry_code_sw_l2"] = legacy_doc.industry_code_sw_l2
+        updates["set__industry_name_sw_l2"] = legacy_doc.industry_name_sw_l2
+        if legacy_doc.assigned_at:
+            updates["set__assigned_at"] = legacy_doc.assigned_at
+
+    canonical_log = list(canonical_doc.industry_change_log or [])
+    merged_log = _merge_change_logs(
+        canonical_doc.industry_change_log, legacy_doc.industry_change_log
+    )
+    if merged_log != canonical_log:
+        updates["set__industry_change_log"] = merged_log
+
+    if updates:
+        StockIndustryClassification.objects(
+            stock_code=canonical_doc.stock_code
+        ).update_one(**updates)
+    StockIndustryClassification.objects(stock_code=legacy_doc.stock_code).delete()
+
+
+def _merge_change_logs(primary, secondary) -> list:
+    """Union two change logs without inventing a new entry, oldest first."""
+    merged = []
+    seen = set()
+    for entry in list(primary or []) + list(secondary or []):
+        if not isinstance(entry, dict):
+            continue
+        key = json.dumps(entry, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(entry)
+    merged.sort(key=lambda entry: str(entry.get("timestamp") or ""))
+    return merged
 
 
 def _parse_csrc_industry(raw: str) -> tuple[str | None, str | None]:

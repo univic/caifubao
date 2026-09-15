@@ -29,7 +29,11 @@ from app.lib.scoring_engine.config import (
     get_effective_horizon_config,
 )
 from app.model.factor import StockFactorDaily
-from app.model.industry import IndustryDailyMetrics, StockIndustryClassification
+from app.model.industry import (
+    IndustryDailyMetrics,
+    StockIndustryClassification,
+    classification_in_effect_on,
+)
 from app.model.scoring import ScoreModelVersion, StockScorePrediction
 from app.model.signal import StockSignalDaily
 from app.model.stock import FinanceMarket, IndividualStock, StockDailyQuote
@@ -182,13 +186,16 @@ _SIGNAL_DECAY_FIELDS = (
     "strength",
 )
 
-#: Industry fields the per-day cache keeps: the classification key/name plus
-#: the metrics columns the component reads (stock_count/avg_score for its
-#: value, buy_count/watch_count for its evidence).
+#: Industry fields the per-day cache keeps: the classification key/name, the
+#: point-in-time anchor the replay guard needs, plus the metrics columns the
+#: component reads (stock_count/avg_score for its value, buy_count/watch_count
+#: for its evidence).
 _INDUSTRY_CLASSIFICATION_FIELDS = (
     "stock_code",
     "industry_code_sw_l1",
     "industry_name_sw_l1",
+    "assigned_at",
+    "industry_change_log",
 )
 _INDUSTRY_METRIC_FIELDS = (
     "industry_code",
@@ -544,7 +551,10 @@ class _DayPrefetch:
         try:
             # Projected + raw rows: only the classification key/name and the
             # newest metrics row per (industry, horizon) are consumed, so the
-            # wide documents are never hydrated.
+            # wide documents are never hydrated. A classification whose
+            # assigned_at/change history post-dates this scoring date is
+            # dropped here so a replay never attributes today's industry to a
+            # past date.
             classifications = {
                 row.stock_code: row
                 for row in self._rows(
@@ -553,6 +563,7 @@ class _DayPrefetch:
                     ),
                     self.service.industry_model,
                 )
+                if classification_in_effect_on(row, self.date)
             }
             industry_codes = sorted(
                 {
