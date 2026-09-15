@@ -1453,6 +1453,137 @@ class StockScoringService:
             ],
         }
 
+    def _ranked_payloads_from_raw(
+        self,
+        raw_by_code: dict,
+        date: datetime.datetime,
+        horizon: int,
+        cohort_fingerprint: str,
+    ) -> dict[str, dict]:
+        """Build ranked prediction payloads without database access.
+
+        This is the shared construction layer for the ordinary ranked scorer
+        and the PIT artifact consumer. Persistence, collision policy, final
+        cohort rank/percentile assignment, and provenance remain caller-owned.
+        """
+        config = self._get_horizon_config(horizon)
+        component_ids = sorted(
+            {c["id"] for raw in raw_by_code.values() for c in raw["components"]}
+        )
+        penalty_ids = sorted(
+            {p["id"] for raw in raw_by_code.values() for p in raw["penalties"]}
+        )
+        rank_maps = {}
+        for item_id, item_key in (
+            *((item_id, "components") for item_id in component_ids),
+            *((item_id, "penalties") for item_id in penalty_ids),
+        ):
+            values = {
+                code: next(
+                    item["raw_value"] for item in raw[item_key] if item["id"] == item_id
+                )
+                for code, raw in raw_by_code.items()
+            }
+            rank_maps[item_id] = self._rank_normalize(values)
+
+        weights = {}
+        for raw in raw_by_code.values():
+            for item in (*raw["components"], *raw["penalties"]):
+                weights.setdefault(item["id"], item["weight"])
+        weight_sum = sum(weights.values()) or 1.0
+        directions = config.get("directions") or {}
+        penalty_id_set = set(penalty_ids)
+        has_flip = any(
+            float(directions.get(item_id, 1.0)) < 0
+            for item_id in component_ids
+            if item_id not in penalty_id_set
+        )
+
+        payloads = {}
+        for code, raw in raw_by_code.items():
+            score = sum(
+                rank_maps[item["id"]][code]
+                * (item["weight"] / weight_sum)
+                * float(directions.get(item["id"], 1.0))
+                for item in raw["components"]
+            )
+            score += sum(
+                rank_maps[item["id"]][code]
+                * (item["weight"] / weight_sum)
+                * float(directions.get(item["id"], -1.0))
+                for item in raw["penalties"]
+            )
+            if has_flip:
+                score = round(min(100.0, score * 100.0), 2)
+            else:
+                score = round(max(0.0, min(100.0, score * 100.0)), 2)
+
+            explanation_components = [
+                {
+                    "id": item["id"],
+                    "raw_value": item["raw_value"],
+                    "weight": item["weight"],
+                    "contribution": round(
+                        rank_maps[item["id"]][code]
+                        * (item["weight"] / weight_sum)
+                        * float(directions.get(item["id"], 1.0))
+                        * 100.0,
+                        4,
+                    ),
+                }
+                for item in raw["components"]
+            ]
+            explanation_penalties = [
+                {
+                    "id": item["id"],
+                    "raw_value": item["raw_value"],
+                    "weight": item["weight"],
+                    "contribution": round(
+                        rank_maps[item["id"]][code]
+                        * (item["weight"] / weight_sum)
+                        * float(directions.get(item["id"], -1.0))
+                        * 100.0,
+                        4,
+                    ),
+                }
+                for item in raw["penalties"]
+            ]
+            payloads[code] = {
+                "stock_code": code,
+                "stock_name": raw["stock_name"],
+                "date": date,
+                "horizon": horizon,
+                "score": score,
+                "recommendation": self._recommendation(score, config),
+                "base_price": raw["base_price"],
+                "target_date": raw["target_date"],
+                "status": "PENDING",
+                "explanation": {
+                    "summary": "rank-normalized cross-sectional score",
+                    "horizon": horizon,
+                    "score": score,
+                    "components": explanation_components,
+                    "penalties": explanation_penalties,
+                    "thresholds": self._thresholds(config),
+                    "model_version": self.model_version,
+                },
+                "verification": {
+                    "status": "PENDING",
+                    "target_date": raw["target_date"].isoformat(),
+                    "expected_quote_count": horizon,
+                    "verified_quote_count": 0,
+                    "effective_threshold": config["effective_threshold"],
+                    "stop_loss_threshold": config["stop_loss_threshold"],
+                },
+                "input_snapshot": {
+                    "status": "RANKED",
+                    "scoring_mode": "ranked",
+                    "cohort_fingerprint": cohort_fingerprint,
+                },
+                "model_version": self.model_version,
+            }
+        return payloads
+
     def score_all_stocks_ranked(
         self,
         date: datetime.datetime | None = None,
@@ -1503,7 +1634,6 @@ class StockScoringService:
                 continue
             if self.batch_prefetch and prefetch is None and stocks:
                 prefetch = _DayPrefetch(self, date, expected_codes, horizons)
-            config = self._get_horizon_config(current_horizon)
             raw_by_code = {}
             blocked_codes = []
             failed_codes = []
@@ -1550,92 +1680,12 @@ class StockScoringService:
                 )
                 continue
 
-            # --- rank-normalize each component across the cohort ---
-            component_ids = sorted(
-                {c["id"] for raw in raw_by_code.values() for c in raw["components"]}
+            ranked_payloads = self._ranked_payloads_from_raw(
+                raw_by_code, date, current_horizon, cohort_fingerprint
             )
-            penalty_ids = sorted(
-                {p["id"] for raw in raw_by_code.values() for p in raw["penalties"]}
-            )
-            rank_maps = {}
-            for cid in component_ids:
-                values = {
-                    code: raw["components"][
-                        next(
-                            i for i, c in enumerate(raw["components"]) if c["id"] == cid
-                        )
-                    ]["raw_value"]
-                    for code, raw in raw_by_code.items()
-                }
-                rank_maps[cid] = self._rank_normalize(values)
-            for pid in penalty_ids:
-                values = {
-                    code: raw["penalties"][
-                        next(
-                            i for i, p in enumerate(raw["penalties"]) if p["id"] == pid
-                        )
-                    ]["raw_value"]
-                    for code, raw in raw_by_code.items()
-                }
-                rank_maps[pid] = self._rank_normalize(values)
 
-            # weights per component id (same for all stocks in cohort)
-            weights = {}
-            for code, raw in raw_by_code.items():
-                for c in raw["components"]:
-                    weights.setdefault(c["id"], c["weight"])
-                for p in raw["penalties"]:
-                    weights.setdefault(p["id"], p["weight"])
-            weight_sum = sum(weights.values()) or 1.0
-
-            # --- build and persist scored predictions ---
-            directions = config.get("directions") or {}
-            # A real construction-layer flip exists only when a NON-penalty
-            # component direction is negative (penalties are -1 by default, so
-            # they do not indicate a flip). Flipped models keep a signed,
-            # strictly sortable score: the lower clamp is removed so a full
-            # flip does not collapse the whole market to a 0.0 tie. Default
-            # (no flip) models MUST keep the develop floor clamp - with only
-            # risk_penalty negative, stocks whose weighted component ranks sit
-            # below their penalty rank (ST/fallen names) would otherwise
-            # silently go negative and break bit-identical default re-runs.
-            penalty_ids = set(penalty_ids)
-            has_flip = any(
-                float(directions.get(cid, 1.0)) < 0
-                for cid in component_ids
-                if cid not in penalty_ids
-            )
-            for code, raw in raw_by_code.items():
-                score = 0.0
-                for c in raw["components"]:
-                    direction = float(directions.get(c["id"], 1.0))
-                    score += (
-                        rank_maps[c["id"]][code]
-                        * (c["weight"] / weight_sum)
-                        * direction
-                    )
-                for p in raw["penalties"]:
-                    # penalties default to SUBTRACT: higher raw penalty (more
-                    # volatile/ST/suspended) lowers the score, mirroring the
-                    # raw path's negative penalty contribution. A direction
-                    # override (e.g. construction-layer flip in research
-                    # candidates) may flip this sign.
-                    direction = float(directions.get(p["id"], -1.0))
-                    score += (
-                        rank_maps[p["id"]][code]
-                        * (p["weight"] / weight_sum)
-                        * direction
-                    )
-                # Upper clamp always applies. Lower clamp applies unless a real
-                # component flip is present (see has_flip above). Semantics for
-                # flipped models mirror the research evaluator
-                # (h20_excess_alpha): raw weighted sum is kept signed and the
-                # cohort percentile is derived from ranking that sum.
-                if has_flip:
-                    score = round(min(100.0, score * 100.0), 2)
-                else:
-                    score = round(max(0.0, min(100.0, score * 100.0)), 2)
-
+            # --- persist scored predictions ---
+            for code in raw_by_code:
                 existing = (
                     prefetch.existing(code, current_horizon)
                     if prefetch is not None
@@ -1656,73 +1706,7 @@ class StockScoringService:
                     else:
                         stored_blocked_codes.append(code)
                     continue
-                recommendation = self._recommendation(score, config)
-                # persist real component values so downstream analysis
-                # (factor_eval, calibration, backtest attribution) still works
-                explanation_components = [
-                    {
-                        "id": c["id"],
-                        "raw_value": c["raw_value"],
-                        "weight": c["weight"],
-                        "contribution": round(
-                            rank_maps[c["id"]][code]
-                            * (c["weight"] / weight_sum)
-                            * float(directions.get(c["id"], 1.0))
-                            * 100.0,
-                            4,
-                        ),
-                    }
-                    for c in raw["components"]
-                ]
-                explanation_penalties = [
-                    {
-                        "id": p["id"],
-                        "raw_value": p["raw_value"],
-                        "weight": p["weight"],
-                        "contribution": round(
-                            rank_maps[p["id"]][code]
-                            * (p["weight"] / weight_sum)
-                            * float(directions.get(p["id"], -1.0))
-                            * 100.0,
-                            4,
-                        ),
-                    }
-                    for p in raw["penalties"]
-                ]
-                payload = {
-                    "stock_code": code,
-                    "stock_name": raw["stock_name"],
-                    "date": date,
-                    "horizon": current_horizon,
-                    "score": score,
-                    "recommendation": recommendation,
-                    "base_price": raw["base_price"],
-                    "target_date": raw["target_date"],
-                    "status": "PENDING",
-                    "explanation": {
-                        "summary": "rank-normalized cross-sectional score",
-                        "horizon": current_horizon,
-                        "score": score,
-                        "components": explanation_components,
-                        "penalties": explanation_penalties,
-                        "thresholds": self._thresholds(config),
-                        "model_version": self.model_version,
-                    },
-                    "verification": {
-                        "status": "PENDING",
-                        "target_date": raw["target_date"].isoformat(),
-                        "expected_quote_count": current_horizon,
-                        "verified_quote_count": 0,
-                        "effective_threshold": config["effective_threshold"],
-                        "stop_loss_threshold": config["stop_loss_threshold"],
-                    },
-                    "input_snapshot": {
-                        "status": "RANKED",
-                        "scoring_mode": "ranked",
-                        "cohort_fingerprint": cohort_fingerprint,
-                    },
-                    "model_version": self.model_version,
-                }
+                payload = ranked_payloads[code]
                 if prefetch is not None:
                     # Deferred: one bulk upsert per horizon (C1/3.3).
                     if not dry_run:

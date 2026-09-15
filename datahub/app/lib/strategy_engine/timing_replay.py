@@ -15,6 +15,10 @@ import re
 from statistics import fmean, pstdev
 from typing import Any, Mapping, Sequence
 
+from app.lib.scoring_engine.prediction_integrity import (
+    verify_prediction_commitment,
+)
+
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _USABLE_SCORE_STATUSES = {"PENDING", "TRACKING", "VERIFIED", "INSUFFICIENT_DATA"}
@@ -27,6 +31,10 @@ def _canonical_sha256(value: Any) -> str:
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _cohort_fingerprint(codes: Sequence[str]) -> str:
+    return hashlib.sha256("\n".join(sorted(codes)).encode("utf-8")).hexdigest()
 
 
 def _mapping(value: Any, field: str) -> Mapping[str, Any]:
@@ -237,14 +245,40 @@ def validate_replay_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
             record.get("artifact_sha256"),
             f"prediction_cohorts[{day_text}].artifact_sha256",
         )
-        fingerprint = _text(
+        prediction_root = _sha256(
+            record.get("prediction_root_sha256"),
+            f"prediction_cohorts[{day_text}].prediction_root_sha256",
+        )
+        fingerprint = _sha256(
             record.get("cohort_fingerprint"),
             f"prediction_cohorts[{day_text}].cohort_fingerprint",
         )
+        raw_member_codes = record.get("member_codes")
+        if not isinstance(raw_member_codes, list) or not raw_member_codes:
+            raise ValueError(
+                f"prediction_cohorts[{day_text}].member_codes must be a non-empty list"
+            )
+        member_codes = [
+            _text(value, f"prediction_cohorts[{day_text}].member_codes")
+            for value in raw_member_codes
+        ]
+        if member_codes != sorted(set(member_codes)):
+            raise ValueError(
+                f"prediction_cohorts[{day_text}].member_codes must be sorted and unique"
+            )
+        expected_fingerprint = _cohort_fingerprint(member_codes)
+        if fingerprint != expected_fingerprint:
+            raise ValueError(
+                f"prediction_cohorts[{day_text}].cohort_fingerprint does not reconcile"
+            )
         member_count = _positive_int(
             record.get("member_count"),
             f"prediction_cohorts[{day_text}].member_count",
         )
+        if member_count != len(member_codes):
+            raise ValueError(
+                f"prediction_cohorts[{day_text}].member_count does not reconcile"
+            )
         data_as_of = _instant(
             record.get("data_as_of"),
             f"prediction_cohorts[{day_text}].data_as_of",
@@ -257,7 +291,9 @@ def validate_replay_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
         prediction_cohorts[day_text] = {
             "artifact_uri": record["artifact_uri"].strip(),
             "artifact_sha256": record_hash,
+            "prediction_root_sha256": prediction_root,
             "cohort_fingerprint": fingerprint,
+            "member_codes": member_codes,
             "member_count": member_count,
             "data_as_of": _rfc3339(data_as_of),
         }
@@ -467,8 +503,6 @@ def _prediction_reason(
     provenance = manifest["prediction_cohorts"][day]
     if snapshot.get("cohort_fingerprint") != provenance["cohort_fingerprint"]:
         return None, "cohort_fingerprint_mismatch"
-    if snapshot.get("cohort_artifact_sha256") != provenance["artifact_sha256"]:
-        return None, "cohort_artifact_mismatch"
     try:
         snapshot_as_of = _instant(
             snapshot.get("data_as_of"), "input_snapshot.data_as_of"
@@ -481,6 +515,16 @@ def _prediction_reason(
         return None, "future_data_as_of"
     if snapshot_as_of != expected_as_of:
         return None, "data_as_of_mismatch"
+    try:
+        expected_index = provenance["member_codes"].index(stock_code)
+        verify_prediction_commitment(
+            prediction,
+            expected_root=provenance["prediction_root_sha256"],
+            expected_leaf_count=provenance["member_count"],
+            expected_leaf_index=expected_index,
+        )
+    except (ValueError, TypeError):
+        return None, "prediction_integrity_mismatch"
     percentile = getter("percentile")
     if isinstance(percentile, bool):
         return None, "invalid_percentile"

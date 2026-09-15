@@ -172,6 +172,50 @@ def run_capture_pit_inputs(args) -> None:
     print(json.dumps({"artifact_id": artifact["artifact_id"], "output": args.output}))
 
 
+def run_score_pit_artifacts(args) -> None:
+    """Compute ranked predictions from P2a artifacts; publish only on apply."""
+    _require_new_output(args.output)
+    from app.lib.scoring_engine.pit_artifact_scoring import (
+        PitArtifactScoringConsumer,
+        build_replay_handoff,
+        publish_predictions,
+        write_result_exclusive,
+    )
+    from app.lib.scoring_engine.pit_input_evidence import load_artifact
+
+    consumer = PitArtifactScoringConsumer(
+        load_artifact(args.universe_artifact),
+        load_artifact(args.input_artifact),
+        input_artifact_uri=args.input_artifact,
+    )
+    result = consumer.build_result()
+    # Reserve and publish the caller-selected path before any database write.
+    # This keeps an output collision (including a concurrent creator) inside
+    # the zero-prediction-write preflight boundary. The report is a valid
+    # dry-run result even if a later explicit apply preflight fails.
+    artifact_sha256 = write_result_exclusive(args.output, result)
+    handoff = build_replay_handoff(
+        result, artifact_uri=args.output, artifact_sha256=artifact_sha256
+    )
+    inserted = 0
+    if args.apply:
+        _init_db_connection()
+        inserted = publish_predictions(result)
+    print(
+        json.dumps(
+            {
+                "applied": bool(args.apply),
+                "inserted_count": inserted,
+                "output": args.output,
+                "artifact_sha256": artifact_sha256,
+                "prediction_cohorts_by_horizon": handoff,
+                "summary": result["summary"],
+            },
+            sort_keys=True,
+        )
+    )
+
+
 def run_equivalence_check_cmd(args) -> int:
     """C1 (perf 3.5/5.3): diff the per-stock and batched paths on one date.
 
@@ -467,6 +511,19 @@ def main(argv: list[str] | None = None) -> None:
     )
     p_pit_inputs.add_argument("--output", required=True)
 
+    p_pit_score = subparsers.add_parser(
+        "score-pit-artifacts",
+        help="Compute ranked predictions from frozen P2a artifacts",
+    )
+    p_pit_score.add_argument("--universe-artifact", required=True)
+    p_pit_score.add_argument("--input-artifact", required=True)
+    p_pit_score.add_argument("--output", required=True)
+    p_pit_score.add_argument(
+        "--apply",
+        action="store_true",
+        help="Insert predictions after registry/collision preflight",
+    )
+
     # verify command
     p_verify = subparsers.add_parser("verify", help="Verify score predictions")
     add_common_options(p_verify, include_range=True)
@@ -605,6 +662,8 @@ def main(argv: list[str] | None = None) -> None:
         run_capture_pit_universe(args)
     elif args.command == "capture-pit-inputs":
         run_capture_pit_inputs(args)
+    elif args.command == "score-pit-artifacts":
+        run_score_pit_artifacts(args)
     elif args.command == "verify":
         _init_db_connection()
         result = run_verification(
