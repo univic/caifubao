@@ -33,4 +33,4 @@
 - [x] 4.2 Ruff check/format and `openspec validate --all --strict`.
 - [x] 4.3 Spec-guardian and qa-reviewer after validation; contract-reviewer only
       if an external contract is introduced.
-- [ ] 4.4 Branch conflict check, Draft PR, CI green, then ready for review.
+- [x] 4.4 Branch conflict check, Draft PR, CI green, then ready for review.
