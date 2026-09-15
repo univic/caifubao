@@ -93,6 +93,30 @@ python -m app.jobs.scoring_runner verify --from 2024-01-01 --to 2024-06-30
 python -m app.jobs.scoring_runner report --horizon 20 --from 2024-01-01 --to 2024-12-31
 ```
 
+### Forward PIT input capture (P2a, research-only)
+
+P2a is a two-phase evidence capture. It does not generate predictions. Export
+`CAIFUBAO_BUILD_REVISION` from the immutable image/source revision; a manual
+fallback version is intentionally not accepted.
+
+```bash
+# After the previous session closes and before 2026-09-15 opens:
+python -m app.jobs.scoring_runner capture-pit-universe \
+  --date 2026-09-15 --output /artifacts/universe-2026-09-15.json
+
+# After 2026-09-15 closes and before the next session opens:
+python -m app.jobs.scoring_runner capture-pit-inputs \
+  --universe-artifact /artifacts/universe-2026-09-15.json \
+  --model-version ranked-v1 --horizons 20 \
+  --output /artifacts/ranked-inputs-2026-09-15.json
+```
+
+The first artifact freezes membership and industry classification before the
+session. The second binds that exact artifact to the complete bounded ranked
+scoring read set. Both conform to the shared research artifact envelope and
+refuse overwrite. P2a does not mark stored scores `FRESH`; a later P2b consumer
+must validate and score from the frozen input artifact before P1 can use it.
+
 ## Technical Factor Runner
 
 `python -m app.jobs.tech_factor_runner <command> [options]`

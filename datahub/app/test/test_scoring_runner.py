@@ -249,6 +249,124 @@ def test_main_compare_requires_both_versions(monkeypatch):
     assert excinfo.value.code == 2  # argparse usage error
 
 
+def test_main_capture_pit_universe_wires_date_and_output(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+
+    captured = {}
+    monkeypatch.setattr(
+        scoring_runner,
+        "run_capture_pit_universe",
+        lambda args: captured.update(date=args.date, output=args.output),
+    )
+
+    scoring_runner.main(
+        [
+            "capture-pit-universe",
+            "--date",
+            "2026-09-15",
+            "--output",
+            "/tmp/universe.json",
+        ]
+    )
+
+    assert captured == {
+        "date": "2026-09-15",
+        "output": "/tmp/universe.json",
+    }
+
+
+def test_main_capture_pit_inputs_wires_artifact_model_and_horizons(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+
+    captured = {}
+    monkeypatch.setattr(
+        scoring_runner,
+        "run_capture_pit_inputs",
+        lambda args: captured.update(
+            universe=args.universe_artifact,
+            model=args.model_version,
+            horizons=args.horizons,
+            output=args.output,
+        ),
+    )
+
+    scoring_runner.main(
+        [
+            "capture-pit-inputs",
+            "--universe-artifact",
+            "/tmp/universe.json",
+            "--model-version",
+            "ranked-v1",
+            "--horizons",
+            "20",
+            "--output",
+            "/tmp/inputs.json",
+        ]
+    )
+
+    assert captured == {
+        "universe": "/tmp/universe.json",
+        "model": "ranked-v1",
+        "horizons": "20",
+        "output": "/tmp/inputs.json",
+    }
+
+
+def test_capture_pit_universe_refuses_existing_output_before_db_read(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    import pytest
+
+    import app.jobs.scoring_runner as scoring_runner
+
+    output = tmp_path / "existing.json"
+    output.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(
+        scoring_runner,
+        "_init_db_connection",
+        lambda: (_ for _ in ()).throw(AssertionError("must not read DB")),
+    )
+
+    with pytest.raises(FileExistsError, match="output already exists"):
+        scoring_runner.run_capture_pit_universe(
+            SimpleNamespace(date="2026-09-15", output=str(output))
+        )
+
+    assert output.read_text(encoding="utf-8") == "keep"
+
+
+def test_capture_pit_inputs_refuses_existing_output_before_artifact_or_db_read(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    import pytest
+
+    import app.jobs.scoring_runner as scoring_runner
+
+    output = tmp_path / "existing.json"
+    output.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(
+        scoring_runner,
+        "_init_db_connection",
+        lambda: (_ for _ in ()).throw(AssertionError("must not read DB")),
+    )
+
+    with pytest.raises(FileExistsError, match="output already exists"):
+        scoring_runner.run_capture_pit_inputs(
+            SimpleNamespace(
+                universe_artifact="/missing/universe.json",
+                model_version="ranked-v1",
+                horizons="20",
+                output=str(output),
+            )
+        )
+
+    assert output.read_text(encoding="utf-8") == "keep"
+
+
 def test_run_scoring_makes_one_call_covering_all_horizons(monkeypatch):
     """Perf C1 remainder: the runner must not rebuild the per-day prefetch once
     per horizon. A full-market day has to reach ``score_all_stocks`` exactly

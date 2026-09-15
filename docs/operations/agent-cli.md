@@ -341,6 +341,35 @@ friction, board-lot, daily close valuation, and no artificial final-close
 liquidation. Output remains `research_only=true` and
 `validation_status=UNVALIDATED`.
 
+### Stock timing PIT input capture (P2a, research-only)
+
+P2a closes the provenance gap without relabelling historical Mongo rows. It is
+forward-only and two-phase: capture the universe after the prior close but
+before D opens, then capture D's ranked-scoring inputs after D closes but before
+the next session opens. Both commands require the build-injected
+`CAIFUBAO_BUILD_REVISION` and exclusively create a new JSON path.
+
+```bash
+PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.scoring_runner \
+  capture-pit-universe --date 2026-09-15 \
+  --output /artifacts/universe-2026-09-15.json
+
+PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.scoring_runner \
+  capture-pit-inputs \
+  --universe-artifact /artifacts/universe-2026-09-15.json \
+  --model-version ranked-v1 --horizons 20 \
+  --output /artifacts/ranked-inputs-2026-09-15.json
+```
+
+The input artifact freezes the exact pre-open universe plus bounded quotes,
+factors, live/decayed signals, CSI300 history, pre-open industry classification,
+pre-D industry metrics, calendar, model config and code revision. Source rows
+and hashes are carried together under the shared immutable artifact contract;
+numeric source values use declared fixed-unit integer encoding. These commands
+never write `StockScorePrediction` or change scheduled scoring. P1 continues to
+reject legacy predictions until the P2b consumer scores from and revalidates
+this artifact.
+
 ### System
 
 #### `system health`
