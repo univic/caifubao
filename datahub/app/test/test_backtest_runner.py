@@ -161,3 +161,191 @@ def test_timing_pool_runs_real_pure_evaluator_without_database(tmp_path, capsys)
     assert report["results"][0]["buy_hold_return_pct"] == 2.0
     assert report["validation_status"] == "UNVALIDATED"
     assert "UNVALIDATED" in capsys.readouterr().out
+
+
+def _replay_manifest():
+    sha_a = "a" * 64
+    sha_b = "b" * 64
+    return {
+        "schema_version": "timing-replay-p1",
+        "cohort": {
+            "as_of": "2026-01-04T07:00:00Z",
+            "source": "fixture:pit-members-v1",
+            "membership_basis": "point_in_time",
+            "delisted_completeness": "VERIFIED",
+            "provenance": {
+                "artifact_uri": "s3://fixture/members.json",
+                "artifact_sha256": sha_a,
+                "member_count": 1,
+                "subsequently_delisted_count": 0,
+                "suspended_count": 0,
+                "includes_subsequently_delisted": True,
+                "includes_suspended": True,
+            },
+            "members": [
+                {
+                    "stock_code": "sh600001",
+                    "listed_on": "2010-01-01",
+                    "delisted_on": None,
+                    "suspended_at_as_of": False,
+                    "evidence_at": "2026-01-04T06:00:00Z",
+                }
+            ],
+        },
+        "prediction_cohorts": {
+            "2026-01-05": {
+                "artifact_uri": "s3://fixture/ranks/2026-01-05.json",
+                "artifact_sha256": sha_b,
+                "cohort_fingerprint": "pit-fingerprint-v1",
+                "member_count": 5000,
+                "data_as_of": "2026-01-05T07:00:00Z",
+            }
+        },
+        "model": {
+            "model_version": "ranked-pit-v1",
+            "config_hash": "c" * 64,
+            "horizon": 20,
+        },
+        "strategy": {"entry_percentile": 0.9, "exit_percentile": 0.3},
+        "window": {"from": "2026-01-05", "to": "2026-01-05"},
+        "trading_calendar": ["2026-01-05"],
+        "initial_cash": 50000,
+        "board_lot": 100,
+        "friction": {
+            "commission_rate": 0.00025,
+            "minimum_commission": 5.0,
+            "stamp_duty_rate": 0.001,
+            "slippage_rate": 0.001,
+        },
+    }
+
+
+def test_timing_replay_parser_registers_real_research_command():
+    args = backtest_runner.build_parser().parse_args(
+        ["timing-replay", "manifest.json", "--output", "report.json"]
+    )
+
+    assert args.command == "timing-replay"
+    assert args.manifest_json == "manifest.json"
+    assert args.output == "report.json"
+
+
+def test_timing_replay_loads_read_only_evidence_and_invokes_p0(tmp_path, capsys):
+    manifest_path = tmp_path / "manifest.json"
+    report_path = tmp_path / "report.json"
+    manifest_path.write_text(json.dumps(_replay_manifest()), encoding="utf-8")
+    calls = []
+
+    def evaluator(cohort, runner, **kwargs):
+        calls.append(("evaluate", cohort, kwargs))
+        pair = runner("sh600001", save_result=False)
+        assert pair == {"timing": {}, "buy_hold": {}}
+        return {"research_only": True, "validation_status": "UNVALIDATED"}
+
+    def evidence_loader(stock_code, manifest):
+        calls.append(("read", stock_code, manifest["model_version"]))
+        return ["quote"], ["prediction"]
+
+    result = backtest_runner.run_timing_replay(
+        SimpleNamespace(manifest_json=str(manifest_path), output=str(report_path)),
+        evaluator=evaluator,
+        db_initializer=lambda: calls.append(("db",)),
+        model_loader=lambda version: {
+            "model_version": version,
+            "config_hash": "c" * 64,
+            "scoring_mode": "ranked",
+            "status": "ACTIVE",
+        },
+        evidence_loader=evidence_loader,
+        pair_builder=lambda code, quotes, predictions, manifest: {
+            "timing": {},
+            "buy_hold": {},
+        },
+    )
+
+    assert result["research_only"] is True
+    assert ("read", "sh600001", "ranked-pit-v1") in calls
+    assert calls[0] == ("db",)
+    assert "UNVALIDATED" in report_path.read_text(encoding="utf-8")
+    assert "research_only" in capsys.readouterr().out
+
+
+def test_timing_replay_rejects_model_before_loading_stock_evidence(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(_replay_manifest()), encoding="utf-8")
+    evidence_calls = []
+
+    with pytest.raises(ValueError, match="status"):
+        backtest_runner.run_timing_replay(
+            SimpleNamespace(manifest_json=str(manifest_path), output=None),
+            evaluator=lambda *_args, **_kwargs: {},
+            db_initializer=lambda: None,
+            model_loader=lambda _version: {
+                "model_version": "ranked-pit-v1",
+                "config_hash": "c" * 64,
+                "scoring_mode": "ranked",
+                "status": "RETIRED",
+            },
+            evidence_loader=lambda *_args: evidence_calls.append(True),
+        )
+
+    assert evidence_calls == []
+
+
+def test_timing_replay_pair_is_accepted_by_the_real_p0_contract(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(_replay_manifest()), encoding="utf-8")
+    quote = {
+        "date": "2026-01-05",
+        "open_hfq": 10.0,
+        "close_hfq": 10.5,
+        "trade_status": 1,
+        "change_rate": 1.0,
+    }
+
+    report = backtest_runner.run_timing_replay(
+        SimpleNamespace(manifest_json=str(manifest_path), output=None),
+        db_initializer=lambda: None,
+        model_loader=lambda version: {
+            "model_version": version,
+            "config_hash": "c" * 64,
+            "scoring_mode": "ranked",
+            "status": "ACTIVE",
+        },
+        evidence_loader=lambda _code, _manifest: ([quote], []),
+    )
+
+    assert report["results"][0]["status"] == "SUCCESS"
+    assert report["results"][0]["stock_code"] == "sh600001"
+    assert report["results"][0]["observed_sessions"] == 1
+    assert report["research_only"] is True
+    assert report["validation_status"] == "UNVALIDATED"
+
+
+def test_timing_replay_reports_stable_manifest_and_output_file_errors(tmp_path):
+    missing = tmp_path / "missing.json"
+    with pytest.raises(ValueError, match="cannot read timing replay manifest"):
+        backtest_runner.run_timing_replay(
+            SimpleNamespace(manifest_json=str(missing), output=None)
+        )
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(_replay_manifest()), encoding="utf-8")
+    missing_parent_output = tmp_path / "missing-directory" / "report.json"
+    with pytest.raises(ValueError, match="cannot write timing replay report"):
+        backtest_runner.run_timing_replay(
+            SimpleNamespace(
+                manifest_json=str(manifest_path), output=str(missing_parent_output)
+            ),
+            evaluator=lambda *_args, **_kwargs: {
+                "research_only": True,
+                "validation_status": "UNVALIDATED",
+            },
+            db_initializer=lambda: None,
+            model_loader=lambda version: {
+                "model_version": version,
+                "config_hash": "c" * 64,
+                "scoring_mode": "ranked",
+                "status": "ACTIVE",
+            },
+        )

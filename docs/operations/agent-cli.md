@@ -296,6 +296,51 @@ date and finite non-negative `equity`; only timing-side SELL records with
 `status=FILLED`, positive quantity, positive execution price, and an in-window
 trade date count toward the completed-trade gate.
 
+### Stock timing replay adapter (P1, research-only)
+
+`timing-replay` builds those same P0 result pairs from real stored quotes and
+ranked predictions. It reads MongoDB and may write the selected JSON output
+file, but it never generates scores or writes a backtest/model/cohort record.
+
+```bash
+PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.backtest_runner \
+  timing-replay /path/to/timing-replay-p1-manifest.json \
+  --output /path/to/timing-replay-report.json
+```
+
+The versioned manifest must contain:
+
+- a frozen `point_in_time` cohort whose immutable source URI/SHA-256, member
+  count, subsequently-delisted count, and suspended count reconcile with its
+  member rows;
+- an ACTIVE registry-pinned `ranked` model version/config hash and one fixed
+  horizon/entry percentile/exit percentile;
+- the authoritative trading calendar, cash, board lot, and complete friction
+  object; and
+- one immutable prediction-cohort record per signal date, including artifact
+  URI/SHA-256, cohort fingerprint, member count, and `data_as_of` no later than
+  that session's close.
+
+Every stored prediction must repeat exact `freshness=FRESH`, the daily cohort
+fingerprint, artifact hash and cutoff in `input_snapshot`. Legacy ranked predictions that only contain
+`scoring_mode` and `cohort_fingerprint` intentionally create no timing signal:
+they do not prove which immutable historical universe produced the percentile
+or that its inputs stopped at D. This fail-closed result is a data-provenance
+gap, not permission to substitute the current active universe.
+
+A complete, versioned shape is available at
+[`docs/examples/timing-replay-p1-manifest.json`](../examples/timing-replay-p1-manifest.json).
+Its hashes, counts, model version, cohort fingerprints, calendar, and members
+are placeholders and must be replaced with the immutable evidence being
+replayed; the CLI validates the completed file rather than generating it.
+
+Buy-and-hold forms its intent before the window and fills at the first tradable
+adjusted open. Timing observes D's valid percentile after D close and can first
+fill at a later tradable adjusted open. Both arms use identical execution,
+friction, board-lot, daily close valuation, and no artificial final-close
+liquidation. Output remains `research_only=true` and
+`validation_status=UNVALIDATED`.
+
 ### System
 
 #### `system health`
