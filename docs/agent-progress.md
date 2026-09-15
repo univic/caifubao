@@ -24,6 +24,35 @@
 ```
 
 ## 进度记录
+### 2026-09-15 22:39 CST — P3 单股前向基线启动：sh600036 招商银行
+
+- 状态：进行中
+- 已完成：从最新 `origin/develop` 建立 `codex/p3-stock-baseline`。基于 dev 实际数据按长历史、
+  可交易性、HFQ 完整性、流动性和整手资金门槛对照 6 只候选后，冻结首个单股验证锚点为
+  **sh600036 招商银行**：2021-01-04 至 2026-09-15 共 1,383 个行情交易日，可交易率
+  99.93%，复权 OHLC 完整率 100%，近 76 个交易日平均成交额约 33.92 亿元，2026-09-15
+  收盘 41.10 元（一手约 4,110 元）；选择目的仅是固定可验证样本，不构成收益或买入结论。
+  已在 2026-09-16 开盘前生成首个 P2a universe 工件（5,561 个成员，包含 sh600036），
+  artifact id `sha256:9fda1a578fd4be340fb9fc360eaa80fc3ba9f6564ce4d3129c02ac984407c118`，
+  artifact hash `9aad70034988e459c46b553402318dc39a8197ef924a6106048b538bcec992f3`；副本暂存于
+  `/private/tmp/caifubao-p3-artifacts/universe-2026-09-16.json`，未提交生成数据、未执行
+  `--apply`、未写线上 prediction。
+- 验证：本地副本文件 SHA-256 为
+  `a798e53318e97aa0b3261e5cb8de8e5dbeb64d5990a69bcca3cfa04398f9be1a`，schema 为
+  `stock-pit-universe-v1`、grade 为 `RESEARCH`、session 为 `2026-09-16`、捕获时间为
+  `2026-09-15T14:37:23Z`；工件内源码版本绑定当前 dev 镜像修订 `007b232d6efc`。
+- 下一步：2026-09-16 收盘后、下一交易日开盘前，以该 universe 工件运行
+  `capture-pit-inputs --model-version flip_wide_shadow_v1 --horizons 20`；随后必须在包含 PR #245
+  P2b 的不可变源码/镜像上运行默认 dry-run 的 `score-pit-artifacts`，记录 sh600036 的 Merkle
+  proof/handoff，并连续积累真实日工件后交给 P1 做费后、T+1、同股 buy-and-hold 对照回放。
+  单股结果仅作基线，最终结论仍需满足至少 120 交易日、至少 5 笔交易、集中度 <40%、
+  walk-forward decay ≤20%，并扩展到 top-50/全市场，禁止据单票调参后宣称 alpha。
+- 阻塞：dev datahub 当前仍是 #244 对应镜像 `sha-007b232d6efc`，尚无 #245 P2b 消费器；部署也
+  未默认注入 `CAIFUBAO_BUILD_REVISION`，本次已用镜像不可变修订显式传入。Pod 无 artifact
+  持久卷，因此本地 `/private/tmp` 副本是当前唯一保留件，后续运行前需先落实耐久存储或再次确认
+  文件存在。sh600036 在本次 universe 工件中没有行业分类行，后续如策略依赖行业分量需 fail
+  closed 或先补齐并重新开启新的前向窗口，不能回写本工件。
+
 ### 2026-09-15 22:15 CST — P2b PR #245 已合并
 
 - 状态：已完成
