@@ -5,6 +5,7 @@ import datetime
 import json
 import logging
 import os
+from pathlib import Path
 import time
 
 from app.lib.utilities import job_run_helper
@@ -122,6 +123,53 @@ def run_backfill(args):
         replace=args.replace,
     )
     print(f"Backfill completed: {result}")
+
+
+def _require_new_output(path: str) -> None:
+    if Path(path).exists():
+        raise FileExistsError(f"output already exists: {path}")
+
+
+def run_capture_pit_universe(args) -> None:
+    """Capture the pre-open universe without touching scoring state."""
+    _require_new_output(args.output)
+    _init_db_connection()
+    from app.lib.scoring_engine.pit_input_evidence import (
+        PitInputEvidenceCapture,
+        write_artifact_exclusive,
+    )
+
+    artifact = PitInputEvidenceCapture().capture_universe(
+        datetime.date.fromisoformat(args.date)
+    )
+    write_artifact_exclusive(args.output, artifact)
+    print(json.dumps({"artifact_id": artifact["artifact_id"], "output": args.output}))
+
+
+def run_capture_pit_inputs(args) -> None:
+    """Capture post-close ranked inputs for one frozen pre-open universe."""
+    _require_new_output(args.output)
+    from app.lib.scoring_engine.pit_input_evidence import load_artifact
+
+    universe = load_artifact(args.universe_artifact)
+    _init_db_connection()
+    from app.lib.scoring_engine.pit_input_evidence import (
+        PitInputEvidenceCapture,
+        write_artifact_exclusive,
+    )
+
+    horizons = (
+        [int(value.strip()) for value in args.horizons.split(",")]
+        if args.horizons
+        else DEFAULT_HORIZONS
+    )
+    artifact = PitInputEvidenceCapture().capture_inputs(
+        universe,
+        model_version=args.model_version,
+        horizons=horizons,
+    )
+    write_artifact_exclusive(args.output, artifact)
+    print(json.dumps({"artifact_id": artifact["artifact_id"], "output": args.output}))
 
 
 def run_equivalence_check_cmd(args) -> int:
@@ -401,6 +449,24 @@ def main(argv: list[str] | None = None) -> None:
     p_backfill.add_argument("--dry-run", action="store_true")
     p_backfill.add_argument("--replace", action="store_true")
 
+    p_pit_universe = subparsers.add_parser(
+        "capture-pit-universe",
+        help="Capture a forward pre-open stock universe artifact",
+    )
+    p_pit_universe.add_argument("--date", required=True, help="Session YYYY-MM-DD")
+    p_pit_universe.add_argument("--output", required=True)
+
+    p_pit_inputs = subparsers.add_parser(
+        "capture-pit-inputs",
+        help="Capture forward post-close ranked-scoring input evidence",
+    )
+    p_pit_inputs.add_argument("--universe-artifact", required=True)
+    p_pit_inputs.add_argument("--model-version", required=True)
+    p_pit_inputs.add_argument(
+        "--horizons", help="Comma-separated horizons (default: 5,20,60)"
+    )
+    p_pit_inputs.add_argument("--output", required=True)
+
     # verify command
     p_verify = subparsers.add_parser("verify", help="Verify score predictions")
     add_common_options(p_verify, include_range=True)
@@ -535,6 +601,10 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "backfill":
         _init_db_connection()
         run_backfill(args)
+    elif args.command == "capture-pit-universe":
+        run_capture_pit_universe(args)
+    elif args.command == "capture-pit-inputs":
+        run_capture_pit_inputs(args)
     elif args.command == "verify":
         _init_db_connection()
         result = run_verification(
