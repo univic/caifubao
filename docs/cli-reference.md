@@ -117,6 +117,44 @@ scoring read set. Both conform to the shared research artifact envelope and
 refuse overwrite. P2a does not mark stored scores `FRESH`; a later P2b consumer
 must validate and score from the frozen input artifact before P1 can use it.
 
+### Forward PIT artifact scoring (P2b, research-only)
+
+P2b consumes the two P2a artifacts without reading mutable market/master
+collections. It revalidates both envelopes and their exact binding, then writes
+an exclusive JSON report containing ranked predictions. Set
+`CAIFUBAO_BUILD_REVISION` to the immutable consumer image/source revision first;
+the command rejects a missing revision. Dry-run is the default.
+
+```bash
+export CAIFUBAO_BUILD_REVISION="$(git rev-parse HEAD)"
+
+python -m app.jobs.scoring_runner score-pit-artifacts \
+  --universe-artifact /artifacts/universe-2026-09-15.json \
+  --input-artifact /artifacts/ranked-inputs-2026-09-15.json \
+  --output /artifacts/ranked-predictions-2026-09-15.json
+
+# Explicit publication: ACTIVE registry/config and all natural keys are
+# preflighted; any existing prediction makes the whole publish fail closed.
+python -m app.jobs.scoring_runner score-pit-artifacts \
+  --universe-artifact /artifacts/universe-2026-09-15.json \
+  --input-artifact /artifacts/ranked-inputs-2026-09-15.json \
+  --output /artifacts/ranked-predictions-2026-09-15-apply.json --apply
+```
+
+Once the exact result bytes are written, stdout emits
+`prediction_cohorts_by_horizon[H]`, ready to copy to the P1 manifest's
+`prediction_cohorts[D]` for that horizon. Its `artifact_sha256` hashes the
+result file; the separate `prediction_root_sha256` verifies each immutable
+prediction leaf and Merkle proof for the complete frozen cohort. Sorted
+`member_codes` binds the daily fingerprint/count and proof index independently
+from the possibly smaller replay pool.
+
+`--apply` is insert-only and never replaces legacy/live predictions. A usable
+new row is top-level `PENDING`, while its `input_snapshot` is `RANKED` and
+`FRESH`; missing-D-quote members remain top-level `BLOCKED` and still count in
+the frozen cohort. `FRESH` proves causal input provenance only—it does not mean
+the future outcome is verified or that the strategy is profitable.
+
 ## Technical Factor Runner
 
 `python -m app.jobs.tech_factor_runner <command> [options]`

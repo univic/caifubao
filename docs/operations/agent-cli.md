@@ -370,6 +370,52 @@ never write `StockScorePrediction` or change scheduled scoring. P1 continues to
 reject legacy predictions until the P2b consumer scores from and revalidates
 this artifact.
 
+### Stock timing PIT artifact consumer (P2b, research-only)
+
+P2b is the scoring half of the forward evidence path. It fully validates the
+P2a universe/input pair and reconstructs ranked scoring from the artifact rows
+only. The calculation phase does not initialize MongoDB or read current
+membership, quotes, factors, signals, industry data, calendar, or stock master.
+Set `CAIFUBAO_BUILD_REVISION` to the immutable consumer image/source revision
+before running; P2b rejects a missing revision instead of emitting untraceable
+predictions.
+
+```bash
+export CAIFUBAO_BUILD_REVISION="$(git rev-parse HEAD)"
+
+# Default: artifact-only calculation, no MongoDB access.
+PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.scoring_runner \
+  score-pit-artifacts \
+  --universe-artifact /artifacts/universe-2026-09-15.json \
+  --input-artifact /artifacts/ranked-inputs-2026-09-15.json \
+  --output /artifacts/ranked-predictions-2026-09-15.json
+
+# Optional explicit insert. Use a new output path and a model/date/horizon with
+# no existing prediction natural keys.
+PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.scoring_runner \
+  score-pit-artifacts \
+  --universe-artifact /artifacts/universe-2026-09-15.json \
+  --input-artifact /artifacts/ranked-inputs-2026-09-15.json \
+  --output /artifacts/ranked-predictions-2026-09-15-apply.json --apply
+```
+
+After the result file is serialized, stdout emits
+`prediction_cohorts_by_horizon[H]`, the exact daily record to place under the
+P1 manifest's `prediction_cohorts[D]` for that horizon. `artifact_sha256`
+binds the exact result-file bytes, while the distinct
+`prediction_root_sha256` binds the immutable generated fields of every cohort
+member through each row's Merkle proof; sorted `member_codes` lets P1 reconcile
+the daily fingerprint/count and proof index even when the replay pool is only a
+selected subset. With `--apply`, P2b checks that the
+captured model is still ACTIVE and ranked with the same config hash, rejects
+the entire run if any natural key exists, then issues one insert-only bulk
+write. It never upgrades old rows.
+
+Computable rows are top-level `PENDING` and carry
+`input_snapshot.status=RANKED`, `freshness=FRESH`, artifact/cohort hashes and D
+close. Missing-quote members remain `BLOCKED` and unranked. `FRESH` is input
+provenance, not future verification, profitability, or trading authorization.
+
 ### System
 
 #### `system health`

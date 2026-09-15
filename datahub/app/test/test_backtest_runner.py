@@ -196,8 +196,10 @@ def _replay_manifest():
             "2026-01-05": {
                 "artifact_uri": "s3://fixture/ranks/2026-01-05.json",
                 "artifact_sha256": sha_b,
-                "cohort_fingerprint": "pit-fingerprint-v1",
-                "member_count": 5000,
+                "prediction_root_sha256": sha_a,
+                "cohort_fingerprint": "333d83aefe911ca97a02afb247e5e648779d65c66a4b56cccf2cef0f7ad0170f",
+                "member_codes": ["sh600001", "sh600002"],
+                "member_count": 2,
                 "data_as_of": "2026-01-05T07:00:00Z",
             }
         },

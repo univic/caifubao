@@ -24,6 +24,70 @@
 ```
 
 ## 进度记录
+### 2026-09-15 22:05 CST — P2b 实现与强制门禁全绿，待提交及 PR CI
+
+- 状态：进行中
+- 已完成：P2b 已完整实现并解决最终 reviewer 指出的 cohort 边界：P2b handoff 携带完整、排序、
+  去重的 daily ranked `member_codes`；P1 从该列表重算 fingerprint/count、解析 Merkle leaf index，
+  同时允许独立冻结的单股/top-N replay cohort 为其子集。版本化 Merkle 承诺绑定 score/rank/
+  percentile/base price/target/recommendation/explanation/model/input provenance，精确结果文件 SHA 与
+  prediction root 分离。CLI 默认 dry-run；显式 apply 仍是完整预检后的 insert-only。
+- 验证：datahub 全量 **886 passed**；Ruff check/format、OpenSpec strict **24/24**、
+  `git diff --check` 全绿。spec-guardian、contract-reviewer、qa-reviewer 最终均为 `GATE_OK`。
+  `origin/develop` 已更新，当前分支相对其 0 ahead/0 behind（共同基线 `007b232`），无冲突。
+- 下一步：提交并推送 `codex/timing-pit-consumer-p2b`，创建 Draft PR，等待所有 CI 绿后转 Ready；
+  最后回写 PR/CI 状态并勾选 OpenSpec task 4.4。
+- 阻塞：无。未连接真实 Mongo、未执行 `--apply`、未写线上 prediction。
+
+### 2026-09-15 21:56 CST — P2b Merkle 完整性与生产语义对齐完成，进入全量门禁
+
+- 状态：进行中
+- 已完成：本条取代 15:38 条中的旧 handoff 设计。P2b 结果文件的
+  `artifact_sha256` 现绑定精确序列化字节，另以版本化、域分离的逐 horizon Merkle root/proof
+  绑定完整冻结 cohort 中每行不可变预测字段；P1 校验 root/count/index/path 后才接受信号，而
+  top-level `status`/`verification` 等未来验证字段仍可变。已补齐 P1 manifest 合同、示例和
+  build revision 前置条件。生产对齐集成测试覆盖 6 个成员 × 3 个 horizon、稀疏历史回退、原始值
+  并列、方向翻转、惩罚项与缺 D 行情 `BLOCKED`，P2b 与生产 ranked 路径业务字段逐项一致。
+- 验证：P2b/P1/scoring/P2a 聚焦 **129 passed**；Ruff 聚焦检查通过；OpenSpec 修订已由
+  spec-guardian 复审为 `GATE_OK`。测试还确认篡改 score/rank/input provenance/proof 会被 P1
+  fail closed，单改未来验证字段不破坏承诺。实现过程中发现并修复生成解释值可能超过有限小数的
+  Merkle 编码边界，现按协议使用 1e-8 half-even 定点量化。
+- 下一步：运行全量 datahub、全量 Ruff/format、OpenSpec strict 与 diff 检查；更新 tasks；请
+  contract-reviewer、qa-reviewer 复审并修完所有发现；随后与 `origin/develop` 冲突检查、提交、
+  推送、建 Draft PR、等待 CI 全绿后转 Ready。
+- 阻塞：无。尚未连接真实 Mongo、未执行 `--apply`、未写线上 prediction。
+
+### 2026-09-15 15:38 CST — P2b 核心实现完成，全量 datahub 879 项通过
+
+- 状态：进行中
+- 已完成：新增 `stock-timing-pit-consumer-p2b` OpenSpec 并修完 spec-guardian 的 3 个 P1 +
+  1 个 P2，复审 `GATE_OK`；实现工件对完整复验、唯一冻结成员集/日历/窗口约束、纯内存 P2a
+  prefetch，以及由 live ranked 路径和 P2b 共用的无数据库 payload 构造层。新增
+  `score-pit-artifacts`（默认 dry-run；`--apply` 才连接 Mongo），生成 P1 daily cohort 记录和
+  `FRESH` provenance；apply 在写前校验当前 ACTIVE/ranked/config、拒绝任一自然键碰撞，并只做
+  单次 insert-only bulk。补齐 CLI/runbook 文档。
+- 验证：失败测试先确认缺模块；实现后聚焦 P2a/P2b/scoring/P1 124 项通过；datahub 全量
+  **879 passed**；Ruff check/format、`git diff --check` 通过；OpenSpec strict **24/24** 通过
+  （仅 PostHog 遥测 DNS 噪声，exit 0）。
+- 下一步：执行 contract-reviewer 与 qa-reviewer；修复所有 P1 并复审，随后更新进度、提交、
+  与 `origin/develop` 做冲突检查、创建 Draft PR、等待 CI 全绿后转 Ready。
+- 阻塞：无。尚未连接真实 Mongo、未执行 `--apply`、未写线上 prediction。
+
+### 2026-09-15 15:17 CST — P2b 真实回放适配层：#244 已合并，离线 PIT 消费器启动
+
+- 状态：进行中
+- 已完成：PR #244 已确认 CI 全绿并 squash merge 到 `develop`（`007b232`）；从最新
+  `origin/develop` 建立 `codex/timing-pit-consumer-p2b`。已冻结本切片验收边界：P2b 必须完整复验
+  P2a universe/input 工件，在评分阶段不回读 Mongo 行情、因子、信号或股票主数据；生成的 ranked
+  prediction 必须绑定工件哈希、冻结 cohort、`data_as_of` 与 `FRESH` 证据，并能被 P1 回放接受。
+- 验证：#244 merge commit 与当前分支基线已核对；工作树在记录本条目前无其他改动。
+- 下一步：先新增并严格校验 `stock-timing-pit-consumer-p2b` OpenSpec，完成 spec-guardian 评审；
+  随后以失败测试驱动实现纯工件评分、零写入失败语义、显式 publish 与 P1 端到端验收，最后走
+  contract-reviewer、qa-reviewer、全量检查、冲突检查和 Draft PR CI。
+- 阻塞：无。为避免不可变证据的哈希自引用，拟将 prediction 的
+  `cohort_artifact_sha256` 绑定已封存且包含完整读集的 P2a input artifact 哈希；该语义将在 Spec
+  Gate 中明确，并由 P1 集成测试验证。
+
 ### 2026-09-14 12:30 CST — PR #236 收口勘误：修正缓冲区与换仓成本语义
 
 - 状态：进行中
