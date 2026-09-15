@@ -24,6 +24,51 @@
 ```
 
 ## 进度记录
+### 2026-09-16 07:00 CST — 个股择时实跑（REPLAY）：策略链跑通、认证版三处阻塞；发现 2026-08-31 全市场复权断层
+
+- 状态：进行中（研究结论已出；认证链路与历史口径均待外部条件）
+- 已完成：
+  - **实跑口径**：`flip_wide_shadow_v1` h20 的真实全市场排名百分位（dev 存量，104 个交易日
+    2026-01-05~2026-09-08）+ 真实行情；D 收盘出信号、**D+1 开盘成交**、整手 100 股、
+    佣金 0.025%（最低 5 元）/ 印花 0.1% / 滑点 0.1%、停牌不顺延、逐日收盘估值、同股 buy&hold。
+    全程只读，未写库（`stock_score_predictions` 811,509、`stock_industry` 5,212 均未变）。
+  - **结果（不复权价口径，可解释）**：sh600036 择时 **−2.78%** vs 买入持有 **−3.84%**
+    （超额 +1.06pp，2 个回合，最大回撤 −9.82% vs −16.91%）。另测 4 只的超额：+1.03（sh600519）、
+    +8.05（sz000651）、−2.00（sh600030）、−3.80（sh601398）pp，每个 1~2 个回合。
+    不复权口径不含分红，含分红后买入持有要好 1~3pp，因此该窗口**大致打平，无可宣称 alpha**。
+  - **P0 门禁实测**（在源码树真实执行 `timing-pool`）：`coverage=1.0`、8 笔完成卖出，但
+    `gate_passed=false`，失败原因 `requested`（5 < 50）与 `evidence_eligible`（0 < 50），
+    `status=UNVALIDATED` —— 样本量不足时系统自己拒绝下结论（与仓库既有判断一致）。
+  - **发现 P1 级数据缺陷：2026-08-31 复权序列全市场断层（dev 与 prod 完全一致）**。
+    sh600036 当日 `close 39.35→40.12`（+2%）但 `fq_factor 30.9531→6.6608`，
+    `close_hfq 225.96→267.23`（**+18.3%**）；全市场 5,204 只中 **4,676 只（90%）** 当日因子
+    跳变 >10%（比值 p05/p50/p95 = 0.178 / 0.995 / 5.368）。历史因子本身还是旧的坏序列：
+    sh600036 在 2025-01-01~2026-08-28 的 401 个交易日里有 **393 天**因子变化（真实 `adj_factor`
+    只在除权日变）。对应 `openspec/changes/fq-adj-factor-fix/tasks.md` 的 **5.1/5.2
+    （发布 + 全市场 FQ 重算）仍未执行**。后果：一切跨 08-31 的 HFQ 计算（含评分分量与历史回测）
+    不可解释 —— 同一策略 HFQ 口径"买入持有 +17.49%"、raw 口径 −3.84%，差异几乎全来自该断层。
+    正向 P2a 工件不受影响（捕获的是当下自洽序列）。
+  - **认证链路（P2a→P2b→P1）三处阻塞，均已实测**：① `capture-pit-inputs`（session 2026-09-16）
+    仍被窗口门禁拒绝（`input capture must run after close and before next open`，Job Failed、
+    未写任何工件），须等 09-16 收盘；② dev 注册表中 `flip_wide_shadow_v1` 为 ACTIVE 但
+    **`scoring_mode` 字段缺失** → `validate_model_pin` 报 `scoring_mode must be ranked`；
+    ③ 存量预测一律被 P1 判为 `stale_prediction`（`input_snapshot` 仅有
+    `status/scoring_mode/cohort_fingerprint`，无 `FRESH`/`data_as_of`/Merkle）→ 0 成交、全现金。
+  - **部署可用性缺口**：dev 镜像内 `timing-pool`/`timing-replay` 直接
+    `FileNotFoundError: /backend/app/services/timing_evaluator.py`（镜像没有 `app/services`，
+    源码回退路径同样不存在）。根因与上一轮查明的 `CAIFUBAO_BUILD_REVISION` 为空**同一处**：
+    `workflow_run` 触发的 publish 使用的是**默认分支 main 上过期的 workflow**，而
+    "把 timing_evaluator.py 拷进 datahub"和"传 build-arg"两步都只在 develop 的新版本里。
+- 验证：只读 Mongo 查询 + dev `timing-pool`/`timing-replay` 实跑；曲线与逐日明细在本地
+  `tmp-timing-test/`（`sh600036_nav_raw.png`、`timing_overview.png`、`hfq_discontinuity.png`、
+  `timing_pool_report.json`、`sh600036_raw.json`），未提交。
+- 下一步（按依赖顺序）：① 修 publish 流水线（把 develop 的 workflow 发布到 main，或部署期注入
+  模块与构建修订）→ 镜像才能跑择时 CLI；② 执行 FQ 全市场重算（`fq-adj-factor-fix` 5.2）→
+  历史回放才可解释；③ 补注册表 `scoring_mode=ranked`；④ 09-16 收盘后跑 `capture-pit-inputs`
+  → `score-pit-artifacts`（dry-run）→ 授权后再决定 `--apply` → 拼 P1 manifest → `timing-replay`；
+  ⑤ 之后才谈开 120 日前向窗口。
+- 阻塞：认证版择时结论需 09-16 收盘后的真实前向工件与 operator 授权；历史口径结论需 FQ 重算才成立。
+
 ### 2026-09-15 23:42 CST — P3 解阻塞：#245(P2b) 上 dev + PIT 工件持久化 + industry 代码格式缺陷修复
 
 - 状态：进行中（两个 Draft PR 待评审/合并；集群侧 P3 运行前置已就绪）
