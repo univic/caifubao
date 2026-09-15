@@ -24,6 +24,89 @@
 ```
 
 ## 进度记录
+### 2026-09-16 07:00 CST — 个股择时实跑（REPLAY）：策略链跑通、认证版三处阻塞；发现 2026-08-31 全市场复权断层
+
+- 状态：进行中（研究结论已出；认证链路与历史口径均待外部条件）
+- 已完成：
+  - **实跑口径**：`flip_wide_shadow_v1` h20 的真实全市场排名百分位（dev 存量，104 个交易日
+    2026-01-05~2026-09-08）+ 真实行情；D 收盘出信号、**D+1 开盘成交**、整手 100 股、
+    佣金 0.025%（最低 5 元）/ 印花 0.1% / 滑点 0.1%、停牌不顺延、逐日收盘估值、同股 buy&hold。
+    全程只读，未写库（`stock_score_predictions` 811,509、`stock_industry` 5,212 均未变）。
+  - **结果（不复权价口径，可解释）**：sh600036 择时 **−2.78%** vs 买入持有 **−3.84%**
+    （超额 +1.06pp，2 个回合，最大回撤 −9.82% vs −16.91%）。另测 4 只的超额：+1.03（sh600519）、
+    +8.05（sz000651）、−2.00（sh600030）、−3.80（sh601398）pp，每个 1~2 个回合。
+    不复权口径不含分红，含分红后买入持有要好 1~3pp，因此该窗口**大致打平，无可宣称 alpha**。
+  - **P0 门禁实测**（在源码树真实执行 `timing-pool`）：`coverage=1.0`、8 笔完成卖出，但
+    `gate_passed=false`，失败原因 `requested`（5 < 50）与 `evidence_eligible`（0 < 50），
+    `status=UNVALIDATED` —— 样本量不足时系统自己拒绝下结论（与仓库既有判断一致）。
+  - **发现 P1 级数据缺陷：2026-08-31 复权序列全市场断层（dev 与 prod 完全一致）**。
+    sh600036 当日 `close 39.35→40.12`（+2%）但 `fq_factor 30.9531→6.6608`，
+    `close_hfq 225.96→267.23`（**+18.3%**）；全市场 5,204 只中 **4,676 只（90%）** 当日因子
+    跳变 >10%（比值 p05/p50/p95 = 0.178 / 0.995 / 5.368）。历史因子本身还是旧的坏序列：
+    sh600036 在 2025-01-01~2026-08-28 的 401 个交易日里有 **393 天**因子变化（真实 `adj_factor`
+    只在除权日变）。对应 `openspec/changes/fq-adj-factor-fix/tasks.md` 的 **5.1/5.2
+    （发布 + 全市场 FQ 重算）仍未执行**。后果：一切跨 08-31 的 HFQ 计算（含评分分量与历史回测）
+    不可解释 —— 同一策略 HFQ 口径"买入持有 +17.49%"、raw 口径 −3.84%，差异几乎全来自该断层。
+    正向 P2a 工件不受影响（捕获的是当下自洽序列）。
+  - **认证链路（P2a→P2b→P1）三处阻塞，均已实测**：① `capture-pit-inputs`（session 2026-09-16）
+    仍被窗口门禁拒绝（`input capture must run after close and before next open`，Job Failed、
+    未写任何工件），须等 09-16 收盘；② dev 注册表中 `flip_wide_shadow_v1` 为 ACTIVE 但
+    **`scoring_mode` 字段缺失** → `validate_model_pin` 报 `scoring_mode must be ranked`；
+    ③ 存量预测一律被 P1 判为 `stale_prediction`（`input_snapshot` 仅有
+    `status/scoring_mode/cohort_fingerprint`，无 `FRESH`/`data_as_of`/Merkle）→ 0 成交、全现金。
+  - **部署可用性缺口**：dev 镜像内 `timing-pool`/`timing-replay` 直接
+    `FileNotFoundError: /backend/app/services/timing_evaluator.py`（镜像没有 `app/services`，
+    源码回退路径同样不存在）。根因与上一轮查明的 `CAIFUBAO_BUILD_REVISION` 为空**同一处**：
+    `workflow_run` 触发的 publish 使用的是**默认分支 main 上过期的 workflow**，而
+    "把 timing_evaluator.py 拷进 datahub"和"传 build-arg"两步都只在 develop 的新版本里。
+- 验证：只读 Mongo 查询 + dev `timing-pool`/`timing-replay` 实跑；曲线与逐日明细在本地
+  `tmp-timing-test/`（`sh600036_nav_raw.png`、`timing_overview.png`、`hfq_discontinuity.png`、
+  `timing_pool_report.json`、`sh600036_raw.json`），未提交。
+- 下一步（按依赖顺序）：① 修 publish 流水线（把 develop 的 workflow 发布到 main，或部署期注入
+  模块与构建修订）→ 镜像才能跑择时 CLI；② 执行 FQ 全市场重算（`fq-adj-factor-fix` 5.2）→
+  历史回放才可解释；③ 补注册表 `scoring_mode=ranked`；④ 09-16 收盘后跑 `capture-pit-inputs`
+  → `score-pit-artifacts`（dry-run）→ 授权后再决定 `--apply` → 拼 P1 manifest → `timing-replay`；
+  ⑤ 之后才谈开 120 日前向窗口。
+- 阻塞：认证版择时结论需 09-16 收盘后的真实前向工件与 operator 授权；历史口径结论需 FQ 重算才成立。
+
+### 2026-09-15 23:42 CST — P3 解阻塞：#245(P2b) 上 dev + PIT 工件持久化 + industry 代码格式缺陷修复
+
+- 状态：进行中（两个 Draft PR 待评审/合并；集群侧 P3 运行前置已就绪）
+- 已完成：
+  - **dev datahub 部署失败的根因与恢复**：`datahub_deploy` 于 14:18Z 失败、dev 停在 #244，
+    原因是 Spegel 预热 Job 在 10 分钟等待窗内一直 ContainerCreating（该镜像实际 19 分钟后才拉完并被取消）。
+    手动重派 `datahub-deploy`（dev, image_tag `sha-085d782fa0e4`）成功（run `34986170610`），
+    dev 现为 **#245 P2b**，`score-pit-artifacts` 可用。
+  - **顺带查明 `CAIFUBAO_BUILD_REVISION` 未烘焙进镜像**：`workflow_run` 触发的 publish 使用**默认分支
+    main** 上的工作流文件，而 main 尚未包含 #244 的 `build-args`，同时被检出的 develop Dockerfile
+    ARG 默认为空 → 镜像 ENV 为空字符串。短期用 Job env 显式传精确修订即可；根治需把该 workflow
+    发布到 main（release）或在部署期注入，属独立变更。
+  - **PIT 工件持久化**：dev 新建 PVC `stock-timing-artifacts`（2Gi，`local-path`；目标态应为 Retain 类），
+    公开示例拆为 PVC + 三阶段 Job（`stock-timing-universe/inputs/score.example.yaml`），
+    并补 `docs/operations/stock-timing-pit-evidence.md` runbook（**#248**）。
+  - **重生成并落盘 2026-09-16 universe 工件**（替换 codex 只存在于其本机的副本）：
+    Job `stock-timing-universe-20260916` 成功；`/artifacts/universe-2026-09-16.json`，
+    sha256 `6b0830d0653077c3ae52c1bbccacf9e4f7115d9528dac1c7d65fe18af6020990`，
+    artifact_id `sha256:9e14af2531b5724b7b0e24b9958f96251c455a4c6598187911b3c8999ebd8dd9`，
+    session 2026-09-16、universe 5,561 行、构建修订 `085d782fa0e4…`；
+    **industry_classification 行数为 0**，正是下面这条缺陷的直接证据。
+  - **industry 代码格式缺陷修复（#247，Spec Gate 通过）**：`stock_industry` 唯一以 baostock 的
+    `sh.600036` 形式存键，而行情/因子/信号/评分一律用 `sh600036` → `industry_momentum`（各 horizon 权重 5）
+    长期返回中性、`industry_daily_metrics` 在 dev 与源库均为 **0 条**、P2a universe 的行业快照为空。
+    改动：采集侧归一到规范键 + 一次性 `normalize-codes` 迁移（幂等、dry-run 零写入、不改 `last_synced_at`、
+    合并保留 canonical 分类与其自身 `assigned_at`、未识别键只报告）+ 回放 PIT 守卫
+    （`classification_in_effect_on` 移到 `app.model.industry`，并在评分预取/组件/聚合/H20 导出四处生效，
+    防止“键修好之后把今天的行业算到历史日期上”）。
+- 验证：datahub 全量 **902 passed**；`ruff check --select E4,E7,E9,F` 与 `ruff format --check` 通过；
+  `openspec validate --all --strict` **25/25**（CI pin 的 `@fission-ai/openspec@1.1.1`）；
+  四个新 manifest 通过 `kubectl apply --dry-run=client`；spec-guardian `required` 且 P1/P2 已闭合
+  （含其复审发现的 H20 快照前视，已补守卫与回归测试）；qa-reviewer 对 #248 首轮 P1/P2 已修正并复审。
+- 下一步：① 合并 #247/#248（CI 进行中）；② **决定 P3 前向窗口起点**：当前 09-16 工件的行业快照为空，
+  窗口内 `industry_momentum` 会恒为中性（对横截面排名是常数、不影响百分位，但与声明模型不一致）；
+  建议 industry 修复部署并迁移后再生成新 universe 工件、开新窗口，不要把 09-16 当成已开始的窗口；
+  ③ industry 迁移须**拥有该集合的环境（prod）先做**再 dev——dev 的 `stock_industry` 是按 `stock_code`
+  全量 upsert 的 prod 快照，dev 先迁移会被下一次 data-sync 重新写回分隔键。
+- 阻塞：无；生产/研究环境的 industry 部署与迁移需 operator 授权后执行（见 #247 tasks 5.x）。
 ### 2026-09-15 22:15 CST — P2b PR #245 已合并
 
 - 状态：已完成
