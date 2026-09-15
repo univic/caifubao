@@ -32,4 +32,4 @@
 - [x] 4.2 Run Ruff and `openspec validate --all --strict`.
 - [x] 4.3 Run spec-guardian, contract-reviewer, and qa-reviewer; resolve P1 and
       acknowledge remaining P2 findings.
-- [ ] 4.4 Check branch conflicts, create Draft PR, wait for CI, then mark ready.
+- [x] 4.4 Check branch conflicts, create Draft PR, wait for CI, then mark ready.
