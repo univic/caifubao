@@ -1,0 +1,227 @@
+# Stock-timing PIT capture Jobs (example).
+#
+# The three phases of the forward evidence chain, in order:
+#
+#   1. stock-timing-universe  `capture-pit-universe`  pre-open, after the
+#      previous session closed. Freezes membership + industry classification.
+#   2. stock-timing-inputs    `capture-pit-inputs`    after the session closes
+#      and before the next one opens. Binds the frozen universe to the complete
+#      ranked scoring read set for that session.
+#   3. stock-timing-score     `score-pit-artifacts`   offline ranked scoring
+#      from the two artifacts. Dry-run by default and needs no database access;
+#      `--apply` is a separate, explicitly authorised publication step that also
+#      needs the MONGODB_* env below.
+#
+# All three write to /artifacts on the stock-timing-artifacts PVC
+# (k8s/base/stock-timing-artifacts.example.yaml). Output paths are exclusive:
+# a run refuses to overwrite an existing file, so a re-run needs a new session
+# path (or deleting the stale file first).
+#
+# Prefer the one-off Job launcher in the private overlay, which copies the live
+# datahub Deployment's image, image revision and generated ConfigMap names;
+# render these directly only when that is not available.
+#
+# The Jobs have fixed names so `kubectl apply` works; delete one
+# (`kubectl delete job stock-timing-universe`) before running it again.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: stock-timing-universe
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: stock-timing-universe
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app: caifubao-datahub
+        job.caifubao.io/type: stock-timing-universe
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: stock-timing-universe
+        image: caifubao-datahub:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "app.jobs.scoring_runner", "capture-pit-universe"]
+        args:
+        - --date
+        - "2026-09-16"
+        - --output
+        - /artifacts/universe-2026-09-16.json
+        env:
+        - name: MONGODB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_HOST
+        - name: MONGODB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_PORT
+        - name: MONGODB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_NAME
+        - name: MONGODB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_USER
+        - name: MONGODB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: datahub-secret
+              key: MONGODB_PASSWORD
+        # The publish workflow bakes this into the image; set it here only when
+        # the image under test does not carry it (the CLI fails closed on an
+        # empty or hand-written revision).
+        - name: CAIFUBAO_BUILD_REVISION
+          value: "<immutable-datahub-image-revision>"
+        volumeMounts:
+        - name: stock-timing-artifacts
+          mountPath: /artifacts
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+      volumes:
+      - name: stock-timing-artifacts
+        persistentVolumeClaim:
+          claimName: stock-timing-artifacts
+      imagePullSecrets:
+      - name: ccr-secret
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: stock-timing-inputs
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: stock-timing-inputs
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 7200
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app: caifubao-datahub
+        job.caifubao.io/type: stock-timing-inputs
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: stock-timing-inputs
+        image: caifubao-datahub:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "app.jobs.scoring_runner", "capture-pit-inputs"]
+        args:
+        - --universe-artifact
+        - /artifacts/universe-2026-09-16.json
+        - --model-version
+        - flip_wide_shadow_v1
+        - --horizons
+        - "20"
+        - --output
+        - /artifacts/ranked-inputs-2026-09-16.json
+        env:
+        - name: MONGODB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_HOST
+        - name: MONGODB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_PORT
+        - name: MONGODB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_NAME
+        - name: MONGODB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_USER
+        - name: MONGODB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: datahub-secret
+              key: MONGODB_PASSWORD
+        - name: CAIFUBAO_BUILD_REVISION
+          value: "<immutable-datahub-image-revision>"
+        volumeMounts:
+        - name: stock-timing-artifacts
+          mountPath: /artifacts
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+      volumes:
+      - name: stock-timing-artifacts
+        persistentVolumeClaim:
+          claimName: stock-timing-artifacts
+      imagePullSecrets:
+      - name: ccr-secret
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: stock-timing-score
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: stock-timing-score
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app: caifubao-datahub
+        job.caifubao.io/type: stock-timing-score
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: stock-timing-score
+        image: caifubao-datahub:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "app.jobs.scoring_runner", "score-pit-artifacts"]
+        args:
+        - --universe-artifact
+        - /artifacts/universe-2026-09-16.json
+        - --input-artifact
+        - /artifacts/ranked-inputs-2026-09-16.json
+        - --output
+        - /artifacts/ranked-predictions-2026-09-16.json
+        env:
+        - name: CAIFUBAO_BUILD_REVISION
+          value: "<immutable-datahub-image-revision>"
+        volumeMounts:
+        - name: stock-timing-artifacts
+          mountPath: /artifacts
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+      volumes:
+      - name: stock-timing-artifacts
+        persistentVolumeClaim:
+          claimName: stock-timing-artifacts
+      imagePullSecrets:
+      - name: ccr-secret
