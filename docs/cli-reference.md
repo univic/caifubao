@@ -60,6 +60,21 @@ python -m app.jobs.backtest_runner compare sh600519 SCORE_THRESHOLD \
 # Winner: SCORE_THRESHOLD  (Δ return: +3.45%,  Δ Sharpe: +0.23)
 ```
 
+### timing-replay — Frozen point-in-time timing evaluation
+
+```bash
+PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.backtest_runner timing-replay \
+  /path/to/timing-replay-p1-manifest.json \
+  --output /path/to/timing-replay-report.json
+```
+
+This research-only command reads real adjusted quotes and causally-bound ranked
+predictions for an explicit frozen cohort, then compares percentile timing with
+same-stock buy-and-hold through the P0 pooled evaluator. It never discovers the
+current active universe or persists a backtest. See
+[agent-cli.md](operations/agent-cli.md#stock-timing-replay-adapter-p1-research-only)
+for the provenance requirements and legacy-data fail-closed boundary.
+
 ## Scoring Runner (existing)
 
 `python -m app.jobs.scoring_runner <command> [options]`

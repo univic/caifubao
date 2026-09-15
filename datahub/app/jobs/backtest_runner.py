@@ -36,6 +36,35 @@ SCORE_DRIVEN_STRATEGIES = {
 }
 
 
+def _load_timing_evaluator():
+    try:
+        # The image workflow copies this dependency-free module into the
+        # datahub package so the deployed CLI has the same implementation.
+        from app.services.timing_evaluator import evaluate_timing_pool
+
+        return evaluate_timing_pool
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"app.services", "app.services.timing_evaluator"}:
+            raise
+        # Source-tree fallback: backend and datahub both expose a top-level
+        # ``app`` package, so load the backend module without importing Flask.
+        module_path = (
+            Path(__file__).resolve().parents[3]
+            / "backend"
+            / "app"
+            / "services"
+            / "timing_evaluator.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "_caifubao_timing_evaluator", module_path
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("cannot load timing evaluator")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.evaluate_timing_pool
+
+
 def _require_score_model_version(args, *strategies: str) -> str | None:
     model_version = (getattr(args, "model_version", None) or "").strip()
     if any(strategy in SCORE_DRIVEN_STRATEGIES for strategy in strategies):
@@ -238,32 +267,7 @@ def run_timing_pool(args, evaluator=None) -> dict:
     if not isinstance(cohort, list) or not cohort:
         raise ValueError("timing-pool input requires an explicit non-empty cohort")
     if evaluator is None:
-        try:
-            # The image workflow copies this dependency-free module into the
-            # datahub package so the deployed CLI has the same implementation.
-            from app.services.timing_evaluator import evaluate_timing_pool
-
-            evaluator = evaluate_timing_pool
-        except ModuleNotFoundError as exc:
-            if exc.name not in {"app.services", "app.services.timing_evaluator"}:
-                raise
-            # Source-tree fallback: backend and datahub both expose a top-level
-            # ``app`` package, so load the backend module without importing Flask.
-            module_path = (
-                Path(__file__).resolve().parents[3]
-                / "backend"
-                / "app"
-                / "services"
-                / "timing_evaluator.py"
-            )
-            spec = importlib.util.spec_from_file_location(
-                "_caifubao_timing_evaluator", module_path
-            )
-            if spec is None or spec.loader is None:
-                raise RuntimeError("cannot load timing evaluator")
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            evaluator = module.evaluate_timing_pool
+        evaluator = _load_timing_evaluator()
 
     def _paired_runner(stock_code, **_kwargs):
         pair = results.get(stock_code)
@@ -288,6 +292,118 @@ def run_timing_pool(args, evaluator=None) -> dict:
     rendered = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
     if args.output:
         Path(args.output).write_text(rendered + "\n", encoding="utf-8")
+    print(rendered)
+    return report
+
+
+def _registered_model_record(model_version: str) -> dict | None:
+    from app.model.scoring import ScoreModelVersion
+
+    record = ScoreModelVersion.objects(model_version=model_version).first()
+    if record is None:
+        return None
+    return {
+        "model_version": record.model_version,
+        "config_hash": record.config_hash,
+        "scoring_mode": record.scoring_mode,
+        "status": record.status,
+    }
+
+
+def _timing_replay_evidence(stock_code: str, manifest: dict) -> tuple[list, list]:
+    from app.model.scoring import StockScorePrediction
+    from app.model.stock import StockDailyQuote
+
+    start = parse_date(manifest["window"]["from"])
+    end = parse_date(manifest["window"]["to"])
+    quotes = list(
+        StockDailyQuote.objects(
+            code=stock_code,
+            date__gte=start,
+            date__lte=end,
+        ).order_by("date")
+    )
+    predictions = list(
+        StockScorePrediction.objects(
+            stock_code=stock_code,
+            date__gte=start,
+            date__lte=end,
+            horizon=manifest["horizon"],
+            model_version=manifest["model_version"],
+        ).order_by("date")
+    )
+    return quotes, predictions
+
+
+def run_timing_replay(
+    args,
+    *,
+    evaluator=None,
+    db_initializer=None,
+    model_loader=None,
+    evidence_loader=None,
+    pair_builder=None,
+) -> dict:
+    """Run real, read-only evidence through the P1 adapter and P0 evaluator."""
+    from app.lib.strategy_engine.timing_replay import (
+        replay_pair,
+        validate_model_pin,
+        validate_replay_manifest,
+    )
+
+    manifest_path = Path(args.manifest_json)
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(
+            f"cannot read timing replay manifest: {manifest_path}"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"invalid timing replay manifest JSON: {manifest_path}"
+        ) from exc
+    manifest = validate_replay_manifest(payload)
+    if db_initializer is None:
+        db_initializer = _init_db
+    if model_loader is None:
+        model_loader = _registered_model_record
+    if evidence_loader is None:
+        evidence_loader = _timing_replay_evidence
+    if pair_builder is None:
+        pair_builder = replay_pair
+    if evaluator is None:
+        evaluator = _load_timing_evaluator()
+
+    db_initializer()
+    registry_record = model_loader(manifest["model_version"])
+    validate_model_pin(manifest, registry_record)
+
+    def _paired_runner(stock_code, **kwargs):
+        if kwargs.get("save_result") is not False:
+            raise ValueError("timing replay requires save_result=False")
+        quotes, predictions = evidence_loader(stock_code, manifest)
+        return pair_builder(stock_code, quotes, predictions, manifest)
+
+    report = evaluator(
+        manifest["cohort_codes"],
+        _paired_runner,
+        cohort_as_of=manifest["cohort_as_of"],
+        cohort_source=manifest["cohort_source"],
+        model_version=manifest["model_version"],
+        config=manifest["config"],
+        window=manifest["window"],
+        delisted_completeness=manifest["delisted_completeness"],
+        initial_cash=manifest["initial_cash"],
+    )
+    rendered = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+    if args.output:
+        output_path = Path(args.output)
+        try:
+            output_path.write_text(rendered + "\n", encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(
+                f"cannot write timing replay report: {output_path}"
+            ) from exc
     print(rendered)
     return report
 
@@ -626,6 +742,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_timing_pool.add_argument("input_json", help="Versioned explicit-cohort JSON")
     p_timing_pool.add_argument("--output", help="Optional report JSON path")
 
+    # --- timing-replay (research-only, real read-only evidence) ---
+    p_timing_replay = subparsers.add_parser(
+        "timing-replay",
+        help="Replay a frozen point-in-time cohort from stored evidence",
+    )
+    p_timing_replay.add_argument(
+        "manifest_json", help="Versioned frozen cohort and evidence manifest"
+    )
+    p_timing_replay.add_argument("--output", help="Optional report JSON path")
+
     return parser
 
 
@@ -650,6 +776,8 @@ def main():
             run_walk_forward(args)
         elif args.command == "timing-pool":
             run_timing_pool(args)
+        elif args.command == "timing-replay":
+            run_timing_replay(args)
         else:
             parser.print_help()
     except ValueError as exc:
