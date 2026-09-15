@@ -453,3 +453,57 @@ def test_live_traversal_queries_each_code_subbatch_once_across_date_slices(tmp_p
         for target in ("sh600001", "sh600002")
     )
     assert pq.ParquetFile(output).num_row_groups == 10
+
+
+def test_prior_industry_metric_requires_an_in_effect_classification():
+    from app.jobs import autoresearch_h20_snapshot_runner as runner
+
+    date = pd.Timestamp("2026-04-10")
+    metrics = [
+        {
+            "industry_code": "J66",
+            "date": pd.Timestamp("2026-04-09"),
+            "avg_score": 70.0,
+            "stock_count": 8,
+        }
+    ]
+
+    in_effect = {
+        "sh600036": {
+            "code": "J66",
+            "name": "货币金融服务",
+            "assigned_at": pd.Timestamp("2020-01-01"),
+            "industry_change_log": [],
+        }
+    }
+    assert runner._prior_industry_metric("sh600036", date, in_effect, metrics) == {
+        "industry_name": "货币金融服务",
+        "avg_score": 70.0,
+        "stock_count": 8,
+    }
+
+    # A classification assigned after the scoring date must not be attributed
+    # to it: the H20 export is a replay and would otherwise look ahead.
+    later = {
+        "sh600036": {
+            "code": "J66",
+            "name": "货币金融服务",
+            "assigned_at": pd.Timestamp("2026-05-01"),
+            "industry_change_log": [],
+        }
+    }
+    assert runner._prior_industry_metric("sh600036", date, later, metrics) is None
+
+    changed_after = {
+        "sh600036": {
+            "code": "J66",
+            "name": "货币金融服务",
+            "assigned_at": pd.Timestamp("2020-01-01"),
+            "industry_change_log": [
+                {"timestamp": "2026-05-01T00:00:00+00:00", "new_l1": "C36"}
+            ],
+        }
+    }
+    assert (
+        runner._prior_industry_metric("sh600036", date, changed_after, metrics) is None
+    )

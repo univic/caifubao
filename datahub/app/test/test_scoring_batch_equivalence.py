@@ -128,6 +128,11 @@ def seed_market():
                     stock_code=code,
                     industry_code_sw_l1=industry_code,
                     industry_name_sw_l1=industry_name,
+                    # Point-in-time anchor: the scoring industry lookup only
+                    # attributes a classification that is in effect on the
+                    # evaluation date.
+                    assigned_at=datetime.datetime(2020, 1, 1, tzinfo=datetime.UTC),
+                    industry_change_log=[],
                 )
             )
 

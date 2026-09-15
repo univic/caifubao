@@ -155,6 +155,46 @@ new row is top-level `PENDING`, while its `input_snapshot` is `RANKED` and
 the frozen cohort. `FRESH` proves causal input provenance only—it does not mean
 the future outcome is verified or that the strategy is profitable.
 
+## Industry Sync Runner
+
+`python -m app.jobs.industry_sync_runner <command> [options]`
+
+```bash
+# Monthly CSRC sync (baostock). Codes are stored canonically (sh600036).
+python -m app.jobs.industry_sync_runner run [--dry-run] [--force-update]
+
+# One-time migration: rewrite legacy separated keys (sh.600036) to canonical.
+python -m app.jobs.industry_sync_runner normalize-codes --dry-run
+python -m app.jobs.industry_sync_runner normalize-codes
+```
+
+`stock_industry.stock_code` MUST use the same canonical code as quotes,
+factors, signals and predictions. `normalize-codes` rewrites only keys matching
+the baostock shape `^[a-z]{2}\.\d{6}$`; keys matching neither shape are listed
+under `unrecognized` in the JSON summary and left untouched. It is idempotent,
+changes no `stock_industry` document in `--dry-run` (it still records a
+`datahub_job_runs` entry), and does not touch `last_synced_at`. When both a
+canonical and a legacy row exist, the surviving row keeps the earlier
+`assigned_at` if the two classifications match, so a sync that ran first cannot
+hide the classification's real start date.
+
+Roll out owning-environment first and migrate before the next sync: the
+collection is a full prod-to-dev snapshot upserted by `stock_code`, so
+migrating dev before the environment that owns it would reintroduce separated
+keys on the next data sync, and a sync that runs before the migration creates a
+canonical row whose `assigned_at` is the deploy time rather than the
+classification's true anchor.
+
+Verify afterwards (expect `separated=0` for both environments):
+
+```javascript
+db.stock_industry.countDocuments({ stock_code: { $regex: /\./ } })
+```
+
+The corrected industry component changes scores from the first session that has
+industry metrics, so calibration or comparison windows spanning that boundary
+must be split rather than reported as one comparable cohort.
+
 ## Technical Factor Runner
 
 `python -m app.jobs.tech_factor_runner <command> [options]`
