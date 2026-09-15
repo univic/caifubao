@@ -76,7 +76,10 @@ point-in-time attribution rule.
 - GIVEN both a separated key and its canonical key exist
 - WHEN the migration runs
 - THEN exactly the canonical record remains
-- AND its classification and its own `assigned_at` are kept
+- AND its classification is kept, or adopted from the legacy record when the
+  canonical record has none
+- AND the surviving anchor is the earlier of the two when both records carry
+  the same L1 classification, and the canonical record's own anchor otherwise
 - AND the legacy change history is unioned onto the surviving record
 - AND no new change-log entry is appended for the merge
 - AND the separated document is removed
@@ -88,6 +91,15 @@ point-in-time attribution rule.
 - WHEN the migration merges them
 - THEN the surviving record adopts the legacy classification
 - AND it adopts the legacy `assigned_at` as that classification's anchor
+
+#### Scenario: A sync that ran before the migration does not hide history
+
+- GIVEN the fixed sync created a canonical row with a fresh `assigned_at` while
+  the legacy separated row still existed
+- AND both rows carry the same L1 classification
+- WHEN the migration merges them
+- THEN the surviving record keeps the earlier legacy anchor
+- AND the classification stays attributable to dates before that sync
 
 #### Scenario: Unrecognized keys are reported, not rewritten
 

@@ -214,11 +214,18 @@ def normalize_stock_codes(dry_run: bool = False) -> dict:
 def _merge_legacy_into_canonical(canonical_doc, legacy_doc) -> None:
     """Fold a legacy separated-key record into its canonical record.
 
-    The surviving record keeps the canonical classification and its own
-    ``assigned_at``: attaching an earlier legacy anchor to a later
-    classification would let a historical date inherit a classification that
-    did not exist yet. The legacy anchor is adopted only when the canonical
-    record has no classification to anchor.
+    The surviving record keeps the canonical classification: attaching an
+    earlier legacy anchor to a *later* classification would let a historical
+    date inherit a classification that did not exist yet. Two exceptions adopt
+    the legacy anchor, because the classification is provably the same one:
+
+    - the canonical record has no classification to anchor, or
+    - both records carry the same L1 code and name (for example the fixed sync
+      created a canonical row before the migration ran, so its ``assigned_at``
+      is the deploy time rather than the classification's true start).
+
+    Without the second rule, a sync that runs between deploy and migration
+    would permanently hide the classification from every earlier date.
     """
     updates = {}
     if not canonical_doc.industry_code_sw_l1 and legacy_doc.industry_code_sw_l1:
@@ -228,6 +235,10 @@ def _merge_legacy_into_canonical(canonical_doc, legacy_doc) -> None:
         updates["set__industry_name_sw_l2"] = legacy_doc.industry_name_sw_l2
         if legacy_doc.assigned_at:
             updates["set__assigned_at"] = legacy_doc.assigned_at
+    elif _same_classification(canonical_doc, legacy_doc):
+        earlier = _earlier_anchor(canonical_doc.assigned_at, legacy_doc.assigned_at)
+        if earlier is not None and earlier != canonical_doc.assigned_at:
+            updates["set__assigned_at"] = earlier
 
     canonical_log = list(canonical_doc.industry_change_log or [])
     merged_log = _merge_change_logs(
@@ -241,6 +252,27 @@ def _merge_legacy_into_canonical(canonical_doc, legacy_doc) -> None:
             stock_code=canonical_doc.stock_code
         ).update_one(**updates)
     StockIndustryClassification.objects(stock_code=legacy_doc.stock_code).delete()
+
+
+def _same_classification(left, right) -> bool:
+    """Whether both records carry the same CSRC L1 classification."""
+    code = getattr(left, "industry_code_sw_l1", None)
+    if not code or getattr(right, "industry_code_sw_l1", None) != code:
+        return False
+    return (getattr(left, "industry_name_sw_l1", None) or "") == (
+        getattr(right, "industry_name_sw_l1", None) or ""
+    )
+
+
+def _earlier_anchor(left, right):
+    """The earlier of two point-in-time anchors, compared as calendar dates."""
+    if left is None:
+        return right
+    if right is None:
+        return left
+    left_date = left.date() if isinstance(left, datetime.datetime) else left
+    right_date = right.date() if isinstance(right, datetime.datetime) else right
+    return left if left_date <= right_date else right
 
 
 def _merge_change_logs(primary, secondary) -> list:

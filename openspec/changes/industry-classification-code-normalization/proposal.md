@@ -32,7 +32,10 @@ wrong; they were fed a lookup that could not match.
   legacy separated keys (`^[a-z]{2}\.\d{6}$`) in `stock_industry` to canonical
   form. It is idempotent, supports a write-free dry-run, reports keys that
   match neither shape instead of guessing, leaves `last_synced_at` untouched,
-  and merges deterministically when a canonical record already exists.
+  and merges deterministically when a canonical record already exists: the
+  canonical classification wins, and the surviving anchor is the earlier of the
+  two when both rows carry the same classification, so a sync that ran before
+  the migration cannot hide the classification's real start date.
 - **Replay stays point-in-time safe.** Activating a lookup that was dead also
   activates a look-ahead risk: the classification store keeps one current row
   per stock, so replaying an old date would attribute today's industry to it.

@@ -327,6 +327,74 @@ def test_normalize_merge_adopts_legacy_classification_when_canonical_has_none(
     assert store[0].assigned_at == legacy_assigned
 
 
+def test_normalize_merge_keeps_the_earlier_anchor_for_the_same_classification(
+    monkeypatch,
+):
+    """A sync that ran before the migration must not hide the real anchor.
+
+    The fixed sync writes a canonical row (assigned_at = now) while the legacy
+    separated row still exists. Both carry the same classification, so merging
+    them must keep the classification's true start rather than the deploy time.
+    """
+    legacy_assigned = datetime.datetime(2024, 3, 1, tzinfo=datetime.UTC)
+    sync_assigned = datetime.datetime(2026, 9, 15, tzinfo=datetime.UTC)
+
+    result, store = _normalize(
+        monkeypatch,
+        [
+            {
+                "stock_code": "sh600036",
+                "industry_code_sw_l1": "J66",
+                "industry_name_sw_l1": "货币金融服务",
+                "assigned_at": sync_assigned,
+                "industry_change_log": [],
+            },
+            {
+                "stock_code": "sh.600036",
+                "industry_code_sw_l1": "J66",
+                "industry_name_sw_l1": "货币金融服务",
+                "assigned_at": legacy_assigned,
+                "industry_change_log": [],
+            },
+        ],
+    )
+
+    assert result["merged"] == 1
+    assert [doc.stock_code for doc in store] == ["sh600036"]
+    assert store[0].assigned_at == legacy_assigned
+
+
+def test_normalize_merge_keeps_the_canonical_anchor_for_a_different_classification(
+    monkeypatch,
+):
+    legacy_assigned = datetime.datetime(2024, 3, 1, tzinfo=datetime.UTC)
+    canonical_assigned = datetime.datetime(2026, 9, 15, tzinfo=datetime.UTC)
+
+    result, store = _normalize(
+        monkeypatch,
+        [
+            {
+                "stock_code": "sh600036",
+                "industry_code_sw_l1": "J66",
+                "industry_name_sw_l1": "货币金融服务",
+                "assigned_at": canonical_assigned,
+                "industry_change_log": [],
+            },
+            {
+                "stock_code": "sh.600036",
+                "industry_code_sw_l1": "C36",
+                "industry_name_sw_l1": "汽车制造业",
+                "assigned_at": legacy_assigned,
+                "industry_change_log": [],
+            },
+        ],
+    )
+
+    assert result["merged"] == 1
+    assert store[0].industry_code_sw_l1 == "J66"
+    assert store[0].assigned_at == canonical_assigned
+
+
 def test_normalize_is_idempotent(monkeypatch):
     _FakeIndustryModel.reset(
         [{"stock_code": "sh.600036", "industry_code_sw_l1": "J66"}]
@@ -640,3 +708,39 @@ def test_day_prefetch_drops_classifications_not_yet_in_effect():
     # The per-day production prefetch must drop a classification that was not
     # yet in effect, or a replayed date would inherit it.
     assert set(lookup) == {"sh600036"}
+
+
+def test_normalize_codes_cli_tracks_the_job_run(monkeypatch):
+    from app.jobs import industry_sync_runner as runner
+
+    calls = {}
+    monkeypatch.setattr(runner, "_init_db_connection", lambda: None)
+    monkeypatch.setattr(
+        runner.job_run_helper,
+        "create_job_run",
+        lambda context: calls.setdefault("context", context) or object(),
+    )
+    monkeypatch.setattr(
+        runner.job_run_helper,
+        "finish_job_run",
+        lambda job_run, **kwargs: calls.setdefault("finish", kwargs),
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_normalize",
+        lambda dry_run=False: {
+            "status": "GOOD",
+            "scanned": 3,
+            "renamed": 2,
+            "merged": 1,
+            "dry_run": dry_run,
+        },
+    )
+
+    runner.main(["normalize-codes", "--dry-run"])
+
+    assert calls["context"].job_name == runner.NORMALIZE_JOB_NAME
+    assert calls["context"].trigger == runner.NORMALIZE_JOB_TRIGGER
+    assert calls["context"].source == runner.NORMALIZE_JOB_SOURCE
+    assert calls["finish"]["status"] == "SUCCESS"
+    assert calls["finish"]["summary"] == {"scanned": 3, "renamed": 2, "merged": 1}

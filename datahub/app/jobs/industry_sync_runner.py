@@ -23,6 +23,8 @@ SYNC_JOB_NAME = "datahub_industry_sync"
 NORMALIZE_JOB_NAME = "datahub_industry_code_normalize"
 SYNC_JOB_TRIGGER = "cron"
 SYNC_JOB_SOURCE = "k8s-cronjob"
+NORMALIZE_JOB_TRIGGER = "manual"
+NORMALIZE_JOB_SOURCE = "operator-cli"
 SYNC_JOB_HOUR = 12
 SYNC_JOB_MINUTE = 0
 
@@ -114,8 +116,10 @@ def main(argv: list[str] | None = None) -> None:
     p_normalize.add_argument("--dry-run", action="store_true", help="Preview only")
     p_normalize.add_argument("--job-name", default=NORMALIZE_JOB_NAME)
     p_normalize.add_argument("--job-family", default=SYNC_JOB_FAMILY)
-    p_normalize.add_argument("--trigger", default=SYNC_JOB_TRIGGER)
-    p_normalize.add_argument("--source", default=SYNC_JOB_SOURCE)
+    # A one-off migration is run by an operator, not by the monthly CronJob, so
+    # its job-run record must not claim a cron trigger.
+    p_normalize.add_argument("--trigger", default=NORMALIZE_JOB_TRIGGER)
+    p_normalize.add_argument("--source", default=NORMALIZE_JOB_SOURCE)
 
     args = parser.parse_args(argv)
 

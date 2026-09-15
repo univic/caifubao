@@ -51,10 +51,16 @@ def classification_in_effect_on(row, as_of_date) -> bool:
     """Whether the row's CURRENT classification is provably in effect on a date.
 
     Accepts a mongoengine document or a plain mapping (the H20 snapshot runner
-    projects industry rows to dicts). Every consumer that attributes an industry
-    to a past date — paper strategy, replayed scoring, industry metric
-    aggregation, the H20 export — must use this guard: an unguarded read is
-    look-ahead.
+    projects industry rows to dicts). Every consumer that reads the live store
+    and attributes an industry to a past date — paper strategy, replayed
+    scoring, industry metric aggregation, the H20 export — must use this guard:
+    an unguarded read is look-ahead.
+
+    A frozen P2a artifact row carries only ``assigned_at``. That is sufficient
+    there: the capture window (after the prior close, before the open) bounds
+    the row, and a change-log entry cannot post-date the capture because the
+    store is only ever written by the sync. The loop below therefore sees an
+    empty history for artifact rows rather than a missing rule.
     """
     target = as_calendar_date(as_of_date)
     assigned = as_calendar_date(_field(row, "assigned_at"))
