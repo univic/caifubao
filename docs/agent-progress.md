@@ -24,6 +24,20 @@
 ```
 
 ## 进度记录
+### 2026-09-15 22:08 CST — P2b PR #245 首轮 CI 全绿，准备转 Ready
+
+- 状态：已完成
+- 已完成：P2b 已提交为 `ddc7772` 并推送到 `codex/timing-pit-consumer-p2b`；Draft PR
+  **#245** 已创建。实现、OpenSpec、P1/P2b 合同、生产对齐测试和公开操作文档均已收口；三道
+  reviewer 最终均为 `GATE_OK`。
+- 验证：本地 datahub **886 passed**；Ruff check/format、OpenSpec strict **24/24**、diff check、
+  `origin/develop` 冲突检查全绿。PR #245 首轮 GitHub Required Checks 已通过：Datahub Tests、
+  Datahub Ruff、OpenSpec Validate、Private Deploy Dry Run 均成功，其余未受影响任务按预期跳过。
+- 下一步：提交本条状态与 task 4.4 勾选，等待该文档收口提交的 Required Checks 再次全绿，然后
+  将 PR #245 转 Ready；合并由 orchestrator/用户决定。后续建议进入 P3：用真实、封存的前向工件
+  连续积累样本并运行 P1 单股/ETF replay，不在本 PR 执行真实 `--apply`。
+- 阻塞：无。未连接真实 Mongo、未执行 `--apply`、未写线上 prediction。
+
 ### 2026-09-15 22:05 CST — P2b 实现与强制门禁全绿，待提交及 PR CI
 
 - 状态：进行中
