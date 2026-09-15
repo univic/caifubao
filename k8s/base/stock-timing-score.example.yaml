@@ -9,9 +9,9 @@
 # refuses to overwrite. Each session needs its own output path and Job.
 #
 # `CAIFUBAO_BUILD_REVISION` is baked into the published image from the source
-# revision. The CLI rejects an empty value but cannot detect a wrong one, so
-# only set the env below if the image does not carry it, and then set it to the
-# exact immutable revision.
+# revision. The CLI rejects an empty value but cannot detect a wrong one, so add
+# an explicit `env:` entry only if the image does not carry it, and set it to
+# the exact immutable revision.
 #
 # Publishing (`--apply`) is a separate, explicitly authorised step: add `--apply`
 # **and** the `MONGODB_*` env vars from the other two example Jobs, and never

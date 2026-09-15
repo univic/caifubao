@@ -24,6 +24,44 @@
 ```
 
 ## 进度记录
+### 2026-09-15 23:42 CST — P3 解阻塞：#245(P2b) 上 dev + PIT 工件持久化 + industry 代码格式缺陷修复
+
+- 状态：进行中（两个 Draft PR 待评审/合并；集群侧 P3 运行前置已就绪）
+- 已完成：
+  - **dev datahub 部署失败的根因与恢复**：`datahub_deploy` 于 14:18Z 失败、dev 停在 #244，
+    原因是 Spegel 预热 Job 在 10 分钟等待窗内一直 ContainerCreating（该镜像实际 19 分钟后才拉完并被取消）。
+    手动重派 `datahub-deploy`（dev, image_tag `sha-085d782fa0e4`）成功（run `34986170610`），
+    dev 现为 **#245 P2b**，`score-pit-artifacts` 可用。
+  - **顺带查明 `CAIFUBAO_BUILD_REVISION` 未烘焙进镜像**：`workflow_run` 触发的 publish 使用**默认分支
+    main** 上的工作流文件，而 main 尚未包含 #244 的 `build-args`，同时被检出的 develop Dockerfile
+    ARG 默认为空 → 镜像 ENV 为空字符串。短期用 Job env 显式传精确修订即可；根治需把该 workflow
+    发布到 main（release）或在部署期注入，属独立变更。
+  - **PIT 工件持久化**：dev 新建 PVC `stock-timing-artifacts`（2Gi，`local-path`；目标态应为 Retain 类），
+    公开示例拆为 PVC + 三阶段 Job（`stock-timing-universe/inputs/score.example.yaml`），
+    并补 `docs/operations/stock-timing-pit-evidence.md` runbook（**#248**）。
+  - **重生成并落盘 2026-09-16 universe 工件**（替换 codex 只存在于其本机的副本）：
+    Job `stock-timing-universe-20260916` 成功；`/artifacts/universe-2026-09-16.json`，
+    sha256 `6b0830d0653077c3ae52c1bbccacf9e4f7115d9528dac1c7d65fe18af6020990`，
+    artifact_id `sha256:9e14af2531b5724b7b0e24b9958f96251c455a4c6598187911b3c8999ebd8dd9`，
+    session 2026-09-16、universe 5,561 行、构建修订 `085d782fa0e4…`；
+    **industry_classification 行数为 0**，正是下面这条缺陷的直接证据。
+  - **industry 代码格式缺陷修复（#247，Spec Gate 通过）**：`stock_industry` 唯一以 baostock 的
+    `sh.600036` 形式存键，而行情/因子/信号/评分一律用 `sh600036` → `industry_momentum`（各 horizon 权重 5）
+    长期返回中性、`industry_daily_metrics` 在 dev 与源库均为 **0 条**、P2a universe 的行业快照为空。
+    改动：采集侧归一到规范键 + 一次性 `normalize-codes` 迁移（幂等、dry-run 零写入、不改 `last_synced_at`、
+    合并保留 canonical 分类与其自身 `assigned_at`、未识别键只报告）+ 回放 PIT 守卫
+    （`classification_in_effect_on` 移到 `app.model.industry`，并在评分预取/组件/聚合/H20 导出四处生效，
+    防止“键修好之后把今天的行业算到历史日期上”）。
+- 验证：datahub 全量 **902 passed**；`ruff check --select E4,E7,E9,F` 与 `ruff format --check` 通过；
+  `openspec validate --all --strict` **25/25**（CI pin 的 `@fission-ai/openspec@1.1.1`）；
+  四个新 manifest 通过 `kubectl apply --dry-run=client`；spec-guardian `required` 且 P1/P2 已闭合
+  （含其复审发现的 H20 快照前视，已补守卫与回归测试）；qa-reviewer 对 #248 首轮 P1/P2 已修正并复审。
+- 下一步：① 合并 #247/#248（CI 进行中）；② **决定 P3 前向窗口起点**：当前 09-16 工件的行业快照为空，
+  窗口内 `industry_momentum` 会恒为中性（对横截面排名是常数、不影响百分位，但与声明模型不一致）；
+  建议 industry 修复部署并迁移后再生成新 universe 工件、开新窗口，不要把 09-16 当成已开始的窗口；
+  ③ industry 迁移须**拥有该集合的环境（prod）先做**再 dev——dev 的 `stock_industry` 是按 `stock_code`
+  全量 upsert 的 prod 快照，dev 先迁移会被下一次 data-sync 重新写回分隔键。
+- 阻塞：无；生产/研究环境的 industry 部署与迁移需 operator 授权后执行（见 #247 tasks 5.x）。
 ### 2026-09-15 22:15 CST — P2b PR #245 已合并
 
 - 状态：已完成

@@ -11,9 +11,9 @@
 # (this one has a fixed name and an immutable pod template).
 #
 # `CAIFUBAO_BUILD_REVISION` is baked into the published image from the source
-# revision. The CLI rejects an empty value but cannot detect a wrong one, so
-# only set the env below if the image does not carry it, and then set it to the
-# exact immutable revision.
+# revision. The CLI rejects an empty value but cannot detect a wrong one, so add
+# an explicit entry to the `env:` block only if the image does not carry it, and
+# set it to the exact immutable revision.
 #
 # Prefer the one-off Job launcher in the private overlay, which copies the live
 # datahub Deployment's image, revision and generated ConfigMap names; render

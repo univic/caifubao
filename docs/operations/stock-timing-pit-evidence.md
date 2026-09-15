@@ -62,27 +62,34 @@ deliberately has none, because the default dry run performs no database access.
 executes the command. The published image bakes it; the CLIs reject an empty
 value but cannot detect a wrong one, so never hand-write a placeholder.
 
-Before each session, update the Job's session date, its output path, and — for
-the inputs phase — the universe artifact path. Jobs have fixed names and
-immutable pod templates, and outputs are exclusive, so re-running a phase means
-deleting the Job and using the new session's paths:
+Before each session, update **every** session-bound path in the manifest you are
+about to apply: the universe Job's `--date` and `--output`; the inputs Job's
+`--universe-artifact` and `--output`; and the score Job's `--universe-artifact`,
+`--input-artifact` and `--output`. A stale pair on the score Job validates and
+scores the previous session while writing it under the new session's filename,
+so a filename alone proves nothing — check the artifact's own `payload.session`.
+Jobs have fixed names and immutable pod templates, and outputs are exclusive, so
+re-running a phase means deleting the Job and using the new session's paths:
 
 ```bash
 # 1. pre-open, for session 2026-09-16
-kubectl apply -f k8s/base/stock-timing-universe.example.yaml
-kubectl -n <namespace> wait --for=condition=complete job/stock-timing-universe --timeout=30m
+kubectl -n <namespace> apply -f k8s/base/stock-timing-universe.example.yaml
+kubectl -n <namespace> wait --for=condition=complete job/stock-timing-universe --timeout=1h
 
 # 2. post-close on 2026-09-16
-kubectl apply -f k8s/base/stock-timing-inputs.example.yaml
-kubectl -n <namespace> wait --for=condition=complete job/stock-timing-inputs --timeout=60m
+kubectl -n <namespace> apply -f k8s/base/stock-timing-inputs.example.yaml
+kubectl -n <namespace> wait --for=condition=complete job/stock-timing-inputs --timeout=2h
 
 # 3. offline dry-run scoring
-kubectl apply -f k8s/base/stock-timing-score.example.yaml
-kubectl -n <namespace> wait --for=condition=complete job/stock-timing-score --timeout=30m
+kubectl -n <namespace> apply -f k8s/base/stock-timing-score.example.yaml
+kubectl -n <namespace> wait --for=condition=complete job/stock-timing-score --timeout=1h
 
 # before the next session
 kubectl -n <namespace> delete job stock-timing-universe stock-timing-inputs stock-timing-score
 ```
+
+The wait timeouts match each Job's `activeDeadlineSeconds`, so a wait timeout
+means the Job's own deadline is about to fire.
 
 `capture-pit-inputs` requires the named model version to be registered and
 `ACTIVE` with `scoring_mode=ranked`; it fails closed otherwise, so confirm the
