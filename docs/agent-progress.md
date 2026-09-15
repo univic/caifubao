@@ -24,6 +24,21 @@
 ```
 
 ## 进度记录
+### 2026-09-15 22:15 CST — P2b PR #245 已合并
+
+- 状态：已完成
+- 已完成：PR **#245**（`feat(datahub): add PIT artifact scoring consumer`）已按 squash 方式合并到
+  `develop`，合并提交为 `085d782fa0e44bd8148c74bbe80c2abc2424f011`。P2b 现已进入主开发线：
+  能从 P2a 封存工件离线复建 ranked 预测，输出精确结果文件 SHA 与逐 horizon Merkle handoff，
+  P1 可安全消费全市场日排名 cohort 的单股/子集 proof；默认 dry-run，未执行真实发布。
+- 验证：合并前及转 Ready 后的 GitHub Required Checks 均全绿；Datahub Tests、Datahub Ruff、
+  OpenSpec Validate、Private Deploy Dry Run 通过。合并前本地 datahub **886 passed**，三道 reviewer
+  均为 `GATE_OK`，目标分支无冲突。
+- 下一步：进入 P3 前向证据运行阶段。先选择研究标的/回放 cohort（建议从宽基 ETF 与一只高流动性
+  个股各一条基线开始），用真实但封存的每日 P2a→P2b 工件连续积累样本，再由 P1 做费后、无前瞻
+  replay；在样本与验收阈值冻结前不宣称可获利，也不启用 `--apply` 写线上 prediction。
+- 阻塞：无。
+
 ### 2026-09-15 22:08 CST — P2b PR #245 首轮 CI 全绿，准备转 Ready
 
 - 状态：已完成
