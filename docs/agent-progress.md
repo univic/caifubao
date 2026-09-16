@@ -24,6 +24,46 @@
 ```
 
 ## 进度记录
+### 2026-09-16 09:33 CST — 收口 #248/#247：Spec Gate、行业代码迁移（prod→dev）、指标重建与覆盖率验证；publish workflow 提升到 main
+
+- 状态：已完成（本轮范围）
+- 已完成：
+  - **#248 Spec Gate**：spec-guardian 判 **not required**（复用既有 P2a/P2b/P1/P0 合同、无新语义），
+    结论已写入 PR #248 正文与评论。按复核意见修正：runbook 的"门禁"改为 P0 实际门禁
+    （≥50 请求代码 / ≥50 证据可用 / 覆盖率 ≥90% / ≥120 观测交易日 / ≥5 笔完成交易），
+    单票集中度与 walk-forward decay 明确标注为**归档 MVP strategy-discovery** 的另一套门禁；
+    不再用 `ReadWriteOnce` 暗示采集阶段互斥。已合并（`9211d5f`）。
+  - **#247 合并**（`cbfc2bf`），dev 镜像 `sha-cbfc2bf17787` 部署完成。
+  - **行业代码迁移（数据拥有环境 → dev）**：dev 侧 `MONGODB_SRC_*` 对 prod 实测**只读**
+    （建索引与写 `datahub_job_runs` 均 Unauthorized），因此在 `caifubao` 命名空间用其**自身凭据**
+    跑一次性 Job（同一新镜像）：
+    - **prod**：dry-run `scanned 5212 / renamed 5212 / merged 0 / unrecognized 0` → 正式 `renamed 5212`；
+      结果 **0 dotted / 5212 canonical / 83 个一级行业**，最近交易日可交易代码覆盖 **5198/5402 = 96.22%**，
+      `sh600036 → J66 货币金融服务`。
+    - **dev**：同样 5212 → canonical、**0 dotted**、覆盖率 **96.22%**。
+  - **`industry_daily_metrics` 重建**（只写指标、不重跑评分、不改预测）：
+    - **prod 2241 行**（`score_v2_202605b` h5/h20/h60，最新 2026-09-15，83 个行业）；
+    - **dev 332 行**（`flip_wide_shadow_v1` h20 @2026-09-04；`score_v2_202605b` h5/h20/h60 @2026-09-11）。
+    - **PIT 守卫按设计生效**：凡评分日早于分类 `assigned_at`（2026-09-02）的日期一律 0 行 ——
+      历史 `industry_daily_metrics` **不能**由当前分类表回填（与本 change 的非目标一致）。
+  - **组件级验证**：`industry_momentum` 对 `sh600036` 在 prod 与 dev 均返回**非中性**值
+    （prod h5 0.525/0.551、h20 0.532/0.686、h60 0.669；dev h60 0.687，行业 J66）——修复前恒为 0.5。
+  - **构建通道修复**：单文件 PR #250 经 qa-reviewer 复核后**关闭**（私有 `deploy-dry-run` 依赖 develop 才有的
+    `k8s/overlays/example-research/` 布局，main 目标的单文件 PR 无法通过 Required Checks；且会让 main 上的
+    新 workflow 依赖 main 缺失的 `backend/app/services/timing_evaluator.py` 与 Dockerfile ARG）。
+    改为按仓库既有 release 约定做**单提交提升**（PR #251）：新提交树与 `develop` **逐 tree 相同**
+    （校验 `git write-tree` == `origin/develop^{tree}`），提升前核对 main 独有路径均有 develop 对应物
+    （`openspec/archive`、`docs/archive`、`skills/`、折叠进 RULES 的 agent 指引、前端重构删除的旧文件），
+    合并为 **`8b1b108`**。
+- 验证：以上 dry-run/apply 计数、覆盖率、指标行数与组件值均为实测；迁移/重建/检查 Job 全部 `Complete`。
+  写入面仅限：`stock_industry`（键改写 5212 条）、`industry_daily_metrics`（新建 2241/332 行）、
+  相应 `datahub_job_runs` 记录与 `ensure_indexes` 建索引；预测与评分结果未被改动。
+- 下一步：① 验证 main 触发构建（research）与 develop 触发构建（dev）均带
+  `app/services/timing_evaluator.py` 与非空 `CAIFUBAO_BUILD_REVISION`；② 09-16 收盘后跑
+  `capture-pit-inputs` → `score-pit-artifacts`（dry-run）；③ 决定 P3 前向窗口起点——当前 09-16
+  universe 工件的行业快照为空，建议修复落地后再生成新 universe 工件开窗。
+- 阻塞：无（本轮）；P3 前向窗口仍受 09-16 收盘时间约束。
+
 ### 2026-09-16 07:00 CST — 个股择时实跑（REPLAY）：策略链跑通、认证版三处阻塞；发现 2026-08-31 全市场复权断层
 
 - 状态：进行中（研究结论已出；认证链路与历史口径均待外部条件）
