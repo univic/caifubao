@@ -29,6 +29,14 @@
 ```
 
 ## 进度记录
+### 2026-09-16 21:40 CST — P0-5/TASK-404：切片 1/2 预备/3 全部前置合入主线，进入逐项批准的集群执行阶段
+
+- 状态：已完成（四项前置全部合并；后续步骤均为需逐项批准的集群/数据变更）
+- 已完成：按既定顺序合并四个 PR——私有 #83（`2ffb2ef`，数据权威切换设计 + 挂起门控/Job 接线/验证器类型）、公开 #257（`69ff15b`，8 个 research writer 挂起模板 + daily-basic/health-watcher/asset-status）、公开 #256（`76f5197`，快照导入契约 + export/import 工具 + S3 传输 + 文档）、公开 #258（`7f7507a`，只读 writer 切换验证器）。合并顺序的 fail-closed 依赖实测成立：#83 入 main 后 #257 的 Private Deploy Dry Run 由红转绿。
+- 验证：每个 PR 合并前 CI 全绿（含 Private Deploy Dry Run、OpenSpec 27/27、datahub 965→982 passed）；develop 合并提交 CI 绿；私有侧 pin 改为 develop 提交 `7f7507a` 后 `verify-environment-layout` 本地通过。
+- 下一步：§8 清单逐项批准执行——步骤 2 industry 键迁移 → 步骤 3 FQ 全市场重算 → 步骤 4 解除 `mongodb-s3-backup` 挂起 → 步骤 5 逐 writer 切换（每次启用后用 `writer-verify` 出验收数字）→ 步骤 6 首次快照实跑 → 步骤 7 dev 切换 → 步骤 8 观察窗 → 步骤 9 退役。
+- 阻塞：无（全部剩余动作按设计需用户逐项批准）。
+
 
 
 ### 2026-09-16 20:10 CST — P0-5/TASK-404 切片 2 执行支撑：writer 切换验证器（只读）
