@@ -187,7 +187,7 @@ trading: 风控 → 订单（幂等） → 成交/持仓/资金 → 对账 → �
 | GitHub Environment `development` | 技术名称 | dev 域部署的 secrets/RBAC 作用域；不代表成熟生产 |
 | GitHub Environment `production` | 技术名称/历史名称 | 仅剩 tailscale operator bootstrap 在用；publish workflow 的 job 级 environment 仍用它取 secrets（漂移项）。**不代表实盘** |
 | GitHub Environment `research` | 技术名称 | research stable 部署作用域；**不代表实盘** |
-| 镜像 tag `prod` / `latest` | 技术名称 | `main` 分支构建的 channel tag，部署目标是 research stable；**不代表实盘** |
+| 镜像 tag `prod` / `latest` | 技术名称 | `main` 分支构建推送的 channel tag，对应部署 channel 为 research stable（实际部署使用 `sha-<sha>` 不可变 tag）；**不代表实盘** |
 | 镜像 tag `develop` | 技术名称 | `develop` 分支构建的 channel tag，部署目标是 dev |
 | namespace `caifubao-dev` | 技术名称 | dev 运行目标（CLI 默认 namespace） |
 | 部署输入 `development`/`production` | 过渡别名 | 部署输入现为 `dev`/`research`；旧值仅作过渡别名（`production` 已退役并 fail loudly） |

@@ -272,7 +272,7 @@
 | signal decay 专项测试缺失 | 低 | 12d.6 部分修复：hybrid 阈值测试已补齐，signal decay 逻辑仍无专门测试 |
 | data-sync 失败自动补跑 | 低 | 失败后次日 19:15 才重试；方案见 `docs/operations/roadmap-2026-08.md` |
 | strategy_daily CronJob 未接线 | 中 | `strategy_daily` 未在任何 overlay 定义，当前为 operator cadence；非交易日会异常结束（fail loud），需先决策「优雅跳过 vs 接受告警」 |
-| MongoDB 运维遗留（旧 stable 迁移、副本集 HA、定时备份启用） | 中 | dev 已迁 vm-8-15；旧 stable（retired production，非实盘 `prod`）暂留 vm-4-12，副本集 HA 与 backup CronJob 解挂待决策（`docs/operations/mongodb-node-migration.md`） |
+| MongoDB 运维遗留（旧 stable 迁移、副本集 HA、定时备份启用） | 中 | dev 已迁独立数据节点；旧 stable（retired production，非实盘 `prod`）暂留原节点，副本集 HA 与 backup CronJob 解挂待决策（节点名与细节见 `docs/operations/mongodb-node-migration.md`） |
 
 ---
 

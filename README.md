@@ -88,7 +88,9 @@ BARK_URL=https://your.bark.url
 
 - `__init__.py` - 基础配置
 - `dev_config.py` - 开发环境配置
-- `production_config.py` - 生产环境配置
+- `production_config.py` - 生产环境配置（`APP_ENV=PRODUCTION` 是应用进程配置的
+  历史/技术命名，与部署环境和资金阶段无关，见
+  [`docs/architecture/environment-model.md`](docs/architecture/environment-model.md) §13）
 
 ## 运行方式
 
@@ -364,7 +366,8 @@ tailscale operator bootstrap workflow 在用（自动 dispatch 与部署准入�
 > 区别、`prod` 尚未启用）以权威文档
 > [`docs/architecture/environment-model.md`](docs/architecture/environment-model.md)
 > 为准。注意：`main` 分支构建推送的 `prod`/`latest` 是镜像 channel 技术标签，
-> 其部署目标是 research stable，不代表实盘能力。
+> 对应部署 channel 为 research stable（实际部署使用 `sha-<sha>` 不可变 tag），
+> 不代表实盘能力。
 
 ## 启动脚本说明
 

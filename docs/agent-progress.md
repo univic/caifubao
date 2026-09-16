@@ -10,6 +10,11 @@
 - 写清相关公共 PR、提交或文件；避免重复完整交接文档。
 - 不记录凭据、内部地址、真实域名、私有 overlay 或其他敏感部署信息。
 - 接手任务前先读最新几条；完成阶段性工作后及时更新。
+- 词汇注记（2026-09-16 起）：历史条目中的「prod」指当时的稳定运行环境（现称
+  **旧 stable / retired production**），不代表实盘——`prod`（trading/production）
+  目标态尚未启用；现行口径见
+  [`architecture/environment-model.md`](./architecture/environment-model.md)。
+  新条目请使用两轴词汇（domain × stage）。
 
 ## 条目模板
 
