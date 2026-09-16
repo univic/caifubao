@@ -55,6 +55,25 @@
   默认分支）；随后按 §8 批准流程逐项执行。
 - 阻塞：无（剩余步骤需用户逐项批准；#257 的 dry-run 门在 #83 合并后自愈）。
 
+### 2026-09-16 19:05 CST — P0-5/TASK-404 任务 3.4/3.5：同步契约收敛与文档收口（门控前代码侧收尾）
+
+- 状态：已完成（3.4/3.5 勾选；3.3/3.6-3.8 仍为门控执行步骤）
+- 已完成：
+  - `datahub-perf-optimization` 水位同步 requirement 以 MODIFIED delta 收敛：
+    在线引擎定性为冻结的迁移期遗留；日期分区集合按业务键 upsert、
+    `finance_market` 等无业务键快照类集合保留 `_id` upsert；补 3 日重放
+    窗口、per-collection 水位推进、dev-only signal 跳过规则与"不得扩列"
+    场景（contract 评审 2 P2 + 2 P3 全修复）。
+  - `agent-cli.md`：`data sync` 段标为 migration-period legacy；新增
+    snapshot-export/snapshot-import 两节（含 out_dir 位置参数）。
+  - 环境模型 §12：指向已落地的契约与工具，保留迁移期定性（"Docs stay
+    honest"场景满足）。
+- 验证：openspec validate --all --strict（1.1.1）通过；ruff（CI 钉版）通过；
+  965 passed 无回归；check_links 通过。
+- 下一步：合并顺序 私有 #83 → 公开 #257 → 公开 #256；随后 §8 门控执行
+  （首次快照实跑 → 观察窗 3.6 → dev 切换 3.3/3.7 → 退役）。
+- 阻塞：无（剩余步骤需用户逐项批准）。
+
 ### 2026-09-16 16:05 CST — P0-5/TASK-404 切片 3 收口：S3 传输 + 私有 Job 接线 + 评审闭环
 
 ### 2026-09-16 16:05 CST — P0-5/TASK-404 切片 3 收口：S3 传输 + 私有 Job 接线 + 评审闭环
