@@ -1,7 +1,14 @@
 # CLI Reference
 
-All CLI runners live under `datahub/app/jobs/` and connect to MongoDB via the `MONGO_URI`
-environment variable (default: `mongodb://localhost:27017/caifubao`).
+All CLI runners live under `datahub/app/jobs/`. Connection configuration depends on the
+runner:
+
+- **Most runners** (scoring, strategy, factor, quote, sync, industry-sync, model-registry,
+  daily-basic, parquet-export, health-watcher, `tech_factor_runner`) connect through the
+  shared `MONGODB_*` variables below, which is what the dev/research/prod deployments set.
+- `backtest_runner` still reads the legacy `MONGO_URI`
+  (default `mongodb://localhost:27017/caifubao`); `sync_data` takes explicit
+  `--from-uri` / `--to-uri` arguments and reads no connection env var.
 
 Run from the repository root with the datahub virtual environment activated.
 
@@ -53,6 +60,21 @@ python -m app.jobs.backtest_runner compare sh600519 SCORE_THRESHOLD \
 # Winner: SCORE_THRESHOLD  (Δ return: +3.45%,  Δ Sharpe: +0.23)
 ```
 
+### timing-replay — Frozen point-in-time timing evaluation
+
+```bash
+PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.backtest_runner timing-replay \
+  /path/to/timing-replay-p1-manifest.json \
+  --output /path/to/timing-replay-report.json
+```
+
+This research-only command reads real adjusted quotes and causally-bound ranked
+predictions for an explicit frozen cohort, then compares percentile timing with
+same-stock buy-and-hold through the P0 pooled evaluator. It never discovers the
+current active universe or persists a backtest. See
+[agent-cli.md](operations/agent-cli.md#stock-timing-replay-adapter-p1-research-only)
+for the provenance requirements and legacy-data fail-closed boundary.
+
 ## Scoring Runner (existing)
 
 `python -m app.jobs.scoring_runner <command> [options]`
@@ -70,6 +92,108 @@ python -m app.jobs.scoring_runner verify --from 2024-01-01 --to 2024-06-30
 # Calibration report
 python -m app.jobs.scoring_runner report --horizon 20 --from 2024-01-01 --to 2024-12-31
 ```
+
+### Forward PIT input capture (P2a, research-only)
+
+P2a is a two-phase evidence capture. It does not generate predictions. Export
+`CAIFUBAO_BUILD_REVISION` from the immutable image/source revision; a manual
+fallback version is intentionally not accepted.
+
+```bash
+# After the previous session closes and before 2026-09-15 opens:
+python -m app.jobs.scoring_runner capture-pit-universe \
+  --date 2026-09-15 --output /artifacts/universe-2026-09-15.json
+
+# After 2026-09-15 closes and before the next session opens:
+python -m app.jobs.scoring_runner capture-pit-inputs \
+  --universe-artifact /artifacts/universe-2026-09-15.json \
+  --model-version ranked-v1 --horizons 20 \
+  --output /artifacts/ranked-inputs-2026-09-15.json
+```
+
+The first artifact freezes membership and industry classification before the
+session. The second binds that exact artifact to the complete bounded ranked
+scoring read set. Both conform to the shared research artifact envelope and
+refuse overwrite. P2a does not mark stored scores `FRESH`; a later P2b consumer
+must validate and score from the frozen input artifact before P1 can use it.
+
+### Forward PIT artifact scoring (P2b, research-only)
+
+P2b consumes the two P2a artifacts without reading mutable market/master
+collections. It revalidates both envelopes and their exact binding, then writes
+an exclusive JSON report containing ranked predictions. Set
+`CAIFUBAO_BUILD_REVISION` to the immutable consumer image/source revision first;
+the command rejects a missing revision. Dry-run is the default.
+
+```bash
+export CAIFUBAO_BUILD_REVISION="$(git rev-parse HEAD)"
+
+python -m app.jobs.scoring_runner score-pit-artifacts \
+  --universe-artifact /artifacts/universe-2026-09-15.json \
+  --input-artifact /artifacts/ranked-inputs-2026-09-15.json \
+  --output /artifacts/ranked-predictions-2026-09-15.json
+
+# Explicit publication: ACTIVE registry/config and all natural keys are
+# preflighted; any existing prediction makes the whole publish fail closed.
+python -m app.jobs.scoring_runner score-pit-artifacts \
+  --universe-artifact /artifacts/universe-2026-09-15.json \
+  --input-artifact /artifacts/ranked-inputs-2026-09-15.json \
+  --output /artifacts/ranked-predictions-2026-09-15-apply.json --apply
+```
+
+Once the exact result bytes are written, stdout emits
+`prediction_cohorts_by_horizon[H]`, ready to copy to the P1 manifest's
+`prediction_cohorts[D]` for that horizon. Its `artifact_sha256` hashes the
+result file; the separate `prediction_root_sha256` verifies each immutable
+prediction leaf and Merkle proof for the complete frozen cohort. Sorted
+`member_codes` binds the daily fingerprint/count and proof index independently
+from the possibly smaller replay pool.
+
+`--apply` is insert-only and never replaces legacy/live predictions. A usable
+new row is top-level `PENDING`, while its `input_snapshot` is `RANKED` and
+`FRESH`; missing-D-quote members remain top-level `BLOCKED` and still count in
+the frozen cohort. `FRESH` proves causal input provenance only—it does not mean
+the future outcome is verified or that the strategy is profitable.
+
+## Industry Sync Runner
+
+`python -m app.jobs.industry_sync_runner <command> [options]`
+
+```bash
+# Monthly CSRC sync (baostock). Codes are stored canonically (sh600036).
+python -m app.jobs.industry_sync_runner run [--dry-run] [--force-update]
+
+# One-time migration: rewrite legacy separated keys (sh.600036) to canonical.
+python -m app.jobs.industry_sync_runner normalize-codes --dry-run
+python -m app.jobs.industry_sync_runner normalize-codes
+```
+
+`stock_industry.stock_code` MUST use the same canonical code as quotes,
+factors, signals and predictions. `normalize-codes` rewrites only keys matching
+the baostock shape `^[a-z]{2}\.\d{6}$`; keys matching neither shape are listed
+under `unrecognized` in the JSON summary and left untouched. It is idempotent,
+changes no `stock_industry` document in `--dry-run` (it still records a
+`datahub_job_runs` entry), and does not touch `last_synced_at`. When both a
+canonical and a legacy row exist, the surviving row keeps the earlier
+`assigned_at` if the two classifications match, so a sync that ran first cannot
+hide the classification's real start date.
+
+Roll out owning-environment first and migrate before the next sync: the
+collection is a full prod-to-dev snapshot upserted by `stock_code`, so
+migrating dev before the environment that owns it would reintroduce separated
+keys on the next data sync, and a sync that runs before the migration creates a
+canonical row whose `assigned_at` is the deploy time rather than the
+classification's true anchor.
+
+Verify afterwards (expect `separated=0` for both environments):
+
+```javascript
+db.stock_industry.countDocuments({ stock_code: { $regex: /\./ } })
+```
+
+The corrected industry component changes scores from the first session that has
+industry metrics, so calibration or comparison windows spanning that boundary
+must be split rather than reported as one comparable cohort.
 
 ## Technical Factor Runner
 
@@ -122,11 +246,15 @@ python -m app.jobs.scoring_runner report --horizon 20 --from 2024-01-01 --to 202
 
 ## Environment
 
-All runners respect these environment variables:
+Most runners respect these environment variables (see the note above for the
+`MONGO_URI`-based exceptions):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MONGO_URI` | `mongodb://localhost:27017/caifubao` | MongoDB connection string |
+| `MONGODB_HOST` / `MONGODB_PORT` | - | MongoDB host and port |
+| `MONGODB_NAME` | - | Database name (`caifubao-dev`, `caifubao-research`, `caifubao`) |
+| `MONGODB_USER` / `MONGODB_PASS` | - | Credentials |
+| `MONGO_URI` | `mongodb://localhost:27017/caifubao` | Legacy connection string (`backtest_runner` only) |
 | `APP_ENV` | - | Set to `test` for test environment |
 
 ## Prerequisites

@@ -70,7 +70,12 @@ jobs:
 
           set_output backend '^(backend/|Makefile$|scripts/seed_score_demo\.py$|\.github/workflows/ci\.yml$)'
           set_output frontend '^(frontend/|\.env\.example$|Makefile$|\.github/workflows/ci\.yml$)'
-          set_output datahub '^(datahub/|backend/app/model/|backend/app/utilities/|\.github/workflows/ci\.yml$)'
+          # scripts/caifubao is included so the CLI contract test
+          # (datahub/app/test/test_strategy_cli_contract.py) actually runs on a
+          # scripts-only change — otherwise a wrapper regression would ship
+          # unverified, which is how a dropped --config-json got as far as
+          # review on the forward-evidence path.
+          set_output datahub '^(datahub/|backend/app/model/|backend/app/utilities/|scripts/caifubao$|\.github/workflows/ci\.yml$)'
           set_output docker '^(backend/Dockerfile|datahub/Dockerfile|frontend/Dockerfile|tools/mongodb-tools/Dockerfile|\.github/workflows/ci\.yml$)'
           set_output k8s '^(k8s/|\.github/workflows/ci\.yml$)'
           set_output openspec '^(openspec/|\.github/workflows/ci\.yml$)'

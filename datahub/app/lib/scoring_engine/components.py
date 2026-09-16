@@ -4,6 +4,7 @@ import math
 from statistics import pstdev
 
 from app.lib.scoring_engine.config import DEFAULT_MODEL_VERSION
+from app.lib.scoring_engine.industry_pit import classification_in_effect_on
 from app.model.industry import IndustryDailyMetrics, StockIndustryClassification
 
 
@@ -338,6 +339,7 @@ def industry_momentum_component(
     horizon: int,
     weight: float,
     model_version: str = DEFAULT_MODEL_VERSION,
+    industry_lookup: dict | None = None,
 ) -> dict:
     """Industry momentum component.
 
@@ -347,10 +349,39 @@ def industry_momentum_component(
     - Look-ahead bias (no future metrics are accessible)
     - Feedback loops (re-running the same day won't read its own output)
     - Cross-version contamination
+    It additionally requires the classification itself to be provably in effect
+    on ``date`` (``classification_in_effect_on``), so a replay cannot attribute
+    today's industry to a past date.
     Returns neutral 0.5 when no matching data exists.
+
+    ``industry_lookup`` optionally supplies a per-day prefetched
+    ``{stock_code: (classification, latest metrics)}`` map (perf C1/3.4);
+    without it the two per-stock reads below run unchanged.
     """
     try:
-        industry = StockIndustryClassification.objects(stock_code=stock_code).first()
+        if industry_lookup is not None:
+            industry, metrics = industry_lookup.get(stock_code, (None, None))
+        else:
+            industry = StockIndustryClassification.objects(
+                stock_code=stock_code
+            ).first()
+            metrics = None
+            if industry and industry.industry_code_sw_l1:
+                metrics = (
+                    IndustryDailyMetrics.objects(
+                        industry_code=industry.industry_code_sw_l1,
+                        date__lt=date,
+                        horizon=horizon,
+                        model_version=model_version,
+                    )
+                    .order_by("-date")
+                    .first()
+                )
+        # The store holds one CURRENT row per stock, so a row whose
+        # assigned_at/change history post-dates the evaluation date must not be
+        # attributed to it (replay look-ahead guard).
+        if industry and not classification_in_effect_on(industry, date):
+            industry, metrics = None, None
         if not industry or not industry.industry_code_sw_l1:
             return build_component(
                 "industry_momentum",
@@ -361,17 +392,6 @@ def industry_momentum_component(
                 weight,
                 evidence={"note": "No industry classification available"},
             )
-
-        metrics = (
-            IndustryDailyMetrics.objects(
-                industry_code=industry.industry_code_sw_l1,
-                date__lt=date,
-                horizon=horizon,
-                model_version=model_version,
-            )
-            .order_by("-date")
-            .first()
-        )
 
         if not metrics or metrics.stock_count < 3:
             return build_component(
@@ -440,12 +460,15 @@ def aggregate_industry_metrics(
     # should share the same horizon).
     horizon = predictions[0].horizon
 
-    # Map stock_code → industry doc
+    # Map stock_code → industry doc. Predictions for a replayed date must only
+    # see classifications provably in effect on that date, or past-dated
+    # metrics would be built from today's classification.
     industries = {
         doc.stock_code: doc
         for doc in StockIndustryClassification.objects(
             stock_code__in=[p.stock_code for p in predictions]
         )
+        if classification_in_effect_on(doc, date)
     }
 
     groups: dict[str, dict] = defaultdict(
@@ -538,6 +561,7 @@ def real_relative_strength_component(
     history_quotes: list,
     weight: float,
     lookback: int = 20,
+    index_quotes: list | None = None,
 ) -> dict:
     """Real relative strength: alpha vs CSI 300 index.
 
@@ -545,6 +569,10 @@ def real_relative_strength_component(
     benchmark. When index data is unavailable, falls back to a self-proxy
     calculation (own price change, matching the relative_strength_component
     behaviour).
+
+    ``index_quotes`` optionally supplies the day-prefetched CSI300 window (perf
+    C1/3.4); ``None`` keeps the legacy per-stock index read. An empty list is a
+    real "no index data" answer and takes the self-proxy fallback.
     """
     close = quote_price(quote)
     if close is None or not history_quotes:
@@ -564,19 +592,20 @@ def real_relative_strength_component(
 
     # Try loading CSI 300 index quotes for the same date range
     try:
-        from app.model.stock import StockDailyQuote
+        if index_quotes is None:
+            from app.model.stock import StockDailyQuote
 
-        dates = [q.date for q in stock_quotes if hasattr(q, "date")]
-        if not dates:
-            raise ValueError("No valid dates in stock quotes")
+            dates = [q.date for q in stock_quotes if hasattr(q, "date")]
+            if not dates:
+                raise ValueError("No valid dates in stock quotes")
 
-        start_date = min(dates)
-        end_date = max(dates)
-        index_quotes = list(
-            StockDailyQuote.objects(code="sh000300")
-            .filter(date__gte=start_date, date__lte=end_date)
-            .order_by("date")
-        )
+            start_date = min(dates)
+            end_date = max(dates)
+            index_quotes = list(
+                StockDailyQuote.objects(code="sh000300")
+                .filter(date__gte=start_date, date__lte=end_date)
+                .order_by("date")
+            )
 
         if index_quotes:
             from app.lib.scoring_engine.technical_factors import (

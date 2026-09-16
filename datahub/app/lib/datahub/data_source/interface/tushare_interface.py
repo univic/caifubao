@@ -154,3 +154,26 @@ def adj_factor_by_trade_date(trade_date):
         )
     time.sleep(0.25)
     return df
+
+
+def daily_basic_by_trade_date(trade_date):
+    """Return the full-market daily_basic snapshot for one trade date.
+
+    Columns include ts_code, trade_date, close, turnover_rate,
+    volume_ratio, pe, pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm,
+    total_share, float_share, free_share, total_mv (万元), circ_mv (万元).
+    Values are computed at that trade date's close from the latest
+    published financials — point-in-time by trade_date (no look-ahead).
+    Tushare omits suspended stocks for that date (absence = suspended).
+    """
+    pro = _get_pro()
+    df = call_with_retry(
+        lambda: pro.daily_basic(trade_date=trade_date),
+        label=f"tushare.daily_basic:{trade_date}",
+    )
+    if df is None or df.empty:
+        raise RuntimeError(
+            f"tushare daily_basic returned no rows: trade_date={trade_date}"
+        )
+    time.sleep(0.25)
+    return df

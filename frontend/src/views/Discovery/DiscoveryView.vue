@@ -31,6 +31,12 @@
                 clearable
                 class="linear-input stock-input"
               />
+              <el-input
+                v-model="compareForm.model_version"
+                placeholder="评分模型版本（必填）"
+                clearable
+                class="linear-input model-version-input"
+              />
               <el-date-picker
                 v-model="compareForm.start_date"
                 type="date"
@@ -185,11 +191,10 @@
                 <el-option label="买入持有 (BUY_HOLD)" value="BUY_HOLD" />
                 <el-option label="评分阈值 (SCORE_THRESHOLD)" value="SCORE_THRESHOLD" />
                 <el-option label="评分动量 (SCORE_MOMENTUM)" value="SCORE_MOMENTUM" />
-                <el-option label="Top-N 轮动 (TOP_N_ROTATION)" value="TOP_N_ROTATION" />
                 <el-option label="多周期共识 (MULTI_HORIZON_CONSENSUS)" value="MULTI_HORIZON_CONSENSUS" />
               </el-select>
               <el-select
-                v-if="isScoreStrategy(scanForm.strategy)"
+                v-if="requiresScoreHorizon(scanForm.strategy)"
                 v-model="scanForm.horizon"
                 placeholder="评分周期"
                 class="linear-select horizon-select"
@@ -198,6 +203,13 @@
                 <el-option label="Score20 (20天)" :value="20" />
                 <el-option label="Score60 (60天)" :value="60" />
               </el-select>
+              <el-input
+                v-if="isScoreDrivenStrategy(scanForm.strategy)"
+                v-model="scanForm.model_version"
+                placeholder="评分模型版本（必填）"
+                clearable
+                class="linear-input model-version-input"
+              />
               <el-date-picker
                 v-model="scanForm.start_date"
                 type="date"
@@ -360,7 +372,15 @@
 import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
-import { backtestApi, type CompareResult, type ScanItem } from '@/api/backtest'
+import {
+  backtestApi,
+  isScoreDrivenStrategy,
+  type ComparePayload,
+  type CompareResult,
+  type NonScoreStrategy,
+  type ScanItem,
+  type ScanPayload,
+} from '@/api/backtest'
 
 // --- Tab state ---
 const activeTab = ref('compare')
@@ -376,11 +396,15 @@ const compareForm = reactive({
   start_date: '',
   end_date: '',
   initial_cash: 100000,
-  benchmark_code: ''
+  benchmark_code: '',
+  model_version: ''
 })
 
 const canCompare = computed(() => {
-  return compareForm.stock_code.trim() && compareForm.start_date && compareForm.end_date
+  return compareForm.stock_code.trim()
+    && compareForm.start_date
+    && compareForm.end_date
+    && compareForm.model_version.trim()
 })
 
 const sortedCompareResults = computed(() => {
@@ -405,17 +429,23 @@ function compareRowClass({ row }: { row: CompareResult & { _isBest?: boolean } }
 }
 
 async function runCompare() {
+  if (!compareForm.model_version.trim()) {
+    ElMessage.error('请输入评分模型版本')
+    return
+  }
+
   compareLoading.value = true
   compareSubmitted.value = true
   errorMessage.value = ''
   compareResults.value = []
 
   try {
-    const payload: any = {
+    const payload: ComparePayload = {
       stock_code: compareForm.stock_code.trim(),
       start_date: compareForm.start_date,
       end_date: compareForm.end_date,
-      initial_cash: compareForm.initial_cash
+      initial_cash: compareForm.initial_cash,
+      model_version: compareForm.model_version.trim()
     }
     if (compareForm.benchmark_code) {
       payload.benchmark_code = compareForm.benchmark_code
@@ -454,27 +484,35 @@ const scanForm = reactive({
   start_date: '',
   end_date: '',
   horizon: null as number | null,
+  model_version: '',
   initial_cash: 100000,
   min_trades: 5
 })
 
 const canScan = computed(() => {
-  return scanForm.strategy && scanForm.start_date && scanForm.end_date
+  if (!scanForm.strategy || !scanForm.start_date || !scanForm.end_date) return false
+  if (!isScoreDrivenStrategy(scanForm.strategy)) return true
+  if (!scanForm.model_version.trim()) return false
+  return !requiresScoreHorizon(scanForm.strategy) || scanForm.horizon !== null
 })
 
-function isScoreStrategy(strategy: string): boolean {
-  return ['SCORE_THRESHOLD', 'SCORE_MOMENTUM'].includes(strategy)
+function requiresScoreHorizon(strategy: string): strategy is 'SCORE_THRESHOLD' | 'SCORE_MOMENTUM' {
+  return strategy === 'SCORE_THRESHOLD' || strategy === 'SCORE_MOMENTUM'
 }
 
 async function runScan() {
+  if (isScoreDrivenStrategy(scanForm.strategy) && !scanForm.model_version.trim()) {
+    ElMessage.error('请输入评分模型版本')
+    return
+  }
+
   scanLoading.value = true
   scanSubmitted.value = true
   errorMessage.value = ''
   scanItems.value = []
 
   try {
-    const payload: any = {
-      strategy: scanForm.strategy,
+    const basePayload = {
       start_date: scanForm.start_date,
       end_date: scanForm.end_date,
       initial_cash: scanForm.initial_cash,
@@ -482,8 +520,25 @@ async function runScan() {
       per_page: scanPerPage.value,
       min_trades: scanForm.min_trades
     }
-    if (isScoreStrategy(scanForm.strategy) && scanForm.horizon) {
-      payload.horizon = scanForm.horizon
+    let payload: ScanPayload
+    if (requiresScoreHorizon(scanForm.strategy)) {
+      payload = {
+        ...basePayload,
+        strategy: scanForm.strategy,
+        horizon: scanForm.horizon as number,
+        model_version: scanForm.model_version.trim()
+      }
+    } else if (scanForm.strategy === 'MULTI_HORIZON_CONSENSUS') {
+      payload = {
+        ...basePayload,
+        strategy: scanForm.strategy,
+        model_version: scanForm.model_version.trim()
+      }
+    } else {
+      payload = {
+        ...basePayload,
+        strategy: scanForm.strategy as NonScoreStrategy
+      }
     }
     const response = await backtestApi.scan(payload)
 
@@ -757,6 +812,10 @@ function breakLabel(key: string): string {
 
 .horizon-select {
   width: 160px;
+}
+
+.model-version-input {
+  width: 220px;
 }
 
 /* Input/Picker overrides */
@@ -1056,7 +1115,8 @@ function breakLabel(key: string): string {
 
   .stock-input,
   .strategy-select,
-  .horizon-select {
+  .horizon-select,
+  .model-version-input {
     width: 100%;
   }
 }

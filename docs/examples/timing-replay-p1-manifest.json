@@ -1,0 +1,72 @@
+{
+  "schema_version": "timing-replay-p1",
+  "cohort": {
+    "as_of": "2026-01-04T07:00:00Z",
+    "source": "example:pit-members-v1",
+    "membership_basis": "point_in_time",
+    "delisted_completeness": "VERIFIED",
+    "provenance": {
+      "artifact_uri": "artifact://example/pit-members-2026-01-04.json",
+      "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "member_count": 1,
+      "subsequently_delisted_count": 0,
+      "suspended_count": 0,
+      "includes_subsequently_delisted": true,
+      "includes_suspended": true
+    },
+    "members": [
+      {
+        "stock_code": "sh600001",
+        "listed_on": "1999-11-10",
+        "delisted_on": null,
+        "suspended_at_as_of": false,
+        "evidence_at": "2026-01-04T06:00:00Z"
+      }
+    ]
+  },
+  "prediction_cohorts": {
+    "2026-01-05": {
+      "artifact_uri": "artifact://example/ranked-cohort-2026-01-05.json",
+      "artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "prediction_root_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "cohort_fingerprint": "333d83aefe911ca97a02afb247e5e648779d65c66a4b56cccf2cef0f7ad0170f",
+      "member_codes": ["sh600001", "sh600002"],
+      "member_count": 2,
+      "data_as_of": "2026-01-05T07:00:00Z"
+    },
+    "2026-01-06": {
+      "artifact_uri": "artifact://example/ranked-cohort-2026-01-06.json",
+      "artifact_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "prediction_root_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "cohort_fingerprint": "333d83aefe911ca97a02afb247e5e648779d65c66a4b56cccf2cef0f7ad0170f",
+      "member_codes": ["sh600001", "sh600002"],
+      "member_count": 2,
+      "data_as_of": "2026-01-06T07:00:00Z"
+    }
+  },
+  "model": {
+    "model_version": "replace-with-active-ranked-version",
+    "config_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "horizon": 20
+  },
+  "strategy": {
+    "entry_percentile": 0.9,
+    "exit_percentile": 0.3
+  },
+  "window": {
+    "from": "2026-01-05",
+    "to": "2026-01-06"
+  },
+  "trading_calendar": [
+    "2026-01-05",
+    "2026-01-06"
+  ],
+  "initial_cash": 50000.0,
+  "board_lot": 100,
+  "friction": {
+    "commission_rate": 0.00025,
+    "minimum_commission": 5.0,
+    "stamp_duty_rate": 0.001,
+    "slippage_rate": 0.001
+  }
+}

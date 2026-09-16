@@ -1,0 +1,61 @@
+# Factor-lab evaluate Job (example).
+#
+# Reads /data/lab.parquet (written by k8s/base/factor-lab-export.example.yaml)
+# and writes one JSON report per horizon group back to the panel PVC. Run it
+# only after the export Job has completed: it reads the parquet immediately and
+# the claim is ReadWriteOnce.
+#
+# Prefer the one-off Job launcher in the private overlay, which copies the live
+# datahub Deployment's image and generated ConfigMap names; render this directly
+# only when that is not available.
+#
+# The Job has a fixed name so `kubectl apply` works; delete it
+# (`kubectl delete job factor-lab-evaluate`) before running it again, and change
+# `--horizons` for each group rather than running the groups in parallel.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: factor-lab-evaluate
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: factor-lab-evaluate
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app: caifubao-datahub
+        job.caifubao.io/type: factor-lab-evaluate
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: factor-lab-evaluate
+        image: caifubao-datahub:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "app.jobs.factor_lab_runner", "evaluate"]
+        args:
+        - --panel
+        - /data/lab.parquet
+        - --all
+        - --horizons
+        - "20"
+        - --output
+        - /data/sweep_h20.json
+        volumeMounts:
+        - name: factor-lab-panel
+          mountPath: /data
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "3Gi"
+      volumes:
+      - name: factor-lab-panel
+        persistentVolumeClaim:
+          claimName: factor-lab-panel
+      imagePullSecrets:
+      - name: ccr-secret

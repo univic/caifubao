@@ -36,13 +36,13 @@ class ScoreReplayService:
         horizons = [horizon] if horizon else list(SUPPORTED_HORIZONS)
         scored_count = 0
         for date in dates:
-            for current_horizon in horizons:
-                if stock_code:
-                    stock = self.scoring_service.stock_model.objects(
-                        code=stock_code
-                    ).first()
-                    if not stock:
-                        continue
+            if stock_code:
+                stock = self.scoring_service.stock_model.objects(
+                    code=stock_code
+                ).first()
+                if not stock:
+                    continue
+                for current_horizon in horizons:
                     self.scoring_service.score_single_stock(
                         stock,
                         date,
@@ -56,14 +56,19 @@ class ScoreReplayService:
                     # percentile-driven recommendations into a blanket BUY.
                     # score_single_stock already applied absolute-threshold
                     # recommendations; leave them intact.
-                else:
-                    result = self.scoring_service.score_all_stocks(
-                        date=date,
-                        horizon=current_horizon,
-                        dry_run=dry_run,
-                        replace=replace,
-                    )
-                    scored_count += result["scored_count"]
+            else:
+                # Perf C1 remainder: one call per date covers every requested
+                # horizon, so the per-day prefetch (whole-market history
+                # window, decay window, CSI300, industry, existing) is built
+                # once per date instead of once per (date, horizon). The
+                # service already iterates the same horizon list internally.
+                result = self.scoring_service.score_all_stocks(
+                    date=date,
+                    horizon=horizon,
+                    dry_run=dry_run,
+                    replace=replace,
+                )
+                scored_count += result["scored_count"]
         return {
             "from": normalize_date(start_date),
             "to": normalize_date(end_date),

@@ -175,3 +175,302 @@ def test_scoring_dependency_wait_is_bounded(monkeypatch):
         is False
     )
     assert sleeps == []
+
+
+def test_main_compare_parser_wires_arguments(monkeypatch):
+    """compare subcommand must require both versions + window + horizon and
+    pass them straight to run_compare (task 3.3 operator tool)."""
+    import app.jobs.scoring_runner as scoring_runner
+
+    captured = {}
+
+    def fake_run_compare(args):
+        captured.update(
+            candidate=args.candidate_model_version,
+            baseline=args.baseline_model_version,
+            from_date=args.from_date,
+            to_date=args.to_date,
+            horizon=args.horizon,
+            fmt=args.format,
+        )
+
+    monkeypatch.setattr(scoring_runner, "run_compare", fake_run_compare)
+    scoring_runner.main(
+        [
+            "compare",
+            "--candidate-model-version",
+            "flip_wide_v1",
+            "--baseline-model-version",
+            "score_v2_202605b",
+            "--from",
+            "2026-01-01",
+            "--to",
+            "2026-06-30",
+            "--horizon",
+            "20",
+            "--format",
+            "json",
+        ]
+    )
+    assert captured == {
+        "candidate": "flip_wide_v1",
+        "baseline": "score_v2_202605b",
+        "from_date": "2026-01-01",
+        "to_date": "2026-06-30",
+        "horizon": 20,
+        "fmt": "json",
+    }
+
+
+def test_main_compare_requires_both_versions(monkeypatch):
+    import pytest
+
+    import app.jobs.scoring_runner as scoring_runner
+
+    monkeypatch.setattr(
+        scoring_runner,
+        "run_compare",
+        lambda args: (_ for _ in ()).throw(AssertionError("must not run")),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        scoring_runner.main(
+            [
+                "compare",
+                "--candidate-model-version",
+                "flip_wide_v1",
+                "--from",
+                "2026-01-01",
+                "--to",
+                "2026-06-30",
+                "--horizon",
+                "20",
+            ]
+        )
+    assert excinfo.value.code == 2  # argparse usage error
+
+
+def test_main_capture_pit_universe_wires_date_and_output(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+
+    captured = {}
+    monkeypatch.setattr(
+        scoring_runner,
+        "run_capture_pit_universe",
+        lambda args: captured.update(date=args.date, output=args.output),
+    )
+
+    scoring_runner.main(
+        [
+            "capture-pit-universe",
+            "--date",
+            "2026-09-15",
+            "--output",
+            "/tmp/universe.json",
+        ]
+    )
+
+    assert captured == {
+        "date": "2026-09-15",
+        "output": "/tmp/universe.json",
+    }
+
+
+def test_main_capture_pit_inputs_wires_artifact_model_and_horizons(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+
+    captured = {}
+    monkeypatch.setattr(
+        scoring_runner,
+        "run_capture_pit_inputs",
+        lambda args: captured.update(
+            universe=args.universe_artifact,
+            model=args.model_version,
+            horizons=args.horizons,
+            output=args.output,
+        ),
+    )
+
+    scoring_runner.main(
+        [
+            "capture-pit-inputs",
+            "--universe-artifact",
+            "/tmp/universe.json",
+            "--model-version",
+            "ranked-v1",
+            "--horizons",
+            "20",
+            "--output",
+            "/tmp/inputs.json",
+        ]
+    )
+
+    assert captured == {
+        "universe": "/tmp/universe.json",
+        "model": "ranked-v1",
+        "horizons": "20",
+        "output": "/tmp/inputs.json",
+    }
+
+
+def test_capture_pit_universe_refuses_existing_output_before_db_read(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    import pytest
+
+    import app.jobs.scoring_runner as scoring_runner
+
+    output = tmp_path / "existing.json"
+    output.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(
+        scoring_runner,
+        "_init_db_connection",
+        lambda: (_ for _ in ()).throw(AssertionError("must not read DB")),
+    )
+
+    with pytest.raises(FileExistsError, match="output already exists"):
+        scoring_runner.run_capture_pit_universe(
+            SimpleNamespace(date="2026-09-15", output=str(output))
+        )
+
+    assert output.read_text(encoding="utf-8") == "keep"
+
+
+def test_capture_pit_inputs_refuses_existing_output_before_artifact_or_db_read(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    import pytest
+
+    import app.jobs.scoring_runner as scoring_runner
+
+    output = tmp_path / "existing.json"
+    output.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(
+        scoring_runner,
+        "_init_db_connection",
+        lambda: (_ for _ in ()).throw(AssertionError("must not read DB")),
+    )
+
+    with pytest.raises(FileExistsError, match="output already exists"):
+        scoring_runner.run_capture_pit_inputs(
+            SimpleNamespace(
+                universe_artifact="/missing/universe.json",
+                model_version="ranked-v1",
+                horizons="20",
+                output=str(output),
+            )
+        )
+
+    assert output.read_text(encoding="utf-8") == "keep"
+
+
+def test_run_scoring_makes_one_call_covering_all_horizons(monkeypatch):
+    """Perf C1 remainder: the runner must not rebuild the per-day prefetch once
+    per horizon. A full-market day has to reach ``score_all_stocks`` exactly
+    once with ``horizon=None`` so the whole-market history window, decay window,
+    CSI300, industry and existing-prediction reads happen a single time."""
+    import app.jobs.scoring_runner as scoring_runner
+    from app.lib.scoring_engine import scoring_service as scoring_service_module
+
+    calls = []
+
+    class _FakeService:
+        def __init__(self, model_version=None, **kwargs):
+            self.model_version = model_version
+
+        def score_all_stocks(self, **kwargs):
+            calls.append(kwargs)
+            return {
+                "date": None,
+                "horizons": scoring_runner.DEFAULT_HORIZONS,
+                "scored_count": 123,
+                "skipped_complete_horizons": [],
+                "dry_run": False,
+            }
+
+    monkeypatch.setattr(scoring_service_module, "StockScoringService", _FakeService)
+    args = scoring_runner.argparse.Namespace(
+        model_version="score_v2_202605b",
+        horizon=None,
+        date="2026-08-03",
+        dry_run=False,
+        replace=False,
+    )
+
+    summary = scoring_runner.run_scoring(args)
+
+    assert len(calls) == 1
+    assert calls[0]["horizon"] is None
+    assert calls[0]["date"] == scoring_runner.datetime.datetime(2026, 8, 3)
+    assert summary["horizons"] == scoring_runner.DEFAULT_HORIZONS
+    assert summary["pulled_total"] == 123
+    assert summary["written_total"] == 123
+
+
+def test_run_scoring_passes_a_single_horizon_through_unchanged(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+    from app.lib.scoring_engine import scoring_service as scoring_service_module
+
+    calls = []
+
+    class _FakeService:
+        def __init__(self, model_version=None, **kwargs):
+            pass
+
+        def score_all_stocks(self, **kwargs):
+            calls.append(kwargs)
+            return {"horizons": [20], "scored_count": 7}
+
+    monkeypatch.setattr(scoring_service_module, "StockScoringService", _FakeService)
+    args = scoring_runner.argparse.Namespace(
+        model_version="score_v2_202605b",
+        horizon=20,
+        date=None,
+        dry_run=True,
+        replace=True,
+    )
+
+    summary = scoring_runner.run_scoring(args)
+
+    assert len(calls) == 1
+    assert calls[0]["horizon"] == 20
+    assert calls[0]["dry_run"] is True
+    assert calls[0]["replace"] is True
+    assert summary["horizons"] == [20]
+    assert summary["pulled_total"] == 7
+
+
+def test_equivalence_runner_pins_requested_scoring_mode(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+    from app.lib.scoring_engine import equivalence_check, scoring_service
+
+    constructed = []
+
+    class _FakeService:
+        def __init__(self, **kwargs):
+            constructed.append(kwargs)
+
+    def _fake_check(factory, **kwargs):
+        factory(False)
+        factory(True)
+        assert kwargs["mode"] == "raw"
+        return {"applied": False, "ok": None}
+
+    monkeypatch.setattr(scoring_runner, "_init_db_connection", lambda: None)
+    monkeypatch.setattr(scoring_service, "StockScoringService", _FakeService)
+    monkeypatch.setattr(equivalence_check, "run_equivalence_check", _fake_check)
+    args = scoring_runner.argparse.Namespace(
+        model_version="ranked-v1",
+        horizons="5,20",
+        date="2026-09-01",
+        mode="raw",
+        apply=False,
+        max_diffs=20,
+        report=None,
+    )
+
+    assert scoring_runner.run_equivalence_check_cmd(args) == 0
+    assert [item["scoring_mode"] for item in constructed] == ["raw", "raw"]

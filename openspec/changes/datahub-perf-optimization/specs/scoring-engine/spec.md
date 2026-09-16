@@ -22,6 +22,39 @@ qualify for a fast skip.
 - **THEN** every persisted prediction SHALL be field-identical to the
   per-stock path (score, recommendation, rank, percentile, explanation,
   verification, input_snapshot, model_version)
+- **AND** signal arrays persisted in `explanation` (the `signal_strength`
+  `raw_value` name list and `evidence.signals`, live and decayed) SHALL be
+  ordered by `signal_name` ascending, so the persisted order does not depend on
+  the query or index plan of either read path
+
+#### Scenario: Bulk upsert preserves document identity and write timestamps
+
+- **GIVEN** an existing prediction stored under the natural key
+  `(stock_code, date, horizon, model_version)`
+- **WHEN** the batched path persists a recomputed prediction for that key
+- **THEN** the write SHALL update that document in place rather than insert a
+  duplicate
+- **AND** it SHALL refresh `updated_at` while leaving `generated_at` at its
+  original insert time
+- **AND** a BLOCKED row SHALL persist `rank`/`percentile` as explicit nulls whose
+  *value* is identical to the per-document `save()` result (legacy `save()`
+  `$unset` those fields, so field presence may differ; readers observe the same
+  value through the model)
+
+#### Scenario: Target-date resolution matches the legacy calendar scan
+
+- **GIVEN** a time-normalized ascending trading calendar
+- **WHEN** the T+N target date is resolved for `n > 0`
+- **THEN** it SHALL return the same day as the legacy linear-scan
+  implementation: the n-th calendar position after a trading `start_date`, or
+  the n-th trading day strictly after `start_date` when `start_date` is not a
+  trading day, clamped to the calendar's last day
+- **AND** WHEN `n <= 0` it SHALL return `start_date` unchanged (the legacy
+  implementation raised `IndexError` whenever the zero/negative index fell
+  outside the remaining future days, and otherwise returned the calendar's
+  last day)
+- **AND** the ascending calendar SHALL be computed once per service instance
+  and re-derived when the market calendar is replaced
 
 #### Scenario: Rank assignment via bulk write
 

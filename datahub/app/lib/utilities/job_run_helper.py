@@ -308,6 +308,7 @@ def _reap_stale_running_group(
 def mark_stale_running_job_runs_failed(
     max_age_minutes: int = DEFAULT_STALE_RUNNING_MAX_AGE_MINUTES,
     now: datetime.datetime | None = None,
+    job_family: str | None = None,
 ) -> int:
     """Reap RUNNING records whose process died without finishing the run.
 
@@ -318,26 +319,28 @@ def mark_stale_running_job_runs_failed(
     longer windows get their own entry in
     ``STALE_RUNNING_MAX_AGE_MINUTES_BY_JOB_NAME``. The original document
     fields are preserved; only status, completed_at, and an explanatory
-    error_message are set.
+    error_message are set. ``job_family`` limits cleanup when a runner must not
+    classify unrelated long-running jobs.
     """
     reference = now or utc_now_naive()
     overridden = STALE_RUNNING_MAX_AGE_MINUTES_BY_JOB_NAME
+    family_filter = {"job_family": job_family} if job_family else {}
     updated = 0
     if overridden:
         updated += _reap_stale_running_group(
-            filters={"job_name__nin": sorted(overridden)},
+            filters={**family_filter, "job_name__nin": sorted(overridden)},
             max_age_minutes=max_age_minutes,
             reference=reference,
         )
     else:
         updated += _reap_stale_running_group(
-            filters={},
+            filters=family_filter,
             max_age_minutes=max_age_minutes,
             reference=reference,
         )
     for name, minutes in overridden.items():
         updated += _reap_stale_running_group(
-            filters={"job_name": name},
+            filters={**family_filter, "job_name": name},
             max_age_minutes=minutes,
             reference=reference,
         )

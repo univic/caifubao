@@ -119,6 +119,18 @@
           class="form-grid"
           style="margin-top: 0; padding-top: 0; border-top: 1px solid var(--color-border-subtle);"
         >
+          <el-form-item label="评分模型版本" prop="model_version">
+            <el-input
+              v-model="form.model_version"
+              placeholder="请输入评分数据中的模型版本"
+              clearable
+              class="linear-input"
+            />
+            <template #extra>
+              <span class="form-hint">仅使用该版本的评分，不会自动选择其他版本</span>
+            </template>
+          </el-form-item>
+
           <el-form-item label="评分周期">
             <el-select v-model="form.horizon" placeholder="选择周期" class="linear-select">
               <el-option label="Score5 (短线 5天)" :value="5" />
@@ -304,7 +316,13 @@ import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { backtestApi, type BacktestResult } from '@/api/backtest'
+import {
+  backtestApi,
+  isScoreDrivenStrategy,
+  type BacktestResult,
+  type NonScoreStrategy,
+  type RunBacktestPayload,
+} from '@/api/backtest'
 
 const router = useRouter()
 const formRef = ref<FormInstance>()
@@ -340,6 +358,18 @@ const formRules: FormRules = {
   ],
   end_date: [
     { required: true, message: '请选择结束日期', trigger: 'change' }
+  ],
+  model_version: [
+    {
+      validator: (_rule, value, callback) => {
+        if (isScoreDrivenStrategy(form.strategy) && !String(value || '').trim()) {
+          callback(new Error('请输入评分模型版本'))
+          return
+        }
+        callback()
+      },
+      trigger: ['blur', 'change']
+    }
   ]
 }
 
@@ -393,26 +423,38 @@ async function handleSubmit() {
   result.value = null
 
   try {
-    const payload: any = {
+    const basePayload = {
       stock_code: form.stock_code.trim(),
-      strategy: form.strategy,
       start_date: form.start_date,
       end_date: form.end_date,
       initial_cash: form.initial_cash
     }
+    let payload: RunBacktestPayload
 
-    // Add score-driven params
-    if (['SCORE_THRESHOLD', 'SCORE_MOMENTUM'].includes(form.strategy)) {
-      payload.horizon = form.horizon
-      payload.stop_loss_pct = form.stop_loss_pct
-      if (form.model_version) payload.model_version = form.model_version
-    }
     if (form.strategy === 'SCORE_THRESHOLD') {
-      payload.entry_threshold = form.entry_threshold
-      payload.exit_threshold = form.exit_threshold
-    }
-    if (form.strategy === 'SCORE_MOMENTUM') {
-      payload.score_delta = form.score_delta
+      payload = {
+        ...basePayload,
+        strategy: form.strategy,
+        horizon: form.horizon as number,
+        entry_threshold: form.entry_threshold,
+        exit_threshold: form.exit_threshold,
+        stop_loss_pct: form.stop_loss_pct,
+        model_version: form.model_version.trim()
+      }
+    } else if (form.strategy === 'SCORE_MOMENTUM') {
+      payload = {
+        ...basePayload,
+        strategy: form.strategy,
+        horizon: form.horizon as number,
+        score_delta: form.score_delta,
+        stop_loss_pct: form.stop_loss_pct,
+        model_version: form.model_version.trim()
+      }
+    } else {
+      payload = {
+        ...basePayload,
+        strategy: form.strategy as NonScoreStrategy
+      }
     }
 
     const backtestResult = await backtestApi.run(payload)
