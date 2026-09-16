@@ -16,8 +16,10 @@
 
 ## 2. 切片 2 — research 独立生产链启用（门控执行，逐项批准）
 
-- [ ] 2.1 步骤 0：只读盘点 research/旧 stable 的 CronJob 实际 suspend 状态与
-  最近运行记录（无集群变更）
+- [x] 2.1 步骤 0：只读盘点 research/旧 stable 的 CronJob 实际 suspend 状态与
+  最近运行记录（无集群变更；2026-09-16 完成：research 全部 CronJob 处于
+  挂起——无双写风险；旧 stable quote-index/quote-stock/signal/scoring/
+  industry-sync 活跃；dev data-sync 活跃。细节见私有设计文档 §2.2）
 - [ ] 2.2 对齐修复：research `stock_industry` 规范键迁移（#247 后代码 vs 09-11
   快照数据）；research 侧 FQ 全市场重算（`fq-adj-factor-fix` 5.2）
 - [ ] 2.3 补齐 research 缺失的调度型 writer：`daily_basic`（tushare

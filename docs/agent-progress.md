@@ -57,6 +57,27 @@
 
 ### 2026-09-16 16:05 CST — P0-5/TASK-404 切片 3 收口：S3 传输 + 私有 Job 接线 + 评审闭环
 
+### 2026-09-16 13:40 CST — P0-5/TASK-404 切片 2 步骤 0：集群只读盘点完成（无双写风险）
+
+- 状态：已完成（只读，无任何集群变更）
+- 已完成：对 research/旧 stable/dev 三个命名空间做 CronJob/Deployment 只读盘点：
+  research 全部 CronJob（含 parquet-export、mongodb-s3-backup）**均处于挂起**，
+  lastScheduleTime 停留在 2026-09-10 → 当前不存在第二套每日链路，**无双写风险**，
+  切换流程无需"先整体挂起"步骤；旧 stable 的 quote-index/quote-stock/signal/
+  scoring（最近调度 2026-09-15）与 industry-sync（下次 2026-10-01）活跃——即
+  切片 2 要逐个关闭的 writer 集合；dev 的 data-sync（19:15）与 health-watcher
+  活跃——在线直连仍在每日运行。两个新发现：旧 stable 2026-09-15 的 quote-index
+  Job pod 为 Error（quote-stock/scoring 正常），验证 research quote-index 前需
+  归因；research 备份 CronJob 挂起 → research 备份启用 + restore drill 列为
+  退役旧 stable 的前置项。结果已写入私有设计文档 §2.2/§5.0/§8。
+- 验证：`kubectl get cronjobs/deploy,pods`（三命名空间，只读）；OpenSpec
+  validate（CI 钉版 1.1.1 与 latest 均 27/27——本日发现 1.1.1 要求 SHALL 位于
+  requirement 开头文本，已修正两个 requirement 的措辞位置，语义不变）。
+- 下一步：用户批准后执行切片 2 步骤 2-4（industry 键迁移、FQ 重算、补
+  daily_basic/health-watcher 调度 writer + 解除 research 备份挂起）；随后逐
+  writer 切换（每步独立批准）。
+- 阻塞：无。
+
 ### 2026-09-16 13:05 CST — P0-5/TASK-404 切片 1：数据权威切换设计与快照导入契约（设计轮，无集群操作）
 
 - 状态：已完成（切片 1 = 设计 + OpenSpec 契约；切片 2/3 为待批准执行步骤）；集群零变更
