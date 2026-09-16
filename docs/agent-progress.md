@@ -29,6 +29,33 @@
 ```
 
 ## 进度记录
+### 2026-09-17 18:45 CST — P0-5/TASK-404 §8 步骤 2/3 在 research 执行完成并验收通过；策略研究前置结论
+
+- 状态：已完成（步骤 2 industry 键迁移、步骤 3 FQ 全市场重算；执行经用户批准）
+- 已完成：
+  - **步骤 2**：`stock_industry` 规范键迁移——预览 renamed 5,212/unrecognized 0 → 执行
+    renamed **5,212** → 二次预览 **renamed 0/merged 0**（幂等验收）；迁移前副本
+    `stock_industry_pre_normalize_20260917` 保留。
+  - **步骤 3**：FQ 全市场重算（`--type fq-backfill`，镜像 `sha-73b8d34f7a37`）——
+    pulled **5,219** 只 / written **16,656,156** 行 / **failed 0**；只读断层扫描
+    （窗口 2026-07-01..09-17，交易日历相邻，270,341 对比较，前后同参）：
+    **2026-08-31 跳变 4,673 只（84.0% universe，最大 186.4×）→ 0**，全市场最大单日
+    变化 **50.2%**（除权/涨跌停量级），最高异常日降为 7 只/0.13%；重算前快照
+    `stock_daily_quote_fq_pre_fix`（2026-06-01 起 426,115 行）保留。
+  - **部署链路修复**（私有 #89，QA 两轮 PASS）：8 个 `DATAHUB_*_SUSPEND` 此前无人
+    透传（仓库变量翻转被静默忽略）+ 清单校验步骤缺 env（合法启用会 fail-closed）；
+    现全链透传、校验数据驱动、≥2 个活跃 writer 需 `ACTIVE_WRITERS_ACK` 点名。
+  - 私有 #90 记录步骤 2/3 证据与 §9.0 数据状态。
+- 关键结论（影响策略研究）：`close_hfq` 被 scoring/factor(MA)/etf_lab/market_regime/
+  small_book 消费 → **修复前的 factor/signal/scoring 历史仍基于坏复权价，须按研究
+  窗口重算**；research 行情仍止于 2026-09-11（writer 全挂起）。
+- 验证：见上（前后对照数字来自同一扫描器同一窗口）；无法用全量 S3 备份路径
+  （节点网络限制），已用定向快照并在文档留痕。
+- 下一步：批准 research datahub 部署（8 writer 挂起起步）→ 按 §5.1 逐个启用
+  （quote-index → quote-stock 含 factor/FQ → 视需要 daily-basic/signal/scoring）→
+  按研究窗口重算 factor/signal/scoring → 策略研究。
+- 阻塞：无（后续集群/数据变更按设计需用户逐项批准）。
+
 ### 2026-09-17 03:10 CST — P0-5/TASK-404 执行 runbook 补齐（步骤 6-9）+ 执行就绪核验
 
 - 状态：已完成（全部剩余步骤的命令级 runbook 就绪；执行仍待用户逐项批准）
