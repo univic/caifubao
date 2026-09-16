@@ -83,18 +83,19 @@ job-run semantics used by other datahub jobs).
 
 ### Requirement: Import is idempotent per collection class
 
-For date-partitioned collections (`stock_daily_quote`, `stock_daily_basic`,
-`stock_factor_daily`, `stock_signal_daily`), the importer SHALL upsert by the
-same business keys the online sync used, so re-importing the same snapshot
-yields the same state. For snapshot-class collections (`finance_market`,
-`stock_industry`) and the import-state metadata collection, the importer SHALL
-use explicit replace/drop semantics and SHALL state which collections are
-treated as snapshot-class. For `stock_industry` this deliberately supersedes
-the online sync's upsert-by-`stock_code` behaviour: snapshot-class idempotency
-means state-equivalent replacement, and dev-side rows absent from the snapshot
-are deleted. Re-running a completed import SHALL NOT duplicate documents; for
-date-partitioned collections it SHALL NOT change previously imported business
-rows.
+The importer SHALL import idempotently, with semantics that differ per
+collection class. For date-partitioned collections (`stock_daily_quote`,
+`stock_daily_basic`, `stock_factor_daily`, `stock_signal_daily`), it SHALL
+upsert by the same business keys the online sync used, so re-importing the
+same snapshot yields the same state. For snapshot-class collections
+(`finance_market`, `stock_industry`) and the import-state metadata collection,
+it SHALL use explicit replace/drop semantics and SHALL state which collections
+are treated as snapshot-class. For `stock_industry` this deliberately
+supersedes the online sync's upsert-by-`stock_code` behaviour: snapshot-class
+idempotency means state-equivalent replacement, and dev-side rows absent from
+the snapshot are deleted. Re-running a completed import SHALL NOT duplicate
+documents; for date-partitioned collections it SHALL NOT change previously
+imported business rows.
 
 #### Scenario: The same snapshot is applied twice
 
@@ -126,21 +127,22 @@ current.
 
 ### Requirement: The online direct sync path is transitioned to snapshot import
 
-The transition happens in two observable stages. Stage 1 (cutover) begins once
-the snapshot import path has passed its acceptance observation window defined
-in this change's tasks (verified freshness/count alignment on consecutive
-trading days): from then on, the `data sync` CLI entry point
-(`./scripts/caifubao data sync` and its Makefile alias) SHALL perform snapshot
-import without establishing any online MongoDB connection to the research or
-legacy-stable environments, the dev deployment SHALL no longer receive
-`MONGODB_SRC_*` credentials, and the online sync CronJob SHALL be removed from
-dev's schedule. Stage 2 (removal) is a follow-up change that deletes the online
-sync runner code and any remaining `MONGODB_SRC_*` configuration; between the
-two stages the runner SHALL fail closed — it SHALL refuse to run without
-source credentials rather than silently falling back. Until Stage 1 completes,
-the online path and its `MONGODB_SRC_*` configuration SHALL be documented as a
-migration-period legacy consistent with the environment-model vocabulary,
-without redefining that vocabulary in this change.
+The online direct sync path SHALL be transitioned to snapshot import in two
+observable stages. Stage 1 (cutover) begins once the snapshot import path has
+passed its acceptance observation window defined in this change's tasks
+(verified freshness/count alignment on consecutive trading days): from then
+on, the `data sync` CLI entry point (`./scripts/caifubao data sync` and its
+Makefile alias) SHALL perform snapshot import without establishing any online
+MongoDB connection to the research or legacy-stable environments, the dev
+deployment SHALL no longer receive `MONGODB_SRC_*` credentials, and the online
+sync CronJob SHALL be removed from dev's schedule. Stage 2 (removal) is a
+follow-up change that deletes the online sync runner code and any remaining
+`MONGODB_SRC_*` configuration; between the two stages the runner SHALL fail
+closed — it SHALL refuse to run without source credentials rather than
+silently falling back. Until Stage 1 completes, the online path and its
+`MONGODB_SRC_*` configuration SHALL be documented as a migration-period legacy
+consistent with the environment-model vocabulary, without redefining that
+vocabulary in this change.
 
 #### Scenario: Data sync runs after the cutover
 
