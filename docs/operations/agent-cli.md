@@ -347,7 +347,9 @@ P2a closes the provenance gap without relabelling historical Mongo rows. It is
 forward-only and two-phase: capture the universe after the prior close but
 before D opens, then capture D's ranked-scoring inputs after D closes but before
 the next session opens. Both commands require the build-injected
-`CAIFUBAO_BUILD_REVISION` and exclusively create a new JSON path.
+`CAIFUBAO_BUILD_REVISION` and exclusively create a new JSON path. The durable
+artifact store and the day-by-day operator sequence are in
+[`stock-timing-pit-evidence.md`](./stock-timing-pit-evidence.md).
 
 ```bash
 PYTHONPATH=datahub datahub/.venv/bin/python -m app.jobs.scoring_runner \
