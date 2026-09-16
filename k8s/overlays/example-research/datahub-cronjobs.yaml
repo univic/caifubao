@@ -5,6 +5,11 @@
 # because research is production-shaped (full history, same schedules); diverge
 # here deliberately rather than in a namespace patch.
 #
+# Every writer below ships `suspend: true` on purpose: during the TASK-404
+# transition the research chain must never run unattended beside the old
+# stable chain (one-writer-at-a-time). Private overlays drive the live value
+# via DATAHUB_*_SUSPEND env patches; enable one writer per verified step.
+#
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -14,6 +19,9 @@ metadata:
     job.caifubao.io/type: quote-index
 spec:
   schedule: "0 18 * * 1-5"
+  # Suspended during the TASK-404 transition; private overlays override
+  # per writer via DATAHUB_*_SUSPEND.
+  suspend: true
   timeZone: Asia/Shanghai
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 900
@@ -113,6 +121,9 @@ metadata:
     job.caifubao.io/type: quote-stock
 spec:
   schedule: "0 18 * * 1-5"
+  # Suspended during the TASK-404 transition; private overlays override
+  # per writer via DATAHUB_*_SUSPEND.
+  suspend: true
   timeZone: Asia/Shanghai
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 900
@@ -222,6 +233,10 @@ metadata:
     job.caifubao.io/type: signal
 spec:
   schedule: "30 18 * * 1-5"
+
+  # Suspended during the TASK-404 transition; private overlays override
+  # per writer via DATAHUB_*_SUSPEND.
+  suspend: true
   timeZone: Asia/Shanghai
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 900
@@ -323,6 +338,10 @@ metadata:
     job.caifubao.io/type: scoring
 spec:
   schedule: "35 18 * * 1-5"
+
+  # Suspended during the TASK-404 transition; private overlays override
+  # per writer via DATAHUB_*_SUSPEND.
+  suspend: true
   timeZone: Asia/Shanghai
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 900
@@ -421,6 +440,10 @@ metadata:
     job.caifubao.io/type: industry-sync
 spec:
   schedule: "0 12 1 * *"
+
+  # Suspended during the TASK-404 transition; private overlays override
+  # per writer via DATAHUB_*_SUSPEND.
+  suspend: true
   timeZone: Asia/Shanghai
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 21600
@@ -505,5 +528,193 @@ spec:
               limits:
                 memory: "512Mi"
                 cpu: "200m"
+          imagePullSecrets:
+          - name: ccr-secret
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: caifubao-datahub-daily-basic
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: daily-basic
+spec:
+  # Daily valuation basics for the research chain. Runs after the quote jobs
+  # (18:00) so the incremental backfill sees the day's stock_daily_quote rows
+  # (its --to-date defaults to the latest quote date), and before signal
+  # (18:30). If tushare has not published trade date T's daily_basic yet, the
+  # run heals on the next execution (done dates are skipped, missing dates are
+  # fetched); scoring degrades to the previous valuation for that day only.
+  # TASK-404 slice 2: enabled per writer-switch step, never beside the old
+  # stable producer.
+  schedule: "20 18 * * 1-5"
+  # Suspended during the TASK-404 transition; private overlays override
+  # per writer via DATAHUB_*_SUSPEND.
+  suspend: true
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: caifubao-datahub
+            job.caifubao.io/type: daily-basic
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: daily-basic-runner
+            image: caifubao-datahub:latest
+            imagePullPolicy: Always
+            # daily_basic_backfill takes only --from-date/--to-date; the
+            # defaults are the schedule semantics (incremental: done dates
+            # skipped, upper bound = latest quote date). No scheduler-args
+            # block: the runner is not job-run tracked.
+            command: ["python", "-m", "app.jobs.daily_basic_backfill"]
+            env:
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_HOST
+            - name: MONGODB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_PORT
+            - name: MONGODB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_NAME
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_USER
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: MONGODB_PASSWORD
+            - name: TUSHARE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: TUSHARE_TOKEN
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: ENVIRONMENT
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: PYMONGO_LOG_LEVEL
+              value: "INFO"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "200m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+          imagePullSecrets:
+          - name: ccr-secret
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: caifubao-datahub-health-watcher
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: health-watcher
+spec:
+  # Post-close chain check for the research chain: quote(18:00) ->
+  # daily-basic(18:20) -> signal(18:30) -> scoring(18:35); run 20:00 weekdays
+  # like dev so a still-running scoring job (3h deadline) is not misread as a
+  # gap.
+  schedule: "0 20 * * 1-5"
+  # Suspended during the TASK-404 transition; private overlays override
+  # per writer via DATAHUB_*_SUSPEND.
+  suspend: true
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: caifubao-datahub
+            job.caifubao.io/type: health-watcher
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: health-watcher
+            image: caifubao-datahub:latest
+            imagePullPolicy: Always
+            command: ["python", "-m", "app.jobs.health_watcher", "--hours", "26", "--fail-on-issues"]
+            env:
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_HOST
+            - name: MONGODB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_PORT
+            - name: MONGODB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_NAME
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_USER
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: MONGODB_PASSWORD
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: ENVIRONMENT
+            # Optional notification target; private overlays set the real URL.
+            # - name: HEALTH_WEBHOOK_URL
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: health-notify
+            #       key: webhook-url
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "100m"
+              limits:
+                memory: "256Mi"
+                cpu: "500m"
           imagePullSecrets:
           - name: ccr-secret
