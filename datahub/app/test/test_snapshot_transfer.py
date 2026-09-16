@@ -1702,7 +1702,6 @@ def test_download_snapshot_data_file_failure_leaves_no_partial_files(
     )
     payload = (snapshot_dir / st.MANIFEST_NAME).read_bytes()
     sidecar = (snapshot_dir / st.MANIFEST_CHECKSUM_NAME).read_bytes()
-    data = (snapshot_dir / "stock_daily_quote.jsonl.gz").read_bytes()
 
     def _download(_bucket, key, local_path):
         if key.endswith("stock_daily_quote.jsonl.gz"):
