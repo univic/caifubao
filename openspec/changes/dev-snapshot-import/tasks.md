@@ -10,14 +10,14 @@
 - [x] 1.1 盘点同步面 collection 的 owner/writer/reader（私有设计文档 §3）
 - [x] 1.2 设计 research/data 每日生产链与缺口（daily_basic、health-watcher、
   data_asset_status 覆盖）（私有设计文档 §4）
-- [x] 1.3 设计 writer 切换顺序、验证指标、回滚窗口与批准门（私有设计文档 §5）
+- [x] 1.3 设计 writer 切换顺序、验证指标、回滚窗口与批准门（私有设计文档 §5+§8）
 - [x] 1.4 设计受控快照导入管线与在线路径退役步骤（私有设计文档 §6）
 - [x] 1.5 本 change：导入契约 ADDED requirements（spec-guardian：GATE REQUIRED）
 
 ## 2. 切片 2 — research 独立生产链启用（门控执行，逐项批准）
 
 - [ ] 2.1 步骤 0：只读盘点 research/旧 stable 的 CronJob 实际 suspend 状态与
- 最近运行记录（无集群变更）
+  最近运行记录（无集群变更）
 - [ ] 2.2 对齐修复：research `stock_industry` 规范键迁移（#247 后代码 vs 09-11
   快照数据）；research 侧 FQ 全市场重算（`fq-adj-factor-fix` 5.2）
 - [ ] 2.3 补齐 research 缺失的调度型 writer：`daily_basic`（tushare
