@@ -37,7 +37,8 @@
   + manifest（sha256、计数、`data_as_of`、producer 镜像 SHA）——**代码已落地**
   （`datahub/app/lib/datahub/snapshot_transfer.py` +
   `snapshot_export_runner.py` + `./scripts/caifubao data snapshot-export`），
-  私有侧导出 Job 清单与对象存储上传待私有 PR
+  对象存储传输（`--upload-uri`，键 `<prefix>/<snapshot_id>/<file>`）已落地；
+  私有侧 Job 接线已完成（run-datahub-job.sh snapshot 类型），首次实跑待批准
 - [ ] 3.2 dev 导入 Job：manifest/校验和/计数 fail-closed 校验（两遍式，先核验
   后写入）+ 幂等应用（业务键 upsert / 快照类 staging→原子
   `renameCollection`）+ 导入状态记录（`snapshot_import_state`）+ freshness

@@ -1240,7 +1240,11 @@ def test_upload_snapshot_uploads_manifest_sidecar_then_data_files(
         "stock_daily_quote.jsonl.gz",
         "stock_industry.jsonl.gz",
     ]
-    expected_keys = [f"prefix/snapshots/{name}" for name in expected_files]
+    # the upload key prefix includes the manifest's snapshot_id so each
+    # export lands in its own key space under the shared base URI
+    expected_keys = [
+        f"prefix/snapshots/snapshot-test00000000/{name}" for name in expected_files
+    ]
     assert [key for _path, _bucket, key in fake.uploaded] == expected_keys
     # every local file name maps onto its derived object key
     assert {path for path, _bucket, _key in fake.uploaded} == {
@@ -1248,7 +1252,7 @@ def test_upload_snapshot_uploads_manifest_sidecar_then_data_files(
     }
     assert result == {
         "bucket": "snap-bucket",
-        "prefix": "prefix/snapshots",
+        "prefix": "prefix/snapshots/snapshot-test00000000",
         "objects": expected_keys,
     }
 
@@ -1263,11 +1267,11 @@ def test_upload_snapshot_empty_prefix_uses_bare_object_keys(tmp_path, monkeypatc
 
     result = st.upload_snapshot(snapshot_dir, "s3://snap-bucket/")
 
-    assert result["prefix"] == ""
+    assert result["prefix"] == "snapshot-test00000000"
     assert [key for _path, _bucket, key in fake.uploaded] == [
-        st.MANIFEST_NAME,
-        st.MANIFEST_CHECKSUM_NAME,
-        "stock_daily_quote.jsonl.gz",
+        "snapshot-test00000000/manifest.json",
+        "snapshot-test00000000/manifest.json.sha256",
+        "snapshot-test00000000/stock_daily_quote.jsonl.gz",
     ]
 
 
@@ -1316,20 +1320,22 @@ def test_upload_snapshot_failure_names_the_key_and_keeps_local_files(
     snapshot_dir, _sha = _write_snapshot(
         tmp_path, {"stock_daily_quote": [_quote_doc()]}
     )
-    fake = _FakeS3Client(fail_uploads={"p/stock_daily_quote.jsonl.gz"})
+    fake = _FakeS3Client(
+        fail_uploads={"p/snapshot-test00000000/stock_daily_quote.jsonl.gz"}
+    )
     _patch_s3_client(monkeypatch, fake)
 
     with pytest.raises(
         st.SnapshotTransferError,
-        match="s3://snap-bucket/p/stock_daily_quote.jsonl.gz",
+        match="s3://snap-bucket/p/snapshot-test00000000/stock_daily_quote.jsonl.gz",
     ):
         st.upload_snapshot(snapshot_dir, "s3://snap-bucket/p")
 
     # fail-closed: manifest+sidecar uploaded, then the transfer aborted, and
     # every local file is still on disk for the retry (nothing is deleted)
     assert [key for _path, _bucket, key in fake.uploaded] == [
-        "p/manifest.json",
-        "p/manifest.json.sha256",
+        "p/snapshot-test00000000/manifest.json",
+        "p/snapshot-test00000000/manifest.json.sha256",
     ]
     assert (snapshot_dir / st.MANIFEST_NAME).is_file()
     assert (snapshot_dir / st.MANIFEST_CHECKSUM_NAME).is_file()
@@ -1432,7 +1438,8 @@ def test_upload_then_download_round_trip_preserves_manifest_and_files(
 
     st.upload_snapshot(snapshot_dir, "s3://snap-bucket/snaps")
     dest = tmp_path / "dst"
-    st.download_snapshot("s3://snap-bucket/snaps", dest)
+    # the import URI points at the per-snapshot key space the upload created
+    st.download_snapshot("s3://snap-bucket/snaps/snapshot-test00000000", dest)
 
     assert (dest / st.MANIFEST_NAME).read_bytes() == (
         snapshot_dir / st.MANIFEST_NAME
@@ -1682,3 +1689,64 @@ def test_snapshot_import_runner_prefers_snapshot_dir_over_snapshot_uri(
 
     assert download_calls == []
     assert engine_calls[0]["snapshot_dir"] == old_dir
+
+
+def test_download_snapshot_data_file_failure_leaves_no_partial_files(
+    tmp_path, monkeypatch
+):
+    """A data-file failure cleans the manifest pair and earlier downloads."""
+    import boto3
+
+    snapshot_dir, _sha = _write_snapshot(
+        tmp_path, {"stock_daily_quote": [_quote_doc()]}
+    )
+    payload = (snapshot_dir / st.MANIFEST_NAME).read_bytes()
+    sidecar = (snapshot_dir / st.MANIFEST_CHECKSUM_NAME).read_bytes()
+    data = (snapshot_dir / "stock_daily_quote.jsonl.gz").read_bytes()
+
+    def _download(_bucket, key, local_path):
+        if key.endswith("stock_daily_quote.jsonl.gz"):
+            raise RuntimeError("simulated mid-download failure")
+        Path(local_path).write_bytes(
+            payload if key.endswith(st.MANIFEST_NAME) else sidecar
+        )
+
+    client = MagicMock(name="s3client")
+    client.download_file.side_effect = _download
+    monkeypatch.setattr(boto3, "client", lambda service, **kwargs: client)
+
+    dest = tmp_path / "dst"
+    with pytest.raises(st.SnapshotTransferError, match="mid-download failure"):
+        st.download_snapshot("s3://snap-bucket/snaps/snapshot-test00000000", dest)
+
+    # fail-closed cleanup: no manifest pair, no partial data files
+    assert list(dest.iterdir()) == []
+
+
+def test_snapshot_import_runner_dry_run_with_uri_still_downloads(monkeypatch, tmp_path):
+    """Documented nuance: dry-run skips DB writes, not the snapshot download."""
+    from app.jobs import snapshot_import_runner
+    from app.lib.datahub import snapshot_transfer
+
+    download_calls = []
+
+    def _fake_download(s3_uri, dest_dir, **_kwargs):
+        download_calls.append(s3_uri)
+        return tmp_path
+
+    monkeypatch.setattr(
+        snapshot_transfer, "_get_local_db", lambda cfg=None: MagicMock()
+    )
+    monkeypatch.setattr(snapshot_transfer, "download_snapshot", _fake_download)
+    monkeypatch.setattr(
+        snapshot_transfer,
+        "run_import",
+        lambda **_kwargs: {"status": "DRY_RUN", "dry_run": True},
+    )
+    _patch_job_tracking(monkeypatch, snapshot_import_runner)
+
+    snapshot_import_runner.main(
+        ["run", "--snapshot-uri", "s3://b/p/snapshot-x", "--dry-run"]
+    )
+
+    assert download_calls == ["s3://b/p/snapshot-x"]

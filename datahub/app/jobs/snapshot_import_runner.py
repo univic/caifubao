@@ -93,6 +93,9 @@ def run_import(args) -> dict:
         # Otherwise pull the snapshot from object storage into
         # <SNAPSHOT_DIR base>/downloads/<uri basename> and import from there;
         # endpoint/region default from DATA_LAKE_* inside download_snapshot.
+        # Note: the download happens even with --dry-run — dry-run skips the
+        # DB writes, not the transfer; the import itself re-verifies every
+        # byte as defense in depth.
         download_dir = snapshot_transfer.download_dir_for_uri(
             snapshot_transfer.default_snapshot_dir(), args.snapshot_uri
         )

@@ -1143,10 +1143,13 @@ def run_import(
 # ---------------------------------------------------------------------------
 # Optional object-storage (S3) transport
 #
-# Object keys are DERIVED at transfer time as "<prefix>/<file>" (an empty
-# prefix uploads/downloads the bare file name); the manifest's per-collection
-# `file` field keeps holding the local relative file name, so manifest bytes
-# stay transport-independent (see module docstring).
+# Object keys are DERIVED at transfer time. Upload prefixes the key with the
+# manifest's snapshot_id: "<prefix>/<snapshot_id>/<file>", so each export
+# lands in its own key space under the shared base URI passed by the operator.
+# Download takes the full per-snapshot URI (".../<snapshot_id>") and derives
+# "<uri-prefix>/<file>". The manifest's per-collection `file` field keeps
+# holding the local relative file name, so manifest bytes stay
+# transport-independent (see module docstring).
 # ---------------------------------------------------------------------------
 
 
@@ -1305,20 +1308,30 @@ def upload_snapshot(
             f"snapshot manifest checksum not found: {checksum_path}; refusing "
             "to upload an unchecksummed snapshot"
         )
-    try:
-        manifest = json.loads(manifest_path.read_bytes().decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SnapshotTransferError(
-            f"snapshot manifest is not valid JSON: {manifest_path}: {exc}"
-        ) from exc
+    # Full pre-upload validation (sidecar checksum + structure): a corrupt
+    # local snapshot must not reach the bucket — defense in depth on top of
+    # the importer's own re-verification.
+    manifest, _manifest_sha256 = _load_manifest(snapshot_dir)
     data_files = _manifest_data_file_names(manifest, str(manifest_path))
+    snapshot_id = str(manifest.get("snapshot_id") or "").strip()
+    if not snapshot_id or "/" in snapshot_id:
+        raise SnapshotTransferError(
+            f"snapshot manifest has an unusable snapshot_id {snapshot_id!r}; "
+            "refusing to upload"
+        )
+
+    # The upload key prefix includes the snapshot_id so each export lands in
+    # its own key space: "<prefix>/<snapshot_id>/<file>". Operators pass the
+    # shared base URI (e.g. .../snapshots) to --upload-uri and later point
+    # --snapshot-uri at "s3://<bucket>/<prefix>/<snapshot_id>" for import.
+    object_prefix = f"{prefix}/{snapshot_id}" if prefix else snapshot_id
 
     endpoint_url, region_name = _s3_env_defaults(endpoint_url, region_name)
     client = _build_s3_client(endpoint_url, region_name)
 
     uploaded: list[str] = []
     for file_name in [MANIFEST_NAME, MANIFEST_CHECKSUM_NAME, *data_files]:
-        key = _s3_object_key(prefix, file_name)
+        key = _s3_object_key(object_prefix, file_name)
         file_path = snapshot_dir / file_name
         try:
             client.upload_file(str(file_path), bucket, key)
@@ -1332,7 +1345,7 @@ def upload_snapshot(
         uploaded.append(key)
         logger.info("Uploaded s3://%s/%s", bucket, key)
 
-    result = {"bucket": bucket, "prefix": prefix, "objects": uploaded}
+    result = {"bucket": bucket, "prefix": object_prefix, "objects": uploaded}
     logger.info("Snapshot upload complete: %s", result)
     return result
 
@@ -1438,9 +1451,26 @@ def download_snapshot(
         ) from exc
     data_files = _manifest_data_file_names(manifest, str(manifest_path))
 
-    for file_name in data_files:
-        _download(file_name)
-        logger.info("Downloaded s3://%s/%s", bucket, _s3_object_key(prefix, file_name))
+    # Download each data file, but never leave a half-populated directory
+    # behind: on a data-file failure, remove everything downloaded so far
+    # (manifest pair included) so the dest_dir holds no partial snapshot.
+    # A retry starts clean; the subsequent import re-verifies every byte
+    # regardless.
+    downloaded: list[str] = []
+    try:
+        for file_name in data_files:
+            _download(file_name)
+            downloaded.append(file_name)
+            logger.info(
+                "Downloaded s3://%s/%s",
+                bucket,
+                _s3_object_key(prefix, file_name),
+            )
+    except SnapshotTransferError:
+        _remove_manifest_pair()
+        for file_name in downloaded:
+            (dest_dir / file_name).unlink(missing_ok=True)
+        raise
 
     logger.info(
         "Snapshot download complete: %s (%d objects)",
