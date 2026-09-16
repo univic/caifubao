@@ -175,8 +175,11 @@ trading: 风控 → 订单（幂等） → 成交/持仓/资金 → 对账 → �
 - dev 数据**可以丢弃、抽样，或通过受控快照导入**；目标态 dev **不得**直接依赖
   research/trading 在线数据库。
 - 当前 `data sync`（旧 stable 在线库 → dev 在线直连）是 **TASK-404 完成前的迁移
-  期遗留**；目标流程为「data/stable 环境生成受控快照 → dev 导入/恢复」，并配
-  显式工具（控制样本规模、可重复、可校验）。
+  期遗留**；目标流程为「data/stable 环境生成受控快照 → dev 导入/恢复」。该流程
+  的显式工具已落地并受契约约束（`openspec/changes/dev-snapshot-import`）：
+  `./scripts/caifubao data snapshot-export` 生成带 manifest/sha256 的版本化
+  快照，`data snapshot-import` 两遍式 fail-closed 导入 dev（先核验后写入，
+  幂等可重放）；在线直连仅在观察窗完成前的迁移期继续按日运行。
 - 需要真实规模测试数据时：从稳定环境的**备份/导出**（MongoDB 归档或 Parquet
   数据湖导出）做受控导入，而不是让 dev 直连在线库。
 

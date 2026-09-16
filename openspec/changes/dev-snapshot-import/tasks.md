@@ -47,12 +47,16 @@
   私有侧导入 Job 清单待私有 PR
 - [ ] 3.3 `data sync` CLI 语义切换为快照导入；移除 `MONGODB_SRC_*` 注入；停用
   `caifubao-datahub-data-sync` CronJob（cutover 门 = 3.6 观察窗完成）
-- [ ] 3.4 `datahub-perf-optimization` 的 "Watermark-Based Incremental
+- [x] 3.4 `datahub-perf-optimization` 的 "Watermark-Based Incremental
   Prod-to-Dev Sync" requirement 以 MODIFIED delta 收敛为单一口径：同步语义
   切换为快照导入，并修正其陈旧的「按 `_id` 幂等 upsert」表述（现行为业务键
-  upsert，见 `SYNC_UPSERT_KEYS`）
-- [ ] 3.5 文档更新：`docs/operations/agent-cli.md` data sync 段落、环境模型
-  §12 迁移期标注收口
+  upsert，见 `SYNC_UPSERT_KEYS`）——**delta 已落地**
+  （`specs/datahub-runners/spec.md`：在线引擎定性为冻结的迁移期遗留，
+  upsert 口径改为业务键，新增"不得扩列"场景；validate 1.1.1 通过）
+- [x] 3.5 文档更新：`docs/operations/agent-cli.md` data sync 段落、环境模型
+  §12 迁移期标注收口——**已落地**（data sync 段标题标为 migration-period
+  legacy；新增 snapshot-export/snapshot-import 两节；环境模型 §12 指向已
+  落地的契约与工具，保留迁移期定性）
 - [ ] 3.6 观察窗口（≥5 交易日）快照导入的 freshness/计数对齐验证
 - [ ] 3.7 旧 stable 退役判据核验（无读取方、research 权威 ≥5 交易日、备份与
   restore drill 通过）并提交退役变更（独立批准）

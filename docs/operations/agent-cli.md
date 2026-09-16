@@ -60,7 +60,7 @@ export CFB_API_BASE="https://<your-api-host>"
 
 ### Data Pipeline
 
-#### `data sync [FROM_DATE] [COLLECTIONS]`
+#### `data sync [FROM_DATE] [COLLECTIONS]` — migration-period legacy
 Sync data from the legacy stable MongoDB to dev. This is the **first step**
 after any change that updates the stable environment's data (quote update,
 factor recompute, etc.). The sync source is the retired legacy stable
@@ -77,7 +77,7 @@ make data-sync
 ./scripts/caifubao data sync --full quote,factor,signal
 ```
 
-Collections: `quote` → `stock_daily_quote`, `factor` → `stock_factor_daily`,
+ `factor` → `stock_factor_daily`,
 `signal` → `stock_signal_daily`, `market` → `finance_market`,
 `industry` → `stock_industry`.
 
@@ -106,6 +106,22 @@ build with full-collection statistics on memory-constrained MongoDB nodes.
 
 **Important**: This syncs data but does NOT update `data_asset_status`.
 Run `data refresh-status` after syncing.
+
+#### `data snapshot-export [COLLECTIONS] [FROM_DATE] [TO_DATE]`
+Export a checksummed dev-import snapshot (manifest v1 + sidecar sha256) from
+the local environment's data domain: per-collection JSONL.gz files with BSON
+-safe encoding, verified before the manifest is written. Optional
+`--upload-uri s3://<bucket>/<prefix>` pushes the snapshot under
+`<prefix>/<snapshot_id>/` using the parquet exporter's object-storage env.
+See [`openspec/changes/dev-snapshot-import`](../../openspec/changes/dev-snapshot-import/proposal.md).
+
+#### `data snapshot-import [SNAPSHOT_DIR] [SNAPSHOT_ID]`
+Verify and import a snapshot into dev (fail-closed, two-pass): the manifest,
+checksums, counts and allow-list are verified before any write; date-partitioned
+collections apply by business-key upsert, snapshot-class collections are
+staged and swapped atomically. `data refresh-status` afterwards recomputes the
+data-quality page freshness.
+
 
 Daily stock jobs that include factors use one full-market Tushare
 `adj_factor(trade_date)` snapshot per target trading day and join it locally to
