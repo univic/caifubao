@@ -79,9 +79,10 @@
   键位事实对照 `sync_engine.py`（`SYNC_UPSERT_KEYS`、dev_only 门）与 overlay 文件核实。
   在案留痕（对账上一条目）：research Environment 的 `TUSHARE_TOKEN` 已于 2026-09-16
   由运维补齐并实测生效（前一日志 10:00 条目中的"待补"状态已解除）。
-- 下一步：记录 contract-reviewer/qa-reviewer 结论并推送两分支 Draft PR；随后由用户批准
-  切片 2 步骤 0（只读盘点 research/旧 stable CronJob 实际状态）与前置对齐修复；切片 3
-  实现（导入 Job + CLI 语义切换 + `MONGODB_SRC_*` 退役）。
+- 下一步：无（本轮交付完成：Draft PR public
+  https://github.com/univic/caifubao/pull/256 + private
+  https://github.com/univic/caifubao-private/pull/83 ；切片 2 步骤 0 与切片 3
+  实现待用户批准后另起轮次）。
 - 阻塞：无（切片 2/3 集群操作需用户逐项批准，属流程设计而非阻塞）。
 
 ### 2026-09-16 11:35 CST — 环境定位文档收敛：两轴环境模型（domain × stage）落地 public/private（PR #255 + private #82）

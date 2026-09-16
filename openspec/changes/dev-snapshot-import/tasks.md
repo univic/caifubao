@@ -52,6 +52,10 @@
 - [x] 4.1 `openspec validate --all --strict` 通过
 - [x] 4.2 spec-guardian gate 结论已记录（GATE REQUIRED，独立 change
   `dev-snapshot-import`）
-- [ ] 4.3 contract-reviewer / qa-reviewer 结论已记录
-- [ ] 4.4 分支冲突检查通过；Draft PR 已创建（public + private 各一）
-- [ ] 4.5 `docs/agent-progress.md` 记录本轮进度（含 PR 链接）
+- [x] 4.3 contract-reviewer（PASS，0 P1 · 2 P2 · 6 P3，全修复）/
+  qa-reviewer（PASS，0 P1 · 1 P2 · 4 P3，全修复）结论已记录于 PR 正文
+- [x] 4.4 分支冲突检查通过（public vs `origin/develop`、private vs
+  `origin/main` 均 clean）；Draft PR：public
+  https://github.com/univic/caifubao/pull/256 、private
+  https://github.com/univic/caifubao-private/pull/83
+- [x] 4.5 `docs/agent-progress.md` 记录本轮进度（含 PR 链接）
