@@ -24,6 +24,32 @@
 ```
 
 ## 进度记录
+### 2026-09-16 09:56 CST — 构建通道修复验证：dev/research 镜像已带 timing_evaluator 与构建修订；research secret 缺 TUSHARE_TOKEN 已补齐
+
+- 状态：已完成
+- 已完成：
+  - **main 触发的构建**（source `8b1b108`，PR #251 提升后）：镜像 `sha-8b1b108c7b54`，
+    私有部署 `environment=research` 成功（run `35045874335`）。research 实测
+    `/app/app/services/timing_evaluator.py` 存在、`CAIFUBAO_BUILD_REVISION=8b1b108c7b54ab68fd8e381a2a610efbc600f107`、
+    `backtest_runner timing-pool --help` 可运行。
+  - **develop 触发的构建**（`workflow_dispatch`，source `7affd47`）：镜像 `sha-7affd47d2a6b` 部署到 dev
+    （run `35045085408` success）。dev 实测同样：模块存在、`CAIFUBAO_BUILD_REVISION=7affd47d2a6b9b24dd882211a9d437b98b9722b1`、
+    `timing-pool --help` 可运行。至此上一轮记录的"镜像缺两个要素"已闭环。
+  - **一次真实故障与修复**：首次 research 部署（run `35044821667`）失败——提升后的 base 需要
+    `TUSHARE_TOKEN`，而 research 的 `datahub-secret` 只有 `MONGODB_PASSWORD`，Pod 进入
+    `CreateContainerConfigError`、rollout 超过 progress deadline，旧 Pod 已被替换（research datahub 短暂不可用）。
+    已用同类环境（dev/prod）同名 token 补该键（不回显值），Pod 立即恢复 1/1；随后重派 research 部署转 **success**。
+    - **跟进（私有侧）**：research 的 GitHub Environment 需补 `TUSHARE_TOKEN`，否则下次
+      bootstrap/secret 重建会复发。
+  - **残留（非阻塞，需另立小改）**：publish workflow 的 job 级 `environment:`
+    仍解析为 `development`/`production`（GitHub Environment，用于取 registry/dispatch secret），
+    而部署 payload 已用 `dev`/`research`；与 develop 现状一致，未在本轮改动。
+- 验证：三个 Pod 内实测（模块、修订、CLI）与两次私有部署 run 结论（dev `35045085408` success、
+  research `35045874335` success）；research/datahub 与 dev/datahub 均 1/1。
+- 下一步：P3 前向——09-16 收盘后跑 `capture-pit-inputs` → `score-pit-artifacts`（dry-run），
+  再决定前向窗口起点（当前 09-16 universe 工件行业快照为空，建议重新生成后开窗）。
+- 阻塞：无。
+
 ### 2026-09-16 09:33 CST — 收口 #248/#247：Spec Gate、行业代码迁移（prod→dev）、指标重建与覆盖率验证；publish workflow 提升到 main
 
 - 状态：已完成（本轮范围）
