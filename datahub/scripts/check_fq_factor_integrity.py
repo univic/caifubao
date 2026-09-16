@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import datetime
 import json
 import sys
 from pathlib import Path
@@ -89,7 +90,11 @@ def build_summary(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Read-only fq_factor integrity probe for the current MongoDB environment."
+        description=(
+            "Read-only fq_factor integrity probe for the current MongoDB "
+            "environment (sample spot-check, plus an optional market-wide "
+            "jump scan)."
+        )
     )
     parser.add_argument(
         "--sample-code",
@@ -103,7 +108,97 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip the probe that searches for any quote document containing fq_factor.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--jump-scan",
+        action="store_true",
+        help=(
+            "Also stream a bounded date window and report per-date fq_factor "
+            "jumps (market-wide acceptance scan for the FQ recompute)."
+        ),
+    )
+    parser.add_argument(
+        "--from-date",
+        default=None,
+        help="Jump-scan window start (YYYY-MM-DD); required with --jump-scan.",
+    )
+    parser.add_argument(
+        "--to-date",
+        default=None,
+        help=(
+            "Jump-scan window end (YYYY-MM-DD); defaults to today. Use the "
+            "recompute window, not the full history."
+        ),
+    )
+    parser.add_argument(
+        "--jump-threshold",
+        type=float,
+        default=None,
+        help="Relative day-over-day change treated as a jump (default 0.10).",
+    )
+    parser.add_argument(
+        "--max-gap-days",
+        type=int,
+        default=None,
+        help=(
+            "Only compare rows at most this many days apart, so a suspended "
+            "stock resuming does not look like a one-day jump (default 5)."
+        ),
+    )
+    parser.add_argument(
+        "--top-dates",
+        type=int,
+        default=None,
+        help="How many anomalous dates to report (default 10).",
+    )
+    parser.add_argument(
+        "--date",
+        default=None,
+        help=(
+            "Optional target date (YYYY-MM-DD, e.g. the known 2026-08-31 "
+            "discontinuity) reported explicitly alongside the ranking."
+        ),
+    )
+    parser.add_argument(
+        "--allow-long-window",
+        action="store_true",
+        help="Permit jump-scan windows longer than the built-in 500-day guard.",
+    )
+    args = parser.parse_args()
+    if args.jump_scan and not args.from_date:
+        parser.error("--jump-scan requires --from-date (use the recompute window)")
+    return args
+
+
+def _parse_day(value: str, flag: str) -> datetime.date:
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError as exc:
+        raise SystemExit(f"{flag} must be YYYY-MM-DD: {value!r}") from exc
+
+
+def build_jump_scan(args, db) -> dict[str, Any]:
+    from app.lib.datahub.data_integrity_keeper.handler import fq_factor_integrity
+
+    date_from = _parse_day(args.from_date, "--from-date")
+    date_to = (
+        _parse_day(args.to_date, "--to-date") if args.to_date else datetime.date.today()
+    )
+    target_date = _parse_day(args.date, "--date") if args.date else None
+    kwargs: dict[str, Any] = {
+        "date_from": date_from,
+        "date_to": date_to,
+        "allow_long_window": args.allow_long_window,
+    }
+    if args.jump_threshold is not None:
+        kwargs["threshold"] = args.jump_threshold
+    if args.max_gap_days is not None:
+        kwargs["max_gap_days"] = args.max_gap_days
+    if args.top_dates is not None:
+        kwargs["top_n"] = args.top_dates
+    if target_date is not None:
+        kwargs["target_date"] = target_date
+
+    return fq_factor_integrity.scan_fq_factor_jumps(db, **kwargs)
 
 
 def main() -> None:
@@ -120,6 +215,8 @@ def main() -> None:
             sample_codes=sample_codes,
             include_any_fq_probe=not args.skip_any_fq_probe,
         )
+        if args.jump_scan:
+            summary["jump_scan"] = build_jump_scan(args, db)
         print(json.dumps(summary, default=str, ensure_ascii=False, indent=2))
     finally:
         client.close()
