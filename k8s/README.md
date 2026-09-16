@@ -6,6 +6,14 @@ Real deployment overlays, private registry settings, domains, namespaces,
 kubeconfigs, and operator runbooks must stay outside the public repository.
 For this workspace, those files have been moved under `caifubao-private/`.
 
+The overlay directory names `example-development`, `example-research`, and
+`example-production` are **sanitized example names only**; they do not encode
+the business environment model. The authoritative environment semantics
+(domain `development/data/research/trading` × stage `dev/stable/paper/production`,
+data ownership, and the fact that the future `prod` = `trading/production`
+target is **not enabled**) live in
+[`docs/architecture/environment-model.md`](../docs/architecture/environment-model.md).
+
 Public deployment examples should use placeholder values such as:
 
 - `registry.example.com/your-org/caifubao-backend`

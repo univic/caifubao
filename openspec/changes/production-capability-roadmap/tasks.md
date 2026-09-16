@@ -25,6 +25,10 @@
       流程（本 change 不授权 promote）
 - [ ] 0.4 生产环境部署验证：datahub prod 配额（2 核/2Gi，私有 #60）dispatch 部署并跑一次
       单日 ranked 计时回填对比
+      （注：本项的「生产环境」指 `trading/production` 目标态运行目标 `prod`——该目标
+      **尚未启用**，当前不存在任何实盘运行时；本文其他处出现的旧 stable / research
+      部署验证不属于本项。环境模型见
+      `docs/architecture/environment-model.md`）
 - [ ] 0.5 MVP 收尾：capability-inventory.md 刷新到当前（H20/flip/strategy/perf 均已合入）；
       openspec 已完成 change 逐个 close/archive
 
