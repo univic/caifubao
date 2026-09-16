@@ -51,8 +51,10 @@
   Prod-to-Dev Sync" requirement 以 MODIFIED delta 收敛为单一口径：同步语义
   切换为快照导入，并修正其陈旧的「按 `_id` 幂等 upsert」表述（现行为业务键
   upsert，见 `SYNC_UPSERT_KEYS`）——**delta 已落地**
-  （`specs/datahub-runners/spec.md`：在线引擎定性为冻结的迁移期遗留，
-  upsert 口径改为业务键，新增"不得扩列"场景；validate 1.1.1 通过）
+  （`specs/datahub-runners/spec.md`：在线引擎定性为冻结的迁移期遗留；
+  upsert 口径对日期分区集合收敛为业务键、`finance_market` 等无业务键的
+  快照类集合保留 `_id` upsert；补 3 日重放窗口、dev-only signal 跳过规则
+  与"不得扩列"场景；validate 1.1.1 通过）
 - [x] 3.5 文档更新：`docs/operations/agent-cli.md` data sync 段落、环境模型
   §12 迁移期标注收口——**已落地**（data sync 段标题标为 migration-period
   legacy；新增 snapshot-export/snapshot-import 两节；环境模型 §12 指向已

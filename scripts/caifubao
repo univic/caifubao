@@ -643,7 +643,7 @@ Usage:
 Data:
   data sync [FROM_DATE|--full] [COLLECTIONS]
                                       Sync data from prod to dev
-  data snapshot-export [COLLECTIONS] [FROM_DATE] [TO_DATE]
+  data snapshot-export [COLLECTIONS] [FROM_DATE] [TO_DATE] [OUT_DIR]
                                       Export a checksummed dev-import snapshot
                                       (versioned manifest, sha256 per file)
   data snapshot-import [SNAPSHOT_DIR] [SNAPSHOT_ID]

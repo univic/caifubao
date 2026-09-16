@@ -77,7 +77,7 @@ make data-sync
 ./scripts/caifubao data sync --full quote,factor,signal
 ```
 
- `factor` → `stock_factor_daily`,
+Collections: `quote` → `stock_daily_quote`, `factor` → `stock_factor_daily`,
 `signal` → `stock_signal_daily`, `market` → `finance_market`,
 `industry` → `stock_industry`.
 
@@ -107,7 +107,7 @@ build with full-collection statistics on memory-constrained MongoDB nodes.
 **Important**: This syncs data but does NOT update `data_asset_status`.
 Run `data refresh-status` after syncing.
 
-#### `data snapshot-export [COLLECTIONS] [FROM_DATE] [TO_DATE]`
+#### `data snapshot-export [COLLECTIONS] [FROM_DATE] [TO_DATE] [OUT_DIR]`
 Export a checksummed dev-import snapshot (manifest v1 + sidecar sha256) from
 the local environment's data domain: per-collection JSONL.gz files with BSON
 -safe encoding, verified before the manifest is written. Optional
@@ -121,7 +121,6 @@ checksums, counts and allow-list are verified before any write; date-partitioned
 collections apply by business-key upsert, snapshot-class collections are
 staged and swapped atomically. `data refresh-status` afterwards recomputes the
 data-quality page freshness.
-
 
 Daily stock jobs that include factors use one full-market Tushare
 `adj_factor(trade_date)` snapshot per target trading day and join it locally to
