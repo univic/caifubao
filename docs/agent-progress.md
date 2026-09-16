@@ -29,6 +29,34 @@
 ```
 
 ## 进度记录
+### 2026-09-16 17:35 CST — P0-5/TASK-404 切片 2 预备：research writer 挂起门控与新 writer 模板
+
+- 状态：已完成（清单+门控全部落地；启用 writer 仍是逐项批准的切换步骤）
+- 已完成：
+  - `example-research/datahub-cronjobs.yaml`：7 个 datahub CronJob 全部硬编码
+    `suspend: true`（修复"重部署静默解除现场挂起"隐患）；新增 daily-basic
+    （18:20，`daily_basic_backfill` 增量默认即调度语义，无 scheduler 参数——
+    runner 不产 job-run，已记偏差）、health-watcher（20:00，dev 同形）与
+    asset-status（18:40，`data_asset_status_initializer` 重算，补缺口 4 的
+    initializer 半边）三个挂起模板。
+  - 私有接线：research kustomization 以 8 个 `DATAHUB_*_SUSPEND` env 补丁驱动
+    实际挂起值；`write-actions-env.sh`/`prepare-worktree.sh`/`env/root/
+    .env.example` 全链透传；`verify-rendered-manifest.sh` research 分支
+    fail-closed 断言 8 个 writer 渲染为挂起 + 新 writer 的 datahub-secret
+    引用；layout check 排除共享 .env 并显式断言 8 键；pinned public sha 升至
+    引入三个模板的提交。
+  - 评审：spec-gate NOT REQUIRED；qa-reviewer FAIL（1 P1：write-actions-env
+    缺 heredoc 透传；1 P1：本分支曾误提交本地构建产物——已重写历史清除并
+    gitignore）→ 全部修复并本地复验。
+- 验证：`kubectl kustomize` example-research 10 CronJob 全挂起；私有
+  prepare → verify-overlay → verify-rendered-manifest（dev+research）→
+  environment-layout-check 本地全绿；Private PR #83 CI 绿。
+- 下一步：合并顺序 **先私有 #83 后公开 #257**（dry-run 派发固定检出私有
+  默认分支）；随后按 §8 批准流程逐项执行。
+- 阻塞：无（剩余步骤需用户逐项批准；#257 的 dry-run 门在 #83 合并后自愈）。
+
+### 2026-09-16 16:05 CST — P0-5/TASK-404 切片 3 收口：S3 传输 + 私有 Job 接线 + 评审闭环
+
 ### 2026-09-16 11:35 CST — 环境定位文档收敛：两轴环境模型（domain × stage）落地 public/private（PR #255 + private #82）
 
 - 状态：已完成（文档范围）；PR 保持 Draft，合并需用户明确批准

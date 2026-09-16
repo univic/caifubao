@@ -124,6 +124,42 @@ patches:
     - op: replace
       path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
       value: PROD_MONGODB_PASS
+- target:
+    group: batch
+    version: v1
+    kind: CronJob
+    name: caifubao-datahub-daily-basic
+  patch: |-
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
+      value: prod-mongodb-pass-secret
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
+      value: PROD_MONGODB_PASS
+- target:
+    group: batch
+    version: v1
+    kind: CronJob
+    name: caifubao-datahub-health-watcher
+  patch: |-
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
+      value: prod-mongodb-pass-secret
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
+      value: PROD_MONGODB_PASS
+- target:
+    group: batch
+    version: v1
+    kind: CronJob
+    name: caifubao-datahub-asset-status
+  patch: |-
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
+      value: prod-mongodb-pass-secret
+    - op: replace
+      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
+      value: PROD_MONGODB_PASS
     - op: replace
       path: /spec/jobTemplate/spec/template/spec/imagePullSecrets
       value:
