@@ -122,9 +122,9 @@ stdout). Semantics:
   basket and the benchmark, exactly as in `evaluate`.
 
 Caveat: the registered lab factors are simple price/volume expressions, not the
-production scoring engine's eight-component `flip_wide` construction. Use this
+current scoring engine's eight-component `flip_wide` construction. Use this
 command to find the holding-period/turnover trade-off of a *factor family*, then
-re-run the chosen cell against the production signal before quoting a number as
+re-run the chosen cell against the current scoring signal before quoting a number as
 the strategy's.
 
 ## ETF and small-book replay boundary

@@ -14,6 +14,12 @@
 | [`SECURITY.md`](../SECURITY.md) | 安全政策 |
 | [`README.md`](../README.md) | 项目总览、环境、运行方式 |
 
+## 架构与环境
+
+| 文档 | 作用 |
+|:---|:---|
+| [`architecture/environment-model.md`](./architecture/environment-model.md) | **权威环境模型**：domain（development/data/research/trading）× stage（dev/stable/paper/production）两轴、数据所有权、Data → Research → Trading 制品流、dev 快照导入边界、FQ/HFQ 职责、`prod` 未启用声明。其他文档与其冲突时以此为准 |
+
 ## 操作 Runbook — `docs/operations/`
 
 | 文档 | 作用 |
@@ -36,7 +42,7 @@
 
 | 文档 | 作用 |
 |:---|:---|
-| [`capability-inventory.md`](./capability-inventory.md) | 系统能力清单。**最后更新 2026-05-22，已过期**；刷新任务见 `openspec/changes/production-capability-roadmap/tasks.md` 0.5 |
+| [`capability-inventory.md`](./capability-inventory.md) | 系统能力清单（2026-09-14 刷新；`openspec/changes/production-capability-roadmap/tasks.md` 0.5 收尾仍开放）。环境相关条目以 [`architecture/environment-model.md`](./architecture/environment-model.md) 为准 |
 | [`technical-factors.md`](./technical-factors.md) | 技术因子参考 |
 | [`integrations/openclaw.md`](./integrations/openclaw.md) | OpenClaw 集成指南 |
 
