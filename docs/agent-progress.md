@@ -31,6 +31,23 @@
 ## 进度记录
 
 
+### 2026-09-16 20:10 CST — P0-5/TASK-404 切片 2 执行支撑：writer 切换验证器（只读）
+
+- 状态：已完成（切片 2 步骤 5 的验收指标从手工查询变为可执行校验）
+- 已完成：
+  - 公开 `datahub/app/jobs/writer_switch_verify.py` + 17 项测试：只读比对
+    research vs 旧 stable（§5.2 指标——freshness 相等、当日计数相对差
+    ≤0.5%（分母 max(research,stable)）、≥20 业务键抽样逐字段比对（scoring
+    确定步长固定样本、其余种子随机；簿记字段排除））；复用 sync_engine 的
+    只读源连接；除自身 job_runs 记录外零写入；缺 `MONGODB_SRC_*` 时拒绝
+    运行（防"自己比自己"空转通过）；退出码 0/1。
+  - 私有接线：run-datahub-job.sh 新增 writer-verify 类型；jobs README 记录
+    一次性只读 secret + 每 writer 调用；§5.2 验证表指向可执行工具。
+  - 评审：spec-gate NOT REQUIRED（只读比对、无新数据语义、§5.2 的规范源
+    是私有设计文档；实现前 9 项设计发现已全部吸收）。
+- 验证：17 项新测试 + 全仓 922 passed + 4 subtests 无回归；ruff（CI 钉版）+ format 通过；contract/qa 复审 PASS。
+- 下一步：步骤 5 逐 writer 切换时即用本工具出验收数字（须用户批准）。
+- 阻塞：无（合并与集群执行均需用户逐项批准）。
 ### 2026-09-16 19:05 CST — P0-5/TASK-404 任务 3.4/3.5：同步契约收敛与文档收口（门控前代码侧收尾）
 
 - 状态：已完成（3.4/3.5 勾选；3.3/3.6-3.8 仍为门控执行步骤）
