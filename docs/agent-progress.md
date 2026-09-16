@@ -24,6 +24,45 @@
 ```
 
 ## 进度记录
+### 2026-09-16 10:00 CST — 阶段总结：P3 解阻塞 → 行业分量修复 → 构建通道打通（本轮闭环）
+
+- 状态：已完成（四项指令全部落地并实测）；仅 P3 前向窗口仍等 09-16 收盘
+- 已完成（按依赖顺序，细节见下方 07:00 / 09:33 / 09:56 三条）：
+  1. **#248**（PIT 工件持久化 + K8s 示例/runbook）：spec-guardian **not required** 并已记录到 PR 正文与评论；
+     按复核修正 runbook 门禁（改为 P0 实际门禁，集中度/decay 归为归档 MVP 的另一套）与 RWO 措辞。
+     合并 **`9211d5f`**。
+  2. **#247**（industry 键格式缺陷）：合并 **`cbfc2bf`**（含本轮补的 H20 快照前视守卫与"同分类取较早锚点"合并规则）。
+  3. **行业代码迁移（数据拥有环境 → dev）**：dev 的 `MONGODB_SRC_*` 对 prod 实测只读，故 prod 迁移在
+     `caifubao` 命名空间用其自身凭据执行；prod 与 dev 各改键 **5212** 条、**0 dotted**、**83 个一级行业**、
+     最近交易日可交易代码覆盖 **5198/5402 = 96.22%**，`sh600036 → J66 货币金融服务`。
+  4. **`industry_daily_metrics` 重建**：prod **2241 行**（`score_v2_202605b` h5/h20/h60，最新 2026-09-15）、
+     dev **332 行**（`flip_wide_shadow_v1` h20@09-04、`score_v2_202605b` h5/h20/h60@09-11）；
+     评分日早于分类 `assigned_at`（2026-09-02）的日期按 **PIT 守卫**为 0 行 → 历史指标不可由当前分类表回填。
+  5. **组件验证**：`industry_momentum(sh600036)` 在 prod 与 dev 均**非中性**
+     （prod h5 0.525/0.551、h20 0.532/0.686、h60 0.669；dev h60 0.687），修复前恒为 0.5。
+  6. **构建通道打通**：#250 单文件方案经 qa-reviewer 复核后关闭（私有 `deploy-dry-run` 依赖 develop 才有的
+     `k8s/overlays/example-research/` 布局，且会依赖 main 缺失的模块/Dockerfile ARG）；改为**单提交提升**
+     #251（新提交树 == `origin/develop^{tree}`）→ main **`8b1b108`**。随后
+     dev 镜像 **`sha-7affd47d2a6b`**、research 镜像 **`sha-8b1b108c7b54`** 均实测：镜像内含
+     `app/services/timing_evaluator.py`、`CAIFUBAO_BUILD_REVISION` 非空、`backtest_runner timing-pool --help` 可运行；
+     dev/research 部署 run 均 success。
+  7. **研究侧结论（07:00 条）**：个股择时 REPLAY（`flip_wide_shadow_v1` h20，104 个交易日）与同股买入持有
+     大致打平，P0 门禁判 `gate_passed=false`（样本不足）；并发现 **2026-08-31 全市场复权断层**
+     （`fq_factor` 30.95→6.66、4,676/5,204 只跳变 >10%，dev/prod 一致），历史 HFQ 回测暂不可解释
+     （`fq-adj-factor-fix` 5.1/5.2 未执行）。
+- 验证：以上数字与 run 结论均为实测，无未验证声明；本轮写入面仅限 `stock_industry`（改键）、
+  `industry_daily_metrics`（新建）、相应 `datahub_job_runs` 与索引，预测/评分结果未改动。
+- 下一步（优先级序）：
+  1. **prod 仍是旧镜像 `sha-4316a3580d11`，且流水线无 prod 部署目标** → 其每月 industry-sync
+     （`0 12 1 * *`，下次 **2026-10-01 12:00**）会用旧代码把 dotted 键**写回**。需决策：
+     单独批准一次 prod 镜像更新（无 overlay，只能手工 set image）／10-01 后重跑迁移／接受重复行（建议第一项）。
+  2. 私有侧 research GitHub Environment 补 `TUSHARE_TOKEN`（否则下次 bootstrap/secret 重建复发）。
+  3. 执行 FQ 全市场重算（`fq-adj-factor-fix` 5.2）→ 历史回放方可解释。
+  4. 注册表补 `scoring_mode=ranked` → 解除 P1 模型 pin 阻塞。
+  5. **09-16 收盘后**：`capture-pit-inputs` → `score-pit-artifacts`(dry-run) → 决定前向窗口起点
+     （当前 09-16 universe 工件行业快照为空，建议重新生成 universe 后再开窗）。
+- 阻塞：无（本轮）；P3 前向窗口受 09-16 收盘时间约束。
+
 ### 2026-09-16 09:56 CST — 构建通道修复验证：dev/research 镜像已带 timing_evaluator 与构建修订；research secret 缺 TUSHARE_TOKEN 已补齐
 
 - 状态：已完成
