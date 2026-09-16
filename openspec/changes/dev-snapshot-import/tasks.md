@@ -23,7 +23,7 @@
 - [ ] 2.3 补齐 research 缺失的调度型 writer：`daily_basic`（tushare
   daily_basic）、`health-watcher` CronJob、`data_asset_status` 覆盖
 - [ ] 2.4 逐 writer 切换（每次一个，验证后关旧）：quote-index → quote-stock
-  （含 FQ）→ daily_basic → factor（随 quote-stock）→ signal → scoring →
+  （含 factor/FQ 阶段产出，不单独切换）→ daily_basic → signal → scoring →
   industry-sync；每个 writer ≥1 交易日验证窗口
 - [ ] 2.5 每个 writer 的验证指标达标：freshness/`data_as_of` 一致、计数差在
   容差内、抽样数值逐字段一致（样本 ≥20）
@@ -38,7 +38,9 @@
 - [ ] 3.3 `data sync` CLI 语义切换为快照导入；移除 `MONGODB_SRC_*` 注入；停用
   `caifubao-datahub-data-sync` CronJob
 - [ ] 3.4 `datahub-perf-optimization` 的 "Watermark-Based Incremental
-  Prod-to-Dev Sync" requirement 以 MODIFIED delta 收敛为单一口径
+  Prod-to-Dev Sync" requirement 以 MODIFIED delta 收敛为单一口径：同步语义
+  切换为快照导入，并修正其陈旧的「按 `_id` 幂等 upsert」表述（现行为业务键
+  upsert，见 `SYNC_UPSERT_KEYS`）
 - [ ] 3.5 文档更新：`docs/operations/agent-cli.md` data sync 段落、环境模型
   §12 迁移期标注收口
 - [ ] 3.6 观察窗口（≥5 交易日）快照导入的 freshness/计数对齐验证
