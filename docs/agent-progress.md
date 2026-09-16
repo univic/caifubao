@@ -29,6 +29,31 @@
 ```
 
 ## 进度记录
+### 2026-09-17 03:10 CST — P0-5/TASK-404 执行 runbook 补齐（步骤 6-9）+ 执行就绪核验
+
+- 状态：已完成（全部剩余步骤的命令级 runbook 就绪；执行仍待用户逐项批准）
+- 已完成：
+  - 私有 PR（`docs/architecture/data-authority-cutover.md` §9）：步骤 6 首次快照
+    导出/导入（导入前的只读权限核验、对象存储交接与 data-lake env 显式挂载、
+    fail-closed/staging 语义与 dry-run 不清扫）；步骤 7 dev 切换的**跨仓库**清单
+    ——公开侧仅删 `k8s/base/datahub.yaml:47-71` 的 5 个 `MONGODB_SRC_*`（strategic
+    merge 会保留 base 同名 env，只删私有 patch 无效），私有侧同步删除正向断言、
+    新增"dev 渲染不得出现 `MONGODB_SRC_*`"反向断言、overlay/secret/`REQUIRE_
+    MONGODB_SRC_PASSWORD` 门、data-sync 挂起（`op: add /spec/suspend`）并 bump
+    layout check 的 pinned ref；步骤 8 观察窗每日核对项；步骤 9 退役顺序
+    （§6.3 判据 1-4 为前置，命名空间删除单独最终变更）。每步含回滚。
+  - 评审：qa-reviewer 两轮 FAIL（首轮 2 P1 + 4 P2 + 5 P3；次轮 2 P1 + 3 P3——
+    跨仓库归属、`--snapshot-uri` 缺 `<snapshot_id>` 段、`:47-71` 行号、
+    `op: add` vs `replace`、pinned ref 文件位置）→ 全部修正。
+- 验证（执行就绪核验，2026-09-17，以公开 develop `586ccd7` + 私有 main 为准）：
+  datahub **1004 passed + 4 subtests**；ruff check/format 通过；openspec
+  `--all --strict` **27/27**；`prepare-worktree` → `verify-overlay --environment all`
+  → `verify-rendered-manifest`（dev+research 契约）→ `verify-suspend-switch`
+  （10 个 patched CronJob 全部通过）→ `verify-environment-layout`（对比私有 main
+  基线）全绿。
+- 下一步：按 §8/§9 逐项批准执行——步骤 2/3 的只读预览可先批；随后步骤 4-9。
+- 阻塞：无（集群/数据变更按设计需用户逐项批准）。
+
 ### 2026-09-17 01:20 CST — P0-5/TASK-404 步骤 4/5 前置就绪：单 writer 切换预检（私有 #87）
 
 - 状态：已完成（步骤 5 的每次切换前置检查与 runbook 就绪；执行仍待用户批准）
