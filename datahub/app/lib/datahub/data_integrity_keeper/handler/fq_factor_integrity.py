@@ -7,9 +7,9 @@ discontinuity was a market-wide single-day jump on 2026-08-31 (30.95 → 6.66,
 ``scripts/check_fq_factor_integrity.py`` cannot detect.
 
 The scan is a pure aggregation over stored ``fq_factor``: no writes, no
-freshness/status updates, no change to how the factor is computed. It streams
-the ``stock_daily_quote`` documents for a BOUNDED date window through a
-three-field projection (using the unique ``(code, date)`` index order) and
+freshness/status updates, and no change to how the factor is computed. It
+streams the ``stock_daily_quote`` documents for a BOUNDED date window through
+a three-field projection (using the unique ``(code, date)`` index order) and
 compares each stock against its own previous row, attributing a relative
 change to the newer date. Adjacency is taken from the stored A-share trade
 calendar (``finance_market.trade_calendar``) when available, so the first
@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import math
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,12 @@ def scan_fq_factor_jumps(
         raise ValueError("date_from and date_to are required")
     if date_from > date_to:
         raise ValueError("date_from must not be after date_to")
+    if not math.isfinite(threshold) or threshold < 0:
+        raise ValueError("threshold must be a finite number >= 0")
+    if max_gap_days < 1:
+        raise ValueError("max_gap_days must be >= 1")
+    if top_n < 1:
+        raise ValueError("top_n must be >= 1")
     window_days = (date_to - date_from).days
     if window_days > max_window_days and not allow_long_window:
         raise ValueError(
@@ -147,6 +154,7 @@ def scan_fq_factor_jumps(
         "pairs_compared": 0,
         "skipped_gap": 0,
         "skipped_zero_factor": 0,
+        "pairs_via_calendar_fallback": 0,
     }
     skipped_gap_by_date: dict[str, int] = {}
     skipped_zero_by_date: dict[str, int] = {}
@@ -189,9 +197,11 @@ def scan_fq_factor_jumps(
             continue
         prior_day, prior_value = prior
         if prior_day == day:
-            # Defensive: the (code, date) index is unique, but a duplicate
-            # must not make the outcome depend on Mongo's tie order.
+            # Defensive: the (code, date) index is unique, but if a duplicate
+            # ever appears the outcome must not depend on Mongo's tie order,
+            # so the pair is dropped and the next older row re-baselines.
             counters["duplicate_dates"] += 1
+            previous.pop(code, None)
             continue
         # Dates descend per code, so `day` is older than `prior_day`; the
         # change is attributed to the newer date (`prior_day`).
@@ -203,6 +213,10 @@ def scan_fq_factor_jumps(
         if expected_previous is not None:
             adjacent = day == expected_previous
         else:
+            # The newer date is outside the loaded calendar (first in-window
+            # trading day, or a quote on a non-trading date): fall back to the
+            # calendar-day bound and say so in the counters.
+            counters["pairs_via_calendar_fallback"] += 1
             adjacent = (prior_day - day).days <= max_gap_days
         if not adjacent:
             counters["skipped_gap"] += 1

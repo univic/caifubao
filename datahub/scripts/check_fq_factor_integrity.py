@@ -3,6 +3,7 @@
 import argparse
 import datetime
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -186,8 +187,10 @@ def parse_args() -> argparse.Namespace:
                 file=sys.stderr,
             )
     if args.jump_scan:
-        if args.jump_threshold is not None and args.jump_threshold < 0:
-            parser.error("--jump-threshold must be >= 0")
+        if args.jump_threshold is not None and (
+            not math.isfinite(args.jump_threshold) or args.jump_threshold < 0
+        ):
+            parser.error("--jump-threshold must be a finite number >= 0")
         if args.max_gap_days is not None and args.max_gap_days < 1:
             parser.error("--max-gap-days must be >= 1")
         if args.top_dates is not None and args.top_dates < 1:

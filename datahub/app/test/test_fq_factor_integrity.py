@@ -339,9 +339,10 @@ def test_duplicate_dates_are_counted_not_compared():
     )
 
     assert report["counters"]["duplicate_dates"] == 1
-    # the surviving pair (08-01 -> 08-04) is reported once
-    assert report["top_dates"][0]["date"] == "2026-08-04"
-    assert report["top_dates"][0]["jump_count"] == 1
+    # The duplicated pair is dropped and the next older row re-baselines, so
+    # no jump is attributed to a date whose value is ambiguous.
+    assert report["top_dates"] == []
+    assert report["counters"]["pairs_compared"] == 0
 
 
 def test_non_datetime_dates_never_reach_the_scan():
@@ -372,6 +373,73 @@ def test_require_universe_refuses_an_unfiltered_acceptance_scan():
             date_to=datetime.date(2026, 8, 10),
             require_universe=True,
         )
+
+
+def test_non_finite_and_negative_thresholds_are_rejected():
+    db = _FakeDb([], universe=["sh600000"])
+    window = {
+        "date_from": datetime.date(2026, 8, 1),
+        "date_to": datetime.date(2026, 8, 10),
+    }
+    for bad in (float("nan"), float("inf"), -0.1):
+        with pytest.raises(ValueError, match="finite number >= 0"):
+            fqi.scan_fq_factor_jumps(db, threshold=bad, **window)
+    with pytest.raises(ValueError, match="max_gap_days must be >= 1"):
+        fqi.scan_fq_factor_jumps(db, max_gap_days=0, **window)
+    with pytest.raises(ValueError, match="top_n must be >= 1"):
+        fqi.scan_fq_factor_jumps(db, top_n=0, **window)
+
+
+def test_duplicate_dates_are_tie_order_independent():
+    """Both duplicate orders must produce the same report."""
+    day = datetime.date(2026, 8, 4)
+    older = datetime.date(2026, 8, 1)
+    first = _FakeDb(
+        [
+            _quote("sh600000", day, 6.66),
+            _quote("sh600000", day, 30.95),
+            _quote("sh600000", older, 30.95),
+        ],
+        universe=["sh600000"],
+    )
+    second = _FakeDb(
+        [
+            _quote("sh600000", day, 30.95),
+            _quote("sh600000", day, 6.66),
+            _quote("sh600000", older, 30.95),
+        ],
+        universe=["sh600000"],
+    )
+    window = {
+        "date_from": datetime.date(2026, 8, 1),
+        "date_to": datetime.date(2026, 8, 10),
+    }
+    reports = [fqi.scan_fq_factor_jumps(db, **window) for db in (first, second)]
+    assert reports[0]["top_dates"] == reports[1]["top_dates"] == []
+    assert reports[0]["counters"]["duplicate_dates"] == 1
+    assert reports[1]["counters"]["duplicate_dates"] == 1
+
+
+def test_calendar_fallback_pairs_are_counted():
+    quotes = [
+        _quote("sh600000", datetime.date(2026, 8, 10), 30.95),
+        _quote("sh600000", datetime.date(2026, 8, 11), 6.66),
+    ]
+    # The newer date is outside the loaded calendar window keys, so the pair
+    # uses the calendar-day fallback and must be counted as such.
+    db = _FakeDb(
+        quotes,
+        universe=["sh600000"],
+        trading_days=[datetime.date(2026, 8, 10), datetime.date(2026, 8, 11)],
+    )
+    report = fqi.scan_fq_factor_jumps(
+        db,
+        date_from=datetime.date(2026, 8, 10),
+        date_to=datetime.date(2026, 8, 11),
+    )
+    assert report["basis"]["trading_days_in_window"] == 2
+    assert report["counters"]["pairs_via_calendar_fallback"] == 0
+    assert report["counters"]["pairs_compared"] == 1
 
 
 def test_allow_long_window_opts_out_of_the_guard():
