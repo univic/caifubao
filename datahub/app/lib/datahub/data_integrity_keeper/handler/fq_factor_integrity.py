@@ -11,7 +11,11 @@ freshness/status updates, no change to how the factor is computed. It streams
 the ``stock_daily_quote`` documents for a BOUNDED date window through a
 three-field projection (using the unique ``(code, date)`` index order) and
 compares each stock against its own previous row, attributing a relative
-change to the newer date. Genuine ex-dividend dates legitimately move a small
+change to the newer date. Adjacency is taken from the stored A-share trade
+calendar (``finance_market.trade_calendar``) when available, so the first
+session after a long holiday is still compared with the last pre-holiday
+session instead of being dropped as a "gap"; without a calendar the scan
+falls back to a calendar-day bound and says so. Genuine ex-dividend dates legitimately move a small
 number of stocks, so the report always carries the per-date count AND the
 fraction of the scanned stock universe, plus the recorded baseline the
 operator compares against — no single hard-coded bound is applied here.
@@ -61,9 +65,23 @@ def _load_stock_universe(db) -> set[str]:
 
 
 def _relative_change(new_value: float, old_value: float) -> float:
-    if not old_value:
-        return float("inf") if new_value else 0.0
+    """Relative change; callers must exclude zero on either side first."""
     return abs(new_value / old_value - 1.0)
+
+
+def _load_trading_days(
+    db, date_from: datetime.date, date_to: datetime.date
+) -> list[datetime.date]:
+    """Return the sorted A-share trading days inside the window (read-only)."""
+    doc = db["finance_market"].find_one(
+        {"name": "ChinaAStock"}, {"_id": 0, "trade_calendar": 1}
+    )
+    days = set()
+    for value in (doc or {}).get("trade_calendar") or []:
+        day = _as_date(value)
+        if day is not None and date_from <= day <= date_to:
+            days.add(day)
+    return sorted(days)
 
 
 def scan_fq_factor_jumps(
@@ -77,14 +95,20 @@ def scan_fq_factor_jumps(
     target_date: datetime.date | None = None,
     max_window_days: int = DEFAULT_MAX_WINDOW_DAYS,
     allow_long_window: bool = False,
+    require_universe: bool = False,
 ) -> dict:
     """Stream the window and report per-date fq_factor jumps.
 
-    A "jump" is a relative day-over-day change above ``threshold`` between two
-    consecutive rows of the same stock that are at most ``max_gap_days``
-    apart; the change is attributed to the newer date. Longer gaps (suspended
-    stocks resuming) would report cumulative moves rather than daily jumps and
-    are counted separately as ``skipped_gap``.
+    A "jump" is a relative change above ``threshold`` between two rows of the
+    same stock that are ADJACENT trading days, or - when no trade calendar is
+    available - at most ``max_gap_days`` calendar days apart. The change is
+    attributed to the newer date. Non-adjacent pairs (a suspended stock
+    resuming, a stock missing a session) would report cumulative moves rather
+    than daily jumps and are counted separately as ``skipped_gap``.
+
+    ``require_universe=True`` refuses to run when the individual-stock
+    universe cannot be read, because an acceptance scan that counts index rows
+    as stocks would overstate the anomaly.
     """
     if not isinstance(date_from, datetime.date) or not isinstance(
         date_to, datetime.date
@@ -100,6 +124,16 @@ def scan_fq_factor_jumps(
         )
 
     universe = _load_stock_universe(db)
+    if require_universe and not universe:
+        raise ValueError(
+            "individual-stock universe is empty (basic_stock with "
+            "object_type=individual_stock); refusing an acceptance scan that "
+            "cannot exclude index rows"
+        )
+    trading_days = _load_trading_days(db, date_from, date_to)
+    previous_trading_day = {
+        day: trading_days[index - 1] for index, day in enumerate(trading_days[1:], 1)
+    }
     start = datetime.datetime.combine(date_from, datetime.time.min)
     end = datetime.datetime.combine(date_to, datetime.time.max)
 
@@ -108,10 +142,14 @@ def scan_fq_factor_jumps(
         "docs_scanned": 0,
         "docs_skipped_non_stock": 0,
         "docs_skipped_missing_factor": 0,
+        "docs_skipped_bad_date": 0,
+        "duplicate_dates": 0,
         "pairs_compared": 0,
         "skipped_gap": 0,
-        "skipped_zero_prev": 0,
+        "skipped_zero_factor": 0,
     }
+    skipped_gap_by_date: dict[str, int] = {}
+    skipped_zero_by_date: dict[str, int] = {}
     seen_codes: set[str] = set()
     latest_date = None
     earliest_date = None
@@ -131,6 +169,7 @@ def scan_fq_factor_jumps(
         day = _as_date(doc.get("date"))
         value = doc.get("fq_factor")
         if day is None:
+            counters["docs_skipped_bad_date"] += 1
             continue
         if earliest_date is None or day < earliest_date:
             earliest_date = day
@@ -145,22 +184,42 @@ def scan_fq_factor_jumps(
         seen_codes.add(code)
 
         prior = previous.get(code)
-        previous[code] = (day, float(value))
         if prior is None:
+            previous[code] = (day, float(value))
             continue
         prior_day, prior_value = prior
+        if prior_day == day:
+            # Defensive: the (code, date) index is unique, but a duplicate
+            # must not make the outcome depend on Mongo's tie order.
+            counters["duplicate_dates"] += 1
+            continue
         # Dates descend per code, so `day` is older than `prior_day`; the
         # change is attributed to the newer date (`prior_day`).
-        if prior_day <= day:
+        if prior_day < day:
+            previous[code] = (day, float(value))
             continue
-        gap = (prior_day - day).days
-        if gap > max_gap_days:
+        previous[code] = (day, float(value))
+        expected_previous = previous_trading_day.get(prior_day)
+        if expected_previous is not None:
+            adjacent = day == expected_previous
+        else:
+            adjacent = (prior_day - day).days <= max_gap_days
+        if not adjacent:
             counters["skipped_gap"] += 1
+            skipped_gap_by_date[str(prior_day)] = (
+                skipped_gap_by_date.get(str(prior_day), 0) + 1
+            )
             continue
-        if not value:
-            counters["skipped_zero_prev"] += 1
+        current_value = float(value)
+        if not value or not prior_value:
+            # A zero factor on either side makes the relative change
+            # meaningless; report it instead of inventing a 100% jump.
+            counters["skipped_zero_factor"] += 1
+            skipped_zero_by_date[str(prior_day)] = (
+                skipped_zero_by_date.get(str(prior_day), 0) + 1
+            )
             continue
-        change = _relative_change(prior_value, float(value))
+        change = _relative_change(prior_value, current_value)
         counters["pairs_compared"] += 1
         if change > max_change:
             max_change = change
@@ -222,6 +281,21 @@ def scan_fq_factor_jumps(
             "latest_date": str(latest_date) if latest_date else None,
         },
         "counters": counters,
+        "basis": {
+            "adjacency": "trade_calendar" if previous_trading_day else "calendar_days",
+            "trading_days_in_window": len(trading_days),
+            "max_gap_days": max_gap_days,
+        },
+        "skipped_gap_by_date": dict(sorted(skipped_gap_by_date.items())),
+        "skipped_zero_factor_by_date": dict(sorted(skipped_zero_by_date.items())),
+        "warnings": (
+            []
+            if universe
+            else [
+                "individual-stock universe unavailable: index rows are not "
+                "filtered, so counts may overstate the anomaly"
+            ]
+        ),
         "jump_dates": len(per_date),
         "top_dates": top_dates,
         "max_change": (round(max_change, 6) if max_change_ref else 0.0),

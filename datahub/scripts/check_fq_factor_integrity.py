@@ -166,6 +166,32 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.jump_scan and not args.from_date:
         parser.error("--jump-scan requires --from-date (use the recompute window)")
+    if not args.jump_scan:
+        ignored = [
+            flag
+            for flag, value in (
+                ("--from-date", args.from_date),
+                ("--to-date", args.to_date),
+                ("--jump-threshold", args.jump_threshold),
+                ("--max-gap-days", args.max_gap_days),
+                ("--top-dates", args.top_dates),
+                ("--date", args.date),
+                ("--allow-long-window", args.allow_long_window),
+            )
+            if value
+        ]
+        if ignored:
+            print(
+                "warning: " + ", ".join(ignored) + " ignored without --jump-scan",
+                file=sys.stderr,
+            )
+    if args.jump_scan:
+        if args.jump_threshold is not None and args.jump_threshold < 0:
+            parser.error("--jump-threshold must be >= 0")
+        if args.max_gap_days is not None and args.max_gap_days < 1:
+            parser.error("--max-gap-days must be >= 1")
+        if args.top_dates is not None and args.top_dates < 1:
+            parser.error("--top-dates must be >= 1")
     return args
 
 
@@ -188,6 +214,9 @@ def build_jump_scan(args, db) -> dict[str, Any]:
         "date_from": date_from,
         "date_to": date_to,
         "allow_long_window": args.allow_long_window,
+        # The acceptance scan must exclude index rows; the sample probe alone
+        # has no such requirement.
+        "require_universe": True,
     }
     if args.jump_threshold is not None:
         kwargs["threshold"] = args.jump_threshold
@@ -216,7 +245,11 @@ def main() -> None:
             include_any_fq_probe=not args.skip_any_fq_probe,
         )
         if args.jump_scan:
-            summary["jump_scan"] = build_jump_scan(args, db)
+            try:
+                summary["jump_scan"] = build_jump_scan(args, db)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                sys.exit(2)
         print(json.dumps(summary, default=str, ensure_ascii=False, indent=2))
     finally:
         client.close()
