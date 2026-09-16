@@ -13,7 +13,9 @@
 # is deliberately kept out of k8s/base/kustomization.yaml. Apply it by hand in
 # the namespace that runs the capture Jobs.
 #
-# ReadWriteOnce: the two capture phases must not run at the same time.
+# ReadWriteOnce only constrains how the volume is mounted, not when a phase
+# runs; phase separation comes from the capture windows and the exclusive
+# output paths.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

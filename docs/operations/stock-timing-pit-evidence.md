@@ -43,7 +43,9 @@ capture window is still open. Once a window closes, a lost file is a permanent
 gap in the forward window. Use a StorageClass with a `Retain` reclaim policy and
 never write artifacts to a pod filesystem.
 
-The claim is `ReadWriteOnce`: the two capture phases must not overlap.
+Keep the two capture phases apart through their legal capture windows and the
+exclusive output paths; the claim is `ReadWriteOnce`, which at most constrains
+how the volume is mounted, not when a phase runs.
 
 ## 3. Daily sequence
 
@@ -144,10 +146,14 @@ mechanical gates pass.
   use.
 - **Forward-only.** REPLAY rows, backfills and `--replace` re-runs never count
   as forward evidence, no matter how green the Job was.
-- **A single-stock baseline is not alpha evidence.** Promotion-level claims need
-  the frozen gates: at least 50 names, at least 120 sessions, at least 5 filled
-  trades, single-name concentration below 40%, and walk-forward decay at or
-  below 20%. Never tune on one stock and present the result as alpha.
+- **A single-stock baseline is not alpha evidence.** The P0 evaluator enforces
+  its own gates and reports `gate_passed=false` until they hold: at least 50
+  requested unique codes, at least 50 evidence-eligible names, coverage at or
+  above 90%, at least 120 observed sessions and at least 5 completed trades
+  (`openspec/changes/stock-timing-evaluator-p0`). Single-name concentration
+  (below 40%) and walk-forward decay (at or below 20%) are separate
+  strategy-discovery gates from the archived MVP ledger, not stock-timing
+  gates. Never tune on one stock and present the result as alpha.
 - **Tuning ends the window.** Changing the model version, config, horizon or
   percentiles invalidates comparability; start a new forward window instead of
   mixing configurations.
