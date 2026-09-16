@@ -1,5 +1,5 @@
 .PHONY: help dev check test-backend test-frontend seed-score-demo
-.PHONY: data-sync data-refresh-status data-status
+.PHONY: data-sync snapshot-export snapshot-import data-refresh-status data-status
 .PHONY: score-one score-all score-verify score-report
 .PHONY: system-health system-cron-list system-cron-trigger
 .PHONY: lint lint-datahub lint-backend lint-frontend
@@ -18,6 +18,8 @@ help: ## Show this help
 	@echo ""
 	@echo "  Data pipeline:"
 	@echo "    make data-sync              Sync prod→dev"
+	@echo "    make snapshot-export        Export dev-import snapshot (manifest+sha256)"
+	@echo "    make snapshot-import        Verify and import latest snapshot (fail-closed)"
 	@echo "    make data-refresh-status    Refresh data_asset_status"
 	@echo "    make data-status STOCK=sz000977"
 	@echo ""
@@ -39,6 +41,12 @@ help: ## Show this help
 # ---- Data pipeline ----
 data-sync: ## Sync data from prod to dev
 	$(CFB) data sync $(DATE) quote,factor,signal,market,industry
+
+snapshot-export: ## Export a dev-import snapshot (versioned manifest + sha256)
+	$(CFB) data snapshot-export
+
+snapshot-import: ## Verify and import the latest snapshot (fail-closed)
+	$(CFB) data snapshot-import
 
 data-refresh-status: ## Refresh data_asset_status freshness
 	$(CFB) data refresh-status
