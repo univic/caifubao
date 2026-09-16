@@ -12,6 +12,7 @@ Usage:
                                                   [--from-date 2026-04-01]
                                                   [--to-date 2026-04-30]
                                                   [--out-dir /work/snapshot]
+                                                  [--upload-uri s3://bucket/prefix]
                                                   [--dry-run]
 
 Collection aliases (resolved against SNAPSHOT_EXPORT_COLLECTIONS):
@@ -26,6 +27,15 @@ Environment:
     SNAPSHOT_DIR  Default output directory (default: /work/snapshot).
     IMAGE_SHA     Producer image SHA recorded in the manifest (fallback:
                   container hostname).
+    DATA_LAKE_ENDPOINT_URL / DATA_LAKE_REGION
+                  Optional S3 endpoint/region for --upload-uri (mirrors the
+                  parquet exporter's object-store settings).
+
+With ``--upload-uri s3://<bucket>/<key-prefix>`` the exported snapshot is
+uploaded after a successful (non-dry-run) export: manifest.json, its
+checksum sidecar, then every manifest-listed data file, under derived
+object keys ``<prefix>/<file>``. A failed upload marks the job run FAILED;
+local snapshot files are never deleted, so the upload can be retried.
 
 Designed to run as a K8s CronJob or on-demand CLI step on the producing
 deployment; dev consumes the snapshot via snapshot_import_runner.
@@ -87,7 +97,7 @@ def run_export(args) -> dict:
         Path(args.out_dir) if args.out_dir else snapshot_transfer.default_snapshot_dir()
     )
     db = snapshot_transfer._get_local_db()
-    return snapshot_transfer.run_export(
+    result = snapshot_transfer.run_export(
         db=db,
         out_dir=out_dir,
         collections=collections,
@@ -96,6 +106,12 @@ def run_export(args) -> dict:
         producer_image=snapshot_transfer.resolve_producer_image(),
         dry_run=args.dry_run,
     )
+    if args.upload_uri and not result.get("dry_run"):
+        # endpoint/region default from DATA_LAKE_* inside upload_snapshot
+        result["upload"] = snapshot_transfer.upload_snapshot(
+            Path(result["snapshot_dir"]), args.upload_uri
+        )
+    return result
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -124,6 +140,15 @@ def main(argv: list[str] | None = None) -> None:
         "--out-dir",
         default=None,
         help="Snapshot output directory (default: $SNAPSHOT_DIR or /work/snapshot)",
+    )
+    p_run.add_argument(
+        "--upload-uri",
+        default=None,
+        help=(
+            "Optional s3://<bucket>/<key-prefix> to upload the exported "
+            "snapshot to (endpoint/region from DATA_LAKE_ENDPOINT_URL/"
+            "DATA_LAKE_REGION)"
+        ),
     )
     p_run.add_argument(
         "--dry-run", action="store_true", help="Print the plan, no write"
@@ -201,6 +226,7 @@ def _run_with_tracking(args) -> None:
             "from_date": args.from_date,
             "to_date": args.to_date,
             "out_dir": args.out_dir,
+            "upload_uri": args.upload_uri,
             "dry_run": args.dry_run,
         },
     )
@@ -220,6 +246,7 @@ def _run_with_tracking(args) -> None:
             "total_docs": result.get("total_docs", 0),
             "collections_exported": result.get("collections_exported", 0),
             "collections": result.get("collections", {}),
+            "upload": result.get("upload"),
             "elapsed_seconds": result.get("elapsed_seconds", 0),
         }
         job_run_helper.finish_job_run(job_run, status=status, summary=summary)

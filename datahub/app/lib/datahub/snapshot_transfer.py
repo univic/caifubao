@@ -64,6 +64,18 @@ Collection classes and idempotency semantics:
   ``data_sync_state``) is on the import allow-list as a snapshot-class
   collection but is never exported.
 
+Optional object-storage (S3) transport:
+
+``upload_snapshot``/``download_snapshot`` move a snapshot directory through
+an S3-compatible bucket instead of a shared filesystem. S3 object keys are
+derived at transfer time as ``<prefix>/<file>`` — the manifest's
+per-collection ``file`` field keeps holding the local relative file name, so
+manifest bytes stay transport-independent between the filesystem and bucket
+transports. A download verifies the manifest sidecar before any data file
+lands, and the import afterwards re-verifies everything (defense in depth).
+Endpoints/regions default from DATA_LAKE_ENDPOINT_URL / DATA_LAKE_REGION,
+mirroring the parquet exporter's object-store settings.
+
 Usage:
     python -m app.jobs.snapshot_export_runner run
     python -m app.jobs.snapshot_import_runner run
@@ -1126,3 +1138,313 @@ def run_import(
     }
     logger.info("Snapshot import complete: %s", summary)
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Optional object-storage (S3) transport
+#
+# Object keys are DERIVED at transfer time as "<prefix>/<file>" (an empty
+# prefix uploads/downloads the bare file name); the manifest's per-collection
+# `file` field keeps holding the local relative file name, so manifest bytes
+# stay transport-independent (see module docstring).
+# ---------------------------------------------------------------------------
+
+
+def parse_s3_uri(s3_uri: str) -> tuple[str, str]:
+    """Parse ``s3://<bucket>/<key-prefix>`` into ``(bucket, prefix)``.
+
+    Only the exact ``s3://`` scheme is accepted. The key prefix may be empty
+    (a bucket-root URI) and is normalized by stripping leading/trailing
+    slashes; inner slashes are kept as-is.
+
+    Raises:
+        SnapshotTransferError: For any other scheme, a missing/unsafe bucket
+            name, or a non-string value (fail-closed).
+    """
+    if not isinstance(s3_uri, str) or not s3_uri.startswith("s3://"):
+        raise SnapshotTransferError(
+            f"invalid S3 URI {s3_uri!r}: expected 's3://<bucket>/<key-prefix>'"
+        )
+    bucket, _, prefix = s3_uri[len("s3://") :].partition("/")
+    if not bucket or bucket in (".", "..") or any(ch.isspace() for ch in bucket):
+        raise SnapshotTransferError(
+            f"invalid S3 URI {s3_uri!r}: missing or unsafe bucket name"
+        )
+    return bucket, prefix.strip("/")
+
+
+def download_dir_for_uri(base_dir: Path, s3_uri: str) -> Path:
+    """Derive the local download directory for a snapshot S3 URI.
+
+    Returns ``<base_dir>/downloads/<uri basename>`` where the basename is the
+    last segment of the URI's key prefix, falling back to the bucket name for
+    bucket-root URIs. A basename of ``.``/``..`` or one containing a path
+    separator is rejected, so the derived directory can never escape
+    ``<base_dir>/downloads``.
+    """
+    bucket, prefix = parse_s3_uri(s3_uri)
+    basename = prefix.rpartition("/")[2] or bucket
+    if basename in (".", "..") or "/" in basename or "\\" in basename:
+        raise SnapshotTransferError(
+            f"cannot derive a safe local download directory from S3 URI "
+            f"{s3_uri!r}: unsafe final path segment {basename!r}"
+        )
+    return Path(base_dir) / "downloads" / basename
+
+
+def _s3_env_defaults(
+    endpoint_url: str | None, region_name: str | None
+) -> tuple[str | None, str | None]:
+    """Endpoint/region defaults mirroring parquet_export_runner's S3 config."""
+    endpoint_url = (
+        endpoint_url
+        or os.getenv("DATA_LAKE_ENDPOINT_URL")
+        or os.getenv("AWS_ENDPOINT_URL")
+    )
+    region_name = (
+        region_name or os.getenv("DATA_LAKE_REGION") or os.getenv("AWS_DEFAULT_REGION")
+    )
+    return endpoint_url or None, region_name or None
+
+
+def _build_s3_client(endpoint_url: str | None, region_name: str | None) -> Any:
+    """Build the boto3 S3 client (same construction as parquet_export_runner).
+
+    boto3/botocore are imported lazily so this module works without them.
+    """
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint_url or None,
+        region_name=region_name or None,
+        config=Config(s3={"addressing_style": "virtual"}),
+    )
+
+
+def _s3_object_key(prefix: str, file_name: str) -> str:
+    """Derive the S3 object key: ``<prefix>/<file>`` (bare name if no prefix)."""
+    return f"{prefix}/{file_name}" if prefix else file_name
+
+
+def _manifest_data_file_names(manifest: Any, source: str) -> list[str]:
+    """Extract the manifest-listed data file names (validated, fail-closed).
+
+    The manifest's ``file`` values stay local relative file names; the S3
+    keys are derived from them, never stored.
+    """
+    if not isinstance(manifest, dict):
+        raise SnapshotTransferError(f"snapshot manifest is not a JSON object: {source}")
+    entries = manifest.get("collections")
+    if not isinstance(entries, list) or not entries:
+        raise SnapshotTransferError(
+            f"snapshot manifest 'collections' must be a non-empty list: {source}"
+        )
+    file_names: list[str] = []
+    for entry in entries:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("file"), str)
+            or not _DATA_FILE_NAME_RE.match(entry["file"])
+        ):
+            raise SnapshotTransferError(
+                f"snapshot manifest collection entry without a plain "
+                f"{SNAPSHOT_FILE_SUFFIX} file name in {source}: {entry!r}"
+            )
+        file_names.append(entry["file"])
+    return file_names
+
+
+def upload_snapshot(
+    snapshot_dir: Path,
+    s3_uri: str,
+    *,
+    endpoint_url: str | None = None,
+    region_name: str | None = None,
+) -> dict[str, Any]:
+    """Upload a complete snapshot directory to an S3-compatible bucket.
+
+    Object keys are derived, not stored: each S3 key is
+    ``<prefix>/<local file name>`` (an empty prefix uploads to the bare file
+    name), while the manifest's per-collection ``file`` field keeps holding
+    the local relative file name — so manifest bytes stay
+    transport-independent between the filesystem and bucket transports.
+
+    Upload order is fixed: manifest.json, then manifest.json.sha256, then
+    every manifest-listed data file. endpoint_url/region_name default from
+    DATA_LAKE_ENDPOINT_URL / DATA_LAKE_REGION (mirroring the parquet
+    exporter) when not passed explicitly.
+
+    Args:
+        snapshot_dir: Directory holding manifest.json and the data files.
+        s3_uri: Destination ``s3://<bucket>/<key-prefix>``.
+        endpoint_url: Optional S3 endpoint (MinIO etc.), else env default.
+        region_name: Optional S3 region, else env default.
+
+    Returns:
+        ``{"bucket": ..., "prefix": ..., "objects": [uploaded keys...]}``.
+
+    Raises:
+        SnapshotTransferError: On a missing/unreadable manifest or on any
+            S3 failure — naming the failed key. Local files are never
+            deleted, so a failed upload can simply be retried (fail-closed).
+    """
+    snapshot_dir = Path(snapshot_dir)
+    bucket, prefix = parse_s3_uri(s3_uri)
+
+    manifest_path = snapshot_dir / MANIFEST_NAME
+    if not manifest_path.is_file():
+        raise SnapshotTransferError(
+            f"snapshot manifest not found: {manifest_path}; refusing to upload "
+            "an incomplete snapshot"
+        )
+    checksum_path = snapshot_dir / MANIFEST_CHECKSUM_NAME
+    if not checksum_path.is_file():
+        raise SnapshotTransferError(
+            f"snapshot manifest checksum not found: {checksum_path}; refusing "
+            "to upload an unchecksummed snapshot"
+        )
+    try:
+        manifest = json.loads(manifest_path.read_bytes().decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SnapshotTransferError(
+            f"snapshot manifest is not valid JSON: {manifest_path}: {exc}"
+        ) from exc
+    data_files = _manifest_data_file_names(manifest, str(manifest_path))
+
+    endpoint_url, region_name = _s3_env_defaults(endpoint_url, region_name)
+    client = _build_s3_client(endpoint_url, region_name)
+
+    uploaded: list[str] = []
+    for file_name in [MANIFEST_NAME, MANIFEST_CHECKSUM_NAME, *data_files]:
+        key = _s3_object_key(prefix, file_name)
+        file_path = snapshot_dir / file_name
+        try:
+            client.upload_file(str(file_path), bucket, key)
+        except SnapshotTransferError:
+            raise
+        except Exception as exc:
+            raise SnapshotTransferError(
+                f"snapshot upload failed for s3://{bucket}/{key} "
+                f"(local file {file_path}): {type(exc).__name__}: {exc}"
+            ) from exc
+        uploaded.append(key)
+        logger.info("Uploaded s3://%s/%s", bucket, key)
+
+    result = {"bucket": bucket, "prefix": prefix, "objects": uploaded}
+    logger.info("Snapshot upload complete: %s", result)
+    return result
+
+
+def download_snapshot(
+    s3_uri: str,
+    dest_dir: Path,
+    *,
+    endpoint_url: str | None = None,
+    region_name: str | None = None,
+) -> Path:
+    """Download a snapshot from an S3-compatible bucket into ``dest_dir``.
+
+    The manifest pair is fetched FIRST — manifest.json then
+    manifest.json.sha256 — and the sidecar is verified (sha256 hex compare,
+    robust ``<hex>  manifest.json`` parsing) against the downloaded manifest
+    bytes before anything else is transferred. On any sidecar mismatch the
+    partially downloaded manifest pair is removed and ``dest_dir`` is left
+    without data files (fail-closed); the subsequent import re-verifies every
+    byte — checksums, counts, watermarks — as defense in depth.
+
+    Object keys are derived, not stored: each S3 key is
+    ``<prefix>/<local file name>`` (an empty prefix means the bare file
+    name), while the manifest's per-collection ``file`` field keeps holding
+    the local relative file name — so manifest bytes stay
+    transport-independent between the filesystem and bucket transports.
+
+    endpoint_url/region_name default from DATA_LAKE_ENDPOINT_URL /
+    DATA_LAKE_REGION (mirroring the parquet exporter) when not passed.
+
+    Args:
+        s3_uri: Source ``s3://<bucket>/<key-prefix>``.
+        dest_dir: Directory to download into (created with parents).
+        endpoint_url: Optional S3 endpoint (MinIO etc.), else env default.
+        region_name: Optional S3 region, else env default.
+
+    Returns:
+        ``dest_dir`` holding the complete snapshot.
+
+    Raises:
+        SnapshotTransferError: On any S3 failure (naming the failed key), an
+            unparsable manifest or a manifest checksum mismatch.
+    """
+    dest_dir = Path(dest_dir)
+    bucket, prefix = parse_s3_uri(s3_uri)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    endpoint_url, region_name = _s3_env_defaults(endpoint_url, region_name)
+    client = _build_s3_client(endpoint_url, region_name)
+
+    def _download(file_name: str) -> None:
+        key = _s3_object_key(prefix, file_name)
+        try:
+            client.download_file(bucket, key, str(dest_dir / file_name))
+        except SnapshotTransferError:
+            raise
+        except Exception as exc:
+            raise SnapshotTransferError(
+                f"snapshot download failed for s3://{bucket}/{key} "
+                f"(local path {dest_dir / file_name}): {type(exc).__name__}: {exc}"
+            ) from exc
+
+    def _remove_manifest_pair() -> None:
+        (dest_dir / MANIFEST_NAME).unlink(missing_ok=True)
+        (dest_dir / MANIFEST_CHECKSUM_NAME).unlink(missing_ok=True)
+
+    _download(MANIFEST_NAME)
+    _download(MANIFEST_CHECKSUM_NAME)
+
+    manifest_path = dest_dir / MANIFEST_NAME
+    checksum_path = dest_dir / MANIFEST_CHECKSUM_NAME
+    payload = manifest_path.read_bytes()
+    computed_sha256 = hashlib.sha256(payload).hexdigest()
+    try:
+        declared = checksum_path.read_text(encoding="utf-8").strip().split()
+    except UnicodeDecodeError:
+        declared = []
+    # sha256sum-style sidecar: "<hex>  manifest.json"; parse the hex token
+    # robustly regardless of the separator width or a missing file name.
+    if not declared or not re.fullmatch(r"[0-9a-f]{64}", declared[0]):
+        _remove_manifest_pair()
+        raise SnapshotTransferError(
+            f"snapshot manifest checksum object "
+            f"s3://{bucket}/{_s3_object_key(prefix, MANIFEST_CHECKSUM_NAME)} is "
+            f"not in the expected '<sha256>  {MANIFEST_NAME}' format: "
+            f"{checksum_path}"
+        )
+    if declared[0] != computed_sha256:
+        _remove_manifest_pair()
+        raise SnapshotTransferError(
+            f"snapshot manifest checksum mismatch for {manifest_path} "
+            f"downloaded from s3://{bucket}/"
+            f"{_s3_object_key(prefix, MANIFEST_NAME)}: "
+            f"declared={declared[0]} actual={computed_sha256}"
+        )
+
+    try:
+        manifest = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        _remove_manifest_pair()
+        raise SnapshotTransferError(
+            f"downloaded snapshot manifest is not valid JSON: {manifest_path}: {exc}"
+        ) from exc
+    data_files = _manifest_data_file_names(manifest, str(manifest_path))
+
+    for file_name in data_files:
+        _download(file_name)
+        logger.info("Downloaded s3://%s/%s", bucket, _s3_object_key(prefix, file_name))
+
+    logger.info(
+        "Snapshot download complete: %s (%d objects)",
+        dest_dir,
+        2 + len(data_files),
+    )
+    return dest_dir

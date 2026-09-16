@@ -10,8 +10,16 @@ collections, staging + atomic rename replacement for snapshot-class ones
 
 Usage:
     python -m app.jobs.snapshot_import_runner run [--snapshot-dir /work/snapshot/snapshot-XXXX]
+                                                  [--snapshot-uri s3://bucket/prefix/snapshot-XXXX]
                                                   [--snapshot-id latest]
                                                   [--dry-run]
+
+Snapshot source precedence: an explicit ``--snapshot-dir`` always wins;
+otherwise ``--snapshot-uri s3://<bucket>/<key-prefix>`` downloads the
+snapshot into ``<SNAPSHOT_DIR base>/downloads/<uri basename>`` (manifest
+pair first, sidecar verified before any data file; the import afterwards
+re-verifies everything) and imports from that directory; otherwise the
+snapshot id is resolved under the snapshot base directory as before.
 
 ``--snapshot-id latest`` (default) picks the most recently written manifest
 under the snapshot directory; a concrete snapshot id selects
@@ -21,6 +29,9 @@ different base directory (or at a specific snapshot directory directly).
 Environment:
     SNAPSHOT_DIR  Default snapshot base directory (default: /work/snapshot).
     IMAGE_SHA     Importing-environment image SHA recorded as a note.
+    DATA_LAKE_ENDPOINT_URL / DATA_LAKE_REGION
+                  Optional S3 endpoint/region for --snapshot-uri (mirrors the
+                  parquet exporter's object-store settings).
 
 This is the replacement for the online direct-sync path
 (app.jobs.data_sync_runner): it never connects to a research or
@@ -72,12 +83,25 @@ def _init_db_connection() -> None:
 def run_import(args) -> dict:
     from app.lib.datahub import snapshot_transfer
 
-    base_dir = (
-        Path(args.snapshot_dir)
-        if args.snapshot_dir
-        else snapshot_transfer.default_snapshot_dir()
-    )
-    snapshot_dir = snapshot_transfer.resolve_snapshot_dir(base_dir, args.snapshot_id)
+    if args.snapshot_dir:
+        # An explicit --snapshot-dir always wins over --snapshot-uri.
+        base_dir = Path(args.snapshot_dir)
+        snapshot_dir = snapshot_transfer.resolve_snapshot_dir(
+            base_dir, args.snapshot_id
+        )
+    elif args.snapshot_uri:
+        # Otherwise pull the snapshot from object storage into
+        # <SNAPSHOT_DIR base>/downloads/<uri basename> and import from there;
+        # endpoint/region default from DATA_LAKE_* inside download_snapshot.
+        download_dir = snapshot_transfer.download_dir_for_uri(
+            snapshot_transfer.default_snapshot_dir(), args.snapshot_uri
+        )
+        snapshot_transfer.download_snapshot(args.snapshot_uri, download_dir)
+        snapshot_dir = download_dir
+    else:
+        snapshot_dir = snapshot_transfer.resolve_snapshot_dir(
+            snapshot_transfer.default_snapshot_dir(), args.snapshot_id
+        )
     db = snapshot_transfer._get_local_db()
     return snapshot_transfer.run_import(
         db=db,
@@ -98,6 +122,15 @@ def main(argv: list[str] | None = None) -> None:
         "--snapshot-dir",
         default=None,
         help="Snapshot base directory (default: $SNAPSHOT_DIR or /work/snapshot)",
+    )
+    p_run.add_argument(
+        "--snapshot-uri",
+        default=None,
+        help=(
+            "Optional s3://<bucket>/<key-prefix> to download the snapshot "
+            "from before importing (endpoint/region from DATA_LAKE_ENDPOINT_"
+            "URL/DATA_LAKE_REGION); ignored when --snapshot-dir is given"
+        ),
     )
     p_run.add_argument(
         "--snapshot-id",
@@ -179,6 +212,7 @@ def _run_with_tracking(args) -> None:
         scheduled_at=scheduled_at,
         extra={
             "snapshot_dir": args.snapshot_dir,
+            "snapshot_uri": args.snapshot_uri,
             "snapshot_id": args.snapshot_id,
             "dry_run": args.dry_run,
         },
