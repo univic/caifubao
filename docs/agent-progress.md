@@ -29,6 +29,29 @@
 ```
 
 ## 进度记录
+### 2026-09-17 01:20 CST — P0-5/TASK-404 步骤 4/5 前置就绪：单 writer 切换预检（私有 #87）
+
+- 状态：已完成（步骤 5 的每次切换前置检查与 runbook 就绪；执行仍待用户批准）
+- 已完成：
+  - 新增 `scripts/verify-suspend-switch.sh`：在 `prepare-worktree.sh` 产物上渲染
+    基线与"仅某变量为 false"的清单，断言基线全挂起、翻转单个变量只解除其自身
+    writer、其余逐字不变；并断言补丁 target 全部存在于渲染（kustomize 会静默忽略
+    不存在的 target）、**变量↔CronJob 接线与 EXPECTED_WIRING 显式映射一致**
+    （交叉接线会 FAIL）、补丁必须使用开关变量（硬编码值 FAIL）。
+  - 渲染失败/中断不再污染工作树：恢复逻辑挂 EXIT/INT/TERM；实测强制渲染失败、
+    SIGINT、SIGTERM 后 kustomization md5 不变、无残留临时目录。
+  - 文档：k8s README 修正陈旧"7 个 writer"为当前 8 个 + parquet/backup 开关，
+    并把预检写入每次切换前置；§8 步骤 4 指明备份开关的**根 key
+    `MONGODB_BACKUP_SUSPEND`**（直接写 `BACKUP_SUSPEND` 是静默无效 key），
+    步骤 5 指明预检 + `--type writer-verify` 验收记录。
+- 验证：正常跑 10 个 patched CronJob 全部 ok；故障注入（重复变量、交叉接线、
+  删除补丁、陈旧模板集、字面量、baseline 未挂起、错误路径）逐一 FAIL；qa-reviewer
+  两轮（首轮 FAIL 2 P2 + 6 P3 → 全修 → 复审 PASS）；`verify-overlay --environment all`
+  通过、check_links 通过。
+- 下一步：步骤 2/3 只读预览（industry dry-run、FQ 基线扫描）→ 步骤 4 解除备份挂起
+  → 步骤 5 逐 writer 切换（每次先跑本预检，再用 `writer-verify` 出验收数字）。
+- 阻塞：无（集群/数据变更按设计需用户逐项批准）。
+
 ### 2026-09-16 23:30 CST — P0-5/TASK-404 §8 步骤 3 验收仪器与 runbook 就绪（只读扫描 + 全市场重算接线）
 
 - 状态：已完成（步骤 3 命令与验收判据就绪；执行仍待用户批准）
