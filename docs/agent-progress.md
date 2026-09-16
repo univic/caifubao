@@ -57,6 +57,31 @@
 
 ### 2026-09-16 16:05 CST — P0-5/TASK-404 切片 3 收口：S3 传输 + 私有 Job 接线 + 评审闭环
 
+### 2026-09-16 16:05 CST — P0-5/TASK-404 切片 3 收口：S3 传输 + 私有 Job 接线 + 评审闭环
+
+- 状态：已完成（切片 3 代码全部落地；集群实跑待批准）
+- 已完成：
+  - 快照管线补齐对象存储传输：`--upload-uri`（上传键
+    `<prefix>/<snapshot_id>/<file>`，每次导出独立键空间）/`--snapshot-uri`
+    （下载先取 manifest 对并校验 sidecar，数据文件失败即清理目的地；import
+    前照例二次校验）；client 构造与 parquet exporter 一致（全部可选 env）。
+  - 私有接线（private PR #83）：run-datahub-job.sh 新增 snapshot-export/
+    snapshot-import 类型（自动补 `run` 子命令、run 元数据旗标置于其后、注入
+    `SNAPSHOT_DIR=/tmp/snapshot`、缺 data-lake envFrom 时快速报错）+ 通用
+    `--env-from-*` 旗标（实测两 deployment 容器均无 data-lake env）+ 运维
+    runbook（research 导出 / dev 导入 / 跨桶凭据前置 / 导入后核验）。
+  - 实现评审闭环：contract-reviewer 首判 FAIL（2 P1：launcher 旗标顺序令
+    Job 死于 argparse；runbook 键布局与引擎不一致）→ 修复并用真实 CLI 与
+    引擎复现证明 → 全部 P1/P2/P3 关闭。
+- 验证：60 项传输相关单测 + 全仓 965 passed 无回归；ruff（CI 钉版）通过；
+  `openspec validate --all --strict`（1.1.1）27/27；PR #256 CI 全绿；
+  `bash -n` 通过；runbook 命令经 fake-kubectl 离线渲染核对。
+- 下一步：用户批准后按序执行——切片 2 步骤 2-4（对齐修复 + 补调度 writer +
+  解除 research 备份挂起）→ 逐 writer 切换 → 首次快照导出/实跑导入 →
+  观察窗 → dev 切换（3.3 门）→ 旧 stable 退役。
+- 阻塞：无（剩余步骤均需用户逐项批准）。
+
+### 2026-09-16 14:30 CST — P0-5/TASK-404 切片 3（代码部分）：受控快照导出/导入工具落地
 ### 2026-09-16 14:30 CST — P0-5/TASK-404 切片 3（代码部分）：受控快照导出/导入工具落地
 
 - 状态：已完成（代码 + 单测 + CLI 接线；私有侧 Job 清单与 dev 切换未动）
