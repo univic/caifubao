@@ -161,7 +161,7 @@
 | 数据新鲜度契约 | ✅ 已实现 | 下游可判断 missing/stale/blocked 状态，避免靠空值猜测；`data_as_of` 已在 OpenClaw 各端点填充（#103） |
 | CI/CD | ✅ 已实现 | GitHub Actions 基础流水线；部署环境按 dev/research 分派（#210） |
 | K8s 部署示例 | ✅ 已实现 | `k8s/` 目录，含 base/overlays/services + compute-worker |
-| 研究环境 overlay | ✅ 已实现 | `k8s/overlays/example-research/`（#214）；研究集群迁移已收尾，research 激活仍待修复 bootstrap 镜像 tag 不变量（#215） |
+| 研究环境 overlay | ✅ 已实现 | `k8s/overlays/example-research/`（#214）；TASK-303 切流、research 激活与首轮部署验证均已完成，目标为 `caifubao-research` + 受保护的 `research` GitHub Environment |
 | 数据管道调度 | ✅ 已实现 | CronJob 依赖链(信号 → 评分 → 验证)，上游失败则跳过；quote/signal/scoring 已拆分为独立 CronJob（#144） |
 | 任务依赖管理 | ✅ 已实现 | `job_run_helper` 检查上游任务 SUCCESS 状态 |
 | Dry-run 支持 | ✅ 已实现 | 评分回填支持 dry-run 模式 |
@@ -241,7 +241,6 @@
 | 评分模型成功标准未在全市场验证 | **高** | 20.x：研究层 walk-forward 已做，但「SCORE 策略是否优于 BUY_HOLD」等生产链验收标准在全市场仍未闭环 |
 | 真实执行能力零实现，且默认必须保持关闭 | **高** | roadmap 2.2-2.4：无券商适配器/对账/下单幂等/kill-switch；任何执行路径都需另行授权、Spec Gate 与验证 |
 | 持久化审计日志 + service token 限流未实现 | 中 | roadmap 1.2：无 RequestAudit 审计链、无 rate-limit；当前 last_used_* 是覆盖写 |
-| 研究环境（research overlay）激活阻塞 | 中 | #215：research 的激活路径缺失，需先修 bootstrap 镜像 tag 不变量；research 集群迁移本身已完成 |
 
 ### P1 — 阶段修正
 

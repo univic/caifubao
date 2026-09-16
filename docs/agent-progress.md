@@ -76,6 +76,11 @@
   **PASS**（1 P2 节点名→已改角色描述，6 P3 已修或记录）；contract-reviewer＝
   **PASS** 0 P1（1 P2 workflow/script 输入拆分表述→已修，3 P3 已修或确认保留
   §11 摘要+规范性引用定位）。
+- 合并前独立复审补充修正：部署输入契约现明确为仅 `development` 是 `dev` 的兼容
+  别名、`production` 已退役并 fail loudly；capability inventory 中 research 激活
+  旧阻塞已删除；实盘券商凭证严格限定到通过全部门禁后的 trading/production，
+  trading/paper 只允许 sandbox/paper 凭证。Private 运维文档同步移除仍可执行的旧
+  production 命令，改用 research overlay、namespace、Environment 与 `RESEARCH_*`。
 - PR：public <https://github.com/univic/caifubao/pull/255>（Draft, base develop）；
   private <https://github.com/univic/caifubao-private/pull/82>（Draft, base main）。
   不自行合并。

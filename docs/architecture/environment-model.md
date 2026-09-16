@@ -37,7 +37,7 @@
 | **development** | 软件平台开发、API/UI/Schema/部署集成验证 | 丢弃型/抽样数据，受控快照导入 | 无真实资金；无真实券商凭证；不得直接依赖 research/trading 在线库 |
 | **data** | 外部市场数据采集、标准化、校验、发布（`fetch → normalize → validate → persist → publish`） | 权威市场数据与外部原始数据：行情（个股/指数）、交易日历、股票主数据、外部 `adj_factor`、估值/基本面参考数据、freshness/发布状态 | 不产生投资观点；不做因子/评分/策略 |
 | **research** | 因子、评分、模型、策略、回测与验证证据 | 因子定义与评估、`stock_factor_daily`、评分预测、实验、回测、模型版本、研究工件 | 无真实资金；无真实券商凭证；不得直接写 trading 状态 |
-| **trading** | 风险控制、订单、成交、持仓、资金、对账 | 策略发布/实例、订单与回报、成交、持仓、资金流水、风控状态、对账记录 | 唯一允许接触真实资金与券商凭证的 domain；必须默认关闭、显式授权 |
+| **trading** | 风险控制、订单、成交、持仓、资金、对账 | 策略发布/实例、订单与回报、成交、持仓、资金流水、风控状态、对账记录 | 唯一允许定义券商适配与执行路径的 domain；真实资金和实盘券商凭证只允许进入 trading/production，且必须默认关闭、显式授权 |
 
 `data` 是职责边界，不要求第四个 K8s namespace：迁移期内 data 职责由稳定运行
 环境中的 datahub 服务承载（见 [§8 迁移期实现位置](#8-迁移期实现位置)）。
@@ -48,7 +48,7 @@
 |:---|:---|:---|:---|
 | **dev** | 快速迭代、可随时重建 | 无 | 可丢弃、可抽样、可受控快照导入 |
 | **stable** | 长期稳定运行，**不涉及真实资金** | 无 | 权威/长期数据，有备份 |
-| **paper** | 模拟交易（订单路径被模拟/记录） | 无真实资金 | 模拟账本与 paper 记录 |
+| **paper** | 模拟交易（订单路径被模拟/记录） | 无真实资金；不得持有实盘券商凭证 | 模拟账本与 paper 记录；只允许 sandbox/paper 凭证 |
 | **production** | 真实资金执行 | **真实资金** | 强一致账本、审计、对账 |
 
 ## 4. 有效组合与无效/不推荐组合
@@ -89,7 +89,7 @@ quote→signal→scoring 例行任务，并作为 `dev` 的 `data sync` 只读�
 | `stock_factor_daily` / FQ/HFQ | 实现位于 datahub 模块 | research 拥有派生因子数据（实现位置随后续迁移调整） |
 | research 与 trading 关系 | trading 未启用 | research → 不可变策略工件 + 验证证据 → trading promotion |
 | 实盘 | 不存在 | `prod`（trading/production），默认关闭 + 显式授权 + 全套执行门禁 |
-| 部署输入 | `dev` / `research`（`development`/`production` 仅作过渡别名，`production` 已退役并 fail loudly） | 同左 |
+| 部署输入 | `dev` / `research`；`development` 是 `dev` 的过渡别名；`production` 是已退役输入并 fail loudly | 同左 |
 | GitHub Environment | `development`、`research`（`production` 仅剩 tailscale operator bootstrap 在用）；publish workflow 的 job 级 environment 仍按分支解析为 `development`/`production`（漂移项，未修复） | 与 domain/stage 语义对齐（见 §13） |
 
 ## 7. 数据所有权
@@ -163,7 +163,7 @@ trading: 风控 → 订单（幂等） → 成交/持仓/资金 → 对账 → �
    交易日证据等）以 production-capability-roadmap 的 requirements 为准；
    replay/backfill/replacement/NAV recompute/job SUCCESS 均不构成前瞻证据。
 4. **禁止事项**：
-   - dev 与 research **不得持有真实券商凭证**，不得访问券商实盘端点；
+   - dev、research 与 trading/paper **不得持有实盘券商凭证**，不得访问券商实盘端点；
    - research 不得直接写 trading 状态；
    - 不得用 repo dispatch 自动 promote 到实盘；
    - 不得把 paper/replay 输出表述为可交易建议。
@@ -190,7 +190,8 @@ trading: 风控 → 订单（幂等） → 成交/持仓/资金 → 对账 → �
 | 镜像 tag `prod` / `latest` | 技术名称 | `main` 分支构建推送的 channel tag，对应部署 channel 为 research stable（实际部署使用 `sha-<sha>` 不可变 tag）；**不代表实盘** |
 | 镜像 tag `develop` | 技术名称 | `develop` 分支构建的 channel tag，部署目标是 dev |
 | namespace `caifubao-dev` | 技术名称 | dev 运行目标（CLI 默认 namespace） |
-| 部署输入 `development`/`production` | 过渡别名 | 部署输入现为 `dev`/`research`；旧值仅作过渡别名（`production` 已退役并 fail loudly） |
+| 部署输入 `development` | 过渡别名 | 映射到 `dev` / development 运行目标 |
+| 部署输入 `production` | 已退役输入 | fail loudly，不映射到 research、旧 stable 或未来 `prod` |
 | `APP_ENV=PRODUCTION` | 技术名称 | 应用进程配置常量，与部署环境/资金阶段无关 |
 | `k8s/overlays/example-production` | 示例名称 | 公共仓库的脱敏示例 overlay |
 
@@ -200,8 +201,9 @@ trading: 风控 → 订单（幂等） → 成交/持仓/资金 → 对账 → �
   dev = 软件平台开发与集成（development/dev）；research = 因子、评分、模型、策略
   与验证证据（research/stable）；trading-paper = 模拟交易（trading/paper，未启
   用）；prod = 真实资金执行（trading/production，未启用）。
-- **哪些环境允许真实券商凭证？** 只有 trading domain（且 production stage 还需
-  满足 §11 门槛）。dev 和 research 一律不允许。
+- **哪些环境允许实盘券商凭证？** 只有完成 §11 全部门槛后的
+  `prod`（trading/production）。trading/paper 只允许 sandbox/paper 凭证；dev 和
+  research 一律不允许实盘券商凭证。
 - **哪个环境负责策略研究？** `research`（research/stable）。
 - **哪个环境负责真实执行？** 未来 `prod`（trading/production）；当前**不存在**。
 - **当前 prod 是否已经存在？** 不存在。当前没有任何真实资金执行能力。

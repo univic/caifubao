@@ -38,3 +38,6 @@
 - [x] 4.5 contract-reviewer / qa-reviewer 结论已记录（按任务要求追加调用）
 - [x] 4.6 分支冲突检查通过；Draft PR 已创建
 - [x] 4.7 `docs/agent-progress.md` 追加本轮进度（含 PR 链接与剩余漂移）
+- [x] 4.8 合并前复审修正：`development` 是唯一部署兼容别名，`production`
+  已退役并 fail loudly；清除 capability inventory 的 research 激活旧阻塞，并将
+  实盘券商凭证严格限制到通过门禁后的 trading/production

@@ -103,6 +103,9 @@ is not enabled and does not exist, that `trading-paper` (`trading/paper`) is
 currently only a default-deny manifest skeleton without workloads, and that the
 system therefore has no real broker execution capability (no broker adapter,
 order idempotency, fill/cash/position reconciliation, or kill-switch). The
+docs SHALL reserve live-broker credentials for `trading/production` after all
+execution gates pass; `trading/paper` may use only sandbox/paper credentials
+and SHALL NOT receive live-broker credentials. The
 disclosure SHALL be a factual statement, not a promotion of upcoming live
 trading, and public docs SHALL reference
 `openspec/changes/production-capability-roadmap/` as the normative source for
@@ -118,6 +121,14 @@ demonstration MVP, not investment advice".
   is a target state only
 - AND the doc does not present the GitHub `production` Environment, `prod`
   image tags, or the legacy stable namespace as evidence of live capability
+
+#### Scenario: Paper trading cannot receive live credentials
+
+- GIVEN the future `trading-paper` running target
+- WHEN its credential boundary is documented
+- THEN only sandbox/paper credentials are allowed
+- AND live-broker credentials remain restricted to a separately authorized
+  `trading/production` target after all execution gates pass
 
 #### Scenario: Reader asks where the live-trading gate is defined
 
