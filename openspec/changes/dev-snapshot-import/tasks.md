@@ -33,12 +33,19 @@
 
 ## 3. 切片 3 — 受控快照导入替代在线同步（实现 PR）
 
-- [ ] 3.1 快照导出：逐 allow-list collection mongodump + manifest（sha256、
-  计数、`data_as_of`、producer 镜像 SHA）
-- [ ] 3.2 dev 导入 Job：manifest/校验和/计数 fail-closed 校验 + 幂等应用
-  （业务键 upsert / 快照类 `--drop`）+ 导入状态记录（取代 `data_sync_state`）
+- [ ] 3.1 快照导出：逐 allow-list collection 导出（JSONL.gz + BSON 安全编码）
+  + manifest（sha256、计数、`data_as_of`、producer 镜像 SHA）——**代码已落地**
+  （`datahub/app/lib/datahub/snapshot_transfer.py` +
+  `snapshot_export_runner.py` + `./scripts/caifubao data snapshot-export`），
+  私有侧导出 Job 清单与对象存储上传待私有 PR
+- [ ] 3.2 dev 导入 Job：manifest/校验和/计数 fail-closed 校验（两遍式，先核验
+  后写入）+ 幂等应用（业务键 upsert / 快照类 staging→原子
+  `renameCollection`）+ 导入状态记录（`snapshot_import_state`）+ freshness
+  复用既有 initializer 重算——**代码已落地**
+  （`snapshot_import_runner.py` + `./scripts/caifubao data snapshot-import`），
+  私有侧导入 Job 清单待私有 PR
 - [ ] 3.3 `data sync` CLI 语义切换为快照导入；移除 `MONGODB_SRC_*` 注入；停用
-  `caifubao-datahub-data-sync` CronJob
+  `caifubao-datahub-data-sync` CronJob（cutover 门 = 3.6 观察窗完成）
 - [ ] 3.4 `datahub-perf-optimization` 的 "Watermark-Based Incremental
   Prod-to-Dev Sync" requirement 以 MODIFIED delta 收敛为单一口径：同步语义
   切换为快照导入，并修正其陈旧的「按 `_id` 幂等 upsert」表述（现行为业务键

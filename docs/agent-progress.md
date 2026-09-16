@@ -57,6 +57,30 @@
 
 ### 2026-09-16 16:05 CST — P0-5/TASK-404 切片 3 收口：S3 传输 + 私有 Job 接线 + 评审闭环
 
+### 2026-09-16 14:30 CST — P0-5/TASK-404 切片 3（代码部分）：受控快照导出/导入工具落地
+
+- 状态：已完成（代码 + 单测 + CLI 接线；私有侧 Job 清单与 dev 切换未动）
+- 已完成：按 `dev-snapshot-import` 契约实现导出/导入引擎与 runner——
+  - `datahub/app/lib/datahub/snapshot_transfer.py`：manifest v1（逐 collection
+    文件/sha256/计数/`data_as_of`/业务键/类别，manifest 自带校验和）、BSON
+    安全 JSONL 编解码（未知类型 fail-closed）、封闭 allow-list（越界 collection
+    点名拒绝）、两遍式导入（第一遍零写入核验 sha256/计数/水位，第二遍按类
+    应用：日期分区业务键 `ReplaceOne(upsert)` 500/批；快照类 staging→**单条
+    原子 `renameCollection(dropTarget=True)`**，不预删目标）、
+    `snapshot_import_state` 幂等留痕、freshness 复用
+    `data_asset_status_initializer` 既有重算路径。
+  - `snapshot_export_runner.py` / `snapshot_import_runner.py`（镜像
+    data_sync_runner 结构：job_run、SIGTERM、--dry-run）。
+  - `./scripts/caifubao data snapshot-export|snapshot-import` + Makefile 目标；
+    `data sync` 保持原样（cutover 属门控步骤 3.3）。
+- 验证：新增 38 项单测通过（含零写入失败路径/原子换入/幂等重导/编解码往返）；
+  全仓 datahub 测试 943 passed 无回归；ruff（CI 钉版规则）通过；
+  `openspec validate --all --strict`（CI 钉版 1.1.1）27/27；`bash -n` 通过；
+  `data sync`/`cmd_data_sync` 字节级不变。
+- 下一步：私有 PR 补导出/导入 Job 清单与对象存储上传；切片 2 步骤 2-4 获批后
+  执行；最后按 3.3 门完成 dev 切换（移除 `MONGODB_SRC_*`、停用 data-sync）。
+- 阻塞：无（集群侧步骤待用户逐项批准）。
+
 ### 2026-09-16 13:40 CST — P0-5/TASK-404 切片 2 步骤 0：集群只读盘点完成（无双写风险）
 
 - 状态：已完成（只读，无任何集群变更）

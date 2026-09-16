@@ -9,6 +9,8 @@
 # Commands:
 #   data
 #     sync                  Sync data from prod to dev MongoDB
+#     snapshot-export       Export a checksummed dev-import snapshot (manifest)
+#     snapshot-import       Verify and import a snapshot into dev (fail-closed)
 #     refresh-status        Refresh data_asset_status freshness
 #     status STOCK          Check data completeness for a stock
 #
@@ -106,6 +108,38 @@ cmd_data_sync() {
     info "  from: $from_date"
   fi
   _pod_exec "$PYTHON_BIN" -m app.jobs.data_sync_runner run "${args[@]}"
+}
+
+cmd_data_snapshot_export() {
+  local collections="${1:-}" from_date="${2:-}" to_date="${3:-}" out_dir="${4:-}"
+  local args=()
+  if [[ -n "$collections" ]]; then
+    args+=(--collections "$collections")
+  fi
+  if [[ -n "$from_date" ]]; then
+    args+=(--from-date "$from_date")
+  fi
+  if [[ -n "$to_date" ]]; then
+    args+=(--to-date "$to_date")
+  fi
+  if [[ -n "$out_dir" ]]; then
+    args+=(--out-dir "$out_dir")
+  fi
+  info "Exporting snapshot (versioned manifest + sha256)..."
+  _pod_exec "$PYTHON_BIN" -m app.jobs.snapshot_export_runner run "${args[@]}"
+}
+
+cmd_data_snapshot_import() {
+  local snapshot_dir="${1:-}" snapshot_id="${2:-}"
+  local args=()
+  if [[ -n "$snapshot_dir" ]]; then
+    args+=(--snapshot-dir "$snapshot_dir")
+  fi
+  if [[ -n "$snapshot_id" ]]; then
+    args+=(--snapshot-id "$snapshot_id")
+  fi
+  info "Verifying and importing snapshot (fail-closed)..."
+  _pod_exec "$PYTHON_BIN" -m app.jobs.snapshot_import_runner run "${args[@]}"
 }
 
 cmd_data_refresh_status() {
@@ -609,6 +643,12 @@ Usage:
 Data:
   data sync [FROM_DATE|--full] [COLLECTIONS]
                                       Sync data from prod to dev
+  data snapshot-export [COLLECTIONS] [FROM_DATE] [TO_DATE]
+                                      Export a checksummed dev-import snapshot
+                                      (versioned manifest, sha256 per file)
+  data snapshot-import [SNAPSHOT_DIR] [SNAPSHOT_ID]
+                                      Verify then import a snapshot (fail-closed;
+                                      SNAPSHOT_ID defaults to latest)
   data refresh-status [LIMIT]          Refresh data_asset_status freshness
   data status <STOCK>                  Check data completeness for a stock
 
@@ -660,6 +700,8 @@ Environment:
 
 Examples:
   caifubao data sync
+  caifubao data snapshot-export
+  caifubao data snapshot-import
   caifubao score score-one sz000977
   caifubao data status sz000977
   caifubao system health
@@ -674,9 +716,11 @@ main() {
       local cmd="${1:-}"; shift || true
       case "$cmd" in
         sync)           cmd_data_sync "$@" ;;
+        snapshot-export) cmd_data_snapshot_export "$@" ;;
+        snapshot-import) cmd_data_snapshot_import "$@" ;;
         refresh-status) cmd_data_refresh_status "$@" ;;
         status)         cmd_data_status "$@" ;;
-        *)              die "Unknown data command: $cmd (use: sync|refresh-status|status)" ;;
+        *)              die "Unknown data command: $cmd (use: sync|snapshot-export|snapshot-import|refresh-status|status)" ;;
       esac
       ;;
     score)
