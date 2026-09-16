@@ -57,6 +57,31 @@
 
 ### 2026-09-16 16:05 CST — P0-5/TASK-404 切片 3 收口：S3 传输 + 私有 Job 接线 + 评审闭环
 
+### 2026-09-16 13:05 CST — P0-5/TASK-404 切片 1：数据权威切换设计与快照导入契约（设计轮，无集群操作）
+
+- 状态：已完成（切片 1 = 设计 + OpenSpec 契约；切片 2/3 为待批准执行步骤）；集群零变更
+- 已完成：
+  - dev 对旧 stable 在线直连的消除进入执行设计：切片 1 盘点在线同步面 6 collection +
+    `data_sync_state` 控制面、research 侧调度现状（CronJob 共 5 个、无 suspend 标志、无
+    daily_basic/factor/health-watcher/data-sync job）与前置对齐缺口（research
+    `stock_industry` 仍为迁移前 dotted 键；FQ 全市场重算（`fq-adj-factor-fix` 5.2）未执行；
+    无 health-watcher/data_asset_status 覆盖）。
+  - 新增 OpenSpec change **`dev-snapshot-import`**（spec-guardian 判定 GATE REQUIRED，独立
+    最小 change）：ADDED-only 导入契约——封闭 allow-list、版本化 manifest（sha256/计数/
+    `data_as_of`/producer 镜像 SHA）、fail-closed、按 collection 类幂等（业务键 upsert /
+    快照类 `--drop`）、freshness 传播、条件性 CLI/`MONGODB_SRC_*` 过渡 SHALL；不预声明
+    切片 2 迁移、不授权任何集群变更；与 `datahub-perf-optimization` 在线同步 requirement 的
+    重叠由切片 3 MODIFIED delta 收敛（tasks 3.4）。
+  - 切片 1 设计文档落在私有仓库 `docs/architecture/data-authority-cutover.md`（collection 级
+    owner/writer/reader 盘点、research/data 每日生产链、逐 writer 切换顺序与验证指标、快照
+    导入管线与旧 stable 退役判据、9 步执行清单——每项集群操作需用户逐项批准且自带回滚）。
+- 验证：`openspec validate --all --strict` 通过（27/27）；两仓库变更文件相对链接全解析；
+  键位事实对照 `sync_engine.py`（`SYNC_UPSERT_KEYS`、dev_only 门）与 overlay 文件核实。
+- 下一步：记录 contract-reviewer/qa-reviewer 结论并推送两分支 Draft PR；随后由用户批准
+  切片 2 步骤 0（只读盘点 research/旧 stable CronJob 实际状态）与前置对齐修复；切片 3
+  实现（导入 Job + CLI 语义切换 + `MONGODB_SRC_*` 退役）。
+- 阻塞：无（切片 2/3 集群操作需用户逐项批准，属流程设计而非阻塞）。
+
 ### 2026-09-16 11:35 CST — 环境定位文档收敛：两轴环境模型（domain × stage）落地 public/private（PR #255 + private #82）
 
 - 状态：已完成（文档范围）；PR 保持 Draft，合并需用户明确批准
