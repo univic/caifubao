@@ -1,0 +1,67 @@
+# Stock-timing artifact scoring Job (example).
+#
+# Phase 3 of the forward PIT evidence chain: `score-pit-artifacts` reconstructs
+# ranked predictions from the two P2a artifacts only. The default dry run does
+# not initialise MongoDB, so this Job deliberately has **no** `MONGODB_*` env.
+#
+# Writes /artifacts/ranked-predictions-<session>.json on the
+# stock-timing-artifacts PVC (k8s/base/stock-timing-artifacts.example.yaml) and
+# refuses to overwrite. Each session needs its own output path and Job.
+#
+# `CAIFUBAO_BUILD_REVISION` is baked into the published image from the source
+# revision. The CLI rejects an empty value but cannot detect a wrong one, so add
+# an explicit `env:` entry only if the image does not carry it, and set it to
+# the exact immutable revision.
+#
+# Publishing (`--apply`) is a separate, explicitly authorised step: add `--apply`
+# **and** the `MONGODB_*` env vars from the other two example Jobs, and never
+# target a model/date/horizon that already has stored predictions.
+#
+# Prefer the one-off Job launcher in the private overlay, which copies the live
+# datahub Deployment's image, revision and generated ConfigMap names.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: stock-timing-score
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: stock-timing-score
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app: caifubao-datahub
+        job.caifubao.io/type: stock-timing-score
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: stock-timing-score
+        image: caifubao-datahub:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "app.jobs.scoring_runner", "score-pit-artifacts"]
+        args:
+        - --universe-artifact
+        - /artifacts/universe-2026-09-16.json
+        - --input-artifact
+        - /artifacts/ranked-inputs-2026-09-16.json
+        - --output
+        - /artifacts/ranked-predictions-2026-09-16.json
+        volumeMounts:
+        - name: stock-timing-artifacts
+          mountPath: /artifacts
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+      volumes:
+      - name: stock-timing-artifacts
+        persistentVolumeClaim:
+          claimName: stock-timing-artifacts
+      imagePullSecrets:
+      - name: ccr-secret
