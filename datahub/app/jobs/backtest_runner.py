@@ -10,10 +10,12 @@ Usage:
 
 import argparse
 import datetime
+import importlib.util
 import json
 import logging
-import sys
 import os
+from pathlib import Path
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,51 @@ SUPPORTED_STRATEGIES = [
     "TOP_N_ROTATION",
     "MULTI_HORIZON_CONSENSUS",
 ]
+
+SCORE_DRIVEN_STRATEGIES = {
+    "SCORE_THRESHOLD",
+    "SCORE_MOMENTUM",
+    "TOP_N_ROTATION",
+    "MULTI_HORIZON_CONSENSUS",
+}
+
+
+def _load_timing_evaluator():
+    try:
+        # The image workflow copies this dependency-free module into the
+        # datahub package so the deployed CLI has the same implementation.
+        from app.services.timing_evaluator import evaluate_timing_pool
+
+        return evaluate_timing_pool
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"app.services", "app.services.timing_evaluator"}:
+            raise
+        # Source-tree fallback: backend and datahub both expose a top-level
+        # ``app`` package, so load the backend module without importing Flask.
+        module_path = (
+            Path(__file__).resolve().parents[3]
+            / "backend"
+            / "app"
+            / "services"
+            / "timing_evaluator.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "_caifubao_timing_evaluator", module_path
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("cannot load timing evaluator")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.evaluate_timing_pool
+
+
+def _require_score_model_version(args, *strategies: str) -> str | None:
+    model_version = (getattr(args, "model_version", None) or "").strip()
+    if any(strategy in SCORE_DRIVEN_STRATEGIES for strategy in strategies):
+        if not model_version:
+            raise ValueError("model_version is required for score-driven strategies")
+        return model_version
+    return None
 
 
 def _init_db() -> None:
@@ -44,6 +91,7 @@ def parse_date(value: str) -> datetime.datetime:
 
 def run_single(args) -> dict:
     """Run a single-stock backtest."""
+    model_version = _require_score_model_version(args, args.strategy)
     _init_db()
     from backend.app.services.backtest_service import run_backtest
 
@@ -69,8 +117,8 @@ def run_single(args) -> dict:
         params["stop_loss_pct"] = float(args.stop_loss)
     if args.score_delta is not None:
         params["score_delta"] = float(args.score_delta)
-    if args.model_version:
-        params["model_version"] = args.model_version
+    if model_version:
+        params["model_version"] = model_version
     if args.consensus_entry:
         params["consensus_entry_thresholds"] = json.loads(args.consensus_entry)
     if args.consensus_exit:
@@ -90,6 +138,7 @@ def run_single(args) -> dict:
 
 def run_multi(args) -> dict:
     """Run a multi-stock backtest."""
+    model_version = _require_score_model_version(args, args.strategy)
     _init_db()
     from backend.app.services.backtest_service import run_multi_stock_backtest
 
@@ -115,7 +164,7 @@ def run_multi(args) -> dict:
         if args.max_position_pct
         else 0.20,
         stop_loss_pct=float(args.stop_loss) if args.stop_loss else -5.0,
-        model_version=args.model_version or None,
+        model_version=model_version,
     )
 
     if result.get("error"):
@@ -133,6 +182,7 @@ def run_multi(args) -> dict:
 
 def run_compare(args) -> dict:
     """Compare two strategies on the same stock."""
+    model_version = _require_score_model_version(args, args.strategy, args.vs_strategy)
     _init_db()
     from backend.app.services.backtest_service import run_backtest
 
@@ -166,6 +216,8 @@ def run_compare(args) -> dict:
             params["exit_threshold"] = float(args.exit)
         if args.stop_loss is not None:
             params["stop_loss_pct"] = float(args.stop_loss)
+        if strat_name in SCORE_DRIVEN_STRATEGIES:
+            params["model_version"] = model_version
 
         r = run_backtest(**params)
         if r.get("error"):
@@ -199,8 +251,166 @@ def run_compare(args) -> dict:
     return results
 
 
+def run_timing_pool(args, evaluator=None) -> dict:
+    """Aggregate an explicit, precomputed timing/buy-hold cohort artifact.
+
+    This research-only command deliberately does not discover a cohort, run a
+    live scan, or persist backtests. The input owns both normalized sides for
+    every requested stock so the same-stock baseline cannot be replaced by an
+    index benchmark accidentally.
+    """
+    payload = json.loads(Path(args.input_json).read_text(encoding="utf-8"))
+    results = payload.get("results")
+    if not isinstance(results, dict):
+        raise ValueError("timing-pool input requires a results object keyed by code")
+    cohort = payload.get("cohort")
+    if not isinstance(cohort, list) or not cohort:
+        raise ValueError("timing-pool input requires an explicit non-empty cohort")
+    if evaluator is None:
+        evaluator = _load_timing_evaluator()
+
+    def _paired_runner(stock_code, **_kwargs):
+        pair = results.get(stock_code)
+        if pair is None:
+            return {
+                "status": "FAILED",
+                "reason_code": "MISSING_RESULT_PAIR",
+            }
+        return pair
+
+    report = evaluator(
+        cohort,
+        _paired_runner,
+        cohort_as_of=payload.get("cohort_as_of"),
+        cohort_source=payload.get("cohort_source"),
+        model_version=payload.get("model_version"),
+        config=payload.get("config"),
+        window=payload.get("window"),
+        delisted_completeness=payload.get("delisted_completeness", "UNKNOWN"),
+        initial_cash=payload.get("initial_cash", 100000.0),
+    )
+    rendered = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+    if args.output:
+        Path(args.output).write_text(rendered + "\n", encoding="utf-8")
+    print(rendered)
+    return report
+
+
+def _registered_model_record(model_version: str) -> dict | None:
+    from app.model.scoring import ScoreModelVersion
+
+    record = ScoreModelVersion.objects(model_version=model_version).first()
+    if record is None:
+        return None
+    return {
+        "model_version": record.model_version,
+        "config_hash": record.config_hash,
+        "scoring_mode": record.scoring_mode,
+        "status": record.status,
+    }
+
+
+def _timing_replay_evidence(stock_code: str, manifest: dict) -> tuple[list, list]:
+    from app.model.scoring import StockScorePrediction
+    from app.model.stock import StockDailyQuote
+
+    start = parse_date(manifest["window"]["from"])
+    end = parse_date(manifest["window"]["to"])
+    quotes = list(
+        StockDailyQuote.objects(
+            code=stock_code,
+            date__gte=start,
+            date__lte=end,
+        ).order_by("date")
+    )
+    predictions = list(
+        StockScorePrediction.objects(
+            stock_code=stock_code,
+            date__gte=start,
+            date__lte=end,
+            horizon=manifest["horizon"],
+            model_version=manifest["model_version"],
+        ).order_by("date")
+    )
+    return quotes, predictions
+
+
+def run_timing_replay(
+    args,
+    *,
+    evaluator=None,
+    db_initializer=None,
+    model_loader=None,
+    evidence_loader=None,
+    pair_builder=None,
+) -> dict:
+    """Run real, read-only evidence through the P1 adapter and P0 evaluator."""
+    from app.lib.strategy_engine.timing_replay import (
+        replay_pair,
+        validate_model_pin,
+        validate_replay_manifest,
+    )
+
+    manifest_path = Path(args.manifest_json)
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(
+            f"cannot read timing replay manifest: {manifest_path}"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"invalid timing replay manifest JSON: {manifest_path}"
+        ) from exc
+    manifest = validate_replay_manifest(payload)
+    if db_initializer is None:
+        db_initializer = _init_db
+    if model_loader is None:
+        model_loader = _registered_model_record
+    if evidence_loader is None:
+        evidence_loader = _timing_replay_evidence
+    if pair_builder is None:
+        pair_builder = replay_pair
+    if evaluator is None:
+        evaluator = _load_timing_evaluator()
+
+    db_initializer()
+    registry_record = model_loader(manifest["model_version"])
+    validate_model_pin(manifest, registry_record)
+
+    def _paired_runner(stock_code, **kwargs):
+        if kwargs.get("save_result") is not False:
+            raise ValueError("timing replay requires save_result=False")
+        quotes, predictions = evidence_loader(stock_code, manifest)
+        return pair_builder(stock_code, quotes, predictions, manifest)
+
+    report = evaluator(
+        manifest["cohort_codes"],
+        _paired_runner,
+        cohort_as_of=manifest["cohort_as_of"],
+        cohort_source=manifest["cohort_source"],
+        model_version=manifest["model_version"],
+        config=manifest["config"],
+        window=manifest["window"],
+        delisted_completeness=manifest["delisted_completeness"],
+        initial_cash=manifest["initial_cash"],
+    )
+    rendered = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+    if args.output:
+        output_path = Path(args.output)
+        try:
+            output_path.write_text(rendered + "\n", encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(
+                f"cannot write timing replay report: {output_path}"
+            ) from exc
+    print(rendered)
+    return report
+
+
 def run_optimize(args) -> dict:
     """Run parameter optimization sweep."""
+    model_version = _require_score_model_version(args, args.strategy)
     _init_db()
     from flask import Flask
 
@@ -241,6 +451,7 @@ def run_optimize(args) -> dict:
             "param_grid": param_grid,
             "initial_cash": float(args.initial_cash),
             "use_split": not args.no_split,
+            "model_version": model_version,
         },
     ):
         response = opt_handler()
@@ -255,6 +466,7 @@ def run_optimize(args) -> dict:
 
 def run_compare_all(args) -> dict:
     """Compare all eligible strategies on one stock via API."""
+    model_version = _require_score_model_version(args, "SCORE_THRESHOLD")
     _init_db()
     from flask import Flask
 
@@ -271,6 +483,7 @@ def run_compare_all(args) -> dict:
             "end_date": args.end_date,
             "initial_cash": float(args.initial_cash),
             "benchmark_code": args.benchmark_code,
+            "model_version": model_version,
         },
     ):
         response = cmp_handler()
@@ -285,6 +498,7 @@ def run_compare_all(args) -> dict:
 
 def run_scan(args) -> dict:
     """Scan one strategy across all active stocks via API."""
+    model_version = _require_score_model_version(args, args.strategy)
     _init_db()
     from flask import Flask
 
@@ -305,6 +519,8 @@ def run_scan(args) -> dict:
         json_payload["horizon"] = int(args.horizon)
     if args.min_trades:
         json_payload["min_trades"] = args.min_trades
+    if model_version:
+        json_payload["model_version"] = model_version
 
     with app.test_request_context(method="POST", json=json_payload):
         response = scan_handler()
@@ -337,6 +553,7 @@ def run_scan(args) -> dict:
 
 def run_walk_forward(args) -> dict:
     """Run walk-forward validation via API."""
+    model_version = _require_score_model_version(args, args.strategy)
     _init_db()
     from flask import Flask
 
@@ -356,6 +573,8 @@ def run_walk_forward(args) -> dict:
     }
     if args.horizon:
         json_payload["horizon"] = int(args.horizon)
+    if model_version:
+        json_payload["model_version"] = model_version
 
     with app.test_request_context(method="POST", json=json_payload):
         response = wf_handler()
@@ -457,6 +676,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_compare.add_argument("--entry", type=float)
     p_compare.add_argument("--exit", type=float)
     p_compare.add_argument("--stop-loss", type=float)
+    p_compare.add_argument("--model-version")
 
     # --- optimize ---
     p_optimize = subparsers.add_parser("optimize", help="Parameter sweep optimization")
@@ -472,6 +692,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_optimize.add_argument("--stop-loss-range", help="Comma-separated: -3,-5,-8")
     p_optimize.add_argument("--initial-cash", default=100000)
+    p_optimize.add_argument("--model-version")
     p_optimize.add_argument(
         "--no-split", action="store_true", help="Don't use train/val/test split"
     )
@@ -485,6 +706,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_cmp_all.add_argument("end_date", help="YYYY-MM-DD")
     p_cmp_all.add_argument("--initial-cash", default=100000)
     p_cmp_all.add_argument("--benchmark-code", default="sh000300")
+    p_cmp_all.add_argument("--model-version")
 
     # --- scan ---
     p_scan = subparsers.add_parser("scan", help="Scan one strategy across market")
@@ -496,6 +718,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--page", type=int, default=1)
     p_scan.add_argument("--per-page", type=int, default=20)
     p_scan.add_argument("--min-trades", type=int, help="Minimum trade count filter")
+    p_scan.add_argument("--model-version")
 
     # --- walk-forward ---
     p_walk_forward = subparsers.add_parser(
@@ -509,6 +732,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_walk_forward.add_argument("--step-days", type=int, default=60)
     p_walk_forward.add_argument("--horizon", type=int, help="Score horizon (5/20/60)")
     p_walk_forward.add_argument("--initial-cash", default=100000)
+    p_walk_forward.add_argument("--model-version")
+
+    # --- timing-pool (research-only, explicit cohort) ---
+    p_timing_pool = subparsers.add_parser(
+        "timing-pool",
+        help="Aggregate explicit same-stock timing/buy-hold result pairs",
+    )
+    p_timing_pool.add_argument("input_json", help="Versioned explicit-cohort JSON")
+    p_timing_pool.add_argument("--output", help="Optional report JSON path")
+
+    # --- timing-replay (research-only, real read-only evidence) ---
+    p_timing_replay = subparsers.add_parser(
+        "timing-replay",
+        help="Replay a frozen point-in-time cohort from stored evidence",
+    )
+    p_timing_replay.add_argument(
+        "manifest_json", help="Versioned frozen cohort and evidence manifest"
+    )
+    p_timing_replay.add_argument("--output", help="Optional report JSON path")
 
     return parser
 
@@ -517,22 +759,29 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command == "single":
-        run_single(args)
-    elif args.command == "multi":
-        run_multi(args)
-    elif args.command == "compare":
-        run_compare(args)
-    elif args.command == "optimize":
-        run_optimize(args)
-    elif args.command == "compare-all":
-        run_compare_all(args)
-    elif args.command == "scan":
-        run_scan(args)
-    elif args.command == "walk-forward":
-        run_walk_forward(args)
-    else:
-        parser.print_help()
+    try:
+        if args.command == "single":
+            run_single(args)
+        elif args.command == "multi":
+            run_multi(args)
+        elif args.command == "compare":
+            run_compare(args)
+        elif args.command == "optimize":
+            run_optimize(args)
+        elif args.command == "compare-all":
+            run_compare_all(args)
+        elif args.command == "scan":
+            run_scan(args)
+        elif args.command == "walk-forward":
+            run_walk_forward(args)
+        elif args.command == "timing-pool":
+            run_timing_pool(args)
+        elif args.command == "timing-replay":
+            run_timing_replay(args)
+        else:
+            parser.print_help()
+    except ValueError as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":

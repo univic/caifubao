@@ -1,15 +1,19 @@
 # -*- coding: utf-8 -*-
 
-import datetime
 import copy
+import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.lib.scoring_engine.calibration_report import ScoreCalibrationReport
+from app.lib.scoring_engine.comparison_report import ExperimentComparisonReport
 from app.lib.scoring_engine.replay_service import ScoreReplayService
-from app.lib.scoring_engine.scoring_service import StockScoringService
+from app.lib.scoring_engine.scoring_service import (
+    StockScoringService,
+    normalize_date,
+)
 from app.lib.scoring_engine.verification_service import ScoreVerificationService
 from app.model.scoring import StockScorePrediction
 
@@ -17,6 +21,13 @@ from app.model.scoring import StockScorePrediction
 class FakeQuerySet:
     def __init__(self, items):
         self.items = list(items)
+
+    def _clone(self, items):
+        """Copy of this queryset with the same projection (mongoengine clones)."""
+        clone = FakeQuerySet(items)
+        if getattr(self, "_only", None):
+            clone._only = self._only
+        return clone
 
     def first(self):
         return self.items[0] if self.items else None
@@ -27,16 +38,34 @@ class FakeQuerySet:
             reverse = field.startswith("-")
             key = field[1:] if field.startswith(("-", "+")) else field
             items = sorted(items, key=lambda item: getattr(item, key), reverse=reverse)
-        return FakeQuerySet(items)
+        return self._clone(items)
 
     def only(self, *fields):
+        self._only = fields
         return self
 
     def limit(self, count):
-        return FakeQuerySet(self.items[:count])
+        return self._clone(self.items[:count])
 
     def count(self):
         return len(self.items)
+
+    def filter(self, **query):
+        return self._clone([item for item in self.items if matches_query(item, query)])
+
+    def as_pymongo(self):
+        """Mimic mongoengine's raw-dict iteration (perf C1 batch prefetch)."""
+        rows = []
+        for item in self.items:
+            if isinstance(item, dict):
+                data = dict(item)
+            else:
+                data = dict(vars(item))
+            if getattr(self, "_only", None):
+                # mongoengine returns only the projected fields (plus _id).
+                data = {key: value for key, value in data.items() if key in self._only}
+            rows.append(data)
+        return FakeQuerySet(rows)
 
     def __iter__(self):
         return iter(self.items)
@@ -44,6 +73,10 @@ class FakeQuerySet:
 
 class FakeModel:
     records = []
+    #: mongoengine-like field metadata; the fakes carry no defaults, so batch
+    #: rows simply raise AttributeError for fields the record never set —
+    #: exactly what ``getattr(record, name, default)`` sees on a fake document.
+    _fields = {}
 
     def __init_subclass__(cls):
         cls.records = []
@@ -84,6 +117,7 @@ class FakePrediction(FakeModel):
     next_id = 1
     bulk_calls = []
     fail_bulk = False
+    fail_rank_bulk = False
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -97,16 +131,46 @@ class FakePrediction(FakeModel):
             def bulk_write(operations, ordered=False):
                 if cls.fail_bulk:
                     raise RuntimeError("prediction bulk failed")
+                if cls.fail_rank_bulk and any(
+                    "rank" in (operation._doc.get("$set") or {})
+                    and "$setOnInsert" not in operation._doc
+                    for operation in operations
+                ):
+                    # Only the rank/percentile/recommendation tail writes use a
+                    # bare $set; prediction upserts carry $setOnInsert and must
+                    # not be caught here (a BLOCKED upsert also sets rank:null).
+                    raise RuntimeError("rank bulk failed")
                 cls.bulk_calls.append((operations, ordered))
                 modified = 0
                 for operation in operations:
-                    prediction = next(
-                        item
-                        for item in cls.records
-                        if item.id == operation._filter["_id"]
-                    )
+                    doc = operation._doc.get("$set", {})
+                    on_insert = operation._doc.get("$setOnInsert", {})
+                    filter_key = operation._filter
+                    if "_id" in filter_key:
+                        prediction = next(
+                            (
+                                item
+                                for item in cls.records
+                                if item.id == filter_key["_id"]
+                            ),
+                            None,
+                        )
+                    else:
+                        # Natural-key upsert (perf C1/3.3 bulk persistence).
+                        prediction = next(
+                            (
+                                item
+                                for item in cls.records
+                                if matches_query(item, filter_key)
+                            ),
+                            None,
+                        )
+                    if prediction is None:
+                        cls.records.append(cls(**{**on_insert, **doc}))
+                        modified += 1
+                        continue
                     changed = False
-                    for key, value in operation._doc["$set"].items():
+                    for key, value in doc.items():
                         if getattr(prediction, key, None) != value:
                             setattr(prediction, key, value)
                             changed = True
@@ -165,6 +229,7 @@ def scoring_service(calendar):
         model.records = []
     FakePrediction.bulk_calls = []
     FakePrediction.fail_bulk = False
+    FakePrediction.fail_rank_bulk = False
 
     with (
         patch(
@@ -273,11 +338,334 @@ def test_stock_score_prediction_model_shape():
     assert type(StockScorePrediction._fields["input_snapshot"]).__name__ == "DictField"
 
 
+def _service_with_registry(registration=None, **kwargs):
+    """Build a scoring service with a deterministic registry fake."""
+    registry_query = MagicMock()
+    registry_query.first.return_value = registration
+    with (
+        patch(
+            "app.lib.scoring_engine.scoring_service.ScoreModelVersion.objects",
+            return_value=registry_query,
+        ),
+        patch("app.lib.scoring_engine.scoring_service.FinanceMarket.objects") as market,
+    ):
+        market.return_value.first.return_value = MagicMock(trade_calendar=[])
+        service = StockScoringService(
+            stock_model=FakeStock,
+            quote_model=FakeQuote,
+            factor_model=FakeFactor,
+            signal_model=FakeSignal,
+            prediction_model=FakePrediction,
+            **kwargs,
+        )
+    service.calendar = []
+    return service
+
+
+def test_registered_ranked_mode_overrides_legacy_environment(monkeypatch):
+    monkeypatch.setenv("DATAHUB_SCORING_MODE", "raw")
+    service = _service_with_registry(
+        SimpleNamespace(config={}, scoring_mode="ranked"),
+        model_version="registered_ranked",
+    )
+    called = {}
+
+    def fake_ranked(self_obj, **kwargs):
+        called["hit"] = True
+        return {"scored_count": 0}
+
+    monkeypatch.setattr(type(service), "score_all_stocks_ranked", fake_ranked)
+
+    service.score_all_stocks()
+
+    assert service.scoring_mode == "ranked"
+    assert called["hit"] is True
+
+
+def test_runtime_mode_applies_when_registry_mode_is_unpinned(monkeypatch):
+    monkeypatch.setenv("DATAHUB_SCORING_MODE", "raw")
+    service = _service_with_registry(
+        SimpleNamespace(config={}, scoring_mode=None),
+        model_version="registered_unpinned",
+        scoring_mode="ranked",
+    )
+    called = {}
+
+    def fake_ranked(self_obj, **kwargs):
+        called["hit"] = True
+        return {"scored_count": 0}
+
+    monkeypatch.setattr(type(service), "score_all_stocks_ranked", fake_ranked)
+
+    service.score_all_stocks()
+
+    assert service.scoring_mode == "ranked"
+    assert called["hit"] is True
+
+
+def test_runtime_mode_conflict_with_registry_fails_before_scoring():
+    with pytest.raises(ValueError, match="conflicts with registered"):
+        _service_with_registry(
+            SimpleNamespace(config={}, scoring_mode="ranked"),
+            model_version="registered_ranked",
+            scoring_mode="raw",
+        )
+
+
+def test_explicit_config_wins_while_registry_mode_remains_pinned():
+    explicit = {"20": {"directions": {"momentum": -1}}}
+    service = _service_with_registry(
+        SimpleNamespace(
+            config={"20": {"directions": {"momentum": 1}}},
+            scoring_mode="ranked",
+        ),
+        model_version="registered_ranked",
+        scoring_config=explicit,
+    )
+
+    assert service.scoring_config == explicit
+    assert service.scoring_mode == "ranked"
+
+
+def test_named_registry_lookup_failure_fails_closed():
+    with (
+        patch(
+            "app.lib.scoring_engine.scoring_service.ScoreModelVersion.objects",
+            side_effect=RuntimeError("db down"),
+        ),
+        patch("app.lib.scoring_engine.scoring_service.FinanceMarket.objects") as market,
+        pytest.raises(RuntimeError, match="registry lookup failed"),
+    ):
+        market.return_value.first.return_value = MagicMock(trade_calendar=[])
+        StockScoringService(model_version="named_model")
+
+
+def test_default_registry_lookup_failure_keeps_legacy_mode(monkeypatch):
+    monkeypatch.setenv("DATAHUB_SCORING_MODE", "ranked")
+    with (
+        patch(
+            "app.lib.scoring_engine.scoring_service.ScoreModelVersion.objects",
+            side_effect=RuntimeError("db down"),
+        ),
+        patch("app.lib.scoring_engine.scoring_service.FinanceMarket.objects") as market,
+    ):
+        market.return_value.first.return_value = MagicMock(trade_calendar=[])
+        service = StockScoringService()
+
+    assert service.scoring_mode == "ranked"
+
+
+def test_ranked_single_stock_fails_closed_before_write():
+    service = _service_with_registry(
+        SimpleNamespace(config={}, scoring_mode="ranked"),
+        model_version="registered_ranked",
+    )
+    stock = FakeStock(code="sh600000", name="浦发银行", active_status=0)
+
+    with pytest.raises(RuntimeError, match="single-stock scoring requires raw"):
+        service.score_single_stock(
+            stock, datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC), 5
+        )
+
+    assert FakePrediction.records == []
+
+
+def test_direct_ranked_path_cannot_override_pinned_raw_mode():
+    service = _service_with_registry(
+        SimpleNamespace(config={}, scoring_mode="raw"),
+        model_version="registered_raw",
+    )
+
+    with pytest.raises(ValueError, match="conflicts with the effective"):
+        service.score_all_stocks_ranked(
+            date=datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC), horizon=5
+        )
+
+    assert FakePrediction.records == []
+
+
+def test_explicit_raw_mode_controls_snapshot_over_legacy_environment(monkeypatch):
+    monkeypatch.setenv("DATAHUB_SCORING_MODE", "ranked")
+    service = _service_with_registry(
+        None,
+        model_version="unregistered_model",
+        scoring_mode="raw",
+    )
+    stock = FakeStock(code="sh699999", name="无行情测试", active_status=0)
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+
+    prediction = service.score_single_stock(stock, date, 5)
+
+    assert service.scoring_mode == "raw"
+    assert prediction.status == "BLOCKED"
+    assert prediction.input_snapshot["scoring_mode"] == "raw"
+
+
+def test_single_stock_rejects_existing_ranked_snapshot_in_raw_mode():
+    service = _service_with_registry(
+        SimpleNamespace(config={}, scoring_mode="raw"),
+        model_version="registered_raw",
+    )
+    stock = FakeStock(code="sh688888", name="模式冲突", active_status=0)
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records.append(
+        FakePrediction(
+            stock_code=stock.code,
+            date=date,
+            horizon=5,
+            model_version="registered_raw",
+            input_snapshot={"scoring_mode": "ranked"},
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="does not match"):
+        service.score_single_stock(stock, date, 5)
+
+
 def test_get_t_plus_n_day(scoring_service):
     start = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
     assert scoring_service.get_t_plus_n_day(start, 5) == datetime.datetime(
         2026, 4, 17, tzinfo=datetime.UTC
     )
+
+
+def test_get_t_plus_n_day_is_cached_and_tracks_calendar_reassignment():
+    """Cached sorted calendar must not go stale when ``calendar`` is replaced.
+
+    ``get_t_plus_n_day`` runs once per stock per horizon, so the ascending
+    calendar is cached (perf C5/R4). The cache is keyed on the identity of the
+    calendar list, so reassigning ``service.calendar`` (as tests, re-bootstrap
+    and a market refresh do) must be picked up.
+    """
+    calendar_a = [
+        datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC),
+    ]
+    calendar_b = [
+        datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 20, tzinfo=datetime.UTC),
+    ]
+    service = StockScoringService.__new__(StockScoringService)
+    service.calendar = calendar_a
+    service._calendar_cache = None
+
+    start = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    assert service.get_t_plus_n_day(start, 1) == datetime.datetime(
+        2026, 4, 13, tzinfo=datetime.UTC
+    )
+    # Second call reuses the cached list object (no rebuild).
+    cached = service._sorted_calendar()
+    assert service._sorted_calendar() is cached
+
+    service.calendar = calendar_b
+    assert service.get_t_plus_n_day(start, 1) == datetime.datetime(
+        2026, 4, 20, tzinfo=datetime.UTC
+    )
+
+
+def test_get_t_plus_n_day_boundary_semantics():
+    """Non-trading start dates count from the next trading day; overflow clamps."""
+    service = StockScoringService.__new__(StockScoringService)
+    service.calendar = [
+        datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC),
+    ]
+    service._calendar_cache = None
+
+    # Saturday 2026-04-11 is not a trading day: the 1st trading day after it is
+    # Monday 04-13 (the legacy implementation counted from ``day > start_date``).
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 11, tzinfo=datetime.UTC), 1
+    ) == datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC)
+    # Beyond the end of the calendar the last known day is returned.
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC), 60
+    ) == datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC)
+    # n <= 0 is the identity answer (the legacy implementation raised
+    # IndexError for n=0 on a non-trading day, or returned the last day).
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 11, tzinfo=datetime.UTC), 0
+    ) == datetime.datetime(2026, 4, 11, tzinfo=datetime.UTC)
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC), 0
+    ) == datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC)
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC), -3
+    ) == datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC)
+    # Empty calendar falls back to a calendar-day approximation.
+    service.calendar = []
+    service._calendar_cache = None
+    assert service.get_t_plus_n_day(
+        datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC), 2
+    ) == datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC)
+
+
+def _legacy_get_t_plus_n_day(calendar, start_date, n):
+    """The pre-cache implementation, kept verbatim as the differential oracle.
+
+    ``get_t_plus_n_day`` is the highest-risk part of the perf change (it runs
+    once per stock per horizon), so the bisect rewrite is pinned against the
+    original linear scan rather than against a handful of hand-picked dates.
+    """
+    start_date = normalize_date(start_date)
+    if not calendar:
+        return start_date + datetime.timedelta(days=round(n * 1.5))
+    sorted_cal = sorted(normalize_date(day) for day in calendar)
+    try:
+        start_idx = sorted_cal.index(start_date)
+        target_idx = start_idx + n
+        if target_idx < len(sorted_cal):
+            return sorted_cal[target_idx]
+        return sorted_cal[-1]
+    except ValueError:
+        future_days = [day for day in sorted_cal if day > start_date]
+        if len(future_days) >= n:
+            return future_days[n - 1]
+        return sorted_cal[-1]
+
+
+def test_get_t_plus_n_day_matches_legacy_scan_on_random_calendars():
+    """Randomized differential test: bisect == legacy linear scan for n >= 1."""
+    import random
+
+    rng = random.Random(20260913)
+    service = StockScoringService.__new__(StockScoringService)
+    checked = 0
+    for _ in range(60):
+        size = rng.randint(1, 40)
+        calendar = []
+        day = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        for _ in range(size):
+            day += datetime.timedelta(days=rng.choice([1, 1, 1, 2, 3, 5, 9]))
+            # Occasionally a non-midnight stamp and/or a duplicated day.
+            hour = rng.choice([0, 0, 0, 0, 15])
+            calendar.append(day + datetime.timedelta(hours=hour))
+        if rng.random() < 0.5:
+            rng.shuffle(calendar)
+        if rng.random() < 0.25:
+            calendar.append(calendar[0])
+
+        service.calendar = calendar
+        service._calendar_cache = None
+        probes = [
+            datetime.datetime(2025, 12, 1, tzinfo=datetime.UTC),  # before range
+            datetime.datetime(2030, 1, 1, tzinfo=datetime.UTC),  # after range
+        ]
+        probes += [normalize_date(rng.choice(calendar)) for _ in range(4)]
+        # A day guaranteed absent from the calendar.
+        probes.append(datetime.datetime(2026, 6, 14, tzinfo=datetime.UTC))
+        for probe in probes:
+            for n in (1, 2, 5, 20, 60, 5000):
+                expected = _legacy_get_t_plus_n_day(calendar, probe, n)
+                assert service.get_t_plus_n_day(probe, n) == expected, (
+                    probe,
+                    n,
+                    calendar,
+                )
+                checked += 1
+    assert checked >= 1000
 
 
 def test_score_single_stock_creates_horizon_prediction(scoring_service):
@@ -320,6 +708,8 @@ def test_score_all_stocks_generates_all_horizons_and_ranks(scoring_service):
 def test_complete_raw_cohort_rerun_skips_before_component_reads(
     scoring_service, monkeypatch
 ):
+    import app.lib.scoring_engine.scoring_service as scoring_module
+
     seed_stock()
     date = seed_quotes()
     seed_factors_and_signal(date)
@@ -329,7 +719,11 @@ def test_complete_raw_cohort_rerun_skips_before_component_reads(
     def fail_if_scored(*args, **kwargs):
         raise AssertionError("complete cohort must skip per-stock scoring")
 
+    def fail_if_prefetched(*args, **kwargs):
+        raise AssertionError("complete cohort must skip the per-day prefetch")
+
     monkeypatch.setattr(scoring_service, "score_single_stock", fail_if_scored)
+    monkeypatch.setattr(scoring_module, "_DayPrefetch", fail_if_prefetched)
     result = scoring_service.score_all_stocks(date=date, horizon=5)
 
     assert result["skipped_complete_horizons"] == [5]
@@ -363,20 +757,33 @@ def test_complete_gate_does_not_override_dry_run_or_replace(
     date = seed_quotes()
     seed_factors_and_signal(date)
     scoring_service.score_all_stocks(date=date, horizon=5)
+    written = []
+    original_bulk = scoring_service._persist_predictions_bulk
+
+    def recording_bulk(writes):
+        written.append(list(writes))
+        return original_bulk(writes)
+
     calls = []
-    original = scoring_service.score_single_stock
+    original_build = scoring_service._build_raw_prediction_payload
 
-    def recording_score(*args, **kwargs):
+    def recording_build(*args, **kwargs):
         calls.append(kwargs)
-        return original(*args, **kwargs)
+        return original_build(*args, **kwargs)
 
-    monkeypatch.setattr(scoring_service, "score_single_stock", recording_score)
+    monkeypatch.setattr(scoring_service, "_persist_predictions_bulk", recording_bulk)
+    monkeypatch.setattr(
+        scoring_service, "_build_raw_prediction_payload", recording_build
+    )
     scoring_service.score_all_stocks(date=date, horizon=5, dry_run=True)
+    assert len(calls) == 1
+    assert all(not batch for batch in written)  # dry_run never writes
+
     scoring_service.score_all_stocks(date=date, horizon=5, replace=True)
 
     assert len(calls) == 2
-    assert calls[0]["dry_run"] is True
-    assert calls[1]["replace"] is True
+    persisted_batches = [batch for batch in written if batch]
+    assert len(persisted_batches) == 1  # replace rewrites through the bulk path
     assert FakePrediction.records[0].stock_code == stock.code
 
 
@@ -389,13 +796,15 @@ def test_complete_gate_is_per_horizon(scoring_service, monkeypatch):
         prediction for prediction in FakePrediction.records if prediction.horizon != 20
     ]
     called_horizons = []
-    original = scoring_service.score_single_stock
+    original = scoring_service._build_raw_prediction_payload
 
-    def recording_score(stock, run_date, horizon, **kwargs):
+    def recording_build(stock, run_date, horizon, *args, **kwargs):
         called_horizons.append(horizon)
-        return original(stock, run_date, horizon, **kwargs)
+        return original(stock, run_date, horizon, *args, **kwargs)
 
-    monkeypatch.setattr(scoring_service, "score_single_stock", recording_score)
+    monkeypatch.setattr(
+        scoring_service, "_build_raw_prediction_payload", recording_build
+    )
     result = scoring_service.score_all_stocks(date=date)
 
     assert result["skipped_complete_horizons"] == [5, 60]
@@ -511,6 +920,183 @@ def test_assign_ranks_uses_stock_code_as_stable_tie_break(scoring_service):
     assert later_code.rank == 2
 
 
+def test_assign_ranks_in_memory_excludes_blocked(scoring_service):
+    """Perf 2.6 + spec: the in-memory predictions branch must exclude BLOCKED
+    rows so they never receive ranks nor shift cohort percentiles (parity with
+    the DB branch's status__ne: BLOCKED)."""
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    good = FakePrediction(
+        stock_code="sh600000",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=80.0,
+    )
+    blocked = FakePrediction(
+        stock_code="sh600001",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="BLOCKED",
+        score=0.0,
+    )
+    FakePrediction.records.extend([good, blocked])
+    # BLOCKED row must not be ranked and must not dilute the denominator.
+    scoring_service.assign_ranks(date, 5, predictions=[good, blocked])
+
+    assert good.rank == 1
+    assert good.percentile == 1.0
+    assert getattr(blocked, "rank", None) is None
+    assert getattr(blocked, "percentile", None) is None
+
+
+def test_assign_ranks_in_memory_mutates_passed_objects(scoring_service, monkeypatch):
+    """Perf C5 remainder: the in-memory branch must set rank/percentile on the
+    caller-provided objects itself (real mongoengine bulk_write never mutates
+    loaded docs), so downstream tail steps can reuse the list without a cohort
+    re-read."""
+    from types import SimpleNamespace
+
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    p1 = FakePrediction(
+        stock_code="sh600000",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=80.0,
+    )
+    p2 = FakePrediction(
+        stock_code="sh600001",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=70.0,
+    )
+    FakePrediction.records.extend([p1, p2])
+    # no-op bulk_write: emulates real mongoengine (does not mutate docs)
+    monkeypatch.setattr(
+        FakePrediction,
+        "_get_collection",
+        classmethod(
+            lambda cls: SimpleNamespace(
+                bulk_write=lambda operations, ordered=False: SimpleNamespace(
+                    modified_count=len(operations)
+                )
+            )
+        ),
+    )
+
+    scoring_service.assign_ranks(date, 5, predictions=[p1, p2])
+
+    assert p1.rank == 1
+    assert p1.percentile == 1.0
+    assert p2.rank == 2
+    assert p2.percentile == 0.5
+
+
+def test_upgrade_recommendations_in_memory_skips_db_read(scoring_service, monkeypatch):
+    """Perf C5 remainder: _upgrade_recommendations(predictions=...) must not
+    re-read the cohort from Mongo; it recomputes from the passed objects and
+    mirrors the updates onto them (rank/percentile set by assign_ranks)."""
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+
+    def boom(*args, **kwargs):
+        raise AssertionError(
+            "_upgrade_recommendations must not re-read the cohort from Mongo"
+        )
+
+    monkeypatch.setattr(FakePrediction, "objects", boom)
+    p1 = FakePrediction(
+        stock_code="sh600000",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=95.0,
+        percentile=0.97,
+        recommendation="WATCH",  # wrong: top band -> BUY
+    )
+    p2 = FakePrediction(
+        stock_code="sh600001",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=40.0,
+        percentile=0.10,
+        recommendation="NONE",  # wrong: bottom band -> AVOID
+    )
+    FakePrediction.records.extend([p1, p2])
+
+    scoring_service._upgrade_recommendations(
+        date, 5, expected_codes=["sh600000", "sh600001"], predictions=[p1, p2]
+    )
+
+    assert p1.recommendation == "BUY"
+    assert p2.recommendation == "AVOID"
+    assert FakePrediction.bulk_calls
+    assert {op._filter["_id"] for op in FakePrediction.bulk_calls[0][0]} == {
+        p1.id,
+        p2.id,
+    }
+
+
+def test_verify_predictions_projects_only_needed_fields(scoring_service, monkeypatch):
+    """Perf C6 remainder: verify_predictions' candidate query must .only() the
+    fields verification touches instead of hydrating full prediction docs."""
+    from app.lib.scoring_engine.verification_service import ScoreVerificationService
+
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    target = datetime.datetime(2026, 4, 17, tzinfo=datetime.UTC)
+    due = FakePrediction(
+        stock_code="sh600000",
+        date=date,
+        horizon=5,
+        model_version=scoring_service.model_version,
+        status="PENDING",
+        score=80.0,
+        base_price=10.0,
+        target_date=target,
+        verification={},
+    )
+    FakePrediction.records.append(due)
+    captured = {}
+    original_objects = FakePrediction.objects.__func__
+
+    def spy_objects(cls, **query):
+        queryset = original_objects(cls, **query)
+        original_only = queryset.only
+
+        def spy_only(*fields):
+            captured["fields"] = fields
+            return original_only(*fields)
+
+        queryset.only = spy_only
+        return queryset
+
+    monkeypatch.setattr(FakePrediction, "objects", classmethod(spy_objects))
+    svc = ScoreVerificationService(
+        quote_model=FakeQuote,
+        prediction_model=FakePrediction,
+        model_version=scoring_service.model_version,
+    )
+    svc.verify_predictions(today=datetime.datetime(2026, 4, 20, tzinfo=datetime.UTC))
+
+    assert "fields" in captured
+    assert {
+        "stock_code",
+        "date",
+        "horizon",
+        "base_price",
+        "status",
+        "target_date",
+        "verification",
+    }.issubset(set(captured["fields"]))
+
+
 def test_legacy_blocked_fields_are_repaired_then_fast_skipped(scoring_service):
     stock = seed_stock()
     date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
@@ -594,6 +1180,57 @@ def test_inactive_extra_prediction_does_not_affect_active_cohort(
 def test_rank_bulk_failure_propagates_before_recommendations(
     scoring_service, monkeypatch
 ):
+    """The prediction upserts succeed, then the rank bulk fails: the failure
+    must propagate and recommendation finalization must not run."""
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    FakePrediction.fail_rank_bulk = True
+    recommendation_called = False
+
+    def mark_recommendation(*args, **kwargs):
+        nonlocal recommendation_called
+        recommendation_called = True
+
+    monkeypatch.setattr(
+        scoring_service, "_upgrade_recommendations", mark_recommendation
+    )
+
+    with pytest.raises(RuntimeError, match="rank bulk failed"):
+        scoring_service.score_all_stocks(date=date, horizon=5)
+
+    assert recommendation_called is False
+    assert FakePrediction.records  # the prediction upsert did commit first
+
+
+def test_ranked_rank_bulk_failure_propagates_before_recommendations(
+    scoring_service, monkeypatch
+):
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    FakePrediction.fail_rank_bulk = True
+    recommendation_called = False
+
+    def mark_recommendation(*args, **kwargs):
+        nonlocal recommendation_called
+        recommendation_called = True
+
+    monkeypatch.setattr(
+        scoring_service, "_upgrade_recommendations", mark_recommendation
+    )
+
+    with pytest.raises(RuntimeError, match="rank bulk failed"):
+        scoring_service.score_all_stocks_ranked(date=date, horizon=5)
+
+    assert recommendation_called is False
+
+
+def test_prediction_bulk_failure_propagates_before_recommendations(
+    scoring_service, monkeypatch
+):
+    """A failed batch upsert is a horizon failure: it propagates immediately
+    instead of being downgraded to a per-code scoring error."""
     seed_stock()
     date = seed_quotes()
     seed_factors_and_signal(date)
@@ -727,6 +1364,207 @@ def test_verification_transitions_to_verified(scoring_service):
     assert prediction.verification["hit_target_intra"] is True
 
 
+def test_verification_batch_matches_single_and_uses_one_quote_query(
+    scoring_service, monkeypatch
+):
+    """Perf 2.7: batch verification must produce the same statuses as the
+    single-prediction path while fetching future quotes once per stock code
+    (not once per prediction)."""
+    import datetime
+
+    stock = seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    service = ScoreVerificationService(
+        quote_model=FakeQuote, prediction_model=FakePrediction
+    )
+
+    # Create two due predictions (horizon 5) for the same stock.
+    preds = []
+    for pdate in (
+        datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC),
+    ):
+        p = FakePrediction(
+            stock_code=stock.code,
+            stock_name=stock.name,
+            date=pdate,
+            horizon=5,
+            model_version=service.model_version,
+            status="PENDING",
+            score=50.0,
+            base_price=10.0,
+            target_date=datetime.datetime(2026, 4, 20, tzinfo=datetime.UTC),
+            verification={
+                "status": "PENDING",
+                "target_date": "2026-04-20",
+                "expected_quote_count": 5,
+                "verified_quote_count": 0,
+            },
+        )
+        FakePrediction.records.append(p)
+        preds.append(p)
+
+    for idx in range(1, 8):
+        FakeQuote.records.append(
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 13 + idx - 1, tzinfo=datetime.UTC),
+                close=10.0 + idx * 0.2,
+                high=10.1 + idx * 0.2,
+                low=9.9,
+            )
+        )
+
+    quote_queries = []
+
+    original_objects = FakeQuote.objects.__func__
+
+    def counting_objects(cls, **query):
+        if "code" in query:
+            quote_queries.append(query.get("code"))
+        return original_objects(cls, **query)
+
+    monkeypatch.setattr(FakeQuote, "objects", classmethod(counting_objects))
+
+    result = service.verify_predictions_batch(
+        preds, today=datetime.datetime(2026, 4, 25, tzinfo=datetime.UTC)
+    )
+
+    assert result["checked_count"] == 2
+    assert result["status_counts"]["VERIFIED"] == 2
+    # one quote query for the single distinct stock code
+    assert len(quote_queries) == 1
+    refreshed = [FakePrediction.records[-2], FakePrediction.records[-1]]
+    assert all(p.status == "VERIFIED" for p in refreshed)
+    assert all(p.verification["verified_quote_count"] >= 5 for p in refreshed)
+
+
+def test_verification_batch_caps_window_at_each_target_date(scoring_service):
+    """Perf 2.7 P1 regression: with two due candidates of one code at
+    staggered target dates, each prediction must only count quotes within its
+    OWN (date, target_date] window. The earlier prediction must not absorb
+    quotes that belong to the later prediction's window."""
+    import datetime
+
+    stock = seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    service = ScoreVerificationService(
+        quote_model=FakeQuote, prediction_model=FakePrediction
+    )
+
+    def make_pred(pdate, target):
+        p = FakePrediction(
+            stock_code=stock.code,
+            stock_name=stock.name,
+            date=pdate,
+            horizon=5,
+            model_version=service.model_version,
+            status="PENDING",
+            score=50.0,
+            base_price=10.0,
+            target_date=target,
+            verification={
+                "status": "PENDING",
+                "target_date": target.isoformat(),
+                "expected_quote_count": 5,
+                "verified_quote_count": 0,
+            },
+        )
+        FakePrediction.records.append(p)
+        return p
+
+    # Candidate A: scored 04-10, target 04-17 (needs 5 quotes by 04-17).
+    # Candidate B: scored 04-14, target 04-22 (later window).
+    d1 = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    d2 = datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC)
+    pred_a = make_pred(d1, datetime.datetime(2026, 4, 17, tzinfo=datetime.UTC))
+    pred_b = make_pred(d2, datetime.datetime(2026, 4, 22, tzinfo=datetime.UTC))
+
+    # Trading quotes 04-13..04-22: A's window is 04-13..04-17 (5 quotes);
+    # 04-20..04-22 belong ONLY to B's window and must not leak into A.
+    FakeQuote.records.extend(
+        [
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 13, tzinfo=datetime.UTC),
+                close=10.1,
+                high=10.2,
+                low=9.9,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 14, tzinfo=datetime.UTC),
+                close=10.2,
+                high=10.3,
+                low=9.8,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 15, tzinfo=datetime.UTC),
+                close=10.3,
+                high=10.4,
+                low=9.7,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 16, tzinfo=datetime.UTC),
+                close=10.4,
+                high=10.5,
+                low=9.6,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 17, tzinfo=datetime.UTC),
+                close=10.5,
+                high=10.6,
+                low=9.5,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 20, tzinfo=datetime.UTC),
+                close=10.6,
+                high=10.7,
+                low=9.4,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 21, tzinfo=datetime.UTC),
+                close=10.7,
+                high=10.8,
+                low=9.3,
+            ),
+            FakeQuote(
+                code=stock.code,
+                date=datetime.datetime(2026, 4, 22, tzinfo=datetime.UTC),
+                close=10.8,
+                high=10.9,
+                low=9.2,
+            ),
+        ]
+    )
+
+    service.verify_predictions_batch(
+        [pred_a, pred_b],
+        today=datetime.datetime(2026, 4, 25, tzinfo=datetime.UTC),
+    )
+
+    a = next(
+        p for p in FakePrediction.records if p.stock_code == stock.code and p.date == d1
+    )
+    b = next(
+        p for p in FakePrediction.records if p.stock_code == stock.code and p.date == d2
+    )
+    # A: exactly 5 quotes (04-13..04-17) == horizon -> VERIFIED, NOT 8
+    # (no absorption of B's 04-20..04-22 window).
+    assert a.status == "VERIFIED"
+    assert a.verification["verified_quote_count"] == 5
+    # B: 6 quotes (04-15..04-22) >= horizon -> VERIFIED.
+    assert b.status == "VERIFIED"
+    assert b.verification["verified_quote_count"] == 6
+
+
 def test_replay_backfills_trading_dates(scoring_service):
     seed_stock()
     date = seed_quotes()
@@ -743,6 +1581,37 @@ def test_replay_backfills_trading_dates(scoring_service):
 
     assert result["date_count"] == 1
     assert result["scored_count"] == 1
+
+
+def test_replay_backfill_makes_one_call_per_date_for_all_horizons(
+    scoring_service, monkeypatch
+):
+    """Perf C1 remainder: a multi-horizon backfill must build the per-day
+    prefetch once per date, not once per (date, horizon)."""
+    seed_stock()
+    date = seed_quotes()
+    seed_factors_and_signal(date)
+    calls = []
+    original = scoring_service.score_all_stocks
+
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(scoring_service, "score_all_stocks", spy)
+    replay = ScoreReplayService(scoring_service=scoring_service)
+
+    result = replay.backfill_predictions(
+        start_date=date,
+        end_date=date,
+        horizon=None,
+        dry_run=True,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["horizon"] is None
+    assert result["horizons"] == [5, 20, 60]
+    assert result["scored_count"] == 3
 
 
 def test_calibration_report_summarizes_verified_predictions():
@@ -805,9 +1674,363 @@ def test_calibration_report_summarizes_verified_predictions():
     )
 
     assert report["prediction_count"] == 2
+    assert report["bucket_basis"] == "score"
     assert report["top_n"]["top_10"]["count"] == 2
     assert report["component_summary"]["signal_strength"]["count"] == 1
     assert report["false_negatives"][0]["stock_code"] == "sh600001"
+
+
+def test_calibration_report_uses_percentiles_for_signed_scores():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            stock_name="浦发银行",
+            date=date,
+            horizon=20,
+            model_version="flip_v1",
+            status="VERIFIED",
+            score=-10.0,
+            percentile=0.9,
+            rank=1,
+            recommendation="BUY",
+            verification={"return_at_target": -0.01, "max_return": 0.02},
+            explanation={"components": []},
+        ),
+        FakePrediction(
+            stock_code="sh600001",
+            stock_name="测试股票",
+            date=date,
+            horizon=20,
+            model_version="flip_v1",
+            status="VERIFIED",
+            score=-90.0,
+            percentile=0.1,
+            rank=2,
+            recommendation="AVOID",
+            verification={"return_at_target": 0.01, "max_return": 0.09},
+            explanation={"components": []},
+        ),
+    ]
+
+    report = ScoreCalibrationReport(
+        prediction_model=FakePrediction,
+        model_version="flip_v1",
+    ).generate(date, date, 20)
+
+    assert report["bucket_basis"] == "percentile"
+    assert report["distribution"]["count"] == 2
+    assert report["distribution"]["min"] == 10.0
+    assert report["distribution"]["max"] == 90.0
+    assert report["score_buckets"][0]["count"] == 1
+    assert report["score_buckets"][-1]["count"] == 1
+    assert report["false_positives"][0]["stock_code"] == "sh600000"
+    assert report["false_negatives"][0]["stock_code"] == "sh600001"
+    assert "percentile" in report["negative_score_warning"]
+
+
+def test_calibration_report_rejects_signed_scores_without_percentiles():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            stock_name="浦发银行",
+            date=date,
+            horizon=20,
+            model_version="flip_v1",
+            status="VERIFIED",
+            score=-10.0,
+            rank=1,
+            recommendation="BUY",
+            verification={},
+            explanation={"components": []},
+        )
+    ]
+
+    with pytest.raises(ValueError, match="percentile"):
+        ScoreCalibrationReport(
+            prediction_model=FakePrediction,
+            model_version="flip_v1",
+        ).generate(date, date, 20)
+
+
+@pytest.mark.parametrize("percentile", [float("nan"), float("inf"), -0.1, 1.1, True])
+def test_calibration_report_rejects_invalid_percentiles(percentile):
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            stock_name="浦发银行",
+            date=date,
+            horizon=20,
+            model_version="flip_v1",
+            status="VERIFIED",
+            score=-10.0,
+            percentile=percentile,
+            rank=1,
+            recommendation="BUY",
+            verification={},
+            explanation={"components": []},
+        )
+    ]
+
+    with pytest.raises(ValueError, match=r"finite number in \[0, 1\]"):
+        ScoreCalibrationReport(
+            prediction_model=FakePrediction,
+            model_version="flip_v1",
+        ).generate(date, date, 20)
+
+
+def test_calibration_report_uses_config_for_positive_only_flipped_window():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            stock_name="浦发银行",
+            date=date,
+            horizon=20,
+            model_version="partial_flip_v1",
+            status="VERIFIED",
+            score=10.0,
+            percentile=0.9,
+            rank=1,
+            recommendation="BUY",
+            verification={},
+            explanation={"components": []},
+        )
+    ]
+
+    report = ScoreCalibrationReport(
+        prediction_model=FakePrediction,
+        model_version="partial_flip_v1",
+        scoring_config={"20": {"directions": {"momentum": -1}}},
+    ).generate(date, date, 20)
+
+    assert report["bucket_basis"] == "percentile"
+    assert report["score_buckets"][-1]["count"] == 1
+
+
+def test_calibration_report_empty_config_falls_back_to_registry(monkeypatch):
+    """An experiment row with empty config must resolve the registered flipped
+    config (mirrors StockScoringService + backend), so a positive-only window of
+    a registered flipped version is not silently mis-bucketed by raw score."""
+    import app.lib.scoring_engine.calibration_report as calibration_module
+
+    class RegisteredVersion:
+        config = {"20": {"directions": {"momentum": -1}}}
+
+    class FakeRegistryModel:
+        @classmethod
+        def objects(cls, **query):
+            return FakeQuerySet([RegisteredVersion()])
+
+    # Reports only consult the registry when prediction_model is the real
+    # StockScorePrediction; pin module-level identity to the fake for this test.
+    monkeypatch.setattr(calibration_module, "StockScorePrediction", FakePrediction)
+    monkeypatch.setattr(calibration_module, "ScoreModelVersion", FakeRegistryModel)
+
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            stock_name="浦发银行",
+            date=date,
+            horizon=20,
+            model_version="registered_flip_v1",
+            status="VERIFIED",
+            score=10.0,
+            percentile=0.9,
+            rank=1,
+            recommendation="BUY",
+            verification={},
+            explanation={"components": []},
+        )
+    ]
+
+    report = ScoreCalibrationReport(
+        prediction_model=FakePrediction,
+        model_version="registered_flip_v1",
+        scoring_config={},  # empty -> must fall back to the registered config
+    ).generate(date, date, 20)
+
+    assert report["bucket_basis"] == "percentile"
+    assert report["score_buckets"][-1]["count"] == 1
+
+
+def test_comparison_report_aligns_signed_and_default_models_by_percentile():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    common = {
+        "stock_name": "测试股票",
+        "date": date,
+        "horizon": 20,
+        "status": "VERIFIED",
+        "rank": 1,
+        "recommendation": "BUY",
+        "verification": {"return_at_target": 0.01, "max_return": 0.02},
+    }
+    FakePrediction.records = [
+        FakePrediction(
+            stock_code="sh600000",
+            model_version="flip_v1",
+            score=-10.0,
+            percentile=0.9,
+            **common,
+        ),
+        FakePrediction(
+            stock_code="sh600000",
+            model_version="baseline_v1",
+            score=80.0,
+            percentile=0.9,
+            **common,
+        ),
+    ]
+
+    report = ExperimentComparisonReport(prediction_model=FakePrediction).compare(
+        "flip_v1", "baseline_v1", date, date, 20
+    )
+
+    assert report["comparison_basis"] == "percentile"
+    assert report["candidate"]["bucket_basis"] == "percentile"
+    assert report["baseline"]["bucket_basis"] == "percentile"
+    assert report["candidate"]["score_buckets"][-1]["count"] == 1
+    assert report["baseline"]["score_buckets"][-1]["count"] == 1
+    assert report["deltas"]["avg_score"] is None
+
+
+def test_comparison_report_preserves_score_basis_for_default_models():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    common = {
+        "stock_code": "sh600000",
+        "stock_name": "测试股票",
+        "date": date,
+        "horizon": 20,
+        "status": "VERIFIED",
+        "rank": 1,
+        "recommendation": "BUY",
+        "verification": {"return_at_target": 0.01, "max_return": 0.02},
+    }
+    FakePrediction.records = [
+        FakePrediction(model_version="candidate_v1", score=80.0, **common),
+        FakePrediction(model_version="baseline_v1", score=70.0, **common),
+    ]
+
+    report = ExperimentComparisonReport(prediction_model=FakePrediction).compare(
+        "candidate_v1", "baseline_v1", date, date, 20
+    )
+
+    assert report["comparison_basis"] == "score"
+    assert report["candidate"]["bucket_basis"] == "score"
+    assert report["deltas"]["avg_score"] == 10.0
+
+
+def test_comparison_report_uses_config_for_positive_only_flipped_window():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    common = {
+        "stock_code": "sh600000",
+        "stock_name": "测试股票",
+        "date": date,
+        "horizon": 20,
+        "status": "VERIFIED",
+        "rank": 1,
+        "recommendation": "BUY",
+        "verification": {"return_at_target": 0.01, "max_return": 0.02},
+    }
+    FakePrediction.records = [
+        FakePrediction(
+            model_version="partial_flip_v1",
+            score=10.0,
+            percentile=0.9,
+            **common,
+        ),
+        FakePrediction(
+            model_version="baseline_v1",
+            score=80.0,
+            percentile=0.9,
+            **common,
+        ),
+    ]
+
+    report = ExperimentComparisonReport(prediction_model=FakePrediction).compare(
+        "partial_flip_v1",
+        "baseline_v1",
+        date,
+        date,
+        20,
+        candidate_config={"20": {"directions": {"momentum": -1}}},
+        baseline_config={},
+    )
+
+    assert report["comparison_basis"] == "percentile"
+    assert report["deltas"]["avg_score"] is None
+
+
+def test_comparison_report_marks_empty_cohort_insufficient():
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    FakePrediction.records = []
+
+    report = ExperimentComparisonReport(prediction_model=FakePrediction).compare(
+        "candidate_v1", "baseline_v1", date, date, 20
+    )
+
+    assert report["comparison_status"] == "insufficient_data"
+    assert report["verdict"] == "Insufficient verified data for comparison."
+
+
+def test_comparison_report_empty_config_falls_back_to_registry(monkeypatch):
+    """Candidate with empty config must resolve the registered flipped config so
+    a positive-only flipped window is still compared on the percentile basis."""
+    import app.lib.scoring_engine.comparison_report as comparison_module
+
+    class RegisteredVersion:
+        config = {"20": {"directions": {"momentum": -1}}}
+
+    class FakeRegistryModel:
+        @classmethod
+        def objects(cls, **query):
+            return FakeQuerySet([RegisteredVersion()])
+
+    monkeypatch.setattr(comparison_module, "StockScorePrediction", FakePrediction)
+    monkeypatch.setattr(comparison_module, "ScoreModelVersion", FakeRegistryModel)
+
+    date = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+    common = {
+        "stock_code": "sh600000",
+        "stock_name": "测试股票",
+        "date": date,
+        "horizon": 20,
+        "status": "VERIFIED",
+        "rank": 1,
+        "recommendation": "BUY",
+        "verification": {"return_at_target": 0.01, "max_return": 0.02},
+    }
+    FakePrediction.records = [
+        FakePrediction(
+            model_version="registered_flip_v1",
+            score=10.0,
+            percentile=0.9,
+            **common,
+        ),
+        FakePrediction(
+            model_version="baseline_v1",
+            score=80.0,
+            percentile=0.9,
+            **common,
+        ),
+    ]
+
+    report = ExperimentComparisonReport(prediction_model=FakePrediction).compare(
+        "registered_flip_v1",
+        "baseline_v1",
+        date,
+        date,
+        20,
+        candidate_config={},  # empty -> falls back to the registered config
+        baseline_config={},
+    )
+
+    assert report["comparison_basis"] == "percentile"
+    assert report["candidate"]["bucket_basis"] == "percentile"
+    assert report["deltas"]["avg_score"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -1152,6 +2375,87 @@ class TestScoreAllStocksRankedEndToEnd:
 
         with pytest.raises(RuntimeError, match="membership changed"):
             scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+
+    def test_ranked_tail_assigns_ranks_from_in_memory_results(
+        self, scoring_service, monkeypatch
+    ):
+        """Perf 2.6: the legacy ranked tail must assign ranks/percentiles from
+        the in-memory persisted objects. Ranks are 1..N over non-BLOCKED rows
+        and BLOCKED rows carry no rank. (The default batch path reads the
+        persisted cohort instead; its ranking is covered by
+        test_scoring_batch_equivalence.py.)"""
+        import datetime
+
+        scoring_service.batch_prefetch = False
+        self._seed_cohort(scoring_service)
+        d = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+
+        preds = list(scoring_service.prediction_model.records)
+        blocked = [p for p in preds if p.stock_code == "sh600099"]
+        scored = [p for p in preds if p.status != "BLOCKED"]
+        assert len(blocked) == 1
+        assert (
+            getattr(blocked[0], "rank", None) is None
+            and getattr(blocked[0], "percentile", None) is None
+        )
+        assert all(
+            getattr(p, "rank", None) is not None
+            and getattr(p, "percentile", None) is not None
+            for p in scored
+        )
+        ranks = sorted(p.rank for p in scored)
+        assert ranks == list(range(1, len(scored) + 1))
+
+    def test_ranked_repair_counts_stored_blocked_row_in_completeness(
+        self, scoring_service, monkeypatch
+    ):
+        """Regression (perf 2.6/2.7 review): a replace=False partial-cohort
+        repair must not hard-fail when a stock with a STORED BLOCKED
+        prediction becomes scorable (quote data corrected between runs).
+        The in-memory completeness set must count the skipped existing
+        BLOCKED row's code (any-status DB semantics), while ranking stays
+        non-BLOCKED-only: the row remains BLOCKED, unranked, healed."""
+        import datetime
+
+        from app.test.test_scoring_service import (
+            FakePrediction,
+            seed_quotes,
+        )
+
+        self._seed_cohort(scoring_service)
+        monkeypatch.delenv("DATAHUB_SCORING_MODE", raising=False)
+        d = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+
+        # run 1: full cohort — sh600099 has no quote -> stored BLOCKED row
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+        stored = [p for p in FakePrediction.records if p.stock_code == "sh600099"]
+        assert len(stored) == 1
+        assert stored[0].status == "BLOCKED"
+        # make it legacy-dirty: stale rank artifacts from the pre-fix era
+        stored[0].rank = 1
+        stored[0].percentile = 1.0
+        stored[0].recommendation = "BUY"
+
+        # data corrected between runs: sh600099 now has a quote on the
+        # scoring date, and another code's row is dropped (partial cohort)
+        seed_quotes(stock_code="sh600099")
+        FakePrediction.records = [
+            p for p in FakePrediction.records if p.stock_code != "sh600001"
+        ]
+
+        # run 2 (replace=False): must succeed — no "cohort incomplete" raise
+        scoring_service.score_all_stocks_ranked(date=d, horizon=5)
+
+        blocked = [p for p in FakePrediction.records if p.stock_code == "sh600099"]
+        assert len(blocked) == 1
+        assert blocked[0].status == "BLOCKED"
+        assert getattr(blocked[0], "rank", None) is None
+        assert getattr(blocked[0], "percentile", None) is None
+        assert blocked[0].recommendation == "NONE"
+        scored = [p for p in FakePrediction.records if p.status != "BLOCKED"]
+        ranks = sorted(p.rank for p in scored)
+        assert ranks == list(range(1, len(scored) + 1))
 
 
 class TestRankedPenaltyDirection:

@@ -1,0 +1,29 @@
+# Factor-lab research panel (example).
+#
+# The factor lab freezes stock_daily_quote into a single parquet panel and then
+# evaluates factors against it. The panel is ~0.4 GB for 2024-2026 and ~1.2 GB
+# for 2019-2026; keeping it on a PVC means a pod restart no longer throws the
+# export away, and export/evaluate can run as ordinary batch Jobs
+# (see k8s/base/factor-lab-jobs.example.yaml).
+#
+# Research-only: nothing in the deployed datahub service reads this claim, so it
+# is deliberately kept out of k8s/base/kustomization.yaml. Apply it in the
+# research namespace by hand.
+#
+# The panel is regenerable from Mongo, so a Delete-reclaim StorageClass is
+# acceptable here; use a Retain class if a snapshot must outlive the claim.
+# ReadWriteOnce: export and evaluate must not run at the same time.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: factor-lab-panel
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: factor-lab
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi

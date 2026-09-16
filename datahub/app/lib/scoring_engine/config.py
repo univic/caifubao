@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import hashlib
+import json
 from copy import deepcopy
 
 SUPPORTED_HORIZONS = (5, 20, 60)
@@ -122,4 +124,52 @@ def get_effective_horizon_config(
 
     if isinstance(weights_override, dict):
         config["weights"].update(weights_override)
+
+    # Component direction override. Each horizon's components default to
+    # positive (higher raw value -> higher score) and penalties to negative
+    # (higher raw penalty -> lower score). An override can flip any component
+    # or penalty to -1/0/+1 (e.g. construction-layer reversal for candidates
+    # whose cross-sectional IC is negative, like the research flip_wide).
+    # The resolved per-component direction map is stored under "directions":
+    # {"component_id": +1|-1|0, ...}. Values missing from the override keep
+    # their default polarity (component +1, penalty -1).
+    directions_override = horizon_override.get("directions")
+    if directions_override is not None and not isinstance(directions_override, dict):
+        raise ValueError(
+            f"directions override must be a dict, got {type(directions_override).__name__}"
+        )
+    if isinstance(directions_override, dict):
+        allowed = set(config.get("weights", {}).keys())
+        unknown = set(map(str, directions_override)) - allowed
+        if unknown:
+            raise ValueError(
+                "direction override keys must be scored components/penalties; "
+                f"got {sorted(unknown)}"
+            )
+        # Validate raw values BEFORE coercing so e.g. 0.5 does not silently
+        # truncate to 0 and bools (subclass of int) do not pass as ints.
+        for value in directions_override.values():
+            if isinstance(value, bool) or value not in (-1, 0, 1):
+                raise ValueError("component directions must be -1, 0, or 1")
+        resolved = {}
+        for key in allowed:
+            default = -1 if key == "risk_penalty" else 1
+            raw = directions_override.get(key)
+            resolved[key] = default if raw is None else int(raw)
+        config["directions"] = resolved
+
     return config
+
+
+def model_config_hash(config: dict) -> str:
+    """Canonical sha256 of a per-horizon scoring override dict.
+
+    Keys are sorted recursively so semantically equal configs hash equal
+    regardless of insertion order. Used by the model-version registry to pin
+    an immutable configuration.
+    """
+    return hashlib.sha256(
+        json.dumps(config, sort_keys=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
+    ).hexdigest()

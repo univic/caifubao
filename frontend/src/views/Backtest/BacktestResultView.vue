@@ -243,6 +243,23 @@
         </div>
       </div>
 
+      <!-- Equity Curve Section -->
+      <div
+        v-if="bt.status === 'COMPLETED' && bt.daily_values?.length"
+        class="content-card"
+      >
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">收益率曲线</h3>
+            <p class="card-desc">
+              策略净值 vs 基准{{ bt.benchmark_code ? `（${bt.benchmark_code}）` : '' }} · 初始资金
+              {{ formatMoney(bt.initial_cash) }}
+            </p>
+          </div>
+        </div>
+        <div ref="equityChartRef" class="equity-chart"></div>
+      </div>
+
       <!-- Daily Values Section -->
       <div v-if="bt.status === 'COMPLETED' && bt.daily_values?.length" class="content-card">
         <div class="card-header">
@@ -342,15 +359,18 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Refresh, ArrowLeft } from '@element-plus/icons-vue'
+import * as echarts from 'echarts'
 import { backtestApi, type BacktestResult } from '@/api/backtest'
 
 const route = useRoute()
 const loading = ref(false)
 const errorMessage = ref('')
 const bt = ref<BacktestResult | null>(null)
+const equityChartRef = ref<HTMLElement | null>(null)
+let equityChart: echarts.ECharts | null = null
 
 const id = route.params.id as string
 
@@ -425,6 +445,111 @@ function sideLabel(value: string) {
 function sideClass(value: string) {
   return value === 'BUY' ? 'buy' : value === 'SELL' ? 'sell' : ''
 }
+function renderEquityChart() {
+  const result = bt.value
+  if (!result || !equityChartRef.value || !result.daily_values?.length) return
+  if (equityChart) {
+    equityChart.dispose()
+    equityChart = null
+  }
+  const dates = result.daily_values.map((row) => (row.date || '').slice(0, 10))
+  const initial = result.initial_cash || 1
+  const strategyLine = result.daily_values.map((row) =>
+    Number(((row.equity ?? 0) / initial).toFixed(6))
+  )
+  // Benchmark NAV is index-aligned to strategy daily_values when present.
+  const benchValues = result.benchmark_daily_values || []
+  const benchmarkLine = dates.map((_, idx) => {
+    const row = benchValues[idx]
+    return row ? Number((row.equity / initial).toFixed(6)) : null
+  })
+
+  const trades = (result.trades || []).map((t) => ({
+    date: (t.date || '').slice(0, 10),
+    side: t.side,
+  }))
+  const buyPoints: Array<[string, number]> = []
+  const sellPoints: Array<[string, number]> = []
+  trades.forEach((t) => {
+    const idx = dates.indexOf(t.date)
+    if (idx >= 0) {
+      const date = dates[idx] as string
+      const val = strategyLine[idx] as number
+      if (t.side === 'BUY') buyPoints.push([date, val])
+      else if (t.side === 'SELL') sellPoints.push([date, val])
+    }
+  })
+
+  equityChart = echarts.init(equityChartRef.value)
+  equityChart.setOption({
+    animation: false,
+    backgroundColor: 'transparent',
+    grid: { left: 56, right: 24, top: 40, bottom: 56 },
+    tooltip: { trigger: 'axis' },
+    legend: {
+      data: ['策略净值', '基准'],
+      textStyle: { color: '#d0d6e0' },
+      top: 0,
+    },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLabel: { color: '#8a8f98' },
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.15)' } },
+    },
+    yAxis: {
+      type: 'value',
+      scale: true,
+      axisLabel: { color: '#8a8f98' },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
+    },
+    series: [
+      {
+        name: '策略净值',
+        type: 'line',
+        data: strategyLine,
+        showSymbol: false,
+        lineStyle: { width: 2, color: '#7170ff' },
+        areaStyle: { color: 'rgba(113,112,255,0.08)' },
+        markPoint: {
+          symbolSize: 44,
+          label: { show: false },
+          data: [
+            ...buyPoints.map(([coord, value]) => ({
+              coord: [coord as string, value as number],
+              symbol: 'triangle',
+              symbolRotate: 0,
+              itemStyle: { color: '#d1495b' },
+            })),
+            ...sellPoints.map(([coord, value]) => ({
+              coord: [coord as string, value as number],
+              symbol: 'triangle',
+              symbolRotate: 180,
+              itemStyle: { color: '#2ea36d' },
+            })),
+          ],
+        },
+      },
+      {
+        name: '基准',
+        type: 'line',
+        data: benchmarkLine,
+        showSymbol: false,
+        lineStyle: { width: 1.5, color: '#8a8f98', type: 'dashed' },
+      },
+    ],
+  })
+}
+
+watch(
+  () => bt.value?.status,
+  async (status) => {
+    if (status === 'COMPLETED') {
+      await nextTick()
+      renderEquityChart()
+    }
+  }
+)
 
 async function fetchResult() {
   if (!id) return
@@ -669,6 +794,13 @@ onMounted(fetchResult)
   border-radius: 12px;
   overflow: hidden;
   margin-bottom: 24px;
+}
+
+.equity-chart {
+  width: 100%;
+  height: 420px;
+  padding: 8px 12px 12px;
+  box-sizing: border-box;
 }
 
 .card-header {

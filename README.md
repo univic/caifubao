@@ -351,11 +351,13 @@ repository 中配置：
 
 会在 `develop` / `main` 分支构建并推送镜像。
 
-`.github/workflows/deploy-dispatch.yml` 会在 `develop` 分支镜像发布成功后向
-private `caifubao-private` 发送 development 部署事件，也会在 `main`
-分支镜像发布成功后发送 production 部署事件。建议在 private repo 的
-`production` environment 上启用 required reviewers 或手动 approval，
-把自动 dispatch 和生产准入控制分开。
+`.github/workflows/backend-publish.yml`、`frontend-publish.yml`、
+`datahub-publish.yml` 会在镜像发布成功后自动向 private `caifubao-private`
+发送部署事件：`develop` 分支发布对应 `dev` 域，`main` 分支发布对应
+`research` 域（P0-3 起；此前为 `development` / `production`）。
+`.github/workflows/deploy-dispatch.yml` 提供手动分发入口，接受 `dev` /
+`research` 目标。建议在 private repo 的 `production` environment 上启用
+required reviewers 或手动 approval，把自动 dispatch 和生产准入控制分开。
 
 ## 启动脚本说明
 
@@ -477,6 +479,15 @@ web_server (API)
     ↓
 前端应用
 ```
+
+## 文档
+
+完整文档索引见 [`docs/README.md`](docs/README.md)。常用入口：
+
+- 规则与工作流：[`RULES.md`](RULES.md)、[`AGENTS.md`](AGENTS.md)、[`.project-rules.md`](.project-rules.md)
+- 运维 CLI：[`docs/operations/agent-cli.md`](docs/operations/agent-cli.md)
+- 系统能力与数据：[`docs/capability-inventory.md`](docs/capability-inventory.md)
+- 历史/研究记录：[`docs/autoresearch/`](docs/autoresearch/)，已过期文档见 [`docs/archive/`](docs/archive/README.md)
 
 ## 开发指南
 

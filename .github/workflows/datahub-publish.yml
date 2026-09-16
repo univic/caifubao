@@ -36,19 +36,22 @@ jobs:
 
           printf '%s\n' "$CHANGED_FILES"
 
-          if printf '%s\n' "$CHANGED_FILES" | grep -E -q '^(datahub/|backend/app/utilities/|backend/app/model/|\.github/workflows/datahub-publish\.yml$)'; then
+          if printf '%s\n' "$CHANGED_FILES" | grep -E -q '^(datahub/|backend/app/utilities/|backend/app/model/|backend/app/services/timing_evaluator\.py$|\.github/workflows/datahub-publish\.yml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Copy backend utilities and models
+      - name: Copy backend datahub dependencies
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.changed == 'true'
         run: |
           mkdir -p datahub/app/utilities
           cp -r backend/app/utilities/* datahub/app/utilities/
           mkdir -p datahub/app/model
           cp -r backend/app/model/* datahub/app/model/
+          mkdir -p datahub/app/services
+          touch datahub/app/services/__init__.py
+          cp backend/app/services/timing_evaluator.py datahub/app/services/timing_evaluator.py
 
       - name: Log in to Container Registry
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.changed == 'true'
@@ -85,6 +88,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            CAIFUBAO_BUILD_REVISION=${{ env.SOURCE_SHA }}
 
       - name: Dispatch private datahub deploy
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.changed == 'true'
@@ -101,10 +106,10 @@ jobs:
 
           case "$SOURCE_BRANCH" in
             develop)
-              TARGET_ENVIRONMENT="development"
+              TARGET_ENVIRONMENT="dev"
               ;;
             main)
-              TARGET_ENVIRONMENT="production"
+              TARGET_ENVIRONMENT="research"
               ;;
             *)
               echo "Unsupported source branch: $SOURCE_BRANCH"
@@ -142,11 +147,11 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ steps.changes.outputs.changed }}" = "true" ]; then
             case "$SOURCE_BRANCH" in
               develop)
-                TARGET_ENVIRONMENT="development"
+                TARGET_ENVIRONMENT="dev"
                 CHANNEL_TAG="develop"
                 ;;
               main)
-                TARGET_ENVIRONMENT="production"
+                TARGET_ENVIRONMENT="research"
                 CHANNEL_TAG="prod, latest"
                 ;;
               *)

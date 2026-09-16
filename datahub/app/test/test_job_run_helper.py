@@ -174,6 +174,23 @@ def test_mark_stale_running_job_runs_failed_respects_custom_window(
     assert "1440 minutes" in store["groups"][2]["updates"]["set__error_message"]
 
 
+def test_mark_stale_running_job_runs_failed_can_scope_to_family(monkeypatch):
+    import app.lib.utilities.job_run_helper as job_run_helper
+
+    store = {"update_results": [0, 0, 0, 0]}
+    monkeypatch.setattr(job_run_helper, "DatahubJobRun", _FakeJobRunManager)
+    _FakeJobRunManager.store = store
+
+    job_run_helper.mark_stale_running_job_runs_failed(
+        now=datetime.datetime(2026, 4, 14, 12, 0),
+        job_family="data_sync_daily",
+    )
+
+    assert all(
+        group["filters"]["job_family"] == "data_sync_daily" for group in store["groups"]
+    )
+
+
 class _FlakySaveDocument:
     """First save hits a failed index ensure; the retry succeeds."""
 

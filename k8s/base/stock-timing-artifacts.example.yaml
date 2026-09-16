@@ -1,0 +1,34 @@
+# Stock-timing PIT evidence store (example).
+#
+# The stock-timing forward evidence chain writes immutable JSON artifacts
+# (`capture-pit-universe` -> `capture-pit-inputs` -> `score-pit-artifacts`, see
+# docs/operations/stock-timing-pit-evidence.md). Unlike the factor-lab panel
+# these files are NOT regenerable: the universe artifact hashes its capture
+# instant, and the inputs artifact can only be re-captured while its session
+# window is still open. A lost file therefore becomes a permanent gap in the
+# forward window. Keep them on a claim, never on the pod filesystem, and prefer
+# a StorageClass whose reclaim policy is Retain.
+#
+# Research-only: nothing in the deployed datahub service reads this claim, so it
+# is deliberately kept out of k8s/base/kustomization.yaml. Apply it by hand in
+# the namespace that runs the capture Jobs.
+#
+# ReadWriteOnce only constrains how the volume is mounted, not when a phase
+# runs; phase separation comes from the capture windows and the exclusive
+# output paths.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: stock-timing-artifacts
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: stock-timing
+spec:
+  accessModes:
+  - ReadWriteOnce
+  # Real deployments use a Retain class. `local-path` is shown only because the
+  # public examples must not carry private storage-class names.
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi

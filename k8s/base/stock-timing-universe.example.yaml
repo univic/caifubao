@@ -1,0 +1,90 @@
+# Stock-timing universe capture Job (example).
+#
+# Phase 1 of the forward PIT evidence chain: `capture-pit-universe` freezes the
+# session's membership and pre-open industry classification. It must run after
+# the previous session closes and before the session opens; a late run is
+# rejected, not silently downgraded.
+#
+# Writes /artifacts/universe-<session>.json on the stock-timing-artifacts PVC
+# (k8s/base/stock-timing-artifacts.example.yaml). The command refuses to
+# overwrite an existing path, so each session needs its own output path and Job
+# (this one has a fixed name and an immutable pod template).
+#
+# `CAIFUBAO_BUILD_REVISION` is baked into the published image from the source
+# revision. The CLI rejects an empty value but cannot detect a wrong one, so add
+# an explicit entry to the `env:` block only if the image does not carry it, and
+# set it to the exact immutable revision.
+#
+# Prefer the one-off Job launcher in the private overlay, which copies the live
+# datahub Deployment's image, revision and generated ConfigMap names; render
+# this directly only when that is not available.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: stock-timing-universe
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: stock-timing-universe
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app: caifubao-datahub
+        job.caifubao.io/type: stock-timing-universe
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: stock-timing-universe
+        image: caifubao-datahub:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "app.jobs.scoring_runner", "capture-pit-universe"]
+        args:
+        - --date
+        - "2026-09-16"
+        - --output
+        - /artifacts/universe-2026-09-16.json
+        env:
+        - name: MONGODB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_HOST
+        - name: MONGODB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_PORT
+        - name: MONGODB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_NAME
+        - name: MONGODB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_USER
+        - name: MONGODB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: datahub-secret
+              key: MONGODB_PASSWORD
+        volumeMounts:
+        - name: stock-timing-artifacts
+          mountPath: /artifacts
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+      volumes:
+      - name: stock-timing-artifacts
+        persistentVolumeClaim:
+          claimName: stock-timing-artifacts
+      imagePullSecrets:
+      - name: ccr-secret

@@ -4,6 +4,8 @@ import argparse
 import datetime
 import json
 import logging
+import os
+from pathlib import Path
 import time
 
 from app.lib.utilities import job_run_helper
@@ -51,29 +53,28 @@ def run_scoring(args) -> dict:
     service = StockScoringService(model_version=args.model_version)
     horizons = [args.horizon] if args.horizon else DEFAULT_HORIZONS
 
-    results = {}
-    for horizon in horizons:
-        logger.info("Running scoring for horizon=%d...", horizon)
-        result = service.score_all_stocks(
-            date=parse_date(args.date),
-            horizon=horizon,
-            dry_run=args.dry_run,
-            replace=args.replace,
-        )
-        results[str(horizon)] = result
-        logger.info("Scoring horizon=%d completed: %s", horizon, result)
+    # Perf C1 remainder: one call covers every requested horizon. Looping here
+    # built one per-day prefetch per horizon, so a full-market day read the
+    # whole-market history window three times (30/70/130 trading days for
+    # h5/h20/h60) and re-listed the stock universe three times. The service
+    # already iterates the same horizon list internally, so the loop only
+    # multiplied the reads. ``horizon=None`` keeps the single-horizon case
+    # identical to before.
+    logger.info("Running scoring for horizons=%s...", horizons)
+    result = service.score_all_stocks(
+        date=parse_date(args.date),
+        horizon=args.horizon,
+        dry_run=args.dry_run,
+        replace=args.replace,
+    )
+    logger.info("Scoring completed for horizons=%s: %s", horizons, result)
 
+    scored_count = result.get("scored_count", 0) if isinstance(result, dict) else 0
     summary = {
         "horizons": horizons,
-        "results": results,
-        "pulled_total": sum(
-            r.get("scored_count", 0) if isinstance(r, dict) else 0
-            for r in results.values()
-        ),
-        "written_total": sum(
-            r.get("scored_count", 0) if isinstance(r, dict) else 0
-            for r in results.values()
-        ),
+        "results": result,
+        "pulled_total": scored_count,
+        "written_total": scored_count,
     }
     return summary
 
@@ -124,6 +125,146 @@ def run_backfill(args):
     print(f"Backfill completed: {result}")
 
 
+def _require_new_output(path: str) -> None:
+    if Path(path).exists():
+        raise FileExistsError(f"output already exists: {path}")
+
+
+def run_capture_pit_universe(args) -> None:
+    """Capture the pre-open universe without touching scoring state."""
+    _require_new_output(args.output)
+    _init_db_connection()
+    from app.lib.scoring_engine.pit_input_evidence import (
+        PitInputEvidenceCapture,
+        write_artifact_exclusive,
+    )
+
+    artifact = PitInputEvidenceCapture().capture_universe(
+        datetime.date.fromisoformat(args.date)
+    )
+    write_artifact_exclusive(args.output, artifact)
+    print(json.dumps({"artifact_id": artifact["artifact_id"], "output": args.output}))
+
+
+def run_capture_pit_inputs(args) -> None:
+    """Capture post-close ranked inputs for one frozen pre-open universe."""
+    _require_new_output(args.output)
+    from app.lib.scoring_engine.pit_input_evidence import load_artifact
+
+    universe = load_artifact(args.universe_artifact)
+    _init_db_connection()
+    from app.lib.scoring_engine.pit_input_evidence import (
+        PitInputEvidenceCapture,
+        write_artifact_exclusive,
+    )
+
+    horizons = (
+        [int(value.strip()) for value in args.horizons.split(",")]
+        if args.horizons
+        else DEFAULT_HORIZONS
+    )
+    artifact = PitInputEvidenceCapture().capture_inputs(
+        universe,
+        model_version=args.model_version,
+        horizons=horizons,
+    )
+    write_artifact_exclusive(args.output, artifact)
+    print(json.dumps({"artifact_id": artifact["artifact_id"], "output": args.output}))
+
+
+def run_score_pit_artifacts(args) -> None:
+    """Compute ranked predictions from P2a artifacts; publish only on apply."""
+    _require_new_output(args.output)
+    from app.lib.scoring_engine.pit_artifact_scoring import (
+        PitArtifactScoringConsumer,
+        build_replay_handoff,
+        publish_predictions,
+        write_result_exclusive,
+    )
+    from app.lib.scoring_engine.pit_input_evidence import load_artifact
+
+    consumer = PitArtifactScoringConsumer(
+        load_artifact(args.universe_artifact),
+        load_artifact(args.input_artifact),
+        input_artifact_uri=args.input_artifact,
+    )
+    result = consumer.build_result()
+    # Reserve and publish the caller-selected path before any database write.
+    # This keeps an output collision (including a concurrent creator) inside
+    # the zero-prediction-write preflight boundary. The report is a valid
+    # dry-run result even if a later explicit apply preflight fails.
+    artifact_sha256 = write_result_exclusive(args.output, result)
+    handoff = build_replay_handoff(
+        result, artifact_uri=args.output, artifact_sha256=artifact_sha256
+    )
+    inserted = 0
+    if args.apply:
+        _init_db_connection()
+        inserted = publish_predictions(result)
+    print(
+        json.dumps(
+            {
+                "applied": bool(args.apply),
+                "inserted_count": inserted,
+                "output": args.output,
+                "artifact_sha256": artifact_sha256,
+                "prediction_cohorts_by_horizon": handoff,
+                "summary": result["summary"],
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def run_equivalence_check_cmd(args) -> int:
+    """C1 (perf 3.5/5.3): diff the per-stock and batched paths on one date.
+
+    Read-only unless ``--apply`` is given: both passes then run with
+    ``replace=True`` and the batched pass is the last writer, so the persisted
+    day ends up as production now produces it. Returns the process exit code
+    (1 when any field diverges, so an operator/CI wrapper fails closed).
+    """
+    _init_db_connection()
+    from app.lib.scoring_engine.equivalence_check import run_equivalence_check
+
+    horizons = (
+        [int(value) for value in args.horizons.split(",")]
+        if args.horizons
+        else DEFAULT_HORIZONS
+    )
+
+    def service_factory(batch_prefetch: bool):
+        from app.lib.scoring_engine.scoring_service import StockScoringService
+
+        return StockScoringService(
+            model_version=args.model_version,
+            batch_prefetch=batch_prefetch,
+            scoring_mode=args.mode,
+        )
+
+    if args.apply:
+        logger.warning(
+            "equivalence-check --apply rewrites %s predictions with replace=True "
+            "(per-stock pass, then batched pass)",
+            args.date,
+        )
+    report = run_equivalence_check(
+        service_factory,
+        date=parse_date(args.date),
+        horizons=horizons,
+        mode=args.mode,
+        apply=args.apply,
+        max_diffs=args.max_diffs,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    if args.report:
+        with open(args.report, "w", encoding="utf-8") as handle:
+            json.dump(report, handle, ensure_ascii=False, indent=2, default=str)
+    if not report["applied"]:
+        return 0
+    return 0 if report["ok"] else 1
+
+
 def run_report(args):
     _init_db_connection()
     from app.lib.scoring_engine.calibration_report import ScoreCalibrationReport
@@ -138,6 +279,30 @@ def run_report(args):
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     else:
         print(f"Calibration report: {result}")
+
+
+def run_compare(args):
+    """Compare two model versions' VERIFIED predictions over a shared window.
+
+    Operator tool for flipped-model validation (openspec task 3.3): replay the
+    flipped version, then compare its calibration against the baseline default
+    before any promotion. Config-less versions resolve their registered config
+    from the ScoreModelVersion registry (same basis rules as the reports).
+    """
+    _init_db_connection()
+    from app.lib.scoring_engine.comparison_report import ExperimentComparisonReport
+
+    report = ExperimentComparisonReport().compare(
+        candidate_model_version=args.candidate_model_version,
+        baseline_model_version=args.baseline_model_version,
+        start_date=parse_date(args.from_date),
+        end_date=parse_date(args.to_date),
+        horizon=args.horizon,
+    )
+    if args.format == "json":
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    else:
+        print(f"Comparison: {report}")
 
 
 def run_experiment(args):
@@ -328,6 +493,37 @@ def main(argv: list[str] | None = None) -> None:
     p_backfill.add_argument("--dry-run", action="store_true")
     p_backfill.add_argument("--replace", action="store_true")
 
+    p_pit_universe = subparsers.add_parser(
+        "capture-pit-universe",
+        help="Capture a forward pre-open stock universe artifact",
+    )
+    p_pit_universe.add_argument("--date", required=True, help="Session YYYY-MM-DD")
+    p_pit_universe.add_argument("--output", required=True)
+
+    p_pit_inputs = subparsers.add_parser(
+        "capture-pit-inputs",
+        help="Capture forward post-close ranked-scoring input evidence",
+    )
+    p_pit_inputs.add_argument("--universe-artifact", required=True)
+    p_pit_inputs.add_argument("--model-version", required=True)
+    p_pit_inputs.add_argument(
+        "--horizons", help="Comma-separated horizons (default: 5,20,60)"
+    )
+    p_pit_inputs.add_argument("--output", required=True)
+
+    p_pit_score = subparsers.add_parser(
+        "score-pit-artifacts",
+        help="Compute ranked predictions from frozen P2a artifacts",
+    )
+    p_pit_score.add_argument("--universe-artifact", required=True)
+    p_pit_score.add_argument("--input-artifact", required=True)
+    p_pit_score.add_argument("--output", required=True)
+    p_pit_score.add_argument(
+        "--apply",
+        action="store_true",
+        help="Insert predictions after registry/collision preflight",
+    )
+
     # verify command
     p_verify = subparsers.add_parser("verify", help="Verify score predictions")
     add_common_options(p_verify, include_range=True)
@@ -337,6 +533,51 @@ def main(argv: list[str] | None = None) -> None:
     add_common_options(p_report, include_range=True, include_horizon=False)
     p_report.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
     p_report.add_argument("--format", choices=["json", "text"], default="json")
+
+    # compare command - flipped-model validation (openspec task 3.3)
+    p_compare = subparsers.add_parser(
+        "compare", help="Compare two model versions over a shared window"
+    )
+    p_compare.add_argument("--from", dest="from_date", required=True)
+    p_compare.add_argument("--to", dest="to_date", required=True)
+    p_compare.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
+    p_compare.add_argument("--candidate-model-version", required=True)
+    p_compare.add_argument("--baseline-model-version", required=True)
+    p_compare.add_argument("--format", choices=["json", "text"], default="json")
+
+    # equivalence-check command - C1 batch/per-stock diff (perf 3.5/5.3)
+    p_equiv = subparsers.add_parser(
+        "equivalence-check",
+        help="Diff the per-stock and batched scoring paths on one evaluation date",
+    )
+    add_common_options(p_equiv, include_horizon=False)
+    p_equiv.add_argument(
+        "--date",
+        required=True,
+        help="Evaluation date (YYYY-MM-DD) with quotes already ingested.",
+    )
+    p_equiv.add_argument(
+        "--horizons",
+        help="Comma-separated horizons to check (default: all of 5,20,60).",
+    )
+    p_equiv.add_argument(
+        "--mode",
+        choices=["raw", "ranked"],
+        default=os.getenv("DATAHUB_SCORING_MODE", "raw").strip().lower() or "raw",
+        help="Scoring mode to compare (default: DATAHUB_SCORING_MODE or raw).",
+    )
+    p_equiv.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually run both paths (replace=True). Without it the check is read-only.",
+    )
+    p_equiv.add_argument(
+        "--max-diffs",
+        type=int,
+        default=20,
+        help="Maximum number of field diffs to keep in the report (default 20).",
+    )
+    p_equiv.add_argument("--report", help="Optional path to write the JSON report.")
 
     # experiment command
     p_experiment = subparsers.add_parser(
@@ -417,6 +658,12 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "backfill":
         _init_db_connection()
         run_backfill(args)
+    elif args.command == "capture-pit-universe":
+        run_capture_pit_universe(args)
+    elif args.command == "capture-pit-inputs":
+        run_capture_pit_inputs(args)
+    elif args.command == "score-pit-artifacts":
+        run_score_pit_artifacts(args)
     elif args.command == "verify":
         _init_db_connection()
         result = run_verification(
@@ -436,6 +683,10 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "grid-search":
         _init_db_connection()
         run_grid_search(args)
+    elif args.command == "compare":
+        run_compare(args)
+    elif args.command == "equivalence-check":
+        raise SystemExit(run_equivalence_check_cmd(args))
     else:
         parser.print_help()
 

@@ -52,6 +52,7 @@ class StockDailyQuote(Document):
             ("date", "code"),
             "code",
             "#date",
+            {"fields": ["-date"], "cls": False},
         ],
     }
     stock = GenericLazyReferenceField(required=True)

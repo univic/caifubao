@@ -1,24 +1,42 @@
 # -*- coding: utf-8 -*-
 """Industry classification sync pipeline.
 
-Fetches Shenwan (申万) industry data from baostock and upserts into
-StockIndustryClassification. Runs monthly via cronjob to keep classifications
-up to date.
+Fetches CSRC (证监会) industry data from baostock's ``query_stock_industry`` and
+upserts into StockIndustryClassification. Baostock's industry API returns the
+CSRC classification (e.g. ``J66货币金融服务``); the legacy ``*_sw_*`` field names
+on the model are kept for compatibility even though the data is CSRC, not Shenwan
+(申万). Runs monthly via cronjob to keep classifications up to date.
 """
 
 import datetime
+import json
 import logging
+import re
 
 from app.model.industry import StockIndustryClassification
 
 logger = logging.getLogger(__name__)
+
+# Baostock returns industry codes as ``sh.600036``; every other collection and
+# every scoring lookup uses ``sh600036``. Persisting the baostock form made all
+# canonical lookups miss, so ingestion normalizes to the canonical form and a
+# migration rewrites the legacy rows (industry-classification-code-normalization).
+CANONICAL_CODE_PATTERN = re.compile(r"^(sh|sz|bj)\d{6}$")
+LEGACY_CODE_PATTERN = re.compile(r"^([a-z]{2})\.(\d{6})$")
+#: How many unrecognized keys a migration summary reports verbatim.
+UNRECOGNIZED_SAMPLE_LIMIT = 20
+
+
+def canonical_stock_code(code: str) -> str:
+    """Return the canonical stock code shared with quotes and predictions."""
+    return str(code or "").strip().replace(".", "")
 
 
 def sync_industry_classification(
     dry_run: bool = False,
     force_update: bool = False,
 ) -> dict:
-    """Fetch Shenwan industry data from baostock and upsert.
+    """Fetch CSRC industry data from baostock and upsert.
 
     For stocks already classified, only updates if the existing record is older
     than 30 days (or force_update is True). For new stocks, always inserts.
@@ -44,17 +62,18 @@ def sync_industry_classification(
 
         while rs.next():
             row = rs.get_row_data()
-            if len(row) < 3 or not row[0]:
+            # Baostock row: [updateDate, code, code_name, industry,
+            # industryClassification]. The industry column is CSRC format.
+            if len(row) < 4 or not row[1]:
                 continue
 
-            code = row[0].strip()
-            name = row[1].strip() if len(row) > 1 else ""
-            industry_name = row[2].strip() if len(row) > 2 else ""
+            code = canonical_stock_code(row[1])
+            name = row[2].strip() if len(row) > 2 else ""
+            industry_raw = row[3].strip() if len(row) > 3 else ""
 
-            # Baostock returns industry as "申万一级行业-申万二级行业" format
-            # Parse into L1 and L2
-            l1_name, l2_name = _parse_shenwan_industry(industry_name)
-            l1_code = _derive_industry_code(l1_name or "")
+            # CSRC string is "CODE名称", e.g. "J66货币金融服务".
+            l1_code, l1_name = _parse_csrc_industry(industry_raw)
+            l2_code = l2_name = None
 
             if not l1_name:
                 counts["skipped"] += 1
@@ -94,7 +113,7 @@ def sync_industry_classification(
                 existing.industry_name_sw_l1 = l1_name
                 existing.industry_code_sw_l1 = l1_code
                 existing.industry_name_sw_l2 = l2_name
-                existing.industry_code_sw_l2 = _derive_industry_code(l2_name or "")
+                existing.industry_code_sw_l2 = l2_code
                 existing.last_synced_at = now
                 existing.save()
                 counts["updated"] += 1
@@ -108,7 +127,7 @@ def sync_industry_classification(
                     stock_name=name,
                     industry_code_sw_l1=l1_code,
                     industry_name_sw_l1=l1_name,
-                    industry_code_sw_l2=_derive_industry_code(l2_name or ""),
+                    industry_code_sw_l2=l2_code,
                     industry_name_sw_l2=l2_name,
                     assigned_at=now,
                 )
@@ -138,44 +157,155 @@ def sync_industry_classification(
         bs.logout()
 
 
-def _parse_shenwan_industry(raw: str) -> tuple[str | None, str | None]:
-    """Parse baostock's industry string into L1 and L2 names.
+def normalize_stock_codes(dry_run: bool = False) -> dict:
+    """Rewrite legacy separated ``stock_industry`` keys to the canonical form.
 
-    Baostock format: '银行业' (L1 only) or '银行-银行Ⅱ' (L1-L2)
+    Only keys matching the baostock shape ``xx.NNNNNN`` are rewritten; a key
+    that is neither canonical nor that legacy shape is reported in
+    ``unrecognized`` and left untouched rather than guessed at.
+
+    Idempotent, and ``dry_run`` performs no write. The rewrite uses
+    collection-level updates rather than ``save()``, so ``last_synced_at`` is
+    not refreshed and ``assigned_at`` / ``industry_change_log`` keep their
+    point-in-time meaning. A merge deliberately appends no change-log entry:
+    the key changed, not the classification.
     """
-    if not raw or raw.strip() == "":
+    counts = {"scanned": 0, "renamed": 0, "merged": 0, "skipped": 0}
+    unrecognized: list[str] = []
+
+    for doc in StockIndustryClassification.objects():
+        counts["scanned"] += 1
+        code = str(getattr(doc, "stock_code", "") or "")
+        legacy_match = LEGACY_CODE_PATTERN.match(code)
+        if not legacy_match:
+            if CANONICAL_CODE_PATTERN.match(code):
+                counts["skipped"] += 1
+            else:
+                unrecognized.append(code)
+            continue
+
+        canonical = canonical_stock_code(code)
+        existing = StockIndustryClassification.objects(stock_code=canonical).first()
+        if existing is None:
+            if not dry_run:
+                StockIndustryClassification.objects(stock_code=code).update_one(
+                    set__stock_code=canonical
+                )
+            counts["renamed"] += 1
+        else:
+            if not dry_run:
+                _merge_legacy_into_canonical(existing, doc)
+            counts["merged"] += 1
+
+    summary = {
+        "status": "GOOD",
+        "scanned": counts["scanned"],
+        "renamed": counts["renamed"],
+        "merged": counts["merged"],
+        "skipped": counts["skipped"],
+        "unrecognized_count": len(unrecognized),
+        "unrecognized": unrecognized[:UNRECOGNIZED_SAMPLE_LIMIT],
+        "dry_run": dry_run,
+    }
+    logger.info("Industry code normalization completed: %s", summary)
+    return summary
+
+
+def _merge_legacy_into_canonical(canonical_doc, legacy_doc) -> None:
+    """Fold a legacy separated-key record into its canonical record.
+
+    The surviving record keeps the canonical classification: attaching an
+    earlier legacy anchor to a *later* classification would let a historical
+    date inherit a classification that did not exist yet. Two exceptions adopt
+    the legacy anchor, because the classification is provably the same one:
+
+    - the canonical record has no classification to anchor, or
+    - both records carry the same L1 code and name (for example the fixed sync
+      created a canonical row before the migration ran, so its ``assigned_at``
+      is the deploy time rather than the classification's true start).
+
+    Without the second rule, a sync that runs between deploy and migration
+    would permanently hide the classification from every earlier date.
+    """
+    updates = {}
+    if not canonical_doc.industry_code_sw_l1 and legacy_doc.industry_code_sw_l1:
+        updates["set__industry_code_sw_l1"] = legacy_doc.industry_code_sw_l1
+        updates["set__industry_name_sw_l1"] = legacy_doc.industry_name_sw_l1
+        updates["set__industry_code_sw_l2"] = legacy_doc.industry_code_sw_l2
+        updates["set__industry_name_sw_l2"] = legacy_doc.industry_name_sw_l2
+        if legacy_doc.assigned_at:
+            updates["set__assigned_at"] = legacy_doc.assigned_at
+    elif _same_classification(canonical_doc, legacy_doc):
+        earlier = _earlier_anchor(canonical_doc.assigned_at, legacy_doc.assigned_at)
+        if earlier is not None and earlier != canonical_doc.assigned_at:
+            updates["set__assigned_at"] = earlier
+
+    canonical_log = list(canonical_doc.industry_change_log or [])
+    merged_log = _merge_change_logs(
+        canonical_doc.industry_change_log, legacy_doc.industry_change_log
+    )
+    if merged_log != canonical_log:
+        updates["set__industry_change_log"] = merged_log
+
+    if updates:
+        StockIndustryClassification.objects(
+            stock_code=canonical_doc.stock_code
+        ).update_one(**updates)
+    StockIndustryClassification.objects(stock_code=legacy_doc.stock_code).delete()
+
+
+def _same_classification(left, right) -> bool:
+    """Whether both records carry the same CSRC L1 classification."""
+    code = getattr(left, "industry_code_sw_l1", None)
+    if not code or getattr(right, "industry_code_sw_l1", None) != code:
+        return False
+    return (getattr(left, "industry_name_sw_l1", None) or "") == (
+        getattr(right, "industry_name_sw_l1", None) or ""
+    )
+
+
+def _earlier_anchor(left, right):
+    """The earlier of two point-in-time anchors, compared as calendar dates."""
+    if left is None:
+        return right
+    if right is None:
+        return left
+    left_date = left.date() if isinstance(left, datetime.datetime) else left
+    right_date = right.date() if isinstance(right, datetime.datetime) else right
+    return left if left_date <= right_date else right
+
+
+def _merge_change_logs(primary, secondary) -> list:
+    """Union two change logs without inventing a new entry, oldest first."""
+    merged = []
+    seen = set()
+    for entry in list(primary or []) + list(secondary or []):
+        if not isinstance(entry, dict):
+            continue
+        key = json.dumps(entry, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(entry)
+    merged.sort(key=lambda entry: str(entry.get("timestamp") or ""))
+    return merged
+
+
+def _parse_csrc_industry(raw: str) -> tuple[str | None, str | None]:
+    """Parse baostock's CSRC industry string into (code, name).
+
+    CSRC strings look like "J66货币金融服务" (leading code + Chinese name).
+    Returns (None, None) when the string is empty or malformed.
+    """
+    import re
+
+    if not raw or not raw.strip():
         return None, None
-
-    if "-" in raw:
-        parts = raw.split("-", 1)
-        return parts[0].strip(), parts[1].strip() if len(parts) > 1 else None
-
-    return raw.strip(), None
-
-
-# A minimal mapping of common Shenwan L1 industry names to official codes.
-# Full numeric codes would require referencing the official Shenwan industry
-# code table. Populate entries here as codes are verified from baostock docs.
-_INDUSTRY_CODE_MAP: dict[str, str] = {}
-
-
-def _derive_industry_code(industry_name: str) -> str:
-    """Return a deterministic code for the given industry name.
-
-    Checks the _INDUSTRY_CODE_MAP for an official mapping first, otherwise
-    falls back to CRC32 hash. Codes are deterministic and stable.
-    """
-    if not industry_name:
-        return "UNKNOWN"
-    if industry_name in _INDUSTRY_CODE_MAP:
-        return _INDUSTRY_CODE_MAP[industry_name]
-
-    # CRC32 produces a deterministic 0-2^32 range value from the name bytes
-    import zlib
-
-    code_val = zlib.crc32(industry_name.encode("utf-8")) & 0xFFFFFFFF
-    code = f"SW{(code_val % 100000):05d}"
-    return code
+    text = raw.strip()
+    match = re.match(r"^([A-Za-z]+\d+)(.*)$", text)
+    if not match or not match.group(2).strip():
+        return None, None
+    return match.group(1), match.group(2).strip()
 
 
 def get_industry_coverage_stats() -> dict:

@@ -44,6 +44,7 @@ class StockFactorDaily(Document):
         "indexes": [
             {"fields": ["stock_code", "date"], "unique": True},
             ("stock_code", "-date"),
+            "-date",
         ],
     }
     stock = GenericLazyReferenceField()
