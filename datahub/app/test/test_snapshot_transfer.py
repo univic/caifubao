@@ -187,7 +187,7 @@ def _assert_no_writes(db, cols):
             col.count_documents.assert_not_called()
         else:
             col.bulk_write.assert_not_called()
-    db.command.assert_not_called()
+    db.client.admin.command.assert_not_called()
 
 
 def _patch_job_tracking(monkeypatch, runner):
@@ -470,17 +470,18 @@ def test_import_replaces_snapshot_class_collections_atomically(tmp_path, monkeyp
     staging.count_documents.side_effect = lambda _q: (order.append("count"), len(docs))[
         1
     ]
-    db.command.side_effect = lambda *a, **k: order.append("rename")
+    db.client.admin.command.side_effect = lambda cmd, **k: order.append("rename")
 
     summary = st.run_import(db=db, snapshot_dir=snapshot_dir)
 
     assert summary["status"] == "GOOD"
     assert order == ["drop", "insert", "count", "rename"]
-    db.command.assert_called_once_with(
-        "renameCollection",
-        f"caifubao_dev.stock_industry{st.STAGING_SUFFIX}",
-        to="caifubao_dev.stock_industry",
-        dropTarget=True,
+    db.client.admin.command.assert_called_once_with(
+        {
+            "renameCollection": f"caifubao_dev.stock_industry{st.STAGING_SUFFIX}",
+            "to": "caifubao_dev.stock_industry",
+            "dropTarget": True,
+        }
     )
     # the target is replaced BY the atomic rename (dropTarget=True), never
     # pre-dropped — a failed rename must leave the previous state intact
@@ -701,7 +702,7 @@ def test_import_staging_count_mismatch_leaves_target_untouched(tmp_path):
         st.run_import(db=db, snapshot_dir=snapshot_dir)
 
     db["stock_industry"].drop.assert_not_called()
-    db.command.assert_not_called()
+    db.client.admin.command.assert_not_called()
     db[st.SNAPSHOT_IMPORT_STATE_COLLECTION].replace_one.assert_not_called()
 
 
@@ -1034,3 +1035,58 @@ def test_snapshot_export_runner_sigterm_handler_marks_run_failed(monkeypatch):
 
     assert exc_info.value.code == 128 + snapshot_export_runner.signal.SIGTERM
     assert finished[0][1]["summary"] == {"failed_phase": "snapshot_export"}
+
+
+def test_snapshot_import_runner_records_failed_run_for_engine_error(monkeypatch):
+    """R1: an allow-list rejection is visible as a FAILED job-run record."""
+    from app.jobs import snapshot_import_runner
+    from app.lib.datahub import snapshot_transfer
+
+    monkeypatch.setattr(
+        snapshot_transfer, "_get_local_db", lambda cfg=None: MagicMock()
+    )
+
+    def _boom(**_kwargs):
+        raise st.SnapshotTransferError(
+            "snapshot manifest proposes collections outside the dev import "
+            "allow-list: ['user_credentials']; allowed: [...]"
+        )
+
+    monkeypatch.setattr(snapshot_transfer, "run_import", _boom)
+    _patch_job_tracking(monkeypatch, snapshot_import_runner)
+
+    finished = []
+    monkeypatch.setattr(
+        snapshot_import_runner.job_run_helper,
+        "finish_job_run",
+        lambda job_run, **kwargs: finished.append(kwargs),
+    )
+
+    with pytest.raises(st.SnapshotTransferError):
+        snapshot_import_runner.main(
+            [
+                "run",
+                "--snapshot-dir",
+                "/tmp/does-not-matter",
+                "--snapshot-id",
+                "my-snapshot",
+            ]
+        )
+
+    assert len(finished) == 1
+    assert finished[0]["status"] == "FAILED"
+    assert "user_credentials" in finished[0]["error_message"]
+
+
+def test_snapshot_id_rejects_path_traversal():
+    with pytest.raises(st.SnapshotTransferError, match="plain directory name"):
+        st.resolve_snapshot_dir(Path("/tmp/snap"), "../escape")
+    with pytest.raises(st.SnapshotTransferError, match="plain directory name"):
+        st.resolve_snapshot_dir(Path("/tmp/snap"), "sub/dir")
+
+
+def test_decode_bson_json_wraps_corrupt_markers_as_snapshot_transfer_error():
+    with pytest.raises(st.SnapshotTransferError, match="undecodable"):
+        st.decode_bson_json('{"__bson_oid": "not-a-hex-oid"}')
+    with pytest.raises(st.SnapshotTransferError, match="undecodable"):
+        st.decode_bson_json('{"__bson_date": "not-a-number"}')

@@ -86,6 +86,7 @@ from typing import Any
 
 from bson import ObjectId
 from bson.decimal128 import Decimal128
+from bson.errors import BSONError
 from pymongo import ReplaceOne
 from pymongo.collection import Collection as MongoCollection
 from pymongo.database import Database as MongoDatabase
@@ -255,8 +256,23 @@ def encode_bson_json(obj: Any) -> str:
 
 
 def decode_bson_json(line: str) -> Any:
-    """Decode one JSON line restoring BSON-safe markers."""
-    return json.loads(line, object_hook=_bson_json_object_hook)
+    """Decode one JSON line restoring BSON-safe markers.
+
+    Raises SnapshotTransferError (not raw json/bson errors) so callers keep a
+    single fail-closed error contract.
+    """
+    try:
+        return json.loads(line, object_hook=_bson_json_object_hook)
+    except SnapshotTransferError:
+        raise
+    except (json.JSONDecodeError, ValueError, TypeError, BSONError) as exc:
+        # includes bson.errors.BSONError (e.g. InvalidId for corrupt
+        # __bson_oid markers) and TypeError/ValueError for non-numeric
+        # __bson_date markers
+        raise SnapshotTransferError(
+            f"undecodable snapshot JSONL document ({type(exc).__name__}): "
+            f"{line[:200]!r}"
+        ) from exc
 
 
 def _new_snapshot_id(now: datetime.datetime | None = None) -> str:
@@ -285,6 +301,11 @@ def resolve_snapshot_dir(base_dir: Path, snapshot_id: str | None) -> Path:
     """Resolve a snapshot id (or 'latest') to its snapshot directory."""
     if snapshot_id in (None, "latest"):
         return resolve_latest_snapshot_dir(base_dir)
+    if "/" in snapshot_id or "\\" in snapshot_id or snapshot_id in (".", ".."):
+        raise SnapshotTransferError(
+            f"invalid snapshot id {snapshot_id!r}: must be a plain directory "
+            "name under the snapshot base dir"
+        )
     return Path(base_dir) / snapshot_id
 
 
@@ -899,9 +920,18 @@ def _apply_snapshot_replace_collection(
     # previous target state is dropped by the rename itself (dropTarget=True)
     # in the same atomic step, so no failure window can leave dev without
     # either the old or the new state.
+    #
+    # MongoDB requires the renameCollection command to be issued against the
+    # admin database (pymongo's own Collection.rename helper routes it via
+    # conn.admin), so run it on the admin handle with fully-qualified
+    # namespaces. It also needs the renameCollectionSameDB privilege
+    # (dbAdmin/dbOwner) on the dev database — verified against the real dev
+    # mongod in the slice-3 acceptance checklist before the Stage-1 cutover.
     source_ns = f"{db.name}.{staging_name}"
     target_ns = f"{db.name}.{name}"
-    db.command("renameCollection", source_ns, to=target_ns, dropTarget=True)
+    db.client.admin.command(
+        {"renameCollection": source_ns, "to": target_ns, "dropTarget": True}
+    )
     logger.info(
         "Applied %s (replace): staged=%d renamed %s -> %s (dropTarget=True)",
         name,
@@ -1050,13 +1080,20 @@ def run_import(
         return summary
 
     applied: list[dict[str, Any]] = []
-    for entry in verified:
-        if entry["class"] == "snapshot":
-            result = _apply_snapshot_replace_collection(db, snapshot_dir, entry)
-        else:
-            result = _apply_upsert_collection(db, snapshot_dir, entry)
-        entry.update(result)
-        applied.append(entry)
+    try:
+        for entry in verified:
+            if entry["class"] == "snapshot":
+                result = _apply_snapshot_replace_collection(db, snapshot_dir, entry)
+            else:
+                result = _apply_upsert_collection(db, snapshot_dir, entry)
+            entry.update(result)
+            applied.append(entry)
+    except SnapshotTransferError as exc:
+        raise SnapshotTransferError(
+            f"snapshot apply failed after {len(applied)} collections "
+            f"({[e['name'] for e in applied]}); earlier applies are idempotent "
+            f"on re-run: {exc}"
+        ) from exc
 
     _record_import_state(db, manifest, manifest_sha256, verified, producer_image_note)
 

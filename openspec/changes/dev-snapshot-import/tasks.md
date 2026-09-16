@@ -55,6 +55,9 @@
 - [ ] 3.6 观察窗口（≥5 交易日）快照导入的 freshness/计数对齐验证
 - [ ] 3.7 旧 stable 退役判据核验（无读取方、research 权威 ≥5 交易日、备份与
   restore drill 通过）并提交退役变更（独立批准）
+- [ ] 3.8 切片 3 验收（实现评审后新增）：对真实 dev mongod 验证
+  `renameCollection` 经 admin 库下发且 dev Mongo 角色具备
+  renameCollectionSameDB 权限（快照类换入的前提）
 
 ## 4. 验证与评审
 
