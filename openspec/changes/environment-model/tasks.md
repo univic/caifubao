@@ -35,6 +35,6 @@
 - [x] 4.3 本轮新增内容未新增私有部署敏感值（域名、节点名、对象存储、真实地址；
   既有行中的历史提及不在本轮范围）
 - [x] 4.4 spec-guardian gate 结论已记录（GATE REQUIRED，独立最小 change）
-- [ ] 4.5 contract-reviewer / qa-reviewer 结论已记录（按任务要求追加调用）
-- [ ] 4.6 分支冲突检查通过；Draft PR 已创建
-- [ ] 4.7 `docs/agent-progress.md` 追加本轮进度（含 PR 链接与剩余漂移）
+- [x] 4.5 contract-reviewer / qa-reviewer 结论已记录（按任务要求追加调用）
+- [x] 4.6 分支冲突检查通过；Draft PR 已创建
+- [x] 4.7 `docs/agent-progress.md` 追加本轮进度（含 PR 链接与剩余漂移）

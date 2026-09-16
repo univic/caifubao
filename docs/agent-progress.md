@@ -29,6 +29,71 @@
 ```
 
 ## 进度记录
+### 2026-09-16 11:35 CST — 环境定位文档收敛：两轴环境模型（domain × stage）落地 public/private（PR #255 + private #82）
+
+- 状态：已完成（文档范围）；PR 保持 Draft，合并需用户明确批准
+- 已完成（完成范围）：
+  - **public 新增权威文档 `docs/architecture/environment-model.md`**：两轴定义
+    （domain：development/data/research/trading × stage：dev/stable/paper/
+    production）、有效/无效组合、运行目标当前态/目标态、数据所有权、
+    Data→Research→Trading 制品流、dev 快照导入边界、FQ/HFQ 外部输入与派生职责
+    （research 可在自己边界内独立重算；datahub 为迁移期实现位置）、`prod`
+    （trading/production）**未启用**声明、技术名称≠业务语义对照、快速问答。
+  - **当前/目标环境映射**（权威文档 §5/§6）：`dev`=development/dev（运行中，数据
+    暂经在线同步取自旧 stable＝迁移期遗留）；`research`=research/stable（运行中，
+    TASK-303 切流已落地）；旧 stable（历史名 production）＝retired、冻结、无部署
+    路径、迁移期仍承载每日链路并作为 dev 同步源；`trading-paper`=trading/paper
+    （仅 default-deny 骨架，未启用）；`prod`=trading/production（不存在、未启用，
+    全系统无真实执行能力）。
+  - **入口链接与冲突修正**：`README.md`（TASK-303 后 research Environment 口径、
+    `prod`/`latest` 为 channel 技术标签且部署用 `sha-<sha>`）、`docs/README.md`
+    （新增"架构与环境"入口）、`k8s/README.md`（示例名澄清）、
+    `docs/operations/agent-cli.md`（同步来源改标旧 stable/迁移期，"prod"全部标注
+    为技术/历史名，命令行为零变更）、`docs/capability-inventory.md`（环境口径
+    注记）、`openspec/changes/production-capability-roadmap/tasks.md` 0.4 注记。
+  - **历史注记**：`roadmap-2026-08.md`、`mongodb-resilience.md`、
+    `mongodb-node-migration.md` 顶部加"历史状态/已被取代"说明；
+    `factor-lab.md` "production" 用语改为 current；进度日志词汇注记加入记录规则。
+    未重写任何历史事实。
+  - **OpenSpec**：新增最小 change `environment-model`（4 条 ADDED requirements，
+    全部针对公共文档语义；spec-guardian 判定 GATE REQUIRED）。
+  - **private 仓库（`docs/environment-model` 分支）**：以 target-architecture 为
+    设计基础收敛——target-architecture（两轴+运行目标表+FQ/HFQ 职责+不变式 13）、
+    migration-contract（Terminology 一节：目标/已部署/别名/退役/未启用）、
+    refactoring-roadmap（TASK-404 标注 open、迁移期遗留标注）、
+    task-303-cutover（状态更正为 landed）、k8s-README.private（environments/
+    dev|research|trading 布局、环境说明重写、自动部署触发更正、RBAC/Environment
+    指南 development/research、PROD_*/prod tag 历史命名注记）、README
+    （Environment Model 一节、overlays/research 装配口径、deploy/verify 示例改
+    research）。
+- 修改文件：public 15 个 .md（含新增 4 个）；private 7 个 .md。无任何代码、
+  workflow、overlay、脚本或集群行为变更。
+- 验证：`openspec validate --all --strict` 26/26 通过；两仓库变更文件相对链接
+  全部可解析；agent-cli 命令行序列字节级不变（仅措辞/标签）；public 新增行无私
+  有部署敏感值（节点名等既有提及按 qa-reviewer 建议做角色化改写）；分支冲突
+  vs origin/develop、origin/main 均 clean。
+- Reviewer 结论：spec-guardian＝GATE REQUIRED（独立最小 change）；qa-reviewer＝
+  **PASS**（1 P2 节点名→已改角色描述，6 P3 已修或记录）；contract-reviewer＝
+  **PASS** 0 P1（1 P2 workflow/script 输入拆分表述→已修，3 P3 已修或确认保留
+  §11 摘要+规范性引用定位）。
+- PR：public <https://github.com/univic/caifubao/pull/255>（Draft, base develop）；
+  private <https://github.com/univic/caifubao-private/pull/82>（Draft, base main）。
+  不自行合并。
+- 下一步（剩余的非文档漂移，均需独立任务/授权）：
+  1. publish workflow 的 job 级 GitHub Environment 仍按分支解析为
+     `development`/`production`（backend/datahub/frontend/mongodb-tools-publish
+     第 21 行），而 dispatch payload 已用 `dev`/`research`——建议后续 PR 对齐
+     Environment 命名（涉及 GitHub 配置与 secrets，需用户批准）。
+  2. `main` 构建仍推送 `prod`/`latest` channel tag（部署目标 research）——建议
+     后续改名为 `research`/`stable` channel（需协调私有 overlay 默认值）。
+  3. TASK-404 未完成：dev 仍在线直连旧 stable Mongo（`data sync`），快照导入
+     工具链未建；TASK-404 落地前相关文档均已标注"迁移期遗留"。
+  4. 旧 stable namespace 的退役（deprecation change）与 `trading-paper` 骨架
+     之后的 paper 运行时仍未启动（分别属 roadmap 独立变更）。
+  5. `scripts/caifubao`/Makefile 帮助文案仍写 "prod→dev"（代码文件，本轮按
+     "不改业务代码"未动，建议随 TASK-404 一并改）。
+- 阻塞：无（文档范围已闭环；合并与上述运行时事项等待用户决策）。
+
 ### 2026-09-16 10:00 CST — 阶段总结：P3 解阻塞 → 行业分量修复 → 构建通道打通（本轮闭环）
 
 - 状态：已完成（四项指令全部落地并实测）；仅 P3 前向窗口仍等 09-16 收盘
