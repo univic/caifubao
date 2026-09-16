@@ -30,6 +30,7 @@ from app.lib.scoring_engine.config import (
     DEFAULT_MODEL_VERSION,
     get_effective_horizon_config,
 )
+from app.lib.scoring_engine.industry_pit import classification_in_effect_on
 from app.lib.scoring_engine.technical_factors import real_relative_strength
 from app.lib.utilities.data_capability_helper import is_bse_stock_code
 
@@ -251,6 +252,33 @@ def _records(rows: Iterable) -> list[dict]:
 def _plain_rows(queryset):
     """Materialize projected Mongo rows without heavyweight Document objects."""
     return [dict(row) for row in queryset.as_pymongo()]
+
+
+def _prior_industry_metric(code, date, industry_map, metrics):
+    """Industry metric in effect for ``code`` strictly before ``date``.
+
+    The classification store holds one current row per stock, so a row whose
+    ``assigned_at``/change history post-dates ``date`` must not be attributed
+    to it; the caller then receives None and the component stays neutral.
+    """
+    industry = industry_map.get(code)
+    if not industry:
+        return None
+    if not classification_in_effect_on(industry, date):
+        return None
+    prior = [
+        item
+        for item in metrics
+        if item["industry_code"] == industry["code"] and _day(item["date"]) < date
+    ]
+    if not prior:
+        return None
+    latest = max(prior, key=lambda item: item["date"])
+    return {
+        "industry_name": industry["name"],
+        "avg_score": latest.get("avg_score"),
+        "stock_count": latest.get("stock_count"),
+    }
 
 
 def build_trade_calendar(rows: Iterable) -> list[pd.Timestamp]:
@@ -672,10 +700,16 @@ class _MongoBatchSource:
                 item["stock_code"]: {
                     "code": item.get("industry_code_sw_l1"),
                     "name": item.get("industry_name_sw_l1"),
+                    "assigned_at": item.get("assigned_at"),
+                    "industry_change_log": item.get("industry_change_log"),
                 }
                 for item in _plain_rows(
                     StockIndustryClassification.objects(stock_code__in=code_batch).only(
-                        "stock_code", "industry_code_sw_l1", "industry_name_sw_l1"
+                        "stock_code",
+                        "industry_code_sw_l1",
+                        "industry_name_sw_l1",
+                        "assigned_at",
+                        "industry_change_log",
                     )
                 )
                 if item.get("industry_code_sw_l1")
@@ -695,23 +729,7 @@ class _MongoBatchSource:
             def prior_industry_metric(
                 code, date, industry_map=industries, metrics=metric_rows
             ):
-                industry = industry_map.get(code)
-                if not industry:
-                    return None
-                prior = [
-                    item
-                    for item in metrics
-                    if item["industry_code"] == industry["code"]
-                    and _day(item["date"]) < date
-                ]
-                if not prior:
-                    return None
-                latest = max(prior, key=lambda item: item["date"])
-                return {
-                    "industry_name": industry["name"],
-                    "avg_score": latest.get("avg_score"),
-                    "stock_count": latest.get("stock_count"),
-                }
+                return _prior_industry_metric(code, date, industry_map, metrics)
 
             index_objects = [
                 SimpleNamespace(

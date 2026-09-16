@@ -151,49 +151,16 @@ def _query_flags(date, horizon, model_version=None) -> dict[str, dict]:
     return flags
 
 
-def _as_calendar_date(value):
-    """A date for comparison, or None when the value is not usable.
-
-    Compared as calendar dates so mixed naive/aware timestamps cannot raise or
-    shift the comparison. ``industry_change_log`` entries store their timestamp
-    as an ISO string (the writer uses ``now.isoformat()``), so strings are
-    parsed; an unparseable value is unusable rather than assumed.
-    """
-    if value is None:
-        return None
-    if isinstance(value, datetime.datetime):
-        return value.date()
-    if isinstance(value, datetime.date):
-        return value
-    if isinstance(value, str):
-        try:
-            return datetime.datetime.fromisoformat(value).date()
-        except ValueError:
-            return None
-    return None
-
-
 def _classification_in_effect_on(row, as_of_date) -> bool:
     """Whether the row's CURRENT classification is provably in effect on a date.
 
-    ``assigned_at`` is written only when the row is created; the sync records
-    later changes in ``industry_change_log`` instead of moving ``assigned_at``.
-    So the current code can be attributed to the signal date only when the row
-    existed on or before it AND no recorded change happened after it. An entry
-    dated after the signal date — or an entry whose date cannot be read — means
-    the current code may post-date the signal, so the row is not usable.
+    Delegates to the shared guard so paper replay, replayed scoring and
+    industry metric aggregation all use one point-in-time rule
+    (industry-classification-code-normalization).
     """
-    target = _as_calendar_date(as_of_date)
-    assigned = _as_calendar_date(getattr(row, "assigned_at", None))
-    if target is None or assigned is None or assigned > target:
-        return False
-    for entry in getattr(row, "industry_change_log", None) or []:
-        changed = _as_calendar_date(
-            entry.get("timestamp") if isinstance(entry, dict) else None
-        )
-        if changed is None or changed > target:
-            return False
-    return True
+    from app.lib.scoring_engine.industry_pit import classification_in_effect_on
+
+    return classification_in_effect_on(row, as_of_date)
 
 
 def _query_industry_map(codes, as_of_date) -> dict[str, str]:
