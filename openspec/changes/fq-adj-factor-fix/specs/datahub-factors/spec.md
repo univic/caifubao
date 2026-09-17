@@ -127,12 +127,21 @@ stable environment as the source of truth for `fq_factor`, `close_hfq`,
 
 #### Scenario: Factor source is unavailable during acceptance
 
-- GIVEN the tushare request for a sampled code fails, returns no rows, or
-  returns a non-finite or non-positive factor
+- GIVEN the tushare request for a sampled code fails or returns no rows
 - WHEN the acceptance check runs
 - THEN the check FAILS
 - AND it MUST NOT be skipped
 - AND it MUST NOT fall back to legacy-stable parity for that field class
+
+#### Scenario: Individual source rows are unusable
+
+- GIVEN a source frame contains individual non-finite or non-positive factor
+  rows
+- WHEN the acceptance check builds the expected factor series for that code
+- THEN those rows are skipped exactly as the writer skips them, so acceptance
+  cannot fail on values the writer deliberately ignores
+- AND the number of skipped rows is reported
+- AND the check FAILS when no usable factor remains for that code
 
 #### Scenario: Named acceptance date has no rows
 
@@ -205,6 +214,12 @@ report and the job-run record.
   unsupported-universe symbols
 - WHEN the parity check compares counts
 - THEN the comparison reports each declared class separately, with its own
-  verdict and tolerance
-- AND a class with zero rows on either side FAILS
+  verdict, tolerance, and declared mode
+- AND a class with zero rows on either side FAILS, unless that class is
+  explicitly declared as excluded-by-design with a recorded reason (for example
+  the unsupported-universe class, which the research environment excludes by
+  the supported-universe rule)
+- AND a declared minimum-coverage floor is applied to any class whose mode
+  permits research coverage to exceed the legacy environment, so a coverage
+  regression still FAILS
 - AND a total count MUST NOT be used to mask a single-class regression
