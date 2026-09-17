@@ -24,6 +24,7 @@ class FakeSignalService:
         return {
             "written_count": len(selected_codes or []),
             "skipped_count": 0,
+            "skipped_codes": [],
             "failed_count": 0,
             "failed_codes": [],
         }
@@ -60,6 +61,101 @@ def test_force_signal_run_requests_authoritative_rebuild():
 
     assert service.calls == [("sh600000", True)]
     assert result["written_count"] == 1
+
+
+def test_force_signal_run_reports_unevaluable_codes_as_skipped():
+    class ShortHistorySignalService(FakeSignalService):
+        def update_code(self, code, *, force=False):
+            self.calls.append((code, force))
+            if code == "sz301583":
+                return {
+                    "code": "SKIP",
+                    "written_count": 0,
+                    "message": "insufficient factor history",
+                    "skipped_signals": ["MA10_CROSS_MA20", "PRICE_ABOVE_MA60"],
+                }
+            return {"code": "GOOD", "written_count": 1, "message": None}
+
+    service = ShortHistorySignalService()
+
+    result = run_signal(
+        SIGNAL_MA_CROSS,
+        mode=MODE_FORCE,
+        codes=["sh600000", "sz301583"],
+        configs=_configs(service),
+        market_loader=lambda name: object(),
+    )
+
+    assert result["written_count"] == 1
+    assert result["skipped_count"] == 1
+    assert result["skipped_codes"] == ["sz301583"]
+    assert result["skipped_signal_count"] == 2
+    assert result["failed_count"] == 0
+    assert result["failed_codes"] == []
+
+
+def test_stale_signal_run_propagates_skipped_codes():
+    class SkippingMarketService(FakeSignalService):
+        def update_market(self, market=None, selected_codes=None):
+            return {
+                "written_count": 0,
+                "skipped_count": 1,
+                "skipped_codes": ["sz301583"],
+                "skipped_signal_count": 3,
+                "failed_count": 0,
+                "failed_codes": [],
+            }
+
+    service = SkippingMarketService()
+
+    result = run_signal(
+        SIGNAL_MA_CROSS,
+        mode=MODE_STALE,
+        configs=_configs(service),
+        market_loader=lambda name: object(),
+    )
+
+    assert result["skipped_codes"] == ["sz301583"]
+    assert result["skipped_signal_count"] == 3
+    assert result["failed_count"] == 0
+
+
+def test_signal_run_marks_a_fully_skipped_batch():
+    class AllSkippedService(FakeSignalService):
+        def update_code(self, code, *, force=False):
+            self.calls.append((code, force))
+            return {
+                "code": "SKIP",
+                "written_count": 0,
+                "message": "no factor data",
+                "skipped_signals": ["MA10_CROSS_MA20"],
+            }
+
+    result = run_signal(
+        SIGNAL_MA_CROSS,
+        mode=MODE_FORCE,
+        codes=["sz301583", "sh603448"],
+        configs=_configs(AllSkippedService()),
+        market_loader=lambda name: object(),
+    )
+
+    assert result["written_count"] == 0
+    assert result["skipped_count"] == 2
+    assert result["failed_count"] == 0
+    assert result["all_skipped"] is True
+
+
+def test_signal_run_is_not_marked_all_skipped_when_something_was_written():
+    result = run_signal(
+        SIGNAL_MA_CROSS,
+        mode=MODE_FORCE,
+        codes=["sh600000"],
+        configs=_configs(FakeSignalService()),
+        market_loader=lambda name: object(),
+    )
+
+    assert result["written_count"] == 1
+    assert result["all_skipped"] is False
 
 
 def test_force_signal_run_raises_when_service_returns_fail():

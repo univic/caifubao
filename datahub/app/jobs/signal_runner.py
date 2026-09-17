@@ -111,6 +111,9 @@ def run_signal(
         "pulled_count": len(selected_codes),
         "written_count": 0,
         "skipped_count": 0,
+        "skipped_codes": [],
+        "skipped_signal_count": 0,
+        "all_skipped": False,
         "failed_count": 0,
         "failed_codes": [],
         "codes": selected_codes if dry_run else selected_codes[:20],
@@ -124,8 +127,25 @@ def run_signal(
         )
         result["written_count"] = int(batch_result.get("written_count", 0))
         result["skipped_count"] = int(batch_result.get("skipped_count", 0))
+        result["skipped_codes"] = list(batch_result.get("skipped_codes", []))
+        result["skipped_signal_count"] = int(
+            batch_result.get("skipped_signal_count", 0)
+        )
         result["failed_count"] = int(batch_result.get("failed_count", 0))
         result["failed_codes"] = list(batch_result.get("failed_codes", []))
+        result["all_skipped"] = bool(
+            result["pulled_count"]
+            and result["skipped_count"] == result["pulled_count"]
+            and result["written_count"] == 0
+        )
+        if result["all_skipped"]:
+            logger.warning(
+                "%s signal run skipped every selected code (pulled=%d); no signal "
+                "was written. Check the upstream factor path before trusting this "
+                "run as current.",
+                signal,
+                result["pulled_count"],
+            )
         return result
 
     for code in selected_codes:
@@ -139,11 +159,20 @@ def run_signal(
             continue
 
         if update_result.get("code") == "SKIP":
+            # update_code already logged this skip with its reason.
             result["skipped_count"] += 1
-        elif update_result.get("code") != "GOOD":
+            result["skipped_codes"].append(code)
+            result["skipped_signal_count"] += len(
+                update_result.get("skipped_signals") or []
+            )
+            continue
+        if update_result.get("code") != "GOOD":
             result["failed_count"] += 1
             result["failed_codes"].append(code)
             continue
+        result["skipped_signal_count"] += len(
+            update_result.get("skipped_signals") or []
+        )
         result["written_count"] += int(update_result.get("written_count", 0))
 
     if result["failed_count"]:
@@ -152,6 +181,11 @@ def run_signal(
             failed_codes=result["failed_codes"],
             written_count=result["written_count"],
         )
+    result["all_skipped"] = bool(
+        result["pulled_count"]
+        and result["skipped_count"] == result["pulled_count"]
+        and result["written_count"] == 0
+    )
     return result
 
 
@@ -392,6 +426,9 @@ def main(argv: list[str] | None = None) -> None:
             "pulled_total": result.get("pulled_count", 0),
             "written_total": result.get("written_count", 0),
             "skipped_count": result.get("skipped_count", 0),
+            "skipped_codes": result.get("skipped_codes", []),
+            "skipped_signal_count": result.get("skipped_signal_count", 0),
+            "all_skipped": result.get("all_skipped", False),
             "failed_count": result.get("failed_count", 0),
             "failed_codes": result.get("failed_codes", []),
         }
