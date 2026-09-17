@@ -124,6 +124,52 @@ class _LimitedList(list):
         return _LimitedList(sorted(self, key=key_fn))
 
 
+class _AggregateCollection(_FakeCollection):
+    """Fake that executes the verifier's ``$objectToArray`` key-discovery pipeline.
+
+    The production ``_day_field_keys`` scan aggregates; the base fake has no
+    ``aggregate`` so tests would only ever exercise the document-iteration
+    fallback. This double runs the real ``$match`` + ``$project`` stages, and
+    counts the calls so a test can prove the pipeline branch executed.
+    """
+
+    def __init__(self, docs):
+        super().__init__(docs)
+        self.aggregate_calls = 0
+
+    def aggregate(self, pipeline):
+        self.aggregate_calls += 1
+        rows = list(self.docs)
+        for stage in pipeline:
+            if "$match" in stage:
+                rows = [doc for doc in rows if self._matches(doc, stage["$match"])]
+                continue
+            projection = stage["$project"]
+            keys_expr = projection["_keys"]
+            assert keys_expr["$map"]["input"] == {"$objectToArray": "$$ROOT"}
+            code_field = next(field for field in projection if field != "_keys")
+            rows = [
+                {"_keys": list(doc), code_field: doc.get(code_field)} for doc in rows
+            ]
+        return iter(rows)
+
+
+class _TruncatingCollection(_FakeCollection):
+    """Fake whose ``find`` returns fewer docs than ``count_documents``.
+
+    Simulates a DB-side cap so the sample-pool integrity check sees a short
+    pool while the raw day count proves rows were dropped.
+    """
+
+    def __init__(self, docs, cap):
+        super().__init__(docs)
+        self.cap = cap
+
+    def find(self, flt, projection=None):
+        matches = [d for d in self.docs if self._matches(d, flt)]
+        return _LimitedList(matches[: self.cap])
+
+
 class _FakeDb:
     def __init__(self, collections):
         self._collections = collections
@@ -433,6 +479,23 @@ def test_doc_diffs_ignores_excluded_bookkeeping_fields():
     assert comparison["undeclared"] == []
 
 
+def test_doc_diffs_reports_compared_field_missing_on_research():
+    scope = wsv.COLLECTION_SPECS["quote"]["row_classes"]["individual_stock"]
+    research = _doc("quote", "sz000001", _day())
+    stable = dict(research)
+    del research["close"]
+    comparison = wsv._compare_sample(research, stable, scope)
+    assert "close: missing on research side" in comparison["diffs"]
+
+
+def test_doc_diffs_on_both_sides_empty_fails():
+    scope = wsv.COLLECTION_SPECS["quote"]["row_classes"]["individual_stock"]
+    comparison = wsv._compare_sample({}, {}, scope)
+    assert comparison["diffs"] == ["no document on either side"]
+    assert comparison["undeclared"] == []
+    assert comparison["presence_failures"] == []
+
+
 def test_freshness_sort_picks_max_date():
     """The freshness probe must honor sort, not fixture order."""
     earlier = _day(0)
@@ -478,6 +541,27 @@ def test_check_collection_passes_on_identical_environments():
     assert result["checks"]["count"]["total"]["used_for_verdict"] is False
     assert result["checks"]["samples"]["pass"] is True
     assert result["checks"]["samples"]["compared"] == 20
+
+
+def test_check_collection_empty_db_reports_no_data_to_compare():
+    """Both sides empty and no trade calendar: fail closed, do not crash."""
+    spec = wsv.COLLECTION_SPECS["quote"]
+    research_db = _FakeDb(
+        {
+            spec["collection"]: _FakeCollection([]),
+            "basic_stock": _FakeCollection([]),
+        }
+    )
+    stable_db = _FakeDb(
+        {
+            spec["collection"]: _FakeCollection([]),
+            "basic_stock": _FakeCollection([]),
+        }
+    )
+    result = wsv._check_collection("quote", research_db, stable_db, None, 5, 0.005)
+    assert result["status"] == "FAIL"
+    assert result["checks"]["freshness"]["error"] == "no data to compare"
+    assert result["checks"]["count"]["error"] == "no data to compare"
 
 
 def test_check_collection_fails_on_freshness_gap():
@@ -657,6 +741,82 @@ def test_unsupported_universe_on_stable_only_passes():
     assert result["status"] == "PASS", result
 
 
+def test_quote_unsupported_class_is_enforcing_with_a_recorded_basis():
+    research_db, stable_db = _make_pair("quote", count=5)
+    result = wsv._check_collection(
+        "quote", research_db, stable_db, _day().date(), 5, 0.005
+    )
+    entry = result["checks"]["count"]["classes"]["unsupported_universe"]
+    assert entry["mode"] == "research_excludes"
+    assert entry["basis"] == wsv.UNSUPPORTED_UNIVERSE_ENFORCED_BASIS
+    assert "enforced" not in entry
+    assert result["checks"]["count"]["universe_excluded"]["mode"] == "research_excludes"
+
+
+def test_daily_basic_unsupported_class_is_report_only_and_does_not_fail():
+    """The daily_basic writer has no universe filter, so BSE rows must not FAIL."""
+    research_db, stable_db = _make_pair("daily_basic", count=5)
+    collection = wsv.COLLECTION_SPECS["daily_basic"]["collection"]
+    research_db[collection].docs.append(_doc("daily_basic", "bj830799", _day()))
+    research_db["basic_stock"].docs.append(
+        {"code": "bj830799", "object_type": "individual_stock"}
+    )
+    result = wsv._check_collection(
+        "daily_basic", research_db, stable_db, _day().date(), 5, 0.005
+    )
+    entry = result["checks"]["count"]["classes"]["unsupported_universe"]
+    assert entry["mode"] == "report_only"
+    assert entry["research"] == 1
+    assert entry["stable"] == 0
+    assert entry["pass"] is True
+    assert entry["enforced"] is False
+    assert "does not apply the supported-universe filter" in entry["basis"]
+    assert "normalize_daily_basic" in entry["reason"]
+    assert result["checks"]["count"]["universe_excluded"]["mode"] == "report_only"
+    assert "not enforced" in result["checks"]["count"]["universe_excluded"]["reason"]
+    assert result["status"] == "PASS", result
+
+
+def test_scope_payload_records_count_class_mode_basis_and_reason():
+    payload = wsv._scope_payload()
+    daily_basic = payload["daily_basic"]["count_classes"]["unsupported_universe"]
+    assert daily_basic["mode"] == "report_only"
+    assert daily_basic["basis"] == wsv.UNSUPPORTED_UNIVERSE_REPORT_ONLY_BASIS
+    assert daily_basic["reason"] == wsv.UNSUPPORTED_UNIVERSE_REPORT_ONLY_REASON
+    quote = payload["quote"]["count_classes"]["unsupported_universe"]
+    assert quote["mode"] == "research_excludes"
+    assert quote["basis"] == wsv.UNSUPPORTED_UNIVERSE_ENFORCED_BASIS
+
+
+def test_scope_version_changes_when_a_count_class_basis_changes(monkeypatch):
+    baseline = wsv._compute_scope_version()
+    monkeypatch.setitem(
+        wsv.COLLECTION_SPECS["daily_basic"]["count_classes"]["unsupported_universe"],
+        "basis",
+        "edited basis",
+    )
+    assert wsv._compute_scope_version() != baseline
+
+
+def test_validate_declared_scope_rejects_report_only_without_basis(monkeypatch):
+    monkeypatch.delitem(
+        wsv.COLLECTION_SPECS["daily_basic"]["count_classes"]["unsupported_universe"],
+        "basis",
+    )
+    with pytest.raises(
+        RuntimeError, match="report_only class without a recorded basis"
+    ):
+        wsv._validate_declared_scope()
+
+
+def test_validate_declared_scope_requires_the_unsupported_universe_class(monkeypatch):
+    monkeypatch.delitem(
+        wsv.COLLECTION_SPECS["quote"]["count_classes"], "unsupported_universe"
+    )
+    with pytest.raises(RuntimeError, match="must declare the unsupported_universe"):
+        wsv._validate_declared_scope()
+
+
 def test_instrument_type_falls_back_to_cls_discriminator():
     research_db, stable_db = _make_pair("quote", count=5, index_count=5)
     for doc in research_db["basic_stock"].docs:
@@ -702,6 +862,62 @@ def test_sample_pool_is_not_capped_and_covers_the_day():
     assert samples["day_rows"] == 1200
     assert samples["pool_complete"] is True
     assert samples["compared"] == 20
+
+
+def test_incomplete_sample_pool_fails_the_run():
+    """A find()/count_documents() disagreement (DB-side cap) must FAIL."""
+    research_db, stable_db = _make_pair("quote", count=50)
+    spec = wsv.COLLECTION_SPECS["quote"]
+    docs = research_db[spec["collection"]].docs
+    research_db._collections[spec["collection"]] = _TruncatingCollection(docs, 10)
+    result = wsv._check_collection(
+        "quote", research_db, stable_db, _day().date(), 5, 0.005
+    )
+    samples = result["checks"]["samples"]
+    assert samples["pool_size"] == 10
+    assert samples["day_rows"] == 55  # 50 stocks + 5 index rows
+    assert samples["pool_complete"] is False
+    assert "sample pool incomplete" in samples["error"]
+    assert result["status"] == "FAIL"
+
+
+def test_day_field_keys_pipeline_branch_discovers_per_class_keys():
+    """The ``$objectToArray`` aggregation branch must run, not the fallback."""
+    day = _day()
+    spec = wsv.COLLECTION_SPECS["quote"]
+    research_doc = _doc("quote", "sz000001", day)
+    research_doc["research_only_key"] = 1
+    stable_doc = _doc("quote", "sz000002", day)
+    stable_doc["stable_only_key"] = 2
+    index_doc = _doc("quote", "sh000001", day, row_class="stock_index")
+    collection = _AggregateCollection([research_doc, stable_doc, index_doc])
+    db = _FakeDb({spec["collection"]: collection})
+    types = {
+        "sz000001": "individual_stock",
+        "sz000002": "individual_stock",
+        "sh000001": "stock_index",
+    }
+    discovered = wsv._day_field_keys(db, spec, day.date(), types)
+    assert collection.aggregate_calls == 1
+    assert "research_only_key" in discovered["individual_stock"]
+    assert "stable_only_key" in discovered["individual_stock"]
+    assert "fq_factor" in discovered["individual_stock"]
+    # the index row class never sees the stock-only keys
+    assert "research_only_key" not in discovered["stock_index"]
+    assert "stable_only_key" not in discovered["stock_index"]
+
+
+def test_undeclared_field_fails_through_the_aggregation_branch():
+    research_db, stable_db = _make_pair("quote", count=20)
+    spec = wsv.COLLECTION_SPECS["quote"]
+    _stock_docs(research_db, "quote")[-1]["pipeline_extra"] = 1
+    docs = research_db[spec["collection"]].docs
+    research_db._collections[spec["collection"]] = _AggregateCollection(docs)
+    result = wsv._check_collection(
+        "quote", research_db, stable_db, _day().date(), 2, 0.005
+    )
+    assert result["status"] == "FAIL"
+    assert "pipeline_extra" in result["checks"]["samples"]["undeclared_fields"]
 
 
 def test_reference_fields_skipped_across_environments():
@@ -919,6 +1135,69 @@ def test_source_check_passes_on_matching_factors_with_carry_forward():
     assert result["checked_codes"] == 1
     assert result["tolerances"]["close_hfq"] == 5e-4
     assert fake.calls and fake.calls[0][0] == "000001.SZ"
+
+
+def test_carry_forward_backfills_before_the_first_source_day():
+    days = [datetime.date(2026, 9, 20), datetime.date(2026, 9, 25)]
+    values = [1.5, 1.6]
+    # before the first source row: earliest known factor (back-fill)
+    assert wsv._carry_forward(days, values, datetime.date(2026, 9, 1)) == 1.5
+    # exact and between rows: most recent known factor (forward-fill)
+    assert wsv._carry_forward(days, values, datetime.date(2026, 9, 20)) == 1.5
+    assert wsv._carry_forward(days, values, datetime.date(2026, 9, 22)) == 1.5
+    assert wsv._carry_forward(days, values, datetime.date(2026, 9, 25)) == 1.6
+    assert wsv._carry_forward(days, values, datetime.date(2026, 9, 30)) == 1.6
+
+
+def test_source_factor_map_counts_unparseable_dates_invalid():
+    frame = pd.DataFrame(
+        {"trade_date": ["20260920", "not-a-date"], "adj_factor": [1.5, 1.5]}
+    )
+    factors, invalid = wsv._source_factor_map(frame)
+    assert factors == {datetime.date(2026, 9, 20): 1.5}
+    assert invalid == 1
+
+
+def test_source_check_code_flags_row_without_a_date():
+    rows = _source_rows()
+    undated = dict(rows[0])
+    undated["date"] = None
+    rows.append(undated)
+    entry = wsv._source_check_code(
+        "sz000001", rows, _FakeTushare(_adj_frame([("20260920", 1.5)]))
+    )
+    assert entry["pass"] is False
+    assert "row without a date" in entry["failures"]
+
+
+def test_source_check_code_flags_close_zero_or_missing():
+    for mutate in (
+        lambda row: row.__setitem__("close", 0.0),
+        lambda row: row.pop("close"),
+    ):
+        rows = _source_rows()
+        mutate(rows[0])
+        entry = wsv._source_check_code(
+            "sz000001", rows, _FakeTushare(_adj_frame([("20260920", 1.5)]))
+        )
+        assert entry["pass"] is False
+        assert any(
+            "close missing, zero or non-numeric" in failure
+            for failure in entry["failures"]
+        )
+
+
+def test_source_check_code_flags_missing_ohlc_pair():
+    rows = _source_rows()
+    rows[0].pop("open")
+    entry = wsv._source_check_code(
+        "sz000001", rows, _FakeTushare(_adj_frame([("20260920", 1.5)]))
+    )
+    assert entry["pass"] is False
+    assert any(
+        "open/open_hfq missing or non-numeric" in failure
+        for failure in entry["failures"]
+    )
 
 
 def test_source_check_fails_on_tushare_error():
@@ -1139,6 +1418,39 @@ def test_run_with_tracking_records_failed_on_exception(monkeypatch):
         wsv._run_with_tracking(_tracking_args())
     assert helper.finished[-1]["status"] == "FAILED"
     assert "comparison exploded" in helper.finished[-1]["summary"]["error"]
+
+
+def test_run_with_tracking_fails_the_run_row_on_blank_collections(monkeypatch):
+    """Argument resolution failure must not leave the job run RUNNING."""
+    helper = _FakeJobRunHelper()
+    monkeypatch.setattr(wsv, "job_run_helper", helper)
+    monkeypatch.setattr(wsv, "_init_db_connection", lambda: None)
+    args = wsv.parse_args(["--collections", "", "--skip-source-tushare"])
+    with pytest.raises(ValueError, match="no collections selected"):
+        wsv._run_with_tracking(args)
+    assert helper.created == 1
+    assert helper.finished[-1]["status"] == "FAILED"
+    assert "no collections selected" in helper.finished[-1]["summary"]["error"]
+
+
+def test_run_with_tracking_fails_the_run_row_on_malformed_trade_date(monkeypatch):
+    helper = _FakeJobRunHelper()
+    monkeypatch.setattr(wsv, "job_run_helper", helper)
+    monkeypatch.setattr(wsv, "_init_db_connection", lambda: None)
+    args = wsv.parse_args(
+        [
+            "--collections",
+            "quote",
+            "--trade-date",
+            "not-a-date",
+            "--skip-source-tushare",
+        ]
+    )
+    with pytest.raises(ValueError):
+        wsv._run_with_tracking(args)
+    assert helper.created == 1
+    assert helper.finished[-1]["status"] == "FAILED"
+    assert "ValueError" in helper.finished[-1]["summary"]["error"]
 
 
 def test_main_exit_codes(monkeypatch, capsys):

@@ -13,10 +13,16 @@ data-authority-cutover design doc (§5.2):
   reference;
 - count: each declared count class (instrument type from each side's
   ``basic_stock.object_type`` intersected with the supported universe) is
-  compared with its own verdict and tolerance; a class with zero rows on
-  either side FAILS, a research index-coverage collapse FAILS (strict superset
-  + a declared ``min_research_rows`` floor + a code-level superset check), and
-  a total can never mask a single-class regression;
+  compared with its own verdict and tolerance; an *enforcing* class with zero
+  rows on either side FAILS, a research index-coverage collapse FAILS (strict
+  superset + a declared ``min_research_rows`` floor + a code-level superset
+  check), and a total can never mask a single-class regression. A class whose
+  writer does not apply the supported-universe filter is declared
+  ``report_only`` with a recorded ``basis``: its count is reported for
+  visibility and never decides the run (``daily_basic``'s
+  ``unsupported_universe``, because ``normalize_daily_basic`` maps every
+  tushare ``ts_code`` through ``from_tushare_ts_code`` and
+  ``daily_basic_backfill`` bulk-upserts every row);
 - samples: at least N business-key documents are drawn from the complete
   same-day key set and compared field-by-field against the stable document
   with the same business key, restricted to the fields the declared scope
@@ -73,6 +79,15 @@ The verifier NEVER writes to either data domain; its writes are the
 run tracking performs through ``job_run_helper``. Exit code 1 when any check
 fails.
 
+Companion operator step
+-----------------------
+
+The recompute-window discontinuity scan is deliberately not a flag on this
+tool. Run ``check_fq_factor_integrity.py --jump-scan --from-date … --to-date …``
+over the recomputed window as a companion operator step and record its output
+alongside this verifier's report; that companion run satisfies the spec's
+window clause.
+
 Connection model mirrors the legacy sync engine: the research side uses the
 default MONGODB_* env (mongoengine), the legacy stable side uses the
 MONGODB_SRC_* env through ``sync_engine``'s read-only client builder. Supply
@@ -120,7 +135,34 @@ SYNC_JOB_FAMILY = "writer_switch_verify"
 SYNC_JOB_TRIGGER = "manual"
 SYNC_JOB_SOURCE = "cli"
 
-COUNT_CLASS_MODES = ("relative", "coverage_superset", "research_excludes")
+COUNT_CLASS_MODES = (
+    "relative",
+    "coverage_superset",
+    "research_excludes",
+    "report_only",
+)
+
+# The supported-universe rule (no BSE/``bj*`` rows) is enforced by the quote,
+# factor, signal and scoring writers, but NOT by the daily_basic writer:
+# ``normalize_daily_basic`` maps every tushare ``ts_code`` through
+# ``from_tushare_ts_code`` (``.BJ`` -> ``bj*``) and ``daily_basic_backfill``
+# bulk-upserts every row, so BSE rows are expected once that writer is enabled.
+# Declaring its class as enforcing would false-FAIL the default
+# all-collections acceptance run, so it is declared report-only with the basis
+# recorded in the scope payload (and therefore in ``scope_version``).
+UNSUPPORTED_UNIVERSE_ENFORCED_BASIS = (
+    "writer applies the supported-universe filter (is_bse_stock_code); "
+    "research must not contain unsupported-universe rows"
+)
+UNSUPPORTED_UNIVERSE_REPORT_ONLY_BASIS = (
+    "writer does not apply the supported-universe filter; reported for "
+    "visibility, not enforced"
+)
+UNSUPPORTED_UNIVERSE_REPORT_ONLY_REASON = (
+    "normalize_daily_basic maps every tushare ts_code through "
+    "from_tushare_ts_code and daily_basic_backfill bulk-upserts every row, so "
+    "BSE rows appear once the writer is enabled"
+)
 
 # Reason tied to the frozen legacy environment; recorded with the declared
 # scope in both the report and the datahub_job_runs summary.
@@ -206,7 +248,11 @@ COLLECTION_SPECS = {
                 "min_research_rows": DEFAULT_MIN_RESEARCH_INDEX_ROWS,
                 "missing_code_allowance": 0,
             },
-            "unsupported_universe": {"mode": "research_excludes", "allowance": 0},
+            "unsupported_universe": {
+                "mode": "research_excludes",
+                "allowance": 0,
+                "basis": UNSUPPORTED_UNIVERSE_ENFORCED_BASIS,
+            },
         },
         "default_row_class": "individual_stock",
         "row_classes": {
@@ -262,7 +308,14 @@ COLLECTION_SPECS = {
         "code_field": "code",
         "count_classes": {
             "individual_stock": {"mode": "relative"},
-            "unsupported_universe": {"mode": "research_excludes", "allowance": 0},
+            # Report-only: this writer does not apply the supported-universe
+            # filter, so the class is recorded for visibility and never
+            # enforced (see the basis/reason constants above).
+            "unsupported_universe": {
+                "mode": "report_only",
+                "basis": UNSUPPORTED_UNIVERSE_REPORT_ONLY_BASIS,
+                "reason": UNSUPPORTED_UNIVERSE_REPORT_ONLY_REASON,
+            },
         },
         "default_row_class": "individual_stock",
         "row_classes": {
@@ -288,7 +341,11 @@ COLLECTION_SPECS = {
         "code_field": "stock_code",
         "count_classes": {
             "individual_stock": {"mode": "relative"},
-            "unsupported_universe": {"mode": "research_excludes", "allowance": 0},
+            "unsupported_universe": {
+                "mode": "research_excludes",
+                "allowance": 0,
+                "basis": UNSUPPORTED_UNIVERSE_ENFORCED_BASIS,
+            },
         },
         "default_row_class": "individual_stock",
         "row_classes": {
@@ -311,7 +368,11 @@ COLLECTION_SPECS = {
         "code_field": "stock_code",
         "count_classes": {
             "individual_stock": {"mode": "relative"},
-            "unsupported_universe": {"mode": "research_excludes", "allowance": 0},
+            "unsupported_universe": {
+                "mode": "research_excludes",
+                "allowance": 0,
+                "basis": UNSUPPORTED_UNIVERSE_ENFORCED_BASIS,
+            },
         },
         "default_row_class": "individual_stock",
         "row_classes": {
@@ -341,7 +402,11 @@ COLLECTION_SPECS = {
         "code_field": "stock_code",
         "count_classes": {
             "individual_stock": {"mode": "relative"},
-            "unsupported_universe": {"mode": "research_excludes", "allowance": 0},
+            "unsupported_universe": {
+                "mode": "research_excludes",
+                "allowance": 0,
+                "basis": UNSUPPORTED_UNIVERSE_ENFORCED_BASIS,
+            },
         },
         "default_row_class": "individual_stock",
         "row_classes": {
@@ -367,6 +432,18 @@ COLLECTION_SPECS = {
         },
     },
 }
+
+
+def _count_class_payload(body: dict) -> dict:
+    """Canonical count-class declaration for ``_scope_payload``.
+
+    Normalizes the defaulted ``mode`` in and carries every declared key
+    (allowance, floor and the recorded ``basis``/``reason``), so editing any of
+    them changes ``scope_version``.
+    """
+    declared = {"mode": body.get("mode", "relative")}
+    declared.update({key: value for key, value in body.items() if key != "mode"})
+    return declared
 
 
 def _scope_payload() -> dict:
@@ -395,7 +472,8 @@ def _scope_payload() -> dict:
             ),
             "default_row_class": spec["default_row_class"],
             "count_classes": {
-                name: dict(body) for name, body in sorted(spec["count_classes"].items())
+                name: _count_class_payload(body)
+                for name, body in sorted(spec["count_classes"].items())
             },
             "row_classes": row_classes,
         }
@@ -734,6 +812,12 @@ def _validate_declared_scope() -> None:
                         f"research-populated field without provenance: "
                         f"{alias}/{row_class}/{field}"
                     )
+        if "unsupported_universe" not in spec["count_classes"]:
+            # The supported-universe class is universal: without it a BSE row
+            # would be silently dropped by ``_count_by_class``.
+            raise RuntimeError(
+                f"declared scope: {alias} must declare the unsupported_universe class"
+            )
         for name, class_spec in spec["count_classes"].items():
             mode = class_spec.get("mode", "relative")
             if mode not in COUNT_CLASS_MODES:
@@ -743,6 +827,10 @@ def _validate_declared_scope() -> None:
             if mode == "coverage_superset" and "min_research_rows" not in class_spec:
                 raise RuntimeError(
                     f"coverage_superset class without min_research_rows: {alias}/{name}"
+                )
+            if mode == "report_only" and not class_spec.get("basis"):
+                raise RuntimeError(
+                    f"report_only class without a recorded basis: {alias}/{name}"
                 )
 
 
@@ -891,6 +979,8 @@ def _compare_sample(research_doc, stable_doc, scope, compare_derived: bool = Fal
                 "research-populated but non-null on both sides)"
             )
 
+    # No spec declares stable_only_fields today; the branch stays so the
+    # declared legacy-only class remains supported by the comparator.
     for field in sorted(scope["stable_only_fields"]):
         if field in stable_doc and field not in research_doc:
             result["informational"].append(
@@ -919,11 +1009,10 @@ def _count_by_class(db, spec, trade_date: datetime.date, type_map):
             excluded["unclassified"] += 1
             continue
         if data_capability_helper.is_bse_stock_code(code):
-            if "unsupported_universe" in counts:
-                counts["unsupported_universe"] += 1
-                codes["unsupported_universe"].add(str(code))
-            else:
-                excluded["unclassified"] += 1
+            # ``_validate_declared_scope`` requires the class in every spec, so
+            # this cannot silently drop the row.
+            counts["unsupported_universe"] += 1
+            codes["unsupported_universe"].add(str(code))
             continue
         object_type = type_map.get(str(code))
         if object_type in counts:
@@ -1071,6 +1160,8 @@ def _check_collection(
             "relative_diff": round(diff, 6),
             "tolerance": tolerance,
         }
+        if "basis" in class_spec:
+            entry["basis"] = class_spec["basis"]
         if mode == "research_excludes":
             # The supported-universe rule keeps these rows out of research by
             # construction; the verdict is that research must not leak them.
@@ -1080,6 +1171,14 @@ def _check_collection(
             if not entry["pass"]:
                 entry["error"] = "research contains unsupported-universe rows"
                 classes_ok = False
+        elif mode == "report_only":
+            # Non-enforcing by declaration: this collection's writer does not
+            # apply the supported-universe filter, so the count is reported for
+            # visibility only. ``basis``/``reason`` live in the scope payload
+            # (and therefore in scope_version).
+            entry["pass"] = True
+            entry["reason"] = class_spec.get("reason", "")
+            entry["enforced"] = False
         elif mode == "coverage_superset":
             min_rows = class_spec["min_research_rows"]
             missing_allowance = class_spec.get("missing_code_allowance", 0)
@@ -1140,16 +1239,28 @@ def _check_collection(
     count_pass = classes_ok and unclassified_ok
     research_total = sum(research_counts.values())
     stable_total = sum(stable_counts.values())
+    unsupported_mode = spec["count_classes"]["unsupported_universe"].get(
+        "mode", "relative"
+    )
+    if unsupported_mode == "report_only":
+        universe_reason = (
+            "unsupported universe is declared report_only for this collection: "
+            "its writer does not apply the supported-universe filter, so the "
+            "count is reported for visibility and not enforced"
+        )
+    else:
+        universe_reason = (
+            "unsupported universe is declared as its own enforcing class; "
+            "research must not contain it (research_excludes)"
+        )
     result["checks"]["count"] = {
         "trade_date": str(reference_date),
         "classes": classes,
         "universe_excluded": {
             "research": research_counts.get("unsupported_universe", 0),
             "stable": stable_counts.get("unsupported_universe", 0),
-            "reason": (
-                "unsupported universe is declared as its own class; research "
-                "must not contain it (research_excludes)"
-            ),
+            "mode": unsupported_mode,
+            "reason": universe_reason,
         },
         "unclassified": unclassified,
         "total": {
@@ -1258,10 +1369,9 @@ def _check_collection(
             day_field_keys.setdefault(row_class, set()).update(keys)
     discovered_undeclared: set = set()
     for row_class, keys in day_field_keys.items():
-        scope = spec["row_classes"].get(row_class)
-        if scope is None:
-            discovered_undeclared.update(keys)
-            continue
+        # ``_day_field_keys`` buckets by ``_row_class_for_code`` or the declared
+        # default row class, so every key here is a declared row class.
+        scope = spec["row_classes"][row_class]
         field_class = _field_class_map(scope)
         discovered_undeclared.update(
             key for key in keys if len(field_class.get(key, [])) != 1
@@ -1650,11 +1760,13 @@ def _run_with_tracking(args: argparse.Namespace) -> dict:
     )
     job_run = job_run_helper.create_job_run(context)
 
-    aliases = _resolve_collections(args.collections)
-    trade_date = (
-        datetime.date.fromisoformat(args.trade_date) if args.trade_date else None
-    )
     try:
+        # Resolution is inside the try: a blank --collections or a malformed
+        # --trade-date must finish this run as FAILED, never leave it RUNNING.
+        aliases = _resolve_collections(args.collections)
+        trade_date = (
+            datetime.date.fromisoformat(args.trade_date) if args.trade_date else None
+        )
         summary = run_verify(
             aliases=aliases,
             trade_date=trade_date,

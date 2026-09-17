@@ -201,10 +201,23 @@ strict coverage-superset rule (research must have at least as many rows as
 stable, must clear the declared `min_research_rows` floor — 562, the measured
 acceptance universe — and must contain every stable index code within the
 declared missing-code allowance); `unsupported_universe` is a declared class
-whose verdict is `research_excludes` (research must not carry BSE/unsupported
-symbols). A count class with zero rows on either side FAILS, and the reported
-total is never used as the verdict. A supported row the instrument source
-(`basic_stock.object_type`) cannot classify FAILS.
+that is *enforcing* where the writer applies the supported-universe filter
+(`research_excludes`: research must not carry BSE/unsupported symbols) and
+*report-only* where it does not. The `daily_basic` writer maps every tushare
+`ts_code` through `from_tushare_ts_code` and bulk-upserts every row, so BSE
+rows are expected in `stock_daily_basic` once it is enabled; its
+`unsupported_universe` class is therefore `report_only` with a recorded
+`basis`/`reason`, and its count is reported for visibility only, never
+deciding the run. For an enforcing class a zero row count on either side
+FAILS, and the reported total is never used as the verdict. A supported row
+the instrument source (`basic_stock.object_type`) cannot classify FAILS.
+
+The recompute-window discontinuity scan is a companion operator step, not a
+flag on this tool: run
+`check_fq_factor_integrity.py --jump-scan --from-date … --to-date …` over the
+recomputed window and record its output alongside the verifier's report. That
+companion run satisfies the spec's window clause; `writer-switch-verify` does
+not grow a window flag.
 
 | Flag | Default | Description |
 |:---|:---|:---|
