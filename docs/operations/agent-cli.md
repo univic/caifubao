@@ -161,6 +161,79 @@ Output example:
 }
 ```
 
+#### `writer-switch-verify` (datahub verification job module)
+
+Read-only parity check between the research environment (default `MONGODB_*`)
+and the legacy stable environment (`MONGODB_SRC_*`, attached as a one-off
+read-only secret). It refuses to run when the legacy credentials are missing
+(never a vacuous self-comparison), writes only its own `datahub_job_runs`
+record plus the stale-RUNNING cleanup that run tracking performs through
+`job_run_helper`, and exits `0` on PASS / `1` on FAIL. Run it inside the
+datahub pod:
+
+```bash
+python -m app.jobs.writer_switch_verify \
+  --trade-date 2026-09-16 --collections quote,factor --samples 20
+```
+
+Field equality is governed by a declared per-collection field scope. Observed
+fields that the declaration does not classify fail the run by name — both in
+the sampled basket and via a full-day key discovery over every document on the
+reference date. FQ/HFQ fields and the MA factors computed from `close_hfq` are
+declared *derived* and are excluded from legacy parity because legacy stable is
+frozen pre-fq-adj-factor-fix; the report and job-run summary record the
+excluded class, that reason, and a stable `scope_version`. Research-populated
+fields (`isST`, `peTTM`, `psTTM`, `pbMRQ`, `pcfNcfTTM`) must be present and
+non-null on research; their absence on stable is informational, but a non-null
+value that differs on both sides FAILS.
+
+The tushare source verification is **ON by default** and is required for an R1
+acceptance: `--skip-source-tushare` exists only for offline debugging, and a
+PASS produced with it is explicitly not an R1 acceptance (`r1_acceptance:
+false` in the report). The source check always verifies the `quote`
+collection (`stock_daily_quote`) regardless of `--collections`; it samples
+supported individual stocks only, and fails when fewer codes are available
+than `--samples`.
+
+Count differences are reported per declared class, each with its own verdict
+and tolerance. `individual_stock` uses `--tolerance`; `stock_index` uses a
+strict coverage-superset rule (research must have at least as many rows as
+stable, must clear the declared `min_research_rows` floor — 562, the measured
+acceptance universe — and must contain every stable index code within the
+declared missing-code allowance); `unsupported_universe` is a declared class
+that is *enforcing* where the writer applies the supported-universe filter
+(`research_excludes`: research must not carry BSE/unsupported symbols) and
+*report-only* where it does not. The `daily_basic` writer maps every tushare
+`ts_code` through `from_tushare_ts_code` and bulk-upserts every row, so BSE
+rows are expected in `stock_daily_basic` once it is enabled; its
+`unsupported_universe` class is therefore `report_only` with a recorded
+`basis`/`reason`, and its count is reported for visibility only, never
+deciding the run. For the `relative` and `coverage_superset` classes a zero
+row count on either side FAILS (the superset class additionally fails when
+research drops below the legacy count or below the declared floor); the
+enforcing `research_excludes` class is the inverse — it fails when research
+keeps rows beyond the declared allowance. The reported total is never used as
+the verdict. A supported row the instrument source
+(`basic_stock.object_type`) cannot classify FAILS.
+
+The recompute-window discontinuity scan is a companion operator step, not a
+flag on this tool: run
+`check_fq_factor_integrity.py --jump-scan --from-date … --to-date …` over the
+recomputed window and record its output alongside the verifier's report. That
+companion run satisfies the spec's window clause; `writer-switch-verify` does
+not grow a window flag.
+
+| Flag | Default | Description |
+|:---|:---|:---|
+| `--collections` | all | Comma-separated aliases (`quote,daily_basic,factor,signal,scoring`); blank values are rejected |
+| `--trade-date` | expected latest completed session | Completed session under test. When omitted the reference is the expected latest session from `finance_market.trade_calendar` with a 15:00 Asia/Shanghai cutoff (falling back to the per-collection latest research date, recorded as `reference_source`), so two mutually stale environments cannot pass; an explicit date pins a historical acceptance. A raw latest date beyond the reference is reported as an in-progress session, not used as the reference |
+| `--samples` | `20` | Minimum sampled business keys per collection (and per source-check code set) |
+| `--tolerance` | `0.005` | Max relative count difference for `relative` count classes |
+| `--compare-derived` | off | Also compare FQ/HFQ-derived fields; any mismatch then FAILS |
+| `--verify-source-tushare` | on | Verify sampled codes' `fq_factor`/`close_hfq`/OHLC-hfq against tushare `pro.adj_factor` itself; a source error, empty response, or unusable series FAILS (never skipped, never legacy parity) |
+| `--skip-source-tushare` | — | Offline debugging only: skip the source check; the resulting PASS is NOT an R1 acceptance |
+| `--job-name` / `--job-family` / `--trigger` / `--source` | `datahub_writer_switch_verify` / `writer_switch_verify` / `manual` / `cli` | `datahub_job_runs` tracking fields |
+
 ### Scoring
 
 #### `score score-one <STOCK> [--date DATE] [--horizon 5|20|60] [--replace]`
