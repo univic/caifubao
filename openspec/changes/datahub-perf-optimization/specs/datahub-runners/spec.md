@@ -110,3 +110,60 @@ failing the code or listing it as skipped.
 - **AND** the job run SHALL finish with status SUCCESS
 - **AND** the process SHALL exit non-zero only when `failed_count` is greater
   than zero
+
+### Requirement: Historical Signal Rebuilds May Bypass the Daily Dependency Gate
+
+The signal runner SHALL verify the current day's upstream quote+factor run
+before starting, and SHALL only proceed without that verification when an
+operator passes an explicit documented bypass flag. The runner SHALL accept the
+bypass only for a non-scheduled trigger and only for a force rebuild, so a
+scheduled invocation cannot enable it. The bypass SHALL be recorded in the
+created job run and logged as a warning. A bypassed run does not establish the
+day's signal freshness: because the scoring runner gates on the daily
+`signal_daily` SUCCESS record, a bypassed run SHALL NOT satisfy that dependency
+on its own, and the bypass SHALL NOT be treated as evidence that the current
+day's signals were generated.
+
+#### Scenario: Explicit operator bypass proceeds without the daily record
+
+- **GIVEN** an operator-invoked force signal run that passes the bypass flag for
+  a historical rebuild
+- **WHEN** no successful upstream quote+factor run exists for the current
+  scheduled day
+- **THEN** the runner SHALL proceed with the requested signal work instead of
+  recording a dependency SKIP
+- **AND** it SHALL log a warning that the daily dependency check was bypassed
+- **AND** the job-run record SHALL carry `dependency_check_bypassed` set to true
+  in its extra metadata and in its summary on every outcome (success, failure,
+  or dependency skip)
+
+#### Scenario: Scheduled or incremental runs cannot bypass the gate
+
+- **GIVEN** a signal run started by the daily CronJob
+- **WHEN** the daily upstream quote+factor record is absent
+- **THEN** the runner SHALL keep recording a dependency SKIP with no signal
+  writes
+- **AND** the job-run record SHALL carry `dependency_check_bypassed` set to
+  false in its extra metadata and summary
+- **AND** the runner SHALL reject the bypass flag outright when the trigger is
+  scheduled (cron or startup) or when the requested mode is not force
+
+#### Scenario: A bypassed run does not establish the daily signal dependency
+
+- **GIVEN** an operator signal run that passed the bypass flag for a historical
+  rebuild
+- **WHEN** the scoring runner resolves today's `signal_daily` dependency
+- **THEN** that bypassed record SHALL NOT satisfy the dependency, whether it
+  finished SUCCESS, RUNNING, or FAILED
+- **AND** scoring SHALL remain gated on a non-bypassed daily signal run that
+  establishes the current day's signals
+
+#### Scenario: The bypass changes nothing else about the run
+
+- **GIVEN** a signal run that passes the bypass flag
+- **WHEN** it executes the requested force rebuild
+- **THEN** the bypass SHALL NOT change the selected code set, the mode
+  semantics, or the meaning of the pulled, written, skipped, and failed
+  counters
+- **AND** it SHALL NOT alter the signal documents, `source_freshness`, or
+  `generated_at` semantics defined by the existing signal requirements

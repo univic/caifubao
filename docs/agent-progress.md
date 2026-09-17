@@ -29,6 +29,38 @@
 ```
 
 ## 进度记录
+### 2026-09-18 06:35 CST — 信号运维：新增 `--skip-dependency-check` 历史重算开关；scoring 单日成本实测 58s
+
+- 状态：进行中（开关实现+测试完成，待评审/合并；scoring 全区间重算进行中）
+- 已完成：
+  - **运维开关**：`signal_runner` 新增 `--skip-dependency-check`（仅操作者显式传入，
+    且**代码强制**只允许 `--mode force` + 非计划触发器：cron/startup 直接拒绝）。历史全量
+    重算不依赖「今日」行情，而日更依赖门禁会在北京时间跨日后把重试变成**静默空跑**
+    （k8s Job 报 SUCCESS、一行未写、台账记 dependency SKIP）——本日两个分片的 16:14Z
+    重试即为此类。开关会把 `dependency_check_bypassed` 写进 job-run 的 extra 与
+    **所有** summary（success / failed / dependency SKIP）并打一条 WARNING。
+  - **关闭下游漏洞（评审发现）**：`scoring_runner._dependency_state()` 原先只看
+    `signal_daily` 的当天 SUCCESS/写入证据，因此一次「绕过门禁的 3 只 code 历史重算」
+    会顺带解锁当天 scoring。现按 job-run 的 `dependency_check_bypassed` 标记排除，
+    绕过运行不再满足 scoring 依赖（SUCCESS/RUNNING/FAILED 三条路径都排除）。
+  - **spec delta**：`datahub-perf-optimization/specs/datahub-runners` 新增
+    "Historical Signal Rebuilds May Bypass the Daily Dependency Gate" 需求与四个场景
+    （显式绕过可继续且留痕；计划/增量运行不可绕过；绕过不建立当日 signal freshness、
+    不满足 scoring 依赖；绕过不改变选中集合/模式/计数与信号文档语义）。
+  - **scoring 成本实测**：`--type scoring -- backfill --from 2026-08-26 --to 2026-08-26 --replace`
+    单日 **58 秒**（22:27:32→22:28:30Z，succeeded=1/failed=0）；2026-08-26 分数行
+    11,100 → **16,695**（补齐 horizon 60），`updated_at` 更新为本次运行、`generated_at`
+    仍为原插入时间（replace 语义）。据此全区间 08-26→09-17 预计约 16 分钟。
+  - 私有 #92（launcher 增 `--type scoring`）已合并；本次单日探针与全区间重算均走该通道。
+- 验证：`pytest`（datahub 全量）1101 passed + 4 subtests；`ruff check --select E4,E7,E9,F` +
+  `ruff format --check` 通过；`openspec validate --all --strict` 27 passed；
+  `--type scoring --dry-run` 渲染命令/参数与 nodeName 正确。新增用例覆盖：绕过不查询上游
+  记录、默认路径仍走两次门禁、cron/增量组合被拒、WARNING 恰好一次、main() 三条结果的
+  extra+summary 标记、scoring 对绕过记录（SUCCESS/FAILED 带写入）判为 not ready。
+- 下一步：该 PR 评审合并 → 发新镜像 → 用 `--skip-dependency-check` 对
+  `sh688806`/`sz001232`/`sz001248` 三只 code 跑 force 任务补掉 3 行 ma-cross 残差并作为
+  #268 的生产端验证；scoring 全区间结果验收；随后进入策略研究。
+- 阻塞：无。
 ### 2026-09-18 00:20 CST — 信号计算健壮性：因子历史不足的 `(code, signal_name)` 由 FAILED 改为 skip（消除全市场重算反复失败）
 
 - 状态：进行中（实现与测试完成；待只读评审与 PR 合并，合并后发镜像重跑 incapables 集合）

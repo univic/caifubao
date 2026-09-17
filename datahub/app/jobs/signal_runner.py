@@ -245,6 +245,43 @@ def _check_dependency() -> bool:
     )
 
 
+def dependency_ready(skip: bool = False) -> bool:
+    """Decide whether signals may run, honouring an explicit operator bypass.
+
+    The daily gate protects the incremental path: it proves today's upstream
+    quotes and factors exist. A historical rebuild (force/full-history) does not
+    depend on today's session at all, so an operator may bypass the gate
+    explicitly. The bypass is deliberately opt-in, logged, and recorded in the
+    job run.
+    """
+    if skip:
+        logger.warning(
+            "Dependency check bypassed by --skip-dependency-check; the runner "
+            "will not verify today's upstream quote+factor run."
+        )
+        return True
+    return _check_dependency()
+
+
+SCHEDULED_TRIGGERS = ("cron", "startup")
+
+
+def validate_bypass(args: argparse.Namespace) -> None:
+    """Reject a dependency bypass outside an explicit operator historical run."""
+    if not args.skip_dependency_check:
+        return
+    if args.trigger in SCHEDULED_TRIGGERS:
+        raise ValueError(
+            "--skip-dependency-check is not allowed for scheduled triggers "
+            f"(trigger={args.trigger!r}); it is operator-only."
+        )
+    if args.mode != MODE_FORCE:
+        raise ValueError(
+            "--skip-dependency-check requires --mode force: it exists for "
+            "historical rebuilds, not for the incremental stale path."
+        )
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run datahub signal updates with safe stale-only defaults."
@@ -278,6 +315,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Print selected codes without writing signal data.",
+    )
+    parser.add_argument(
+        "--skip-dependency-check",
+        action="store_true",
+        help=(
+            "Operator-only: bypass the daily upstream dependency check. Use it "
+            "for historical rebuilds (force/full-history), never for the "
+            "scheduled daily path; the bypass is recorded in the job run."
+        ),
     )
     parser.add_argument(
         "--market",
@@ -337,6 +383,7 @@ def _init_db_connection() -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    validate_bypass(args)
 
     # Initialize DB connection before any queries
     _init_db_connection()
@@ -356,8 +403,8 @@ def main(argv: list[str] | None = None) -> None:
     else:
         scheduled_at = job_run_helper.utc_now_naive()
 
-    # Check upstream dependency
-    if not _check_dependency():
+    # Check upstream dependency (operator bypass for historical rebuilds)
+    if not dependency_ready(args.skip_dependency_check):
         logger.warning(
             "Dependency check failed: no SUCCESS record found for %s (stock+factors) "
             "at scheduled_at=%s. Skipping signal run.",
@@ -370,7 +417,11 @@ def main(argv: list[str] | None = None) -> None:
             trigger=args.trigger,
             source=args.source,
             scheduled_at=scheduled_at,
-            extra={"signal": args.signal, "mode": args.mode},
+            extra={
+                "signal": args.signal,
+                "mode": args.mode,
+                "dependency_check_bypassed": bool(args.skip_dependency_check),
+            },
         )
         job_run_helper.mark_job_run_skipped(
             context=context,
@@ -382,6 +433,7 @@ def main(argv: list[str] | None = None) -> None:
                 "dependency_include_factors": True,
                 "signal": args.signal,
                 "mode": args.mode,
+                "dependency_check_bypassed": bool(args.skip_dependency_check),
             },
         )
         print(
@@ -405,7 +457,11 @@ def main(argv: list[str] | None = None) -> None:
         trigger=args.trigger,
         source=args.source,
         scheduled_at=scheduled_at,
-        extra={"signal": args.signal, "mode": args.mode},
+        extra={
+            "signal": args.signal,
+            "mode": args.mode,
+            "dependency_check_bypassed": bool(args.skip_dependency_check),
+        },
     )
     job_run = job_run_helper.create_job_run(context)
 
@@ -423,6 +479,7 @@ def main(argv: list[str] | None = None) -> None:
             "signal": args.signal,
             "mode": args.mode,
             "market": args.market,
+            "dependency_check_bypassed": bool(args.skip_dependency_check),
             "pulled_total": result.get("pulled_count", 0),
             "written_total": result.get("written_count", 0),
             "skipped_count": result.get("skipped_count", 0),
@@ -448,6 +505,7 @@ def main(argv: list[str] | None = None) -> None:
                 "mode": args.mode,
                 "written_total": int(getattr(exc, "written_count", 0) or 0),
                 "failed_codes": list(getattr(exc, "failed_codes", [])),
+                "dependency_check_bypassed": bool(args.skip_dependency_check),
             },
             error_message=str(exc),
         )
