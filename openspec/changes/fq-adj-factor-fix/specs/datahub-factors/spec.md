@@ -105,3 +105,121 @@ operations MUST retain the per-code historical path.
 - AND freshness is derived from finally persisted data rather than advanced
   optimistically
 - AND replaying the same target date remains idempotent
+
+### Requirement: FQ/HFQ acceptance is verified against tushare adj_factor
+
+Acceptance of the FQ/HFQ values MUST verify them against the tushare
+`pro.adj_factor` series itself, and MUST NOT treat agreement with the legacy
+stable environment as the source of truth for `fq_factor`, `close_hfq`,
+`open_hfq`, `high_hfq`, `low_hfq`, or factors derived from `close_hfq`.
+
+#### Scenario: Sampled codes match the source of truth
+
+- GIVEN a supported stock with quote rows in the acceptance window
+- WHEN the acceptance check fetches the tushare `adj_factor` series for that
+  code and compares it with the stored FQ fields
+- THEN `fq_factor` equals the source factor on every row where the source
+  provides one
+- AND the most recent known source factor is carried forward for rows the
+  source omits
+- AND `close_hfq == round(close * fq_factor, 4)`
+- AND open/high/low_hq scale by the same ratio as close
+
+#### Scenario: Factor source is unavailable during acceptance
+
+- GIVEN the tushare request for a sampled code fails or returns no rows
+- WHEN the acceptance check runs
+- THEN the check FAILS
+- AND it MUST NOT be skipped
+- AND it MUST NOT fall back to legacy-stable parity for that field class
+
+#### Scenario: Individual source rows are unusable
+
+- GIVEN a source frame contains individual non-finite or non-positive factor
+  rows
+- WHEN the acceptance check builds the expected factor series for that code
+- THEN those rows are skipped exactly as the writer skips them, so acceptance
+  cannot fail on values the writer deliberately ignores
+- AND the number of skipped rows is reported
+- AND the check FAILS when no usable factor remains for that code
+
+#### Scenario: Named acceptance date has no rows
+
+- GIVEN an operator names a trade date for the acceptance check
+- WHEN neither environment has a quote row for that date
+- THEN the check FAILS instead of reporting a vacuous pass
+
+#### Scenario: Acceptance covers the full recompute window
+
+- GIVEN a market-wide FQ recompute over a date range
+- WHEN acceptance runs the bounded discontinuity scan
+  (`datahub/scripts/check_fq_factor_integrity.py --jump-scan --from-date
+  <start> --to-date <end>`, backed by `scan_fq_factor_jumps`)
+- THEN the scan window equals the recompute window rather than only the known
+  incident date
+- AND the scan output — per-date affected count, maximum change, and fraction
+  of the scanned universe — is recorded in the acceptance record alongside the
+  tushare source check
+- AND the recorded per-date counts are compared against the recorded baseline
+  rather than treated as a pass/fail threshold of their own
+
+### Requirement: Legacy-stable FQ/HFQ equality is skipped only under a declared scope
+
+A cross-environment parity check MUST classify every field it observes into an
+explicit, declared field-scope class and MUST skip FQ-derived equality only
+under such a declaration, with the exclusion and its reason recorded in the
+report and the job-run record.
+
+#### Scenario: Derived fields excluded by default
+
+- GIVEN research's FQ/HFQ values were recomputed from the real source while the
+  legacy stable environment is still frozen on the pre-fix values
+- WHEN the parity check compares the two environments
+- THEN FQ-derived fields are excluded from equality only because the declared
+  scope classifies them as derived
+- AND the report and job-run summary record the excluded class, its reason,
+  and a version identifier of the declared scope
+- AND prices, volumes, business keys, and other source-derived fields are
+  still compared field by field
+
+#### Scenario: Derived fields compared on request
+
+- GIVEN the operator asks for derived fields to be compared
+- WHEN the parity check runs
+- THEN FQ-derived fields are compared field by field
+- AND any mismatch FAILS the check
+
+#### Scenario: Undeclared field fails closed
+
+- GIVEN a field appears on either environment that the declared scope does not
+  classify
+- WHEN the parity check runs
+- THEN the check FAILS and names the undeclared field
+- AND no field may be silently ignored
+
+#### Scenario: Field populated only by the newer writer
+
+- GIVEN the current writer populates fields that the frozen legacy writer
+  omitted
+- WHEN the parity check runs
+- THEN those fields are declared as research-populated with the producing
+  writer, source, and code revision
+- AND each of them MUST be present and non-null on the research side
+- AND their absence on the legacy side is reported as informational rather than
+  as a value mismatch
+
+#### Scenario: Count differences are reported per class
+
+- GIVEN the two environments differ in row coverage, for example index rows or
+  unsupported-universe symbols
+- WHEN the parity check compares counts
+- THEN the comparison reports each declared class separately, with its own
+  verdict, tolerance, and declared mode
+- AND a class with zero rows on either side FAILS, unless that class is
+  explicitly declared as excluded-by-design with a recorded reason (for example
+  the unsupported-universe class, which the research environment excludes by
+  the supported-universe rule)
+- AND a declared minimum-coverage floor is applied to any class whose mode
+  permits research coverage to exceed the legacy environment, so a coverage
+  regression still FAILS
+- AND a total count MUST NOT be used to mask a single-class regression
