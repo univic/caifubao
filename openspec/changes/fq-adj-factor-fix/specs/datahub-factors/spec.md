@@ -142,12 +142,17 @@ stable environment as the source of truth for `fq_factor`, `close_hfq`,
 
 #### Scenario: Acceptance covers the full recompute window
 
-- GIVEN a market-wide FQ recompute has been executed
-- WHEN acceptance scans the recomputed history for discontinuities
-- THEN the scan covers the whole recomputed window, not only the known
+- GIVEN a market-wide FQ recompute over a date range
+- WHEN acceptance runs the bounded discontinuity scan
+  (`datahub/scripts/check_fq_factor_integrity.py --jump-scan --from-date
+  <start> --to-date <end>`, backed by `scan_fq_factor_jumps`)
+- THEN the scan window equals the recompute window rather than only the known
   incident date
-- AND a market-wide single-day anomaly above the configured operator bound
-  is reported with its date, affected count, and fraction of the universe
+- AND the scan output — per-date affected count, maximum change, and fraction
+  of the scanned universe — is recorded in the acceptance record alongside the
+  tushare source check
+- AND the recorded per-date counts are compared against the recorded baseline
+  rather than treated as a pass/fail threshold of their own
 
 ### Requirement: Legacy-stable FQ/HFQ equality is skipped only under a declared scope
 
