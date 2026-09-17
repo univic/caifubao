@@ -105,3 +105,101 @@ operations MUST retain the per-code historical path.
 - AND freshness is derived from finally persisted data rather than advanced
   optimistically
 - AND replaying the same target date remains idempotent
+
+### Requirement: FQ/HFQ acceptance is verified against tushare adj_factor
+
+Acceptance of the FQ/HFQ values MUST verify them against the tushare
+`pro.adj_factor` series itself, and MUST NOT treat agreement with the legacy
+stable environment as the source of truth for `fq_factor`, `close_hfq`,
+`open_hfq`, `high_hfq`, `low_hfq`, or factors derived from `close_hfq`.
+
+#### Scenario: Sampled codes match the source of truth
+
+- GIVEN a supported stock with quote rows in the acceptance window
+- WHEN the acceptance check fetches the tushare `adj_factor` series for that
+  code and compares it with the stored FQ fields
+- THEN `fq_factor` equals the source factor on every row where the source
+  provides one
+- AND the most recent known source factor is carried forward for rows the
+  source omits
+- AND `close_hfq == round(close * fq_factor, 4)`
+- AND open/high/low_hq scale by the same ratio as close
+
+#### Scenario: Factor source is unavailable during acceptance
+
+- GIVEN the tushare request for a sampled code fails, returns no rows, or
+  returns a non-finite or non-positive factor
+- WHEN the acceptance check runs
+- THEN the check FAILS
+- AND it MUST NOT be skipped
+- AND it MUST NOT fall back to legacy-stable parity for that field class
+
+#### Scenario: Named acceptance date has no rows
+
+- GIVEN an operator names a trade date for the acceptance check
+- WHEN neither environment has a quote row for that date
+- THEN the check FAILS instead of reporting a vacuous pass
+
+#### Scenario: Acceptance covers the full recompute window
+
+- GIVEN a market-wide FQ recompute has been executed
+- WHEN acceptance scans the recomputed history for discontinuities
+- THEN the scan covers the whole recomputed window, not only the known
+  incident date
+- AND a market-wide single-day anomaly above the configured operator bound
+  is reported with its date, affected count, and fraction of the universe
+
+### Requirement: Legacy-stable FQ/HFQ equality is skipped only under a declared scope
+
+A cross-environment parity check MUST classify every field it observes into an
+explicit, declared field-scope class and MUST skip FQ-derived equality only
+under such a declaration, with the exclusion and its reason recorded in the
+report and the job-run record.
+
+#### Scenario: Derived fields excluded by default
+
+- GIVEN research's FQ/HFQ values were recomputed from the real source while the
+  legacy stable environment is still frozen on the pre-fix values
+- WHEN the parity check compares the two environments
+- THEN FQ-derived fields are excluded from equality only because the declared
+  scope classifies them as derived
+- AND the report and job-run summary record the excluded class, its reason,
+  and a version identifier of the declared scope
+- AND prices, volumes, business keys, and other source-derived fields are
+  still compared field by field
+
+#### Scenario: Derived fields compared on request
+
+- GIVEN the operator asks for derived fields to be compared
+- WHEN the parity check runs
+- THEN FQ-derived fields are compared field by field
+- AND any mismatch FAILS the check
+
+#### Scenario: Undeclared field fails closed
+
+- GIVEN a field appears on either environment that the declared scope does not
+  classify
+- WHEN the parity check runs
+- THEN the check FAILS and names the undeclared field
+- AND no field may be silently ignored
+
+#### Scenario: Field populated only by the newer writer
+
+- GIVEN the current writer populates fields that the frozen legacy writer
+  omitted
+- WHEN the parity check runs
+- THEN those fields are declared as research-populated with the producing
+  writer, source, and code revision
+- AND each of them MUST be present and non-null on the research side
+- AND their absence on the legacy side is reported as informational rather than
+  as a value mismatch
+
+#### Scenario: Count differences are reported per class
+
+- GIVEN the two environments differ in row coverage, for example index rows or
+  unsupported-universe symbols
+- WHEN the parity check compares counts
+- THEN the comparison reports each declared class separately, with its own
+  verdict and tolerance
+- AND a class with zero rows on either side FAILS
+- AND a total count MUST NOT be used to mask a single-class regression
