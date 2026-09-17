@@ -29,7 +29,38 @@
 ```
 
 ## 进度记录
-### 2026-09-17 18:45 CST — P0-5/TASK-404 §8 步骤 2/3 在 research 执行完成并验收通过；策略研究前置结论
+### 2026-09-17 08:50 CST — P0-5/TASK-404：research 部署与 quote 链启用完成、数据补至 09-16；§5.2 验收结果与判据调整结论
+
+- 状态：进行中（步骤 2/3 已完成；writer 逐个启用进行中——`quote-index` + `quote-stock` 已激活）
+- 已完成：
+  - **research datahub 部署**（用户批准）：10 个 CronJob 就位（8 writer + parquet-export +
+    mongodb-s3-backup）**初始全部挂起**；datahub 镜像 `sha-73b8d34f7a37`；rollout 成功。
+  - **writer 启用通道跑通**：仓库变量（创建用 `POST`、更新用 `PATCH`；`PUT` 是 secrets 的方法，
+    实测 404）+ 一次 `datahub-deploy.yml` dispatch 即**精确激活**目标 writer；两个活跃时
+    `ACTIVE_WRITERS_ACK` 精确点名集合，其余 writer 保持挂起（逐次用
+    `kubectl get cronjobs` 核对）。文档修正见私有 #91。
+  - **数据补齐到 2026-09-16**（手工 Job，钉 ubuntu-5700x 节点本地 Mongo）：
+    指数 pulled 562/written **1,686**；股票 pulled 5,564/written **15,618**；
+    FQ pulled **5,206**/written **16,631,343**；MA factor pulled **5,201**/written **15,932**。
+    逐日 09-14/15/16 = **5,769/5,767/5,768** 行，其中 fq/hfq 覆盖 **5,203/5,205/5,206**
+    （= 总行数 − 562 指数行，股票覆盖完整）；`stock_factor_daily` 最大日期 **09-16**、当日 5,201 行。
+  - **§5.2 writer-verify**（trade_date 09-16，20 抽样，私有 Job）：
+    `stock_daily_quote` = freshness 两侧同日 ✅ / count **5,768 vs 5,403**（差 6.3%）/
+    抽样见 research 独有 `isST`/`pbMRQ`/`pcfNcfTTM`；`stock_factor_daily` = freshness 同日 ✅ /
+    count **5,201 vs 5,201**（0.0%）✅ / MA 字段不一致（5%~28%）。整体 FAIL。
+- 关键结论（判据层面）：验证器行为正确，但"逐字段一致"判据在**旧 stable 未做 FQ 重算
+  （缺口 2 仍在）+ 两侧 schema 已漂移**的前提下无法成立，且差异方向指向 **research 正确**
+  （stable 的 MA 仍基于 08-31 断层前的坏复权价）。建议 §5.2/§9.0 改用：字段作用域比较
+  （排除 FQ 派生字段与新增字段）+ 以 tushare `adj_factor` 对照与断层扫描作为 FQ 正确性判据；
+  该扩展需改 `writer_switch_verify`（公开代码，走 Spec Gate + 评审）。
+- 验证：FQ 断层扫描（同一扫描器/窗口）2026-08-31 由 4,673 只(84.0%)降为 **0**、全市场最大
+  单日变化 186.4× → **50.2%**；每次 writer 启用后核对 suspend 向量（单 writer 隔离、ACK 生效）。
+- 下一步：启用 `signal`(18:30)/`scoring`(18:35) 并补齐 09-14..09-16；按研究窗口重算
+  factor → signal → scoring 历史（研究窗口内旧值受坏复权价污染）；`writer_switch_verify`
+  增加字段作用域选项；随后在修正后的数据上开展策略研究。
+- 阻塞：无（后续集群/数据变更按批准推进）。
+
+### 2026-09-17 02:45 CST — P0-5/TASK-404 §8 步骤 2/3 在 research 执行完成并验收通过；策略研究前置结论
 
 - 状态：已完成（步骤 2 industry 键迁移、步骤 3 FQ 全市场重算；执行经用户批准）
 - 已完成：
@@ -56,7 +87,7 @@
   按研究窗口重算 factor/signal/scoring → 策略研究。
 - 阻塞：无（后续集群/数据变更按设计需用户逐项批准）。
 
-### 2026-09-17 03:10 CST — P0-5/TASK-404 执行 runbook 补齐（步骤 6-9）+ 执行就绪核验
+### 2026-09-17 02:20 CST — P0-5/TASK-404 执行 runbook 补齐（步骤 6-9）+ 执行就绪核验
 
 - 状态：已完成（全部剩余步骤的命令级 runbook 就绪；执行仍待用户逐项批准）
 - 已完成：
