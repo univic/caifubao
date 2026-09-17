@@ -192,6 +192,36 @@ class MovingAverageSignalService:
             return pd.merge(f_df, q_df, left_index=True, right_index=True, how="left")
         return f_df
 
+    def _unevaluable_signals(self, factor_df: pd.DataFrame) -> dict[str, str]:
+        """Classify signal names whose required factor window has no evaluable values.
+
+        A sparse projection omits a factor field entirely when no row carries it
+        (a listing whose history has not reached the MA window), and a field can
+        also be present but null for every row. Neither is a calculation
+        failure: the signal name is simply not evaluable yet, so it is reported
+        as skipped instead of raising.
+        """
+        unevaluable: dict[str, str] = {}
+        for signal_name, config in self.configs.items():
+            missing_columns = [
+                name for name in config.required_factors if name not in factor_df
+            ]
+            if missing_columns:
+                unevaluable[signal_name] = "missing factor fields: " + ", ".join(
+                    missing_columns
+                )
+                continue
+            empty_columns = [
+                name
+                for name in config.required_factors
+                if not pd.to_numeric(factor_df[name], errors="coerce").notna().any()
+            ]
+            if empty_columns:
+                unevaluable[signal_name] = "no factor values: " + ", ".join(
+                    empty_columns
+                )
+        return unevaluable
+
     def _load_signal_anchors(self, code: str) -> dict[str, datetime.datetime]:
         rows = self.status_model.objects(
             code=code,
@@ -283,6 +313,8 @@ class MovingAverageSignalService:
         stock_obj,
         target_date: datetime.datetime,
         calculated_at: datetime.datetime,
+        *,
+        signal_names: list[str] | None = None,
     ) -> None:
         self._refresh_market_signal_statuses(
             {stock_obj.code: target_date},
@@ -290,7 +322,13 @@ class MovingAverageSignalService:
             object_type_by_code={
                 stock_obj.code: getattr(stock_obj, "object_type", "individual_stock")
             },
+            skipped_by_code={stock_obj.code: self._skipped_signal_names(signal_names)},
         )
+
+    def _skipped_signal_names(self, signal_names: list[str] | None) -> set[str]:
+        if signal_names is None:
+            return set()
+        return set(self.configs) - set(signal_names)
 
     def _refresh_market_signal_statuses(
         self,
@@ -298,6 +336,7 @@ class MovingAverageSignalService:
         *,
         calculated_at: datetime.datetime | None = None,
         object_type_by_code: dict[str, str] | None = None,
+        skipped_by_code: dict[str, set[str]] | None = None,
     ) -> None:
         if not code_targets:
             return
@@ -353,6 +392,7 @@ class MovingAverageSignalService:
             }
             for code in codes
             for signal_name in self.configs
+            if signal_name not in (skipped_by_code or {}).get(code, set())
         ]
         data_asset_status_helper.bulk_upsert_asset_status(
             records, collection=self.status_model._get_collection()
@@ -365,6 +405,11 @@ class MovingAverageSignalService:
         if not stock_obj:
             return {"code": "FAIL", "written_count": 0, "message": "stock not found"}
         if not data_capability_helper.stock_supports(stock_obj, "ma_factor"):
+            logger.info(
+                "Signal update skipped: code=%s reason=ma_factor is not supported "
+                "for this stock",
+                code,
+            )
             return {
                 "code": "SKIP",
                 "written_count": 0,
@@ -378,10 +423,45 @@ class MovingAverageSignalService:
         factor_df = self._load_factor_df(code, anchor_date=incremental_anchor)
         if factor_df.empty:
             if force:
-                raise RuntimeError(
-                    f"cannot rebuild signals without factor data: {code}"
+                logger.info(
+                    "Signal update skipped: code=%s reason=no factor data", code
                 )
+                return {
+                    "code": "SKIP",
+                    "written_count": 0,
+                    "message": "no factor data",
+                    "skipped_signals": sorted(self.configs),
+                }
             return {"code": "GOOD", "written_count": 0, "message": "no factor data"}
+
+        unevaluable = self._unevaluable_signals(factor_df)
+        evaluable_names = [
+            signal_name
+            for signal_name in self.configs
+            if signal_name not in unevaluable
+        ]
+        if not evaluable_names:
+            reason = "; ".join(
+                f"{signal_name}: {unevaluable[signal_name]}"
+                for signal_name in sorted(unevaluable)
+            )
+            logger.info(
+                "Signal update skipped: code=%s reason=insufficient factor history (%s)",
+                code,
+                reason,
+            )
+            return {
+                "code": "SKIP",
+                "written_count": 0,
+                "message": f"insufficient factor history ({reason})",
+                "skipped_signals": sorted(unevaluable),
+            }
+        if unevaluable:
+            logger.info(
+                "Signal update partially skipped: code=%s skipped_signals=%s",
+                code,
+                sorted(unevaluable),
+            )
 
         source_freshness = self._load_source_freshness(code)
         generated_at = datetime.datetime.now()
@@ -389,7 +469,8 @@ class MovingAverageSignalService:
         operations: list[UpdateOne] = []
         authoritative_keys: list[dict[str, Any]] = []
 
-        for signal_name, config in self.configs.items():
+        for signal_name in evaluable_names:
+            config = self.configs[signal_name]
             signal_df = self.build_signal_frame(config, factor_df)
             if not force:
                 anchor = anchors.get(signal_name)
@@ -416,13 +497,18 @@ class MovingAverageSignalService:
         if force:
             delete_filter: dict[str, Any] = {
                 "stock_code": code,
-                "signal_name": {"$in": list(self.configs)},
+                "signal_name": {"$in": evaluable_names},
             }
             if authoritative_keys:
                 delete_filter["$nor"] = authoritative_keys
             collection.delete_many(delete_filter)
         if refresh_statuses:
-            self._refresh_signal_statuses(stock_obj, target_date, generated_at)
+            self._refresh_signal_statuses(
+                stock_obj,
+                target_date,
+                generated_at,
+                signal_names=evaluable_names,
+            )
 
         written_count = len(operations)
         return {
@@ -430,6 +516,7 @@ class MovingAverageSignalService:
             "written_count": written_count,
             "message": None,
             "target_date": target_date,
+            "skipped_signals": sorted(unevaluable) or None,
         }
 
     def get_codes_requiring_update(self, market=None) -> list[str]:
@@ -510,9 +597,12 @@ class MovingAverageSignalService:
         )
         written_total = 0
         skipped_count = 0
+        skipped_codes: list[str] = []
+        skipped_signal_count = 0
         failed_count = 0
         failed_codes: list[str] = []
         status_targets: dict[str, datetime.datetime] = {}
+        skipped_by_code: dict[str, set[str]] = {}
         for code in codes:
             try:
                 result = self.update_code(code, refresh_statuses=False)
@@ -522,13 +612,21 @@ class MovingAverageSignalService:
                 logger.exception("Signal update failed: code=%s", code)
                 continue
             if result.get("code") == "SKIP":
+                # update_code already logged this skip with its reason.
                 skipped_count += 1
-            elif result.get("code") != "GOOD":
+                skipped_codes.append(code)
+                skipped_signal_count += len(result.get("skipped_signals") or [])
+                continue
+            if result.get("code") != "GOOD":
                 failed_count += 1
                 failed_codes.append(code)
                 continue
-            if result.get("code") == "GOOD" and result.get("target_date") is not None:
+            if result.get("target_date") is not None:
                 status_targets[code] = result["target_date"]
+            skipped_signals = result.get("skipped_signals")
+            if skipped_signals:
+                skipped_by_code[code] = set(skipped_signals)
+                skipped_signal_count += len(skipped_signals)
             written_total += int(result.get("written_count", 0))
         if failed_codes:
             raise SignalUpdateError(
@@ -537,7 +635,9 @@ class MovingAverageSignalService:
                 written_count=written_total,
             )
         try:
-            self._refresh_market_signal_statuses(status_targets)
+            self._refresh_market_signal_statuses(
+                status_targets, skipped_by_code=skipped_by_code
+            )
         except Exception as exc:
             raise SignalUpdateError(
                 "signal status update failed",
@@ -548,6 +648,8 @@ class MovingAverageSignalService:
             "pulled_count": len(codes),
             "written_count": written_total,
             "skipped_count": skipped_count,
+            "skipped_codes": skipped_codes,
+            "skipped_signal_count": skipped_signal_count,
             "failed_count": failed_count,
             "failed_codes": failed_codes,
         }

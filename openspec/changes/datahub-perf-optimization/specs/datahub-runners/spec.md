@@ -76,7 +76,13 @@ without expanding or changing the code set selected by runner arguments.
 The signal runner SHALL route stale MA-signal updates through one market batch
 without expanding the code set selected by market, explicit `--code`, or
 `--limit` arguments. Dry-run SHALL report that same set without writes, while
-force mode SHALL retain the authoritative per-code rebuild path.
+force mode SHALL retain the authoritative per-code rebuild path. Signal
+outcomes SHALL retain the existing runner meanings: `skipped` SHALL cover codes
+whose configured signal names are all unevaluable, without failing the run,
+while `failed` SHALL remain reserved for genuine errors. Per-signal-name
+unevaluability inside a partially evaluable code SHALL be surfaced by the
+factory (returned per code and counted by `skipped_signal_count`) without
+failing the code or listing it as skipped.
 
 #### Scenario: Stale signal run uses one market batch
 
@@ -86,3 +92,21 @@ force mode SHALL retain the authoritative per-code rebuild path.
 - **THEN** it SHALL call the signal market update path once with exactly that set
 - **AND** dry-run SHALL perform zero writes for that same set
 - **AND** force mode SHALL retain the authoritative per-code rebuild behavior
+
+#### Scenario: Unevaluable short-history codes are reported as skipped
+
+- **GIVEN** a force or stale signal run whose selected code set includes a code
+  without enough factor history for every configured signal name
+- **WHEN** the runner reports its result and job-run summary
+- **THEN** `skipped_count` and `skipped_codes` SHALL report that code
+- **AND** `failed_count` and `failed_codes` SHALL NOT report it
+- **AND** a code whose history is insufficient for only some configured signal
+  names SHALL remain GOOD and SHALL NOT appear in either `skipped_codes` or
+  `failed_codes`, while its evaluable signal names are computed and its skipped
+  signal names keep their existing freshness
+- **AND** `skipped_signal_count` SHALL count the `(code, signal_name)` pairs
+  skipped for insufficient factor history across both fully and partially
+  skipped codes (a code skipped for an unsupported capability contributes zero)
+- **AND** the job run SHALL finish with status SUCCESS
+- **AND** the process SHALL exit non-zero only when `failed_count` is greater
+  than zero

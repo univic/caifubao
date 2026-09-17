@@ -29,6 +29,50 @@
 ```
 
 ## 进度记录
+### 2026-09-18 00:20 CST — 信号计算健壮性：因子历史不足的 `(code, signal_name)` 由 FAILED 改为 skip（消除全市场重算反复失败）
+
+- 状态：进行中（实现与测试完成；待只读评审与 PR 合并，合并后发镜像重跑 incapables 集合）
+- 已完成：
+  - **根因定位**：`_load_factor_df` 用 `.only("date","ma_10","ma_20","ma_60")` 稀疏投影，
+    新股/次新股在历史未达 MA 窗口时字段**整体缺席**（不是空值），`build_signal_frame`
+    抛 `ValueError("Missing factor fields…")` → runner 记 per-code FAIL →
+    `SignalUpdateError` 使**整批 fail-fast**（2026-09-17 全市场信号重算 5/8 分片因此中断）。
+    实测：`sz301583` 41 条 factor 行中 `ma_10` 41 / `ma_20` 31 / `ma_60` 0；`sz001232`
+    24 条中 24/14/0；`sh603448`、`sh688801`、`sh601091` 等 factor 行为 0（force 模式原走
+    `RuntimeError`）。此前记录的 389 只「incapable」中 344 只是北交所代码
+    （`basic_stock` 中 `data_capabilities.ma_factor=False`，走既有 capability SKIP，本非故障源），
+    真正的故障类是 45 只 10–59 个交易日历史的主板/创业板/科创板新股。
+  - **修复**：新增显式前置判定 `_unevaluable_signals(factor_df)`——必需因子列缺席或整列为空
+    即该 signal 名不可评估，按 `(code, signal_name)` 粒度记 skip：不写行、不删除、不推进
+    `latest_data_date`/`last_success_at`（下次 stale 选择仍会选中它）；同一 code 仍会计算其
+    可评估的 signal 名（如新股照常算 ma10_cross_ma20）。force 的 prune 范围收窄为**本次
+    实际重建的 signal 名**，避免误删 skip 名的历史行；force + 无任何 factor 行改为 skip
+    （原 `RuntimeError`，同样不删除行）。真实的读库/写库/状态写入失败、stock 不存在、
+    缺 `close` 仍记 FAILED 并使 run 失败。
+  - **可观测性**：`skipped_codes`（整只 code 不可评估）与 `skipped_signal_count`
+    （按 `(code, signal_name)` 计数的历史不足 skip 总数，含部分可评估的 code）贯通
+    `update_market` → runner result → job-run summary；整批全 skip 的 run 另记
+    `all_skipped` 标记并打 WARNING（避免把上游因子整体停摆当成「无 stale 可做」，
+    scoring 依赖 signal run 的 SUCCESS）；每个 code 恰好一条 INFO 日志
+    （capability skip 与历史不足 skip 都在 factory 内记录，调用方不重复打）。
+  - **遗留缺口（另行跟进）**：`get_codes_requiring_update` 以 MA_10/MA_20/MA_60 三者齐备为
+    共同分母，因此只有 10–59 个交易日历史的新股不会被夜间 stale 选中（其 ma-cross 本可计算）；
+    本次 force 重跑会补上这些行，日常路径的「按 config 选择」规则需另立小任务。
+  - **Spec**：`openspec/changes/datahub-perf-optimization` 的 `signals-mvp` 增补
+    "Insufficient factor history is skipped, not failed" 场景，在 "Failure does not
+    advance signal freshness" 与 force 权威区间场景中加入 carve-out/prune 约束；
+    `datahub-runners` 增补 skip vs fail 的 run 结果口径；proposal/tasks 记录该显式语义变化。
+- 验证：
+  - `datahub` 全量 `pytest app/test/` → **1009 passed + 4 subtests**（本分支基线为 develop
+    当前 tip）；`ruff check --select E4,E7,E9,F` 通过、`ruff format --check` 通过。
+  - 新增/调整用例：稀疏因子列只 skip 对应 signal 名且 prune 收窄、全列缺失整 code skip、
+    force 空因子不再抛错且不删行、混合批次 skip/failed 计数与状态刷新范围、
+    runner 两条路径的 `skipped_codes` 透传。
+  - `npx -y @fission-ai/openspec@1.1.1 validate --all --strict` → 27 passed。
+- 下一步：只读评审（qa-reviewer + spec-guardian 复核 delta 与实现一致）→ Draft PR → 合并后
+  用新镜像对 incapables 集合重跑 force 任务（确认 `failed_count=0`、`skipped_codes` 与
+  ma-cross 命中被写入），再进入 scoring 重算与策略研究。
+- 阻塞：无（GitHub 网络间歇性不可达，push/PR 需重试）。
 ### 2026-09-17 08:50 CST — P0-5/TASK-404：research 部署与 quote 链启用完成、数据补至 09-16；§5.2 验收结果与判据调整结论
 
 - 状态：进行中（步骤 2/3 已完成；writer 逐个启用进行中——`quote-index` + `quote-stock` 已激活）

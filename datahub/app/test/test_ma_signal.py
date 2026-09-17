@@ -140,8 +140,11 @@ class IncrementalSignalService(MovingAverageSignalService):
     def _load_source_freshness(self, code):
         return {"MA_60": {"status": "OK"}}
 
-    def _refresh_signal_statuses(self, stock_obj, target_date, calculated_at):
+    def _refresh_signal_statuses(
+        self, stock_obj, target_date, calculated_at, *, signal_names=None
+    ):
         self.refreshed.append((stock_obj.code, target_date))
+        self.refreshed_signal_names = signal_names
 
 
 def test_incremental_update_writes_only_dates_after_evaluated_anchor():
@@ -220,16 +223,114 @@ def test_force_cleanup_failure_does_not_refresh_status():
     assert service.refreshed == []
 
 
-def test_force_without_factor_data_fails_without_deleting_rows():
+def test_force_without_factor_data_skips_without_deleting_rows():
     class EmptyForceService(IncrementalSignalService):
         def _load_factor_df(self, code, anchor_date=None):
             return pd.DataFrame()
 
     service = EmptyForceService({})
 
-    with pytest.raises(RuntimeError, match="without factor data"):
-        service.update_code("sh600000", force=True)
+    # Deliberate contract change (see the datahub-perf-optimization deltas):
+    # a code with no factor rows at all is an unevaluable precondition, not a
+    # calculation failure. It is reported as skipped and still performs no
+    # destructive cleanup, so persisted rows survive.
+    result = service.update_code("sh600000", force=True)
 
+    assert result["code"] == "SKIP"
+    assert result["written_count"] == 0
+    assert result["skipped_signals"] == sorted(service_signal_names())
+    assert RecordingSignalModel.collection.delete_filters == []
+    assert service.refreshed == []
+
+
+def test_force_missing_required_factor_column_skips_only_that_signal():
+    class SparseFactorService(IncrementalSignalService):
+        def _load_factor_df(self, code, anchor_date=None):
+            frame = _incremental_frame().copy()
+            # A sparse projection omits ma_60 entirely for a listing whose
+            # history has not reached the MA60 window.
+            return frame.drop(columns=["ma_60"])
+
+    service = SparseFactorService({})
+
+    result = service.update_code("sh600000", force=True)
+
+    assert result["code"] == "GOOD"
+    assert result["skipped_signals"] == [
+        SIGNAL_MA20_ABOVE_MA60,
+        SIGNAL_PRICE_ABOVE_MA60,
+    ]
+    operations, _ = RecordingSignalModel.collection.batches[0]
+    assert {operation._filter["signal_name"] for operation in operations} == {
+        SIGNAL_MA10_CROSS_MA20
+    }
+    # Force cleanup must be limited to the signal names actually rebuilt.
+    delete_filter = RecordingSignalModel.collection.delete_filters[0]
+    assert delete_filter["signal_name"] == {"$in": [SIGNAL_MA10_CROSS_MA20]}
+    # Skipped signal names must not have their freshness advanced.
+    assert service.refreshed_signal_names == [SIGNAL_MA10_CROSS_MA20]
+
+
+def test_all_null_required_factor_column_skips_signal_names():
+    class NullFactorService(IncrementalSignalService):
+        def _load_factor_df(self, code, anchor_date=None):
+            frame = _incremental_frame().copy()
+            # The column is present but carries no numeric value: a sparse
+            # projection can also return explicit nulls.
+            frame["ma_60"] = float("nan")
+            return frame
+
+    service = NullFactorService({})
+
+    result = service.update_code("sh600000", force=True)
+
+    assert result["code"] == "GOOD"
+    assert result["skipped_signals"] == [
+        SIGNAL_MA20_ABOVE_MA60,
+        SIGNAL_PRICE_ABOVE_MA60,
+    ]
+    operations, _ = RecordingSignalModel.collection.batches[0]
+    assert {operation._filter["signal_name"] for operation in operations} == {
+        SIGNAL_MA10_CROSS_MA20
+    }
+    assert RecordingSignalModel.collection.delete_filters[0]["signal_name"] == {
+        "$in": [SIGNAL_MA10_CROSS_MA20]
+    }
+    assert service.refreshed_signal_names == [SIGNAL_MA10_CROSS_MA20]
+
+
+def test_non_numeric_required_factor_column_is_coerced_and_skipped():
+    class NonNumericFactorService(IncrementalSignalService):
+        def _load_factor_df(self, code, anchor_date=None):
+            frame = _incremental_frame().copy()
+            frame["ma_60"] = "n/a"
+            return frame
+
+    service = NonNumericFactorService({})
+
+    result = service.update_code("sh600000", force=True)
+
+    assert result["code"] == "GOOD"
+    assert result["skipped_signals"] == [
+        SIGNAL_MA20_ABOVE_MA60,
+        SIGNAL_PRICE_ABOVE_MA60,
+    ]
+
+
+def test_all_required_factor_columns_missing_skips_code():
+    class NoRequiredFactorsService(IncrementalSignalService):
+        def _load_factor_df(self, code, anchor_date=None):
+            frame = _incremental_frame().copy()
+            return frame.drop(columns=["ma_10", "ma_20", "ma_60"])
+
+    service = NoRequiredFactorsService({})
+
+    result = service.update_code("sh600000", force=True)
+
+    assert result["code"] == "SKIP"
+    assert result["skipped_signals"] == sorted(service_signal_names())
+    assert "insufficient factor history" in result["message"]
+    assert RecordingSignalModel.collection.batches == []
     assert RecordingSignalModel.collection.delete_filters == []
     assert service.refreshed == []
 
@@ -351,6 +452,63 @@ def test_signal_status_refresh_uses_persisted_counts_and_target_date():
     assert all(record["latest_data_date"] == target for record in records)
 
 
+def test_status_refresh_omits_skipped_signal_names():
+    class AggregateCollection:
+        @staticmethod
+        def aggregate(pipeline):
+            return [
+                {
+                    "_id": {
+                        "stock_code": "sh600000",
+                        "signal_name": SIGNAL_MA10_CROSS_MA20,
+                    },
+                    "data_count": 7,
+                }
+            ]
+
+    class AggregateSignalModel:
+        @staticmethod
+        def _get_collection():
+            return AggregateCollection()
+
+    service = MovingAverageSignalService(signal_model=AggregateSignalModel)
+    stock = SimpleNamespace(code="sh600000", object_type="individual_stock")
+    target = datetime.datetime(2026, 4, 13)
+    calculated_at = datetime.datetime(2026, 4, 13, 18, 30)
+
+    with (
+        patch.object(service.status_model, "_get_collection", return_value=object()),
+        patch.object(
+            data_asset_status_helper, "bulk_upsert_asset_status"
+        ) as bulk_upsert,
+    ):
+        service._refresh_signal_statuses(
+            stock,
+            target,
+            calculated_at,
+            signal_names=[SIGNAL_MA10_CROSS_MA20],
+        )
+
+    records = bulk_upsert.call_args.args[0]
+    # A skipped signal name keeps its previous freshness: no status record for
+    # it, so the next stale selection still requires it.
+    assert {record["asset_name"] for record in records} == {SIGNAL_MA10_CROSS_MA20}
+
+
+def test_build_signal_frame_requires_close_for_price_above_ma60():
+    service = MovingAverageSignalService()
+    config = service.configs[SIGNAL_PRICE_ABOVE_MA60]
+
+    factor_df = pd.DataFrame(
+        [{"date": datetime.datetime(2026, 4, 10), "ma_60": 10.0}]
+    ).set_index("date")
+
+    # Genuine malformed input still fails loudly rather than being classified
+    # as an unevaluable precondition.
+    with pytest.raises(ValueError, match="Missing 'close'"):
+        service.build_signal_frame(config, factor_df)
+
+
 def test_market_update_failure_does_not_advance_any_status():
     class BatchService(MovingAverageSignalService):
         refreshed_targets = None
@@ -406,6 +564,51 @@ def test_market_status_failure_reports_all_retry_codes():
     # Signals for both codes were persisted before the status refresh failed;
     # the exception carries that count for the job-run record.
     assert error.value.written_count == 2
+
+
+def test_market_update_reports_short_history_codes_as_skipped():
+    class MixedService(MovingAverageSignalService):
+        refreshed_kwargs = None
+        refreshed_targets = None
+
+        def get_codes_requiring_update(self, market=None):
+            return ["sh600000", "sz301583"]
+
+        def update_code(self, code, *, force=False, refresh_statuses=True):
+            if code == "sz301583":
+                return {
+                    "code": "SKIP",
+                    "written_count": 0,
+                    "message": "insufficient factor history (missing factor fields: ma_60)",
+                    "skipped_signals": sorted(service_signal_names()),
+                }
+            return {
+                "code": "GOOD",
+                "written_count": 2,
+                "target_date": datetime.datetime(2026, 4, 13),
+                "skipped_signals": [SIGNAL_PRICE_ABOVE_MA60],
+            }
+
+        def _refresh_market_signal_statuses(self, code_targets, **kwargs):
+            self.refreshed_targets = code_targets
+            self.refreshed_kwargs = kwargs
+
+    service = MixedService()
+
+    result = service.update_market()
+
+    assert result["skipped_count"] == 1
+    assert result["skipped_codes"] == ["sz301583"]
+    # Three skipped signal names on the fully unevaluable code plus one on the
+    # partially evaluable code.
+    assert result["skipped_signal_count"] == 4
+    assert result["failed_count"] == 0
+    # A skipped code is not a status target, and the good code's skipped
+    # signal name is excluded from the status refresh.
+    assert service.refreshed_targets == {"sh600000": datetime.datetime(2026, 4, 13)}
+    assert service.refreshed_kwargs == {
+        "skipped_by_code": {"sh600000": {SIGNAL_PRICE_ABOVE_MA60}}
+    }
 
 
 def service_signal_names():
