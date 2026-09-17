@@ -208,9 +208,13 @@ that is *enforcing* where the writer applies the supported-universe filter
 rows are expected in `stock_daily_basic` once it is enabled; its
 `unsupported_universe` class is therefore `report_only` with a recorded
 `basis`/`reason`, and its count is reported for visibility only, never
-deciding the run. For an enforcing class a zero row count on either side
-FAILS, and the reported total is never used as the verdict. A supported row
-the instrument source (`basic_stock.object_type`) cannot classify FAILS.
+deciding the run. For the `relative` and `coverage_superset` classes a zero
+row count on either side FAILS (the superset class additionally fails when
+research drops below the legacy count or below the declared floor); the
+enforcing `research_excludes` class is the inverse — it fails when research
+keeps rows beyond the declared allowance. The reported total is never used as
+the verdict. A supported row the instrument source
+(`basic_stock.object_type`) cannot classify FAILS.
 
 The recompute-window discontinuity scan is a companion operator step, not a
 flag on this tool: run
