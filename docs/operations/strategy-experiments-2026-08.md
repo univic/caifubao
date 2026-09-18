@@ -669,3 +669,44 @@ h+1 个交易日，构建走前 ICIR 与**因果符号**两种合成；持仓数
 **建议**：¥1 万若一定要跑，用 **季度调仓 + 3 名 + 因果符号权重**（35%/Sharpe 1.06/回撤 −28%、
 27 个月翻倍），并把「每票不足 1 手就递补下一名」写进执行规则；更快的做法在 A 股 ¥1 万的
 摩擦结构下并不存在。
+
+### 研究型 paper run 启动：`riq_v1`（REPLAY-only，2026-09-18）
+
+**边界**：这是**研究型账本**（`datahub/scripts/factor_lab_paper_run.py`），每条记录
+`evidence_kind=REPLAY`；**不计入** 120 日不可变前瞻窗口、不导出 target、不注册
+`ScoreModelVersion`、不写 Mongo、不进入 score-driven 的 `paper_causal_v1` 轨道。
+规格见 `openspec/changes/strategy-paper-research-ledger/`。
+
+**命令**（研究面板落在 `factor-lab-panel` claim 上；脚本由 ConfigMap 挂载到 `/scripts`，
+亦可待镜像含该脚本后用 `--type lab-backtest` 调用）：
+
+```bash
+python factor_lab_paper_run.py decide --panel /data/lab_live.parquet \
+  --state /data/paper_riq_v1 --aum 50000 --names 8 --weighting sign \
+  --label fwd_h60 --as-of 2026-09-18 --execution-session 2026-09-21
+python factor_lab_paper_run.py mark --panel /data/lab_live.parquet \
+  --state /data/paper_riq_v1    # 执行日之后运行，得到日频 NAV/回撤/基准
+```
+
+**首次决策（REPLAY 记录 `2026-09-18.decision.json`）**
+
+- 决策 2026-09-18 收盘 → 拟定执行 **2026-09-21 开盘**（T+1 开盘；实际手数由 mark 按开盘价确定）；
+- 账户 ¥50,000、8 名、因果符号权重、权重标签滞后 **61 个交易日**；候选域 **5,186** 只；
+- 期望投入 **¥48,345**、期望现金 **¥1,655**（现金拖累 3.3%）；
+- 决策日因子 IC 均值：amihud_20 +0.1092、reversal_10 +0.0515、trend_60 −0.0805、
+  volatility_20 −0.1244、rsi_14 −0.0683；
+- 目标篮子（含决策日收盘价与指示手数）：
+  `sh688121`(1.15×54)、`sh605199`(5.77×10)、`sz002694`(2.36×26)、`sh600289`(4.24×14)、
+  `sh600076`(2.19×28)、`sz002691`(4.28×14)、`sh600365`(2.83×22)、`sh603869`(8.49×7)；
+- 记录含 `idempotency_key` 与 `payload_sha256`，同一决策日再次写入**失败关闭**（append-only）；
+- 组合中位 ADV **¥916 万/日**，¥5 万规模下容量与冲击不构成约束。
+
+**成本与执行假设**：0.35%/次往返（每边记一半）+ 每笔最低佣金 5 元（每边各计）；
+涨停/停牌的**买入不补**（现金闲置，零收益），被阻断的**卖出滚动**到下一可成交日；
+面板标签按原样消费（不 roll forward）。
+
+**限制**：样本尚短（首次决策），历史回测的区间依赖、微盘流动性与回撤低估等偏差
+（见前文各节）同样适用；本账本为研究观察，不构成投资建议。
+
+**下一步**：2026-09-21 后运行 `mark` 得到日频 NAV 与基准；下一次季度 `decide` 约在
+60 个交易日之后（2026-12 中旬）；每次 `decide`/`mark` 结果回填本文档。
