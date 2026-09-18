@@ -29,6 +29,37 @@
 ```
 
 ## 进度记录
+### 2026-09-18 22:40 CST — research 日更链路全线启用（signal + scoring 计划任务）；策略研究首轮闭环
+
+- 状态：进行中（4 个 writer 已启用并验证；策略研究得到可用结论，待产品化）
+- 已完成：
+  - **计划任务启用（用户批准，逐步执行）**：先 `DATAHUB_SIGNAL_SUSPEND=false` → 部署验证 →
+    再 `DATAHUB_SCORING_SUSPEND=false`；`ACTIVE_WRITERS_ACK` 精确点名
+    `caifubao-datahub-quote-index,caifubao-datahub-quote-stock,caifubao-datahub-signal,caifubao-datahub-scoring`；
+    两次 `datahub-deploy.yml` dispatch（research、镜像 `sha-ef79aa59733e`）均 success，
+    `verify-rendered-manifest.sh` 的多 writer 契约通过；终态 **4 启用 / 6 挂起**。
+  - **启用后实测（补跑当日调度窗口）**：`kubectl create job --from=cronjob/...` 跑当日 slot——
+    signal 依赖门禁通过、pulled 5,186 / **written 3,589** / failed 0 / SUCCESS；
+    scoring 的门禁由该 signal SUCCESS 记录满足、2026-09-18 三个 horizon **16,695 条** / SUCCESS。
+  - **数据新鲜度**：quote / factor / signal / score 全部到 **2026-09-18**
+    （09-18 行数 5,771 / 5,204 / 3,589 / 16,695）；`stock_daily_basic` 仍止于 07-31
+    （其 writer 保持挂起，属预期）。
+  - **研究结论（修复后数据，2020-01→2026-09-17）**：季度 h=60 + 缓冲带 + 走前 ICIR 合成，
+    top-100 净 CAGR 16.7% / Sharpe 0.85 / 回撤 −21.3%，top-30 23.9% / 1.03 / −19.7%；
+    叠加市场宽度风控可把回撤压到 **−12.2%**（CAGR 9.9%）；容量在 k=0.10 冲击模型下约
+    **¥5 千万–1 亿**；小账户：¥1 万不可用（86% 买不到一手）、**¥3 万 6–8 名**可用、
+    **¥10 万 8–12 名**舒适区（整手现金拖累 8%–11%、佣金 ≤0.35%/年）；3 名持仓回撤 −33% 不划算。
+  - **文档**：#270/#271/#272/#273/#274 均已合并（因子层、走前 ICIR、容量与衰减、
+    风控与小账户、集中度与 ¥1 万–100 万网格），实验记录集中在
+    `docs/operations/strategy-experiments-2026-08.md`。
+- 验证：两次 deploy run success；CronJob 终态 4 启用 / 6 挂起；两个补跑 job 均 SUCCESS 且
+  台账记 `signal_daily` / `scoring_daily`；数据新鲜度如上；研究侧全部为只读回测
+  （面板 7,555,430 行），无未来函数（权重走前、T+1 开盘入场）。
+- 下一步：① 把面板导出/因子评估/组合回测脚本固化进 `datahub/scripts/`（走 Spec Gate）；
+  ② small_book/paper 纸面执行；③ 按 §8 逐个启用其余 writer（daily-basic、asset-status、
+  industry-sync、health-watcher、parquet-export、backup）；④ 策略容量/冲击建模产品化。
+- 阻塞：GitHub 网络间歇性不可达（push/PR 需重试）；无其他阻塞。
+
 ### 2026-09-18 21:11 CST — 步骤 3 全链条收官（factor→signal→scoring 重算与验收）与修复后数据的首轮因子/组合研究
 
 - 状态：进行中（signal/scoring 重算与验收已完成；策略层首轮结论已产出，容量问题待解）
