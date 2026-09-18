@@ -88,6 +88,46 @@ kubectl -n caifubao-research cp \
 #   -l job.caifubao.io/type=lab-runner
 ```
 
+## Composite research backtest (`datahub/scripts/`)
+
+`datahub/scripts/factor_lab_composite_backtest.py` is the read-only research
+backtest behind the 2026-09 results recorded in
+[`strategy-experiments-2026-08.md`](./strategy-experiments-2026-08.md). Like the
+rest of the lab it never writes to MongoDB and is never imported by scoring,
+signal, strategy or API code; it consumes the panel through the schema and label
+semantics described above.
+
+```bash
+# research backtest over the panel (read-only; prints one JSON report).
+# The launcher's --type lab-backtest mounts the panel claim and runs
+# `python scripts/factor_lab_composite_backtest.py` from the image.
+k8s/jobs-internal/run-datahub-job.sh --namespace caifubao-research \
+  --type lab-backtest --node-name ubuntu-5700x -- \
+  --panel /data/lab_2026q3.parquet --label fwd_h60 --step 60 \
+  --sizes 30,50,100 --mode composite --output /data/composite_report.json
+```
+
+Anywhere with the datahub dependencies the script also runs directly:
+
+```bash
+python datahub/scripts/factor_lab_composite_backtest.py --help
+```
+
+Modes (`--mode`, repeatable): `composite` (equal-weight-with-causal-sign and
+walk-forward ICIR books across sizes, with per-year/period metrics),
+`liquidity` (threshold sweep by trailing 20-session mean trade amount),
+`capacity` (square-root impact grid; `k` is a parameter, not a measured
+constant), `overlay` (market-breadth filter computed at the rebalance close) and
+`accounts` (100-share lots sized from the raw T+1 open, CNY 5 minimum commission,
+cash drag). Defaults run every mode.
+
+Honesty notes baked into the output: `equal_weight_raw` applies no direction and
+is reported only to show that naive equal weighting is not a strategy; the
+IC-sign and ICIR weights use ICs realised strictly before each rebalance; blocked
+labels are never rolled forward (limit-up entries, limit-down exits,
+suspensions); capacity numbers are model-based and this is research, not
+investment advice.
+
 ## Holding-period x buffer scan
 
 `evaluate` answers "does this factor sort returns?". `holding-scan` answers the
