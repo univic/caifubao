@@ -389,3 +389,193 @@ def test_signal_dependency_rejects_missing_record(monkeypatch):
     )
 
     assert signal_runner._check_dependency() is False
+
+
+def test_dependency_ready_bypasses_the_check_without_querying_records(monkeypatch):
+    import app.jobs.signal_runner as signal_runner
+
+    def fail_latest_job_run(**kwargs):
+        raise AssertionError("a bypass must not query upstream job runs")
+
+    monkeypatch.setattr(
+        "app.jobs.signal_runner.job_run_helper.latest_job_run", fail_latest_job_run
+    )
+
+    assert signal_runner.dependency_ready(skip=True) is True
+
+
+def test_dependency_ready_without_bypass_uses_the_daily_gate(monkeypatch):
+    import app.jobs.signal_runner as signal_runner
+
+    calls = {"n": 0}
+
+    def fail_latest_job_run(**kwargs):
+        calls["n"] += 1
+        return None
+
+    monkeypatch.setattr(
+        "app.jobs.signal_runner.job_run_helper.latest_job_run", fail_latest_job_run
+    )
+
+    assert signal_runner.dependency_ready() is False
+    assert calls["n"] == 2  # SUCCESS query, then RUNNING/FAILED query
+
+
+def test_parse_args_exposes_the_operator_bypass_flag():
+    import app.jobs.signal_runner as signal_runner
+
+    default_args = signal_runner.parse_args([])
+    assert default_args.skip_dependency_check is False
+
+    bypass_args = signal_runner.parse_args(["--skip-dependency-check"])
+    assert bypass_args.skip_dependency_check is True
+
+
+def test_parse_args_help_documents_the_bypass(capsys):
+    import app.jobs.signal_runner as signal_runner
+
+    with pytest.raises(SystemExit):
+        signal_runner.parse_args(["--help"])
+
+    assert "--skip-dependency-check" in capsys.readouterr().out
+
+
+def test_validate_bypass_rejects_scheduled_triggers():
+    import app.jobs.signal_runner as signal_runner
+
+    args = signal_runner.parse_args(
+        ["--mode", "force", "--skip-dependency-check", "--trigger", "cron"]
+    )
+
+    with pytest.raises(ValueError, match="scheduled triggers"):
+        signal_runner.validate_bypass(args)
+
+
+def test_validate_bypass_requires_force_mode():
+    import app.jobs.signal_runner as signal_runner
+
+    args = signal_runner.parse_args(
+        ["--mode", "stale", "--skip-dependency-check", "--trigger", "manual"]
+    )
+
+    with pytest.raises(ValueError, match="requires --mode force"):
+        signal_runner.validate_bypass(args)
+
+
+def test_validate_bypass_accepts_an_operator_force_run():
+    import app.jobs.signal_runner as signal_runner
+
+    args = signal_runner.parse_args(
+        ["--mode", "force", "--skip-dependency-check", "--trigger", "manual"]
+    )
+
+    signal_runner.validate_bypass(args)  # does not raise
+
+
+def test_dependency_ready_warns_exactly_once(caplog):
+    import app.jobs.signal_runner as signal_runner
+
+    with caplog.at_level("WARNING"):
+        assert signal_runner.dependency_ready(skip=True) is True
+
+    bypass_warnings = [
+        record for record in caplog.records if "bypassed" in record.getMessage()
+    ]
+    assert len(bypass_warnings) == 1
+
+
+def _stub_main_dependencies(monkeypatch, ready=True):
+    import app.jobs.signal_runner as signal_runner
+
+    captured = {}
+
+    def fake_create(context):
+        captured["extra"] = dict(context.extra)
+        captured["trigger"] = context.trigger
+        return "job-run"
+
+    def fake_finish(job_run, status=None, summary=None, error_message=None):
+        captured["status"] = status
+        captured["summary"] = dict(summary or {})
+        return job_run
+
+    def fake_skipped(context, *, summary=None):
+        captured["extra"] = dict(context.extra)
+        captured["status"] = "SKIPPED"
+        captured["summary"] = dict(summary or {})
+
+    monkeypatch.setattr(signal_runner, "_init_db_connection", lambda: None)
+    monkeypatch.setattr(signal_runner, "dependency_ready", lambda skip: ready)
+    monkeypatch.setattr(
+        signal_runner,
+        "run_signal",
+        lambda *args, **kwargs: {
+            "pulled_count": 0,
+            "written_count": 0,
+            "skipped_count": 0,
+            "skipped_codes": [],
+            "skipped_signal_count": 0,
+            "all_skipped": False,
+            "failed_count": 0,
+            "failed_codes": [],
+        },
+    )
+    monkeypatch.setattr(signal_runner.job_run_helper, "create_job_run", fake_create)
+    monkeypatch.setattr(signal_runner.job_run_helper, "finish_job_run", fake_finish)
+    monkeypatch.setattr(
+        signal_runner.job_run_helper, "mark_job_run_skipped", fake_skipped
+    )
+    return captured
+
+
+def test_main_records_the_bypass_marker_in_extra_and_summary(monkeypatch):
+    import app.jobs.signal_runner as signal_runner
+
+    captured = _stub_main_dependencies(monkeypatch, ready=True)
+
+    signal_runner.main(
+        [
+            "--signal",
+            "ma-cross",
+            "--mode",
+            "force",
+            "--skip-dependency-check",
+            "--trigger",
+            "manual",
+            "--source",
+            "operator",
+        ]
+    )
+
+    assert captured["extra"]["dependency_check_bypassed"] is True
+    assert captured["summary"]["dependency_check_bypassed"] is True
+    assert captured["status"] == "SUCCESS"
+
+
+def test_main_records_false_marker_when_the_gate_skips(monkeypatch):
+    import app.jobs.signal_runner as signal_runner
+
+    captured = _stub_main_dependencies(monkeypatch, ready=False)
+
+    signal_runner.main(["--signal", "ma-cross", "--mode", "stale", "--trigger", "cron"])
+
+    assert captured["extra"]["dependency_check_bypassed"] is False
+    assert captured["summary"]["dependency_check_bypassed"] is False
+    assert captured["summary"]["reason"] == "dependency_failed"
+
+
+def test_main_rejects_the_bypass_for_a_scheduled_trigger(monkeypatch):
+    import app.jobs.signal_runner as signal_runner
+
+    _stub_main_dependencies(monkeypatch, ready=True)
+
+    with pytest.raises(ValueError, match="scheduled triggers"):
+        signal_runner.main(
+            [
+                "--mode",
+                "force",
+                "--skip-dependency-check",
+                "--trigger",
+                "cron",
+            ]
+        )
