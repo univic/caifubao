@@ -67,6 +67,12 @@ AUM_LEVELS = (10_000, 30_000, 100_000, 300_000, 1_000_000, 10_000_000)
 CAPACITY_AUM_LEVELS = (10_000_000, 50_000_000, 100_000_000, 500_000_000, 1_000_000_000)
 ACCOUNT_SIZES = (3, 5, 8, 10, 15, 20, 30, 50)
 IMPACT_K = (0.05, 0.10, 0.20)
+#: Extreme small-account experiment: how fast can CNY 10k compound when the
+#: book is deliberately tiny? Steps must have a matching ``fwd_h{step}`` label
+#: in the panel, so the sweep only uses horizons the export produced.
+SPRINT_STEPS = (1, 2, 3, 5, 10, 20, 60)
+SPRINT_SIZES = (1, 2, 3, 5, 8)
+SPRINT_AUM = 10_000
 BREADTH_THRESHOLDS = (0.50, 0.60, 0.70)
 PERIODS = {"2020-2023": ("2020", "2023"), "2024-2026": ("2024", "2026")}
 _PANEL_FIELDS = (
@@ -91,7 +97,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         action="append",
-        choices=("composite", "liquidity", "capacity", "overlay", "accounts"),
+        choices=(
+            "composite",
+            "liquidity",
+            "capacity",
+            "overlay",
+            "accounts",
+            "sprint",
+        ),
         default=[],
         help="Report to produce; repeatable. Default: every report.",
     )
@@ -121,6 +134,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--lookback", type=int, default=TRADING_DAYS)
     parser.add_argument("--min-ic-dates", type=int, default=120)
+    parser.add_argument(
+        "--sprint-aum",
+        type=float,
+        default=SPRINT_AUM,
+        help="Account size for the sprint (extreme small-account) report.",
+    )
+    parser.add_argument(
+        "--sprint-steps",
+        default=",".join(str(value) for value in SPRINT_STEPS),
+        help="Comma-separated holding/rebalance steps for the sprint report.",
+    )
+    parser.add_argument(
+        "--sprint-sizes",
+        default=",".join(str(value) for value in SPRINT_SIZES),
+        help="Comma-separated book sizes for the sprint report.",
+    )
     parser.add_argument("--output", default=None, help="Write JSON here as well.")
     return parser.parse_args(argv)
 
@@ -491,6 +520,76 @@ def report_overlay(
     return out
 
 
+def simulate_account(
+    blocks: list[dict],
+    aum: float,
+    size: int,
+    min_commission: float,
+    step: int,
+    charge_costs: bool = True,
+) -> dict:
+    """Lot-aware account simulation over one book's rebalance blocks.
+
+    Lots are sized from the RAW T+1 open (what the account really pays) while
+    value growth uses the panel's HFQ total-return label. ``charge_costs=False``
+    returns the fee-free upper bound used to separate signal from friction.
+    """
+    from app.lib.factor_lab import metrics
+
+    net = []
+    cash_drag = []
+    commission_drag = []
+    held_counts = []
+    for block in blocks:
+        returns = np.array(block["returns"], dtype="float64")
+        entries = np.array(block["raw_entries"], dtype="float64")
+        valid = np.isfinite(entries) & (entries > 0) & np.isfinite(returns)
+        lots = np.zeros(len(entries))
+        lots[valid] = np.floor((aum / size) / (entries[valid] * LOT))
+        lots = np.where(lots > 0, lots, 0.0)
+        prices = np.where(valid, entries, 0.0)
+        invested = float(np.sum(lots * LOT * prices))
+        exit_value = float(np.sum(lots * LOT * prices * (1.0 + returns)))
+        held = int(np.count_nonzero(lots))
+        if charge_costs:
+            traded = invested * block["turnover"]
+            trades = 2.0 * block["turnover"] * max(held, 1)
+            per_trade = traded / (trades / 2.0) if traded else 0.0
+            commission = trades * max(min_commission, 0.00025 * max(per_trade, 0.0))
+            cost = metrics.round_trip_cost() * traded + commission
+        else:
+            commission = 0.0
+            cost = 0.0
+        net.append((aum - invested + exit_value - cost) / aum - 1.0)
+        cash_drag.append(1.0 - invested / aum)
+        commission_drag.append(commission / aum)
+        held_counts.append(held)
+    benchmark = np.array([b["benchmark"] for b in blocks]) if blocks else np.array([])
+    stats = curve_stats(np.array(net), benchmark, step)
+    if stats.get("cagr_net") and stats["cagr_net"] > 0:
+        stats["years_to_double"] = float(np.log(2.0) / np.log(1.0 + stats["cagr_net"]))
+        stats["months_to_double"] = stats["years_to_double"] * 12.0
+    else:
+        stats["years_to_double"] = None
+        stats["months_to_double"] = None
+    stats.update(
+        {
+            "blocks": len(blocks),
+            "avg_names_with_lots": float(np.mean(held_counts)) if held_counts else 0.0,
+            "avg_cash_drag": float(np.mean(cash_drag)) if cash_drag else 0.0,
+            "avg_commission_drag_per_year": float(
+                np.mean(commission_drag) * TRADING_DAYS / step
+            )
+            if commission_drag
+            else 0.0,
+            "avg_turnover": float(np.mean([b["turnover"] for b in blocks]))
+            if blocks
+            else 0.0,
+        }
+    )
+    return stats
+
+
 def report_accounts(
     frame: pd.DataFrame,
     score: pd.Series,
@@ -499,8 +598,6 @@ def report_accounts(
     step: int,
     min_commission: float,
 ) -> dict:
-    from app.lib.factor_lab import metrics
-
     out: dict[str, dict] = {}
     median_entry = float(np.nanmedian(frame["__raw_entry"].to_numpy(dtype="float64")))
     for aum in AUM_LEVELS:
@@ -513,48 +610,9 @@ def report_accounts(
             blocks = collect_blocks(
                 frame, score, label, size, buffer_multiple * size, step
             )
-            net = []
-            cash_drag = []
-            commission_drag = []
-            held_counts = []
-            for block in blocks:
-                returns = np.array(block["returns"], dtype="float64")
-                entries = np.array(block["raw_entries"], dtype="float64")
-                valid = np.isfinite(entries) & (entries > 0) & np.isfinite(returns)
-                lots = np.zeros(len(entries))
-                lots[valid] = np.floor((aum / size) / (entries[valid] * LOT))
-                lots = np.where(lots > 0, lots, 0.0)
-                prices = np.where(valid, entries, 0.0)
-                invested = float(np.sum(lots * LOT * prices))
-                # The panel label is a total return (HFQ, T+1 open to exit
-                # open); apply it to the raw position value so dividends and
-                # splits stay in the result while lot sizes use real prices.
-                exit_value = float(np.sum(lots * LOT * prices * (1.0 + returns)))
-                traded = invested * block["turnover"]
-                held = int(np.count_nonzero(lots))
-                trades = 2.0 * block["turnover"] * max(held, 1)
-                per_trade = traded / (trades / 2.0) if traded else 0.0
-                commission = trades * max(min_commission, 0.00025 * max(per_trade, 0.0))
-                end_value = (
-                    aum
-                    - invested
-                    + exit_value
-                    - metrics.round_trip_cost() * traded
-                    - commission
-                )
-                net.append(end_value / aum - 1.0)
-                cash_drag.append(1.0 - invested / aum)
-                commission_drag.append(commission / aum)
-                held_counts.append(held)
-            benchmark = np.array([b["benchmark"] for b in blocks])
-            out[f"aum_{int(aum)}_names_{size}"] = {
-                "avg_names_with_lots": float(np.mean(held_counts)),
-                "avg_cash_drag": float(np.mean(cash_drag)),
-                "avg_commission_drag_per_year": float(
-                    np.mean(commission_drag) * (TRADING_DAYS / step)
-                ),
-                **curve_stats(np.array(net), benchmark, step),
-            }
+            out[f"aum_{int(aum)}_names_{size}"] = simulate_account(
+                blocks, aum, size, min_commission, step
+            )
     return out
 
 
@@ -562,6 +620,73 @@ def label_horizon(label: str) -> int:
     """Sessions in a ``fwd_h{N}`` label (0 when the name carries no horizon)."""
     suffix = label.rsplit("h", 1)[-1]
     return int(suffix) if suffix.isdigit() else 0
+
+
+def report_sprint(
+    frame: pd.DataFrame,
+    zscores: dict[str, pd.Series],
+    components: tuple[str, ...],
+    lookback: int,
+    min_ic_dates: int,
+    aum: float,
+    steps: tuple[int, ...],
+    sizes: tuple[int, ...],
+    buffer_multiple: int,
+    min_commission: float,
+) -> dict:
+    """How fast can a tiny account compound, and what does friction cost?
+
+    For every holding period with a matching label the report builds the causal
+    ICIR composite (weights lagged by step + 1 sessions), trades the top N with
+    an N*buffer_multiple band, and simulates the account twice: once with the
+    fixed round-trip cost plus the per-trade minimum commission, and once with
+    no friction at all, so the gap is visible.
+    """
+    out: dict[str, dict] = {}
+    median_entry = float(np.nanmedian(frame["__raw_entry"].to_numpy(dtype="float64")))
+    for step in steps:
+        label = f"fwd_h{step}"
+        if label not in frame.columns:
+            continue
+        ic_by_date = {
+            name: daily_ic(frame, values, label) for name, values in zscores.items()
+        }
+        for weighting in ("icir", "sign"):
+            score = walk_forward_composite(
+                frame,
+                zscores,
+                ic_by_date,
+                components,
+                lookback,
+                min_ic_dates,
+                step + 1,
+                weighting=weighting,
+            )
+            for size in sizes:
+                key = f"step{step}_{weighting}_top{size}"
+                if aum / size < LOT or aum / size < median_entry * LOT:
+                    out[key] = {"skipped": "slice < 1 lot"}
+                    continue
+                blocks = collect_blocks(
+                    frame,
+                    score,
+                    label,
+                    size,
+                    max(size, buffer_multiple * size),
+                    step,
+                )
+                if not blocks:
+                    out[key] = {"blocks": 0}
+                    continue
+                out[key] = {
+                    "with_costs": simulate_account(
+                        blocks, aum, size, min_commission, step
+                    ),
+                    "no_costs": simulate_account(
+                        blocks, aum, size, min_commission, step, charge_costs=False
+                    ),
+                }
+    return out
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -577,7 +702,14 @@ def main(argv: list[str] | None = None) -> None:
             "(a mismatch double-counts the holding-period return)."
         )
     label_lag = label_horizon(weight_label) + 1
-    labels = tuple({args.label, weight_label})
+    sprint_steps = tuple(
+        int(part) for part in args.sprint_steps.split(",") if part.strip()
+    )
+    labels = {args.label, weight_label}
+    if "sprint" in (args.mode or []):
+        # The sprint sweep needs every step's label column loaded.
+        labels.update(f"fwd_h{step}" for step in sprint_steps)
+    labels = tuple(labels)
     if not Path(args.panel).exists():
         raise FileNotFoundError(
             f"panel not found: {args.panel} (run factor_lab_runner export first)"
@@ -676,6 +808,19 @@ def main(argv: list[str] | None = None) -> None:
     if "accounts" in modes:
         report["reports"]["accounts"] = report_accounts(
             frame, icir, args.label, args.buffer_multiple, args.step, 5.0
+        )
+    if "sprint" in modes:
+        report["reports"]["sprint"] = report_sprint(
+            frame,
+            zscores,
+            components,
+            args.lookback,
+            args.min_ic_dates,
+            args.sprint_aum,
+            sprint_steps,
+            tuple(int(part) for part in args.sprint_sizes.split(",") if part.strip()),
+            args.buffer_multiple,
+            5.0,
         )
     payload = json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False)
     if args.output:
