@@ -62,6 +62,9 @@ LOT = 100
 LIQUIDITY_WINDOW = 20
 FLOORS = (0.0, 0.30, 0.50, 0.70, 0.85)
 AUM_LEVELS = (10_000, 30_000, 100_000, 300_000, 1_000_000, 10_000_000)
+# The capacity report looks further out along the AUM axis than the
+# small-account grid, where lot rounding is the binding constraint.
+CAPACITY_AUM_LEVELS = (10_000_000, 50_000_000, 100_000_000, 500_000_000, 1_000_000_000)
 ACCOUNT_SIZES = (3, 5, 8, 10, 15, 20, 30, 50)
 IMPACT_K = (0.05, 0.10, 0.20)
 BREADTH_THRESHOLDS = (0.50, 0.60, 0.70)
@@ -95,8 +98,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--label", default="fwd_h20", help="Forward label column.")
     parser.add_argument(
         "--weight-label",
-        default="fwd_h20",
-        help="Label used to estimate the walk-forward ICIR weights.",
+        default=None,
+        help="Label used to estimate the walk-forward weights (default: --label).",
     )
     parser.add_argument("--step", type=int, default=20, help="Sessions per holding.")
     parser.add_argument(
@@ -155,19 +158,27 @@ def zscore_by_date(values: pd.Series, dates: pd.Series) -> pd.Series:
 
 
 def daily_ic(frame: pd.DataFrame, values: pd.Series, label: str) -> pd.Series:
+    """Exact per-date Spearman: ranks over the common non-NaN subset.
+
+    Ranks are computed only where both the factor and the label exist, and the
+    correlation uses population moments (ddof=0) on those ranks, which is what
+    Spearman is; dates with fewer than two pairs are dropped.
+    """
     dates = frame["date"]
-    rank_factor = values.groupby(dates).rank()
-    rank_label = frame[label].groupby(dates).rank()
-    covariance = (
-        (
-            (rank_factor - rank_factor.groupby(dates).transform("mean"))
-            * (rank_label - rank_label.groupby(dates).transform("mean"))
-        )
-        .groupby(dates)
-        .mean()
-    )
-    denominator = rank_factor.groupby(dates).std() * rank_label.groupby(dates).std()
-    return (covariance / denominator).replace([np.inf, -np.inf], np.nan)
+    valid = values.notna() & frame[label].notna()
+    if not valid.any():
+        return pd.Series(dtype="float64")
+    rank_factor = values.where(valid).groupby(dates).rank()
+    rank_label = frame[label].where(valid).groupby(dates).rank()
+    centered_factor = rank_factor - rank_factor.groupby(dates).transform("mean")
+    centered_label = rank_label - rank_label.groupby(dates).transform("mean")
+    pairs = valid.groupby(dates).sum()
+    covariance = (centered_factor * centered_label).groupby(dates).sum() / pairs
+    denominator = rank_factor.groupby(dates).std(ddof=0) * rank_label.groupby(
+        dates
+    ).std(ddof=0)
+    ic = (covariance / denominator).replace([np.inf, -np.inf], np.nan)
+    return ic[pairs >= 2].dropna()
 
 
 def walk_forward_composite(
@@ -177,20 +188,29 @@ def walk_forward_composite(
     components: tuple[str, ...],
     lookback: int,
     min_ic_dates: int,
+    label_lag: int,
     weighting: str = "icir",
 ) -> pd.Series:
-    """Composite score using only ICs realised before each rebalance date.
+    """Composite score using only ICs whose labels were already realised.
 
-    ``weighting="icir"`` weights each factor by mean(IC)/std(IC) (a negative
-    ICIR turns into a negative, i.e. inverted, weight); ``weighting="sign"``
-    keeps the direction but gives every factor an equal magnitude.
+    The panel labels session ``t`` with open(t+1) -> open(t+1+h), so the IC
+    computed at ``t`` is only observable at ``t+1+h``. Weight estimation for a
+    rebalance at session D therefore stops at ``D - h - 1``
+    (``label_lag = h + 1``); using later ICs would leak future prices into the
+    score. ``weighting="icir"`` weights each factor by mean(IC)/std(IC) (a
+    negative ICIR becomes a negative, i.e. inverted, weight);
+    ``weighting="sign"`` keeps the direction with equal magnitudes.
     """
     dates = sorted(frame["date"].unique())
+    positions = {pd.Timestamp(date): index for index, date in enumerate(dates)}
     reference = ic_by_date[components[0]]
     score = pd.Series(np.nan, index=frame.index, dtype="float64")
     for date in dates:
         stamp = pd.Timestamp(date)
-        history = reference.loc[:stamp].iloc[:-1].tail(lookback)
+        cutoff_index = positions[stamp] - label_lag
+        if cutoff_index < 0:
+            continue
+        history = reference.loc[: pd.Timestamp(dates[cutoff_index])].tail(lookback)
         if len(history) < min_ic_dates:
             continue
         weights: dict[str, float] = {}
@@ -366,6 +386,9 @@ def report_composite(
             )
             net = np.array([b["fixed_net"] for b in blocks])
             benchmark = np.array([b["benchmark"] for b in blocks])
+            if not blocks:
+                out[f"{name}_top{size}"] = {"blocks": 0}
+                continue
             out[f"{name}_top{size}"] = {
                 "blocks": len(blocks),
                 "avg_turnover": float(np.mean([b["turnover"] for b in blocks])),
@@ -479,9 +502,13 @@ def report_accounts(
     from app.lib.factor_lab import metrics
 
     out: dict[str, dict] = {}
+    median_entry = float(np.nanmedian(frame["__raw_entry"].to_numpy(dtype="float64")))
     for aum in AUM_LEVELS:
         for size in ACCOUNT_SIZES:
-            if aum / size < LOT:
+            # A slice that cannot buy even one typical lot produces an
+            # all-cash book; report it as skipped instead of a fake strategy.
+            if aum / size < LOT or aum / size < median_entry * LOT:
+                out[f"aum_{int(aum)}_names_{size}"] = {"skipped": "slice < 1 lot"}
                 continue
             blocks = collect_blocks(
                 frame, score, label, size, buffer_multiple * size, step
@@ -531,11 +558,26 @@ def report_accounts(
     return out
 
 
+def label_horizon(label: str) -> int:
+    """Sessions in a ``fwd_h{N}`` label (0 when the name carries no horizon)."""
+    suffix = label.rsplit("h", 1)[-1]
+    return int(suffix) if suffix.isdigit() else 0
+
+
 def main(argv: list[str] | None = None) -> None:
     from app.lib.factor_lab import factors, metrics
 
     args = parse_args(argv)
-    labels = tuple({args.label, args.weight_label})
+    weight_label = args.weight_label or args.label
+    label_sessions = label_horizon(args.label)
+    if label_sessions and label_sessions != args.step:
+        raise ValueError(
+            f"--label {args.label} holds {label_sessions} sessions but --step is "
+            f"{args.step}; the label horizon and the rebalance step must match "
+            "(a mismatch double-counts the holding-period return)."
+        )
+    label_lag = label_horizon(weight_label) + 1
+    labels = tuple({args.label, weight_label})
     if not Path(args.panel).exists():
         raise FileNotFoundError(
             f"panel not found: {args.panel} (run factor_lab_runner export first)"
@@ -547,7 +589,7 @@ def main(argv: list[str] | None = None) -> None:
     for name in DEFAULT_COMPONENTS:
         values = factors.compute(frame, name)
         zscores[name] = zscore_by_date(values, frame["date"])
-        ic_by_date[name] = daily_ic(frame, values, args.weight_label)
+        ic_by_date[name] = daily_ic(frame, values, weight_label)
 
     components = tuple(DEFAULT_COMPONENTS)
     raw_equal = sum(zscores[name] for name in components) / len(components)
@@ -558,10 +600,17 @@ def main(argv: list[str] | None = None) -> None:
         components,
         args.lookback,
         args.min_ic_dates,
+        label_lag,
         weighting="sign",
     )
     icir = walk_forward_composite(
-        frame, zscores, ic_by_date, components, args.lookback, args.min_ic_dates
+        frame,
+        zscores,
+        ic_by_date,
+        components,
+        args.lookback,
+        args.min_ic_dates,
+        label_lag,
     )
     scores = {
         "equal_weight_raw": raw_equal,
@@ -574,7 +623,8 @@ def main(argv: list[str] | None = None) -> None:
     report: dict = {
         "panel": args.panel,
         "label": args.label,
-        "weight_label": args.weight_label,
+        "weight_label": weight_label,
+        "weight_label_lag_sessions": label_lag,
         "step_sessions": args.step,
         "top": args.top,
         "buffer_multiple": args.buffer_multiple,
@@ -590,6 +640,14 @@ def main(argv: list[str] | None = None) -> None:
             "ICIR weighting) only from ICs realised before each rebalance date.",
             "Impact k is a parameter, not a measured constant; capacity results "
             "are model-based and this output is research, not investment advice.",
+            "max_drawdown is sampled once per rebalance (every --step sessions), "
+            "so it omits intra-holding-period troughs and understates a daily "
+            "drawdown; it is not a daily equity-path figure.",
+            "Eligibility requires a non-null forward label, so names whose exit "
+            "turns out untradeable (limit-down exit, suspension) are excluded "
+            "ex-post; that is the panel's conservative label semantics but it "
+            "still biases basket returns upward. Blocked labels are never rolled "
+            "forward.",
         ],
         "reports": {},
     }
@@ -609,7 +667,7 @@ def main(argv: list[str] | None = None) -> None:
             args.top,
             args.buffer_multiple,
             args.step,
-            AUM_LEVELS,
+            CAPACITY_AUM_LEVELS,
         )
     if "overlay" in modes:
         report["reports"]["overlay"] = report_overlay(
@@ -619,7 +677,7 @@ def main(argv: list[str] | None = None) -> None:
         report["reports"]["accounts"] = report_accounts(
             frame, icir, args.label, args.buffer_multiple, args.step, 5.0
         )
-    payload = json.dumps(report, ensure_ascii=False, indent=2)
+    payload = json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False)
     if args.output:
         Path(args.output).write_text(payload + "\n", encoding="utf-8")
     print(payload)
