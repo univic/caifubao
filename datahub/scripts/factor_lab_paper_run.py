@@ -59,18 +59,73 @@ COMMISSION_RATE = 0.00025
 EXECUTION_COLUMNS = ("limit_up", "limit_down", "trade_status", "previous_close")
 
 
+def route_logs_to_stderr() -> None:
+    """Keep stdout clean for the JSON payload (the app config logs to stdout)."""
+    import logging
+
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if isinstance(handler, logging.StreamHandler):
+            handler.setStream(sys.stderr)
+
+
 def side_cost(notional: float) -> float:
     """One side of a trade: half the documented round trip + the min commission.
 
-    ``metrics.round_trip_cost()`` already covers a full buy+sell, so charging it
-    per side would double the documented friction; half per side keeps one round
-    trip per round trip while the CNY 5 minimum still applies to every trade.
+    ``metrics.round_trip_cost()`` already embeds the proportional commission for
+    both sides, so only the *shortfall* up to the CNY 5 per-trade minimum is
+    added on each side; charging the whole minimum would double count it.
     """
     from app.lib.factor_lab import metrics
 
-    return metrics.round_trip_cost() / 2.0 * notional + max(
-        MIN_COMMISSION, COMMISSION_RATE * notional
-    )
+    half_round_trip = metrics.round_trip_cost() / 2.0 * notional
+    minimum_top_up = max(0.0, MIN_COMMISSION - COMMISSION_RATE * notional)
+    return half_round_trip + minimum_top_up
+
+
+def flag(value) -> bool:
+    """Boolean panel flag that tolerates None/NaN/pandas NA."""
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return bool(value)
+
+
+def tradeable_open(row: pd.Series | None, side: str) -> float | None:
+    """Open price when the session allows that side, else None (blocked)."""
+    if row is None:
+        return None
+    price = row.get("open")
+    if price is None or not np.isfinite(price) or price <= 0:
+        return None
+    status = row.get("trade_status")
+    if status is None:
+        return None
+    try:
+        if pd.isna(status) or int(status) != 1:
+            return None
+    except (TypeError, ValueError):
+        return None
+    if side == "buy" and flag(row.get("limit_up")):
+        return None
+    if side == "sell" and flag(row.get("limit_down")):
+        return None
+    return float(price)
+
+
+def close_price(row: pd.Series | None) -> float | None:
+    """Mark price: HFQ close with the raw close as fallback, else None."""
+    if row is None:
+        return None
+    for column in ("close_hfq", "close"):
+        value = row.get(column)
+        if value is not None and np.isfinite(value) and value > 0:
+            return float(value)
+    return None
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -160,20 +215,57 @@ def composite_for(frame: pd.DataFrame, args: argparse.Namespace) -> dict:
         lag,
         weighting=getattr(args, "weighting", "sign"),
     )
+    # Report the IC mean over the ICs the weights could actually have used, not
+    # a whole-panel mean that would look ahead.
+    all_sessions = sorted(frame["date"].unique())
+    as_of = (
+        pd.Timestamp(args.as_of) if getattr(args, "as_of", None) else all_sessions[-1]
+    )
+    cutoff_index = None
+    for position, value in enumerate(all_sessions):
+        if pd.Timestamp(value) <= as_of:
+            cutoff_index = position
+    cutoff = (
+        pd.Timestamp(all_sessions[max(0, cutoff_index - lag)])
+        if cutoff_index is not None
+        else None
+    )
+    history = (
+        ic_by_date[components[0]].loc[:cutoff]
+        if cutoff is not None
+        else ic_by_date[components[0]]
+    ).tail(args.lookback)
     return {
         "score": score,
         "components": list(components),
         "lag_sessions": lag,
-        "factor_ic_mean": {name: float(ic_by_date[name].mean()) for name in components},
+        "ic_cutoff": str(cutoff.date()) if cutoff is not None else None,
+        "factor_ic_mean": {
+            name: float(ic_by_date[name].reindex(history.index).mean())
+            for name in components
+        },
     }
 
 
 def read_state(state: Path) -> list[dict]:
+    """Read decision records, refusing any whose payload hash does not match."""
     if not state.exists():
         return []
     records = []
     for path in sorted(state.glob("*.decision.json")):
-        records.append(json.loads(path.read_text(encoding="utf-8")))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        recorded = payload.pop("payload_sha256", None)
+        recomputed = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        if recorded != recomputed:
+            raise ValueError(
+                f"decision record failed its integrity check: {path} "
+                f"(recorded {recorded}, recomputed {recomputed})"
+            )
+        payload["payload_sha256"] = recorded
+        payload["record_path"] = str(path)
+        records.append(payload)
     return records
 
 
@@ -185,13 +277,18 @@ def previous_basket(records: list[dict]) -> list[str]:
 
 def decide(args: argparse.Namespace) -> dict:
     state = Path(args.state)
-    state.mkdir(parents=True, exist_ok=True)
     labels = tuple({args.label})
     frame = load_frame(args.panel, labels)
     all_sessions = sessions(frame)
     as_of = pd.Timestamp(args.as_of) if args.as_of else all_sessions[-1]
     if as_of not in set(all_sessions):
         as_of = max(value for value in all_sessions if value <= as_of)
+    horizon = core().label_horizon(args.label)
+    if horizon and horizon != args.rebalance_sessions:
+        raise ValueError(
+            f"--label {args.label} holds {horizon} sessions but "
+            f"--rebalance-sessions is {args.rebalance_sessions}; they must match"
+        )
     future = [value for value in all_sessions if value > as_of]
     if args.execution_session:
         execution_session = pd.Timestamp(args.execution_session)
@@ -250,18 +347,18 @@ def decide(args: argparse.Namespace) -> dict:
     weights = {}
     indicative_lots = {}
     for code in basket:
-        close = float(book.loc[code, "close"])
-        lots = int(np.floor(slice_amount / (close * LOT)))
+        price = float(book.loc[code, "close"])
+        indicative_lots[code] = max(int(np.floor(slice_amount / (price * LOT))), 0)
         weights[code] = round(1.0 / args.names, 6)
-        indicative_lots[code] = max(lots, 0)
-    order = []
-    for code in basket:
-        if code not in previous:
-            order.append({"side": "BUY", "stock_code": code})
-    for code in previous:
-        if code not in basket:
-            order.append({"side": "SELL", "stock_code": code})
-
+    intended_trades = [
+        {"intent": "increase-to-target", "stock_code": code}
+        for code in basket
+        if code not in previous
+    ] + [
+        {"intent": "exit", "stock_code": code}
+        for code in previous
+        if code not in basket
+    ]
     expected_invested = sum(
         lots * LOT * float(book.loc[code, "close"])
         for code, lots in indicative_lots.items()
@@ -271,7 +368,7 @@ def decide(args: argparse.Namespace) -> dict:
             [
                 args.ledger_id,
                 str(as_of.date()),
-                str(execution_session.date()) if execution_session else "",
+                str(execution_session.date()),
                 ",".join(basket),
                 f"{args.aum:.2f}",
             ]
@@ -282,10 +379,10 @@ def decide(args: argparse.Namespace) -> dict:
         "identifier_note": "research ledger identifier; NOT a registered score "
         "model version and NOT the score-driven paper track",
         "evidence_kind": EVIDENCE_KIND,
+        "research_intent_only": "these entries describe research intent; they are "
+        "not orders, execution instructions or advice",
         "decision_date": str(as_of.date()),
-        "execution_session": str(execution_session.date())
-        if execution_session
-        else None,
+        "execution_session": str(execution_session.date()),
         "execution_note": "fill at the execution session's open, subject to "
         "limit-up/suspension availability; final share counts are fixed by mark",
         "aum": args.aum,
@@ -295,7 +392,8 @@ def decide(args: argparse.Namespace) -> dict:
         "label": args.label,
         "components": bundle["components"],
         "weight_label_lag_sessions": bundle["lag_sessions"],
-        "factor_ic_mean_at_decision": bundle["factor_ic_mean"],
+        "factor_ic_mean_through_cutoff": bundle["factor_ic_mean"],
+        "ic_cutoff": bundle["ic_cutoff"],
         "rebalance_sessions": args.rebalance_sessions,
         "universe_size": int(len(today)),
         "median_book_adv_cny": float(
@@ -304,14 +402,14 @@ def decide(args: argparse.Namespace) -> dict:
         "target_basket": basket,
         "target_weights": weights,
         "indicative_lots_at_decision_close": indicative_lots,
-        "expected_invested": round(expected_invested, 2),
-        "expected_cash": round(args.aum - expected_invested, 2),
-        "idempotency_key": idempotency_key,
         "indicative_prices_close": {
             code: float(book.loc[code, "close"]) for code in basket
         },
-        "orders": order,
+        "intended_trades": intended_trades,
         "previous_basket": previous,
+        "expected_invested": round(expected_invested, 2),
+        "expected_cash": round(args.aum - expected_invested, 2),
+        "idempotency_key": idempotency_key,
         "dry_run": bool(args.dry_run),
     }
     payload["payload_sha256"] = hashlib.sha256(
@@ -319,6 +417,7 @@ def decide(args: argparse.Namespace) -> dict:
     ).hexdigest()
     path = state / f"{as_of.date()}.decision.json"
     if not args.dry_run:
+        state.mkdir(parents=True, exist_ok=True)
         if path.exists():
             raise FileExistsError(f"decision already recorded (append-only): {path}")
         path.write_text(
@@ -327,26 +426,6 @@ def decide(args: argparse.Namespace) -> dict:
         )
     payload["record_path"] = None if args.dry_run else str(path)
     return payload
-
-
-def _entry_price(row: pd.Series) -> float | None:
-    if not np.isfinite(row.get("open", np.nan)) or row.get("open", 0) <= 0:
-        return None
-    if bool(row.get("limit_up", False)):
-        return None
-    if int(row.get("trade_status", 1) or 0) != 1:
-        return None
-    return float(row["open"])
-
-
-def _exit_price(row: pd.Series) -> float | None:
-    if not np.isfinite(row.get("open", np.nan)) or row.get("open", 0) <= 0:
-        return None
-    if bool(row.get("limit_down", False)):
-        return None
-    if int(row.get("trade_status", 1) or 0) != 1:
-        return None
-    return float(row["open"])
 
 
 def mark(args: argparse.Namespace) -> dict:
@@ -358,110 +437,150 @@ def mark(args: argparse.Namespace) -> dict:
     all_sessions = sessions(frame)
     index = {value: position for position, value in enumerate(all_sessions)}
 
-    def next_session(value: pd.Timestamp) -> pd.Timestamp | None:
-        position = index[value]
-        return all_sessions[position + 1] if position + 1 < len(all_sessions) else None
+    decisions = {}
+    for record in records:
+        decision = pd.Timestamp(record["decision_date"])
+        execution = pd.Timestamp(record["execution_session"])
+        if decision not in index:
+            raise ValueError(
+                f"decision date {decision.date()} of {record['record_path']} is "
+                "not a session in this panel"
+            )
+        if execution not in index:
+            raise ValueError(
+                f"recorded execution session {execution.date()} of "
+                f"{record['record_path']} is not a session in this panel"
+            )
+        decisions[execution] = record
 
-    def row_at(value: pd.Timestamp, code: str) -> pd.Series | None:
-        subset = frame[(frame["date"] == value) & (frame["stock_code"] == code)]
-        return None if subset.empty else subset.iloc[0]
+    lookup = frame.set_index(["date", "stock_code"], drop=False).sort_index()
+
+    def quote(value: pd.Timestamp, code: str) -> pd.Series | None:
+        try:
+            return lookup.loc[(value, code)]
+        except KeyError:
+            return None
 
     aum = float(records[0]["aum"])
+    first_execution = min(decisions)
     cash = aum
     positions: dict[str, int] = {}
+    pending_sell: set[str] = set()
+    last_price: dict[str, float] = {}
+    missing_sessions: dict[str, int] = {}
     nav_rows: list[dict] = []
     decision_reports: list[dict] = []
     fees_total = 0.0
-
-    executions = []
-    for record in records:
-        decision = pd.Timestamp(record["decision_date"])
-        execution = next_session(decision) if decision in index else None
-        executions.append((record, execution))
-    benchmark_start = None
+    traded_total = 0.0
     benchmark_units: dict[str, float] = {}
-    last_price: dict[str, float] = {}
     benchmark_aum = 0.0
+    missing_limit = 20
 
-    current_record = None
-    for position, value in enumerate(all_sessions):
-        for record, execution in executions:
-            if execution != value:
+    for value in all_sessions:
+        if value < first_execution:
+            continue
+        record = decisions.get(value)
+        if not benchmark_units and record is not None:
+            benchmark_aum = aum
+            day = frame[frame["date"] == value]
+            universe = day[
+                (~day["is_bse"].fillna(False))
+                & (~day["is_st"].fillna(False))
+                & day["open"].notna()
+            ]
+            for code in universe["stock_code"]:
+                price = tradeable_open(quote(value, code), "buy")
+                if price is None:
+                    continue
+                benchmark_units[code] = (aum / len(universe)) / price
+
+        if record is not None:
+            target = set(record["target_basket"])
+            for code in list(positions):
+                if code not in target:
+                    pending_sell.add(code)
+
+        # Sell anything pending, every session, until it becomes executable.
+        for code in sorted(pending_sell):
+            price = tradeable_open(quote(value, code), "sell")
+            if price is None:
                 continue
-            if current_record is not None:
-                # Liquidate the previous book at this open where tradeable.
-                for code, lots in list(positions.items()):
-                    row = row_at(value, code)
-                    price = _exit_price(row) if row is not None else None
-                    if price is None:
-                        continue
-                    notional = lots * LOT * price
-                    cost = side_cost(notional)
-                    cash += notional - cost
-                    fees_total += cost
-                    positions.pop(code, None)
-            target = record["target_basket"]
+            lots = positions.pop(code)
+            notional = lots * LOT * price
+            cost = side_cost(notional)
+            cash += notional - cost
+            fees_total += cost
+            traded_total += notional
+            pending_sell.discard(code)
+
+        traded_decision = 0.0
+        if record is not None:
+            target = list(record["target_basket"])
             slice_amount = cash / max(len(target), 1)
-            unfilled = []
+            unfilled: list[str] = []
+            cash_skipped: list[str] = []
             for code in target:
-                row = row_at(value, code)
-                price = _entry_price(row) if row is not None else None
+                price = tradeable_open(quote(value, code), "buy")
                 if price is None:
                     unfilled.append(code)
                     continue
-                lots = int(np.floor(slice_amount / (price * LOT)))
-                if lots <= 0:
-                    unfilled.append(code)
+                desired = int(np.floor(slice_amount / (price * LOT)))
+                delta = desired - positions.get(code, 0)
+                if delta <= 0:
                     continue
-                notional = lots * LOT * price
+                notional = delta * LOT * price
                 cost = side_cost(notional)
                 if notional + cost > cash:
+                    cash_skipped.append(code)
                     continue
                 cash -= notional + cost
                 fees_total += cost
-                positions[code] = lots
-            current_record = record
+                traded_total += notional
+                traded_decision += notional
+                positions[code] = positions.get(code, 0) + delta
+            nav_here = cash + sum(
+                lots * LOT * last_price.get(code, 0.0)
+                for code, lots in positions.items()
+            )
             decision_reports.append(
                 {
                     "decision_date": record["decision_date"],
                     "execution_session": str(value.date()),
                     "target": target,
                     "unfilled": unfilled,
+                    "cash_skipped": cash_skipped,
                     "cash_after": round(cash, 2),
+                    "traded_notional": round(traded_decision, 2),
+                    "turnover": round(traded_decision / nav_here, 4)
+                    if nav_here
+                    else None,
+                    "pending_exits": sorted(pending_sell),
                     "positions": {code: lots for code, lots in positions.items()},
                 }
             )
-            if benchmark_start is None:
-                benchmark_start = value
-                benchmark_aum = aum
-                universe = frame[
-                    (frame["date"] == value)
-                    & (~frame["is_bse"].fillna(False))
-                    & (~frame["is_st"].fillna(False))
-                    & frame["open"].notna()
-                ]
-                for code in universe["stock_code"]:
-                    row = row_at(value, code)
-                    price = _entry_price(row) if row is not None else None
-                    if price is None:
-                        continue
-                    benchmark_units[code] = (aum / len(universe)) / price
 
-        if benchmark_start is None or value < benchmark_start:
-            continue
-        day = frame[frame["date"] == value]
-        closes = {
-            code: float(price)
-            for code, price in zip(day["stock_code"], day["close_hfq"], strict=False)
-            if price is not None and np.isfinite(price) and price > 0
-        }
-        last_price.update(closes)
-        book_value = 0.0
-        for code, lots in positions.items():
-            book_value += lots * LOT * last_price.get(code, 0.0)
-        benchmark_value = 0.0
-        for code, units in benchmark_units.items():
-            benchmark_value += units * last_price.get(code, 0.0)
+        for code in positions:
+            price = close_price(quote(value, code))
+            if price is None:
+                # Suspension: carry the last known price but count the gap; a
+                # name that never comes back is a delisting the operator must
+                # handle, never something to value at zero.
+                missing_sessions[code] = missing_sessions.get(code, 0) + 1
+                if missing_sessions[code] > missing_limit:
+                    raise ValueError(
+                        f"{code} has no usable close for "
+                        f"{missing_sessions[code]} sessions; delisting needs an "
+                        "explicit write-off"
+                    )
+                continue
+            missing_sessions[code] = 0
+            last_price[code] = price
+        book_value = sum(
+            lots * LOT * last_price.get(code, 0.0) for code, lots in positions.items()
+        )
+        benchmark_value = sum(
+            units * last_price.get(code, 0.0) for code, units in benchmark_units.items()
+        )
         nav_rows.append(
             {
                 "date": str(value.date()),
@@ -470,18 +589,21 @@ def mark(args: argparse.Namespace) -> dict:
                 "nav": round(cash + book_value, 2),
                 "benchmark": round(benchmark_value, 2),
                 "positions": len(positions),
+                "pending_exits": len(pending_sell),
             }
         )
+
     nav = np.array([row["nav"] for row in nav_rows], dtype="float64")
     benchmark = np.array([row["benchmark"] for row in nav_rows], dtype="float64")
-    nav_series = nav / aum
+    nav_series = nav / aum if aum else nav
     peak = np.maximum.accumulate(nav_series)
     drawdown = float((nav_series / peak - 1.0).min()) if len(nav_series) else 0.0
+    years = len(nav_series) / TRADING_DAYS if nav_series.size else 0.0
     benchmark_series = (
         benchmark / benchmark_aum if benchmark_aum else np.zeros_like(benchmark)
     )
     benchmark_peak = np.maximum.accumulate(benchmark_series)
-    years = len(nav_series) / TRADING_DAYS if nav_series.size else 0.0
+    nav_average = float(np.mean(nav)) if nav.size else aum
     report = {
         "ledger_id": records[0]["ledger_id"],
         "evidence_kind": EVIDENCE_KIND,
@@ -496,6 +618,9 @@ def mark(args: argparse.Namespace) -> dict:
         if years > 0
         else None,
         "daily_max_drawdown": drawdown,
+        "turnover": round(traded_total / nav_average, 4) if nav_average else None,
+        "traded_notional_total": round(traded_total, 2),
+        "fees_paid": round(fees_total, 2),
         "benchmark_total_return": float(benchmark_series[-1] - 1.0)
         if benchmark_series.size
         else 0.0,
@@ -504,15 +629,16 @@ def mark(args: argparse.Namespace) -> dict:
         )
         if benchmark_series.size
         else 0.0,
-        "fees_paid": round(fees_total, 2),
         "cash": round(cash, 2),
         "book": {code: lots for code, lots in positions.items()},
+        "pending_exits": sorted(pending_sell),
         "decision_reports": decision_reports,
         "nav": nav_rows,
         "note": "REPLAY-only research ledger: records were written before their "
         "outcomes existed, but this is not forward evidence and does not count "
-        "toward the immutable-forward window. Blocked entries are skipped with "
-        "the cash left idle; blocked exits are rolled to the next session.",
+        "toward the immutable-forward window. Retained names are traded on the "
+        "delta; blocked entries are skipped with the cash left idle and never "
+        "back-filled; blocked exits are retried every session until executable.",
     }
     if args.output:
         Path(args.output).write_text(
@@ -524,10 +650,16 @@ def mark(args: argparse.Namespace) -> dict:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    if args.command == "decide":
-        payload = decide(args)
-    else:
-        payload = mark(args)
+    route_logs_to_stderr()
+    # Importing the app package installs a stdout log handler, so keep stdout
+    # reserved for the JSON payload: everything logged during the run goes to
+    # stderr, and only the final document is printed here.
+    real_stdout = sys.stdout
+    sys.stdout = sys.stderr
+    try:
+        payload = decide(args) if args.command == "decide" else mark(args)
+    finally:
+        sys.stdout = real_stdout
     print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
 
 
