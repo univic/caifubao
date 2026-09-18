@@ -173,3 +173,74 @@ Scoring 计算方法的调整。**所有调整必须在此文档记录**（对�
   实际可交易价格，不掺入未来函数（评分日当日信号收盘后建仓）。
 - 全量结论以 `scripts/decile-analysis.py` 输出为准，结果回填到本文档。
 - 任何 Scoring/因子/信号调整：先记录提案 → Spec Gate → 实施 → 验证 → 回填结果。
+
+## 修复后 research 数据的首次因子层研究（2026-09-18）
+
+### 背景
+
+FQ 复权缺陷修复（tushare `adj_factor` 真值）+ factor → signal → scoring 全历史重算
+完成后，research 侧首次具备可信的多年历史。此前本文档中基于 dev `ranked_v1_h20`
+的结论产生于**坏复权价**之上（≤2026-08-28 窗口），只能作为历史记录看待——重算后
+同一窗口的推荐有 **26%–35%** 发生变化（例如 2026-08-26 h=5 1682/5209、2026-08-28
+h=20 1752/5208、2026-08-31 h=20 1817/5206），这直接量化了缺陷对结论的扭曲幅度。
+
+### 方法（可复现）
+
+```bash
+# 1) 面板导出：修复后的 stock_daily_quote（2020-01-01 ~ 2026-09-17）
+k8s/jobs-internal/run-datahub-job.sh --namespace caifubao-research --type lab \
+  --node-name ubuntu-5700x --panel-pvc factor-lab-panel -- \
+  export --from-date 2020-01-01 --to-date 2026-09-17 --horizons 1,5,20,60 \
+  --output /data/lab_2026q3.parquet
+# → 7,555,430 行 / 5,565 只 code / 8,797 交易日 / 约 6 分钟
+
+# 2) 逐 horizon 评估（只读）
+k8s/jobs-internal/run-datahub-job.sh --namespace caifubao-research --type lab \
+  --node-name ubuntu-5700x --panel-pvc factor-lab-panel -- \
+  evaluate --panel /data/lab_2026q3.parquet --all --horizons 20 --output /data/sweep_h20.json
+```
+
+指标：`ic`（Spearman IC 均值）、`icir`、`t`/`tnw`（Newey-West）、`pos`（IC 同号占比）、
+`n_dates`、`top-bottom`（净多空分位价差，扣费后）、`decay`、`gates`。
+
+### h=20 结果（1,547–1,606 个交易日/因子）
+
+| 因子 | ic | icir | t | tnw | pos | top-bottom | gates |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| amihud_20 | **+0.0811** | +0.484 | 19.3 | 4.33 | 0.730 | **+1.32%** | PASS |
+| reversal_10 | +0.0493 | +0.361 | 14.4 | 3.27 | 0.622 | +0.75% | PASS |
+| reversal_5 | +0.0324 | +0.240 | 9.6 | 2.16 | 0.577 | +0.40% | PASS |
+| gap_1 | +0.0240 | +0.320 | 12.8 | 2.88 | 0.677 | +0.17% | PASS |
+| momentum_20（反向） | −0.0707 | −0.481 | −19.2 | −4.31 | 0.315 | −2.41% | PASS |
+| trend_60（反向） | −0.0838 | −0.521 | −20.5 | −4.59 | 0.313 | **−2.67%** | PASS |
+| momentum_60（反向） | −0.0742 | −0.464 | −18.2 | −4.09 | 0.317 | −2.33% | PASS |
+| trend_20（反向） | −0.0593 | −0.424 | −16.9 | −3.81 | 0.352 | −2.27% | PASS |
+| rsi_14（反向） | −0.0635 | −0.440 | −17.6 | −3.94 | 0.342 | −1.95% | PASS |
+| volatility_20（反向） | −0.0985 | −0.508 | −20.2 | −4.54 | 0.302 | −1.93% | performance_decay |
+| volume_zscore_60（反向） | −0.0477 | −0.487 | −19.2 | −4.30 | 0.316 | −1.60% | PASS |
+| momentum_10 / momentum_3 / range_position_20 / volume_ratio_20 | −0.02 ~ −0.05 | −0.17 ~ −0.36 | | | | −1.3% ~ −2.0% | PASS |
+
+h=5：结构一致但幅度减半（trend_60 −1.41%、momentum_20 −1.34%、rsi_14 −1.21%、
+volatility_20 −1.10% 且 gates=performance_decay；amihud_20 +0.46% 但 top-bottom −0.15%）。
+h=1：幅度再减半（≈−0.7% ~ −0.9%），换手显著上升（tnw > 5–12），扣费后不具优势。
+
+### 结论（修复后数据，2020–2026）
+
+1. **A 股 20 日尺度是反转/低波结构，不是动量结构**：动量、趋势、RSI、量能、波动
+   类因子的 IC 全为负且统计极显著（t≈−17 ~ −20，ICIR≈−0.4 ~ −0.5），即**买入低分位**
+   （前期弱、低波动、缩量）才赚钱；`reversal_*`/`gap_1`/`amihud_20` 为正向因子。
+2. 最强净价差出现在 h20 的极端分位（约 1.9%–2.7%/20 交易日），且 `pos` 显示 IC 同号
+   占比 68%–73%（趋势类反向同号占比同水平），不是少数日期的偶然。
+3. `volatility_20/60` 在 h5/h20 触发 `performance_decay` 门禁（近年效力衰减），
+   更适合与其它因子合成或在 h1 使用。
+4. h1/h5 的扣费后优势明显弱于 h20：本文档此前「短线/中线 20 交易日」的目标与
+   因子层证据一致，**研究窗口应锁定 h20**。
+
+### 下一步（提案，未实施）
+
+- 合成因子：等权 z-score（`reversal_10`、`amihud_20`、`−trend_60`、`−volatility_20`、
+  `−rsi_14`）→ 用 `factor_lab_runner scan`/small-book 工具做组合层回测（含换手与费用），
+  产出净值曲线与回撤，而不是停留在 IC 层面；
+- 对照：仅用 `≤2026-08-28` 的坏复权价重算同一评估（`stock_daily_quote_fq_pre_fix`
+  快照仅覆盖 2026-06-01 之后，覆盖窗口有限），量化因子的「假信号」比例；
+- 任何进入 scoring/信号的因子改动仍走 `scoring-factor` skill 的完整流程与 Spec Gate。
