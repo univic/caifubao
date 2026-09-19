@@ -363,6 +363,13 @@ def main(argv: list[str] | None = None) -> None:
                 }
             )
         nav = np.array([row["nav"] for row in nav_rows], dtype="float64") / args.aum
+        if len(nav_rows) > 1:
+            span_days = (
+                pd.Timestamp(nav_rows[-1]["date"]) - pd.Timestamp(nav_rows[0]["date"])
+            ).days
+            span_years = span_days / 365.25
+        else:
+            span_years = 0.0
         peak = np.maximum.accumulate(nav)
         years = len(nav) / (TRADING_DAYS / (1 if daily_marks else args.step))
         return {
@@ -377,6 +384,9 @@ def main(argv: list[str] | None = None) -> None:
             else 0.0,
             "turnover": round(traded / (np.mean(nav) * args.aum), 4)
             if nav.size
+            else None,
+            "turnover_annual": round(traded / (np.mean(nav) * args.aum * span_years), 4)
+            if nav.size and span_years > 0.5
             else None,
             "cash_share_avg": round(
                 float(
@@ -412,6 +422,7 @@ def main(argv: list[str] | None = None) -> None:
         "weight_label": args.label,
         "weight_label_lag_sessions": lag,
         "ex_post_screened_rebalance_sampled": replay(True, False),
+        "decision_time_rebalance_sampled": replay(False, False),
         "decision_time_daily": replay(False, True),
         "note": "Selection in 'decision_time_daily' uses only close-of-decision "
         "information (price, ST/BSE flags, optional liquidity floor); the old "
