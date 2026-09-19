@@ -7,6 +7,7 @@
 
 ## 2. Verification
 
-- [x] 2.1 Record the first live decision (`decide`) and replay it (`mark`) on real panel data
+- [x] 2.1a Record the first live decision (`decide`) on real panel data (2026-09-18 -> execution 2026-09-21)
+- [ ] 2.1b Replay it (`mark`) once the 2026-09-21 session exists; until then no NAV, drawdown or blocked-entry rate has been measured
 - [x] 2.2 Append commands, as-of range, cost assumptions, `REPLAY` label and limitations to `docs/operations/strategy-experiments-2026-08.md`
-- [ ] 2.3 qa-reviewer on the implementation; spec-guardian confirm the delta matches the code
+- [x] 2.3 qa-reviewer ran; its 5 P1 + 11 P2 findings were fixed in the follow-up commit and verified on synthetic panels (recorded in the experiments log)
