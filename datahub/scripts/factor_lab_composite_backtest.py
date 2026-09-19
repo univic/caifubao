@@ -150,6 +150,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=",".join(str(value) for value in SPRINT_SIZES),
         help="Comma-separated book sizes for the sprint report.",
     )
+    parser.add_argument(
+        "--components",
+        default=None,
+        help="Comma-separated registered factors for the composite report "
+        "(default: the five-factor RIQ set). The report's equal_weight_raw row "
+        "is the un-signed book, i.e. long high factor values.",
+    )
     parser.add_argument("--output", default=None, help="Write JSON here as well.")
     return parser.parse_args(argv)
 
@@ -718,12 +725,16 @@ def main(argv: list[str] | None = None) -> None:
 
     zscores: dict[str, pd.Series] = {}
     ic_by_date: dict[str, pd.Series] = {}
-    for name in DEFAULT_COMPONENTS:
+    components = (
+        tuple(part for part in args.components.split(",") if part.strip())
+        if args.components
+        else tuple(DEFAULT_COMPONENTS)
+    )
+    for name in components:
         values = factors.compute(frame, name)
         zscores[name] = zscore_by_date(values, frame["date"])
         ic_by_date[name] = daily_ic(frame, values, weight_label)
 
-    components = tuple(DEFAULT_COMPONENTS)
     raw_equal = sum(zscores[name] for name in components) / len(components)
     sign_equal = walk_forward_composite(
         frame,
