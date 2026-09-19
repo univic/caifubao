@@ -206,6 +206,8 @@ def main(argv: list[str] | None = None) -> None:
         pending_sell: set[str] = set()
         last_price: dict[str, float] = {}
         missing: dict[str, int] = {}
+        entry_raw: dict[str, float] = {}
+        entry_hfq: dict[str, float] = {}
         written_off: dict[str, float] = {}
         delisted: list[str] = []
         failed_entries = 0
@@ -252,7 +254,11 @@ def main(argv: list[str] | None = None) -> None:
                         fees += cost
                         traded += notional
                         pending_sell.discard(code)
-                    slice_amount = cash / max(len(target), 1)
+                    book_now = sum(
+                        lots * LOT * last_price.get(code, 0.0)
+                        for code, lots in positions.items()
+                    )
+                    slice_amount = (cash + book_now) / max(len(target), 1)
                     for code in target:
                         attempted_entries += 1
                         price = tradeable_open(quote(execution, code), "buy")
@@ -272,6 +278,22 @@ def main(argv: list[str] | None = None) -> None:
                         fees += cost
                         traded += notional
                         positions[code] = positions.get(code, 0) + delta
+                        entry_raw[code] = price
+                        row = quote(execution, code)
+                        hfq_entry = row.get("open_hfq") if row is not None else None
+                        if (
+                            hfq_entry is None
+                            or not np.isfinite(hfq_entry)
+                            or hfq_entry <= 0
+                        ):
+                            hfq_entry = (
+                                row.get("close_hfq") if row is not None else None
+                            )
+                        entry_hfq[code] = (
+                            float(hfq_entry)
+                            if hfq_entry and np.isfinite(hfq_entry) and hfq_entry > 0
+                            else None
+                        )
             else:
                 for code in sorted(pending_sell):
                     price = tradeable_open(quote(value, code), "sell")
@@ -288,7 +310,23 @@ def main(argv: list[str] | None = None) -> None:
             if not daily_marks and position not in rebalance_positions:
                 continue
             for code in positions:
-                price = mark_price(quote(value, code))
+                row_today = quote(value, code)
+                hfq_today = (
+                    row_today.get("close_hfq") if row_today is not None else None
+                )
+                if (
+                    hfq_today is not None
+                    and np.isfinite(hfq_today)
+                    and hfq_today > 0
+                    and entry_hfq.get(code)
+                    and entry_raw.get(code)
+                ):
+                    last_price[code] = (
+                        entry_raw[code] * float(hfq_today) / entry_hfq[code]
+                    )
+                    missing[code] = 0
+                    continue
+                price = mark_price(row_today)
                 if price is None:
                     missing[code] = missing.get(code, 0) + 1
                     if missing[code] > 20 and not written_off.get(code):
@@ -305,9 +343,18 @@ def main(argv: list[str] | None = None) -> None:
                 lots * LOT * last_price.get(code, 0.0)
                 for code, lots in positions.items()
             )
+            if cash < -1e-6:
+                raise ValueError(f"negative cash at {value.date()}: {cash}")
+            book_check = sum(
+                lots * LOT * last_price.get(code, 0.0)
+                for code, lots in positions.items()
+            )
+            if any(lots <= 0 for lots in positions.values()):
+                raise ValueError(f"non-positive position at {value.date()}")
             nav_rows.append(
                 {
                     "date": str(value.date()),
+                    "book_check": round(book_check, 2),
                     "nav": round(cash + book, 2),
                     "cash_share": round(cash / (cash + book), 4)
                     if cash + book
