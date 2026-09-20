@@ -117,16 +117,48 @@ Modes (`--mode`, repeatable): `composite` (equal-weight-with-causal-sign and
 walk-forward ICIR books across sizes, with per-year/period metrics),
 `liquidity` (threshold sweep by trailing 20-session mean trade amount),
 `capacity` (square-root impact grid; `k` is a parameter, not a measured
-constant), `overlay` (market-breadth filter computed at the rebalance close) and
+constant), `overlay` (market-breadth filter computed at the rebalance close),
 `accounts` (100-share lots sized from the raw T+1 open, CNY 5 minimum commission,
-cash drag). Defaults run every mode.
+cash drag), `sprint` (extreme small-account sweep over holding steps that have a
+matching `fwd_h{step}` label, with and without friction) and `oos` (one stitched
+rolling out-of-sample curve; see below). Defaults run every mode except `oos` and
+`sprint`, which must be named.
+
+### Rolling out-of-sample (`--mode oos`)
+
+`--mode oos` splits the panel into consecutive folds of `--train-sessions`
+(default 500) training sessions followed by `--test-sessions` (default 250) test
+sessions, rolling forward by `test_sessions`. For each fold the composite ICIR
+weights are frozen using only IC dates `d <= test_start_index - label_horizon - 1
+- embargo`, so no training label overlaps the test window (purge = horizon + 1;
+`--embargo` defaults to 0 and adds extra spacing; it must be >= 0). The frozen
+book is replayed on the test window only, quarterly (`--step` defaults to 60 for
+this mode), equal weight, top `--names` (default 10) with the 2N hold-while-in-band
+buffer, and the daily fold returns are stitched into one out-of-sample curve. The
+report carries the `config` block, a per-fold table and the stitched metrics; a
+panel shorter than one full fold is refused. A mixed run such as `--mode oos
+--mode composite` needs an explicit `--step` because the two families default to
+different steps.
+
+```bash
+python datahub/scripts/factor_lab_composite_backtest.py \
+  --panel /data/lab.parquet --mode oos --label fwd_h20 \
+  --train-sessions 500 --test-sessions 250 --embargo 0 \
+  --names 10 --step 60 --output /data/oos_report.json
+```
+
+The in-sample arm for the same window is the account replay restricted to those
+sessions (`factor_lab_account_replay.py --start-date ... --end-date ...`), which
+reports the requested window back in its top-level `start_date`/`end_date`.
 
 Honesty notes baked into the output: `equal_weight_raw` applies no direction and
 is reported only to show that naive equal weighting is not a strategy; the
 IC-sign and ICIR weights use ICs realised strictly before each rebalance; blocked
 labels are never rolled forward (limit-up entries, limit-down exits,
 suspensions); capacity numbers are model-based and this is research, not
-investment advice.
+investment advice. The `oos` report is a replay on a survival-biased panel, not
+forward evidence. Output note: the script's stdout is the JSON document only (the
+app log handler is bound to stderr).
 
 ## Holding-period x buffer scan
 

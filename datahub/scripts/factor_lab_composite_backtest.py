@@ -30,9 +30,19 @@ What it does
      computed at the rebalance close) at several thresholds/exposures;
    * ``accounts``   a small-account simulation with 100-share lots sized from
      the RAW T+1 open (returns stay on the HFQ total-return label), a CNY 5
-     per-trade minimum commission and zero-yield leftover cash.
+     per-trade minimum commission and zero-yield leftover cash;
+   * ``sprint``     the extreme small-account sweep over holding steps that have
+     a matching ``fwd_h{step}`` label, with and without friction;
+   * ``oos``        one stitched rolling out-of-sample curve: consecutive
+     ``--train-sessions``/``--test-sessions`` folds, fold weights purged of every
+     IC whose forward label could reach the test window (plus ``--embargo``
+     extra sessions) and the test window replayed from cash.
 
-Output is a single JSON document on stdout (or ``--output``).
+Output is a single JSON document on stdout (or ``--output``). The app package
+installs a stdout log handler on import; ``main`` binds it to stderr so stdout
+carries only that JSON. The "existing modes are unchanged" guarantee therefore
+covers the JSON document / ``--output`` payload, not the stdout stream, which no
+longer carries the environment and startup log lines the pre-change build leaked.
 """
 
 from __future__ import annotations
@@ -48,6 +58,9 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 DEFAULT_COMPONENTS = (
     "reversal_10",
@@ -91,6 +104,16 @@ _PANEL_FIELDS = (
 )
 
 
+def _non_negative_sessions(value: str) -> int:
+    """argparse type: a session count that may be zero but never negative."""
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError(
+            f"expected zero or a positive session count, got {number}"
+        )
+    return number
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--panel", default=DEFAULT_PANEL, help="Parquet panel path.")
@@ -104,6 +127,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "overlay",
             "accounts",
             "sprint",
+            "oos",
         ),
         default=[],
         help="Report to produce; repeatable. Default: every report.",
@@ -114,7 +138,43 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Label used to estimate the walk-forward weights (default: --label).",
     )
-    parser.add_argument("--step", type=int, default=20, help="Sessions per holding.")
+    parser.add_argument(
+        "--step",
+        type=int,
+        default=None,
+        help="Sessions per holding (default: 20, or 60 for --mode oos).",
+    )
+    parser.add_argument(
+        "--names",
+        type=int,
+        default=10,
+        help="Book size for --mode oos (equal weight, 2N buffer).",
+    )
+    parser.add_argument(
+        "--aum",
+        type=float,
+        default=50_000.0,
+        help="Account size for --mode oos.",
+    )
+    parser.add_argument(
+        "--train-sessions",
+        type=int,
+        default=500,
+        help="Training sessions per rolling out-of-sample fold.",
+    )
+    parser.add_argument(
+        "--test-sessions",
+        type=int,
+        default=250,
+        help="Test sessions per rolling out-of-sample fold.",
+    )
+    parser.add_argument(
+        "--embargo",
+        type=_non_negative_sessions,
+        default=0,
+        help="Extra purge sessions between the training tail and the test window "
+        "(zero or more; a negative value would re-admit overlapping-label ICs).",
+    )
     parser.add_argument(
         "--sizes",
         default="30,50,100",
@@ -217,6 +277,31 @@ def daily_ic(frame: pd.DataFrame, values: pd.Series, label: str) -> pd.Series:
     return ic[pairs >= 2].dropna()
 
 
+def _icir_weights(
+    history: pd.Series,
+    components: tuple[str, ...],
+    ic_by_date: dict[str, pd.Series],
+    weighting: str,
+) -> dict[str, float]:
+    """Signed, self-normalising factor weights over one IC history window."""
+    weights: dict[str, float] = {}
+    for name in components:
+        series = ic_by_date[name].reindex(history.index)
+        mean = series.mean()
+        std = series.std(ddof=1)
+        if not np.isfinite(mean):
+            continue
+        if weighting == "sign":
+            weights[name] = float(np.sign(mean))
+        elif std and not np.isnan(std):
+            weights[name] = float(mean / std)
+    weights = {name: value for name, value in weights.items() if value}
+    if not weights:
+        return {}
+    total = sum(abs(value) for value in weights.values()) or 1.0
+    return {name: value / total for name, value in weights.items()}
+
+
 def walk_forward_composite(
     frame: pd.DataFrame,
     zscores: dict[str, pd.Series],
@@ -249,25 +334,13 @@ def walk_forward_composite(
         history = reference.loc[: pd.Timestamp(dates[cutoff_index])].tail(lookback)
         if len(history) < min_ic_dates:
             continue
-        weights: dict[str, float] = {}
-        for name in components:
-            series = ic_by_date[name].reindex(history.index)
-            mean = series.mean()
-            std = series.std(ddof=1)
-            if not np.isfinite(mean):
-                continue
-            if weighting == "sign":
-                weights[name] = float(np.sign(mean))
-            elif std and not np.isnan(std):
-                weights[name] = float(mean / std)
-        weights = {name: value for name, value in weights.items() if value}
+        weights = _icir_weights(history, components, ic_by_date, weighting)
         if not weights:
             continue
-        total = sum(abs(value) for value in weights.values()) or 1.0
         mask = (frame["date"] == date).to_numpy()
         names = list(weights)
         block = np.column_stack([zscores[name].to_numpy()[mask] for name in names])
-        vector = np.array([weights[name] / total for name in names])
+        vector = np.array([weights[name] for name in names])
         score.loc[mask] = block @ vector
     return score
 
@@ -696,16 +769,329 @@ def report_sprint(
     return out
 
 
+def plan_oos_folds(
+    n_sessions: int, train_sessions: int, test_sessions: int
+) -> list[tuple[int, int, int, int]]:
+    """Consecutive ``(train_start, train_end, test_start, test_end)`` folds.
+
+    Every fold trains on ``train_sessions`` sessions and tests on the following
+    ``test_sessions``, then rolls forward by exactly ``test_sessions``, so the
+    test windows are consecutive and non-overlapping. Raises instead of silently
+    reporting when the panel cannot hold one full fold.
+    """
+    if train_sessions < 1 or test_sessions < 1:
+        raise ValueError(
+            "--train-sessions and --test-sessions must both be positive "
+            f"(got {train_sessions} and {test_sessions})"
+        )
+    folds: list[tuple[int, int, int, int]] = []
+    start = 0
+    while start + train_sessions + test_sessions <= n_sessions:
+        folds.append(
+            (
+                start,
+                start + train_sessions - 1,
+                start + train_sessions,
+                start + train_sessions + test_sessions - 1,
+            )
+        )
+        start += test_sessions
+    if not folds:
+        raise ValueError(
+            f"panel has {n_sessions} sessions, fewer than one full rolling "
+            f"out-of-sample fold of {train_sessions} train + {test_sessions} test "
+            "sessions"
+        )
+    return folds
+
+
+def attach_execution_columns(frame: pd.DataFrame, path: str) -> pd.DataFrame:
+    """Add the T+1 execution gates the daily replay needs.
+
+    The composite panel projection does not carry the limit/suspension flags, so
+    the ``oos`` mode reads them from the parquet; a panel without them is treated
+    as always tradeable rather than failing the run.
+    """
+    missing = [
+        name
+        for name in ("trade_status", "limit_up", "limit_down")
+        if name not in frame.columns
+    ]
+    if missing:
+        try:
+            extra = pd.read_parquet(path, columns=["date", "stock_code", *missing])
+        except (KeyError, ValueError):
+            extra = pd.read_parquet(path, columns=["date", "stock_code"])
+        extra["date"] = pd.to_datetime(extra["date"])
+        for name in missing:
+            if name not in extra.columns:
+                extra[name] = 1 if name == "trade_status" else False
+        try:
+            frame = frame.merge(
+                extra,
+                on=["date", "stock_code"],
+                how="left",
+                validate="one_to_one",
+            )
+        except pd.errors.MergeError as exc:
+            raise ValueError(
+                "cannot attach execution columns: the panel has duplicate "
+                "(date, stock_code) keys, so the left merge would multiply rows"
+            ) from exc
+    frame["trade_status"] = pd.to_numeric(
+        frame["trade_status"], errors="coerce"
+    ).fillna(1)
+    for name in ("limit_up", "limit_down"):
+        frame[name] = frame[name].fillna(False).astype(bool)
+    return frame
+
+
+def report_oos(
+    frame: pd.DataFrame,
+    zscores: dict[str, pd.Series],
+    ic_by_date: dict[str, pd.Series],
+    components: tuple[str, ...],
+    *,
+    panel: str,
+    step: int,
+    names: int,
+    buffer_multiple: int,
+    aum: float,
+    lookback: int,
+    min_ic_dates: int,
+    label: str,
+    label_lag: int,
+    train_sessions: int,
+    test_sessions: int,
+    embargo: int,
+    liquidity_floor: float = 0.0,
+) -> dict:
+    """One stitched out-of-sample curve from purged, embargoed folds.
+
+    For every fold the composite weights are frozen from the IC dates at or
+    before ``test_start_index - label_horizon - 1 - embargo`` (the same causal
+    cutoff ``walk_forward_composite`` uses, plus the embargo), never from an IC
+    whose forward label could reach into the test window. The frozen book is then
+    replayed on the test window only and the daily returns are stitched.
+    """
+    from app.lib.factor_lab import metrics
+    from factor_lab_account_replay import (
+        COMMISSION_RATE,
+        MIN_COMMISSION,
+        replay_book,
+    )
+
+    dates = list(sorted(frame["date"].unique()))
+    folds = plan_oos_folds(len(dates), train_sessions, test_sessions)
+    frame["__raw_close"] = pd.to_numeric(frame["close"], errors="coerce")
+    reference = ic_by_date[components[0]]
+
+    fold_rows: list[dict] = []
+    stitched = [1.0]
+    cash_shares: list[float] = []
+    traded_total = 0.0
+    sessions_stitched = 0
+    for number, (train_start, train_end, test_start, test_end) in enumerate(folds, 1):
+        # Purge: the IC at session d labels the open-to-open move over
+        # d+1 .. d+1+h, so only d <= test_start - h - 1 can be fully observed
+        # before the test window opens. --embargo adds extra spacing.
+        if embargo < 0:
+            raise ValueError(
+                "--embargo must be zero or a positive session count; a negative "
+                "embargo would move the cutoff later and re-admit the "
+                "overlapping-label ICs the purge exists to remove"
+            )
+        cutoff_index = test_start - label_lag - embargo
+        if cutoff_index > test_start - label_lag:
+            raise ValueError(
+                f"fold {number} would use IC dates after the purge cutoff "
+                f"(embargo {embargo}); refusing to leak the test window"
+            )
+        if cutoff_index < 0:
+            raise ValueError(
+                f"fold {number} has no purgeable training history: its test "
+                f"window starts at session {test_start} but the label lag and "
+                f"embargo need {label_lag + embargo} preceding sessions"
+            )
+        cutoff = pd.Timestamp(dates[cutoff_index])
+        history = reference.loc[:cutoff].tail(lookback)
+        if len(history) < min_ic_dates:
+            raise ValueError(
+                f"fold {number} has only {len(history)} IC dates at or before "
+                f"{cutoff.date()}, fewer than --min-ic-dates {min_ic_dates}"
+            )
+        weights = _icir_weights(history, components, ic_by_date, "icir")
+        if not weights:
+            raise ValueError(
+                f"fold {number} produced no usable factor weights at or before "
+                f"{cutoff.date()}"
+            )
+        frame["__score"] = sum(
+            weight * zscores[name] for name, weight in weights.items()
+        )
+        window = [pd.Timestamp(value) for value in dates[test_start : test_end + 1]]
+        book = replay_book(
+            frame,
+            sessions=window,
+            step=step,
+            names=names,
+            buffer_multiple=buffer_multiple,
+            aum=aum,
+            liquidity_floor=liquidity_floor,
+            label=label,
+            require_label=False,
+            daily_marks=True,
+            include_nav=True,
+        )
+        nav_rows = book["nav"]
+        levels = [row["nav"] / aum for row in nav_rows]
+        # The first test session is all cash: the book is bought at the next
+        # session's open, so its return is exactly zero and no training-window
+        # position is carried into the fold.
+        returns = [0.0] + [
+            levels[index] / levels[index - 1] - 1.0 for index in range(1, len(levels))
+        ]
+        for value in returns:
+            stitched.append(stitched[-1] * (1.0 + value))
+        cash_shares.extend(
+            row["cash_share"] for row in nav_rows if row["cash_share"] is not None
+        )
+        traded_total += book["traded_notional"]
+        sessions_stitched += len(nav_rows)
+        purged = (
+            int(
+                (
+                    (reference.index > cutoff)
+                    & (reference.index <= dates[test_start - 1])
+                ).sum()
+            )
+            if test_start > 0
+            else 0
+        )
+        fold_rows.append(
+            {
+                "fold": number,
+                "train_start": str(pd.Timestamp(dates[train_start]).date()),
+                "train_end": str(pd.Timestamp(dates[train_end]).date()),
+                "test_start": str(pd.Timestamp(dates[test_start]).date()),
+                "test_end": str(pd.Timestamp(dates[test_end]).date()),
+                "ic_first_date": str(pd.Timestamp(history.index[0]).date())
+                if len(history)
+                else None,
+                "ic_cutoff": str(cutoff.date()),
+                "ic_dates_used": int(len(history)),
+                "purged_ic_dates": purged,
+                "factor_weights": {
+                    name: round(float(value), 6) for name, value in weights.items()
+                },
+                "test_total_return": book["total_return"],
+                "test_annualised": book["annualised"],
+                "test_max_drawdown": book["max_drawdown"],
+                "test_turnover_annual": book["turnover_annual"],
+                "test_cash_share_avg": book["cash_share_avg"],
+                "test_traded_notional": book["traded_notional"],
+                "test_sessions": len(nav_rows),
+            }
+        )
+
+    equity = np.array(stitched, dtype="float64")
+    years = sessions_stitched / TRADING_DAYS
+    peak = np.maximum.accumulate(equity)
+    average_nav = float(np.mean(equity[1:])) if sessions_stitched else 1.0
+    config = {
+        "panel": panel,
+        "mode": "oos",
+        "step": step,
+        "names": names,
+        "buffer_multiple": buffer_multiple,
+        "components": list(components),
+        "lookback": lookback,
+        "min_ic_dates": min_ic_dates,
+        "label": label,
+        "label_lag": label_lag,
+        "purge_sessions": label_lag,
+        "train_sessions": train_sessions,
+        "test_sessions": test_sessions,
+        "embargo": embargo,
+        "aum": aum,
+        "liquidity_floor": liquidity_floor,
+        "weighting": "icir",
+        "costs": {
+            "round_trip_cost": metrics.round_trip_cost(),
+            "min_commission_cny": MIN_COMMISSION,
+            "commission_rate": COMMISSION_RATE,
+        },
+    }
+    summary = {
+        "folds": len(fold_rows),
+        "sessions": sessions_stitched,
+        "total_return": float(equity[-1] - 1.0),
+        "annualised": float(equity[-1] ** (1.0 / years) - 1.0)
+        if years > 0 and equity[-1] > 0
+        else None,
+        "max_drawdown": float((equity / peak - 1.0).min()),
+        "turnover_annual": round(traded_total / (average_nav * aum * years), 4)
+        if years > 0 and average_nav > 0
+        else None,
+        "cash_share_avg": round(float(np.mean(cash_shares)), 4)
+        if cash_shares
+        else None,
+        "first_test_start": fold_rows[0]["test_start"],
+        "last_test_end": fold_rows[-1]["test_end"],
+    }
+    return {
+        "config": config,
+        "folds": fold_rows,
+        "summary": summary,
+        "note": "Rolling out-of-sample protocol: fold weights are purged of every "
+        "IC whose forward label could reach the test window, with the optional "
+        "embargo on top, and each fold's test window is replayed from cash so no "
+        "training-window position carries over. This is still a replay on a "
+        "survival-biased panel, not forward evidence or investment advice.",
+        "history_note": "Each fold's train_start/train_end are only the folder "
+        "bounds. The weights actually use the IC dates in [ic_first_date, "
+        "ic_cutoff] -- a window capped by --lookback -- so --train-sessions "
+        "shifts the folds while --lookback caps the IC history and "
+        "purged_ic_dates reports the leaky IC dates removed between the cutoff "
+        "and the test window.",
+    }
+
+
 def main(argv: list[str] | None = None) -> None:
-    from app.lib.factor_lab import factors, metrics
+    # Importing the app package installs a stdout log handler; keep stdout for
+    # the JSON payload by letting that handler bind to stderr instead (the same
+    # pattern factor_lab_paper_run uses).
+    real_stdout = sys.stdout
+    sys.stdout = sys.stderr
+    try:
+        from app.lib.factor_lab import factors, metrics
+    finally:
+        sys.stdout = real_stdout
 
     args = parse_args(argv)
+    modes = args.mode or ["composite", "liquidity", "capacity", "overlay", "accounts"]
+    block_modes = [mode for mode in modes if mode != "oos"]
+    if "oos" in modes and block_modes and args.step is None:
+        # The two families have different natural steps (20 vs 60); a single
+        # shared --step cannot default both honestly, so make the choice explicit.
+        raise ValueError(
+            "--mode oos rebalances quarterly (60) by default while the "
+            f"label-based modes ({', '.join(block_modes)}) default to 20; a mixed "
+            "run needs an explicit --step."
+        )
+    # The daily out-of-sample book is not tied to a forward label's horizon, so
+    # it rebalances quarterly by default; the label-based modes keep 20.
+    step = (
+        args.step
+        if args.step is not None
+        else (60 if "oos" in modes and not block_modes else 20)
+    )
     weight_label = args.weight_label or args.label
     label_sessions = label_horizon(args.label)
-    if label_sessions and label_sessions != args.step:
+    if block_modes and label_sessions and label_sessions != step:
         raise ValueError(
             f"--label {args.label} holds {label_sessions} sessions but --step is "
-            f"{args.step}; the label horizon and the rebalance step must match "
+            f"{step}; the label horizon and the rebalance step must match "
             "(a mismatch double-counts the holding-period return)."
         )
     label_lag = label_horizon(weight_label) + 1
@@ -715,13 +1101,15 @@ def main(argv: list[str] | None = None) -> None:
     labels = {args.label, weight_label}
     if "sprint" in (args.mode or []):
         # The sprint sweep needs every step's label column loaded.
-        labels.update(f"fwd_h{step}" for step in sprint_steps)
+        labels.update(f"fwd_h{sprint_step}" for sprint_step in sprint_steps)
     labels = tuple(labels)
     if not Path(args.panel).exists():
         raise FileNotFoundError(
             f"panel not found: {args.panel} (run factor_lab_runner export first)"
         )
     frame = load_panel(args.panel, labels)
+    if "oos" in modes:
+        frame = attach_execution_columns(frame, args.panel)
 
     zscores: dict[str, pd.Series] = {}
     ic_by_date: dict[str, pd.Series] = {}
@@ -762,13 +1150,12 @@ def main(argv: list[str] | None = None) -> None:
     }
 
     sizes = tuple(int(part) for part in args.sizes.split(",") if part.strip())
-    modes = args.mode or ["composite", "liquidity", "capacity", "overlay", "accounts"]
     report: dict = {
         "panel": args.panel,
         "label": args.label,
         "weight_label": weight_label,
         "weight_label_lag_sessions": label_lag,
-        "step_sessions": args.step,
+        "step_sessions": step,
         "top": args.top,
         "buffer_multiple": args.buffer_multiple,
         "round_trip_cost": metrics.round_trip_cost(),
@@ -796,11 +1183,11 @@ def main(argv: list[str] | None = None) -> None:
     }
     if "composite" in modes:
         report["reports"]["composite"] = report_composite(
-            frame, scores, args.label, sizes, args.buffer_multiple, args.step
+            frame, scores, args.label, sizes, args.buffer_multiple, step
         )
     if "liquidity" in modes:
         report["reports"]["liquidity"] = report_liquidity(
-            frame, icir, args.label, args.top, args.buffer_multiple, args.step
+            frame, icir, args.label, args.top, args.buffer_multiple, step
         )
     if "capacity" in modes:
         report["reports"]["capacity"] = report_capacity(
@@ -809,16 +1196,16 @@ def main(argv: list[str] | None = None) -> None:
             args.label,
             args.top,
             args.buffer_multiple,
-            args.step,
+            step,
             CAPACITY_AUM_LEVELS,
         )
     if "overlay" in modes:
         report["reports"]["overlay"] = report_overlay(
-            frame, icir, args.label, args.top, args.buffer_multiple, args.step
+            frame, icir, args.label, args.top, args.buffer_multiple, step
         )
     if "accounts" in modes:
         report["reports"]["accounts"] = report_accounts(
-            frame, icir, args.label, args.buffer_multiple, args.step, 5.0
+            frame, icir, args.label, args.buffer_multiple, step, 5.0
         )
     if "sprint" in modes:
         report["reports"]["sprint"] = report_sprint(
@@ -833,6 +1220,27 @@ def main(argv: list[str] | None = None) -> None:
             args.buffer_multiple,
             5.0,
         )
+    if "oos" in modes:
+        oos = report_oos(
+            frame,
+            zscores,
+            ic_by_date,
+            components,
+            panel=args.panel,
+            step=step,
+            names=args.names,
+            buffer_multiple=args.buffer_multiple,
+            aum=args.aum,
+            lookback=args.lookback,
+            min_ic_dates=args.min_ic_dates,
+            label=weight_label,
+            label_lag=label_lag,
+            train_sessions=args.train_sessions,
+            test_sessions=args.test_sessions,
+            embargo=args.embargo,
+        )
+        report["reports"]["oos"] = oos
+        report["config"] = oos["config"]
     payload = json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False)
     if args.output:
         Path(args.output).write_text(payload + "\n", encoding="utf-8")

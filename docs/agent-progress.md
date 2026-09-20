@@ -29,6 +29,30 @@
 ```
 
 ## 进度记录
+### 2026-09-20 00:40 CST — 滚动样本外（purge + embargo）：年化 25.7% → 11.0%–12.0%
+
+- 状态：进行中（口径修正完成，前向验证仍未开始）
+- 已完成：
+  - **新增 `--mode oos`**（`datahub/scripts/factor_lab_composite_backtest.py`）：train 500 /
+    test 250 交易日滚动切分，测试窗连续不重叠；每折权重只用
+    `d <= test_start - label_horizon - 1 - embargo` 的 IC（purge = 标签长度 + 1，
+    正好卡掉会用到 `open(test_start+1)` 的那条标签），只在测试窗内从现金重放，
+    拼接为样本外曲线；输出每折诊断（`ic_first_date`/`ic_cutoff`/`ic_dates_used`/
+    `purged_ic_dates`/`test_total_return`）与完整 `config`。`--embargo` 拒绝负值，
+    输出改为纯 JSON（原有模式的 JSON/`--output` 字节不变，stdout 变干净）。
+  - **同窗口对照**（`/data/lab_live.parquet`，2022-01-24 ~ 2026-03-16，1,000 个交易日，
+    `--step 60 --names 10 --aum 50000`）：样本内 +155.2% / **25.7%** / −27.4%；
+    滚动样本外 embargo 0 +53.5% / **11.0%** / **−49.1%**；embargo 21 +59.2% / 12.0% / −48.2%。
+    → **一半以上的历史超额来自样本内估权重**，且样本外回撤几乎翻倍。
+  - **验证**：新增 `test_factor_lab_oos.py`（8 用例，合成面板；含负 embargo 拒绝、
+    混合模式缺 `--step` 报错）与账户回放日期窗用例；另有集成方对账回归（refactor 后
+    三个既有变体与原合并值一致）与独立 QA 复跑（HEAD vs 工作树各模式 JSON 字节一致）。
+- 验证：`pytest app/test/` **1120 passed + 4 subtests**；`ruff check --select E4,E7,E9,F`
+  与 `ruff format --check` 通过；`openspec validate --all --strict` 29 passed 全绿；链接检查通过；
+  research 集群实跑 OOS 与窗口样本内各一次成功。
+- 下一步：合并本 PR（需用户批准）；随后待 2026-09-21 行情落库后执行 ledger 首次 `mark`。
+- 阻塞：无。
+
 ### 2026-09-19 23:10 CST — 账户级回放对账 + 机制单测 + 幸存者核查；冻结前瞻候选
 
 - 状态：进行中（口径修正与机制验证完成，前向验证未开始）
