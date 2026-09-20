@@ -229,7 +229,16 @@ def test_grid_skips_missing_horizons_and_sorts_the_summary():
 
 
 def test_round_trip_cost_matches_the_factor_lab_convention():
-    assert ROUND_TRIP_COST == pytest.approx(0.0035)
+    """The scan's friction must be the paper/backtest model's exact figure.
+
+    Comparing against the imported value (not a hardcoded number) means this
+    fails the moment the two ever diverge again — the drift this test used to
+    lock in (a restated 0.0035 while the model had moved on).
+    """
+    from app.lib.factor_lab import metrics
+
+    assert ROUND_TRIP_COST == pytest.approx(metrics.round_trip_cost())
+    assert ROUND_TRIP_COST == pytest.approx(0.00302)
 
 
 def test_wider_buffer_retains_name_and_reduces_replacement_turnover():
