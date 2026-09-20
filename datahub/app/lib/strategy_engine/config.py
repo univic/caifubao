@@ -14,6 +14,13 @@ import hashlib
 import json
 import math
 
+from app.lib.factor_lab.metrics import (
+    COMMISSION_RATE,
+    SELL_STAMP_DUTY_RATE,
+    SLIPPAGE_PER_SIDE,
+    TRANSFER_FEE_RATE,
+)
+
 # Score-source default: the flip_wide shadow version registered by task 3.3
 # tooling (construction-layer reversal at horizon 20). Configurable to any
 # registered model version.
@@ -27,11 +34,21 @@ DEFAULT_REBALANCE_CADENCE_DAYS = 5  # weekly (5 trading days)
 # Execution cost parameters aligned with the autoresearch profile
 # (autoresearch/profile.yaml -> execution). Paper NAV must use the same
 # cost semantics as research so the paper track is comparable.
+#
+# The A-share rate constants live in `factor_lab.metrics` (the research-side
+# execution model) and are imported here so the paper/live-loop cost model and
+# the research model cannot drift apart: one place owns the numbers. Slippage,
+# commission, the sell stamp duty and the two-way transfer fee
+# (`transfer_fee_rate`, 过户费) are all fractions of notional.
 PAPER_EXECUTION = {
-    "commission_rate": 0.00025,
+    "commission_rate": COMMISSION_RATE,
     "minimum_commission_cny": 5.0,
-    "sell_stamp_duty_rate": 0.001,
-    "slippage_per_side": 0.001,
+    "sell_stamp_duty_rate": SELL_STAMP_DUTY_RATE,
+    # A-share transfer fee is charged on BOTH sides (2023-08-28 onward: 0.001 %
+    # per side), so a round trip pays it twice. It is part of sizing so an order
+    # is not skipped only because the transfer fee pushed it over budget.
+    "transfer_fee_rate": TRANSFER_FEE_RATE,
+    "slippage_per_side": SLIPPAGE_PER_SIDE,
     "board_lot": 100,
     "initial_nav": 1_000_000.0,
 }
@@ -70,6 +87,73 @@ def strategy_config_hash(config: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def validate_execution_config(execution: dict) -> dict:
+    """Validate a partial execution-cost override, filled from PAPER_EXECUTION.
+
+    Missing keys are inherited from PAPER_EXECUTION so an operator only pins what
+    they change. Rates are non-negative fractions below 1; the board lot is a
+    positive integer. Unknown keys are rejected (a typo must not be silently
+    absorbed into a hashed-but-wrong cost model).
+    """
+    if not isinstance(execution, dict):
+        raise ValueError("execution must be a dict")
+    unknown = set(execution) - _KNOWN_EXECUTION_KEYS
+    if unknown:
+        raise ValueError(
+            f"unknown execution keys: {sorted(unknown)}; "
+            f"known: {sorted(_KNOWN_EXECUTION_KEYS)}"
+        )
+    resolved = dict(PAPER_EXECUTION)
+    resolved.update(execution)
+    for key in (
+        "commission_rate",
+        "sell_stamp_duty_rate",
+        "transfer_fee_rate",
+        "slippage_per_side",
+    ):
+        value = resolved.get(key)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 0 <= float(value) < 1
+        ):
+            raise ValueError(f"execution.{key} must be a finite number in [0, 1)")
+    minimum = resolved.get("minimum_commission_cny")
+    if (
+        isinstance(minimum, bool)
+        or not isinstance(minimum, (int, float))
+        or not math.isfinite(float(minimum))
+        or float(minimum) < 0
+    ):
+        raise ValueError(
+            "execution.minimum_commission_cny must be a finite number >= 0"
+        )
+    board_lot = resolved.get("board_lot")
+    if isinstance(board_lot, bool) or not isinstance(board_lot, int) or board_lot < 1:
+        raise ValueError("execution.board_lot must be a positive integer")
+    initial = resolved.get("initial_nav")
+    if (
+        isinstance(initial, bool)
+        or not isinstance(initial, (int, float))
+        or not math.isfinite(float(initial))
+        or float(initial) <= 0
+    ):
+        raise ValueError("execution.initial_nav must be a positive number")
+    return resolved
+
+
+def resolve_execution(config: dict | None) -> dict:
+    """Effective execution-cost model for a validated strategy config.
+
+    A config without an explicit ``execution`` block uses PAPER_EXECUTION
+    unchanged, so existing runs keep their exact cost semantics.
+    """
+    if not config or "execution" not in config:
+        return dict(PAPER_EXECUTION)
+    return validate_execution_config(config["execution"])
+
+
 _KNOWN_TOP_LEVEL = {
     "timing_version",
     "score_model_version",
@@ -80,6 +164,20 @@ _KNOWN_TOP_LEVEL = {
     "rebalance",
     "weighting",
     "cash_reserve_pct",
+    # Optional execution-cost block. It is deliberately NOT part of
+    # DEFAULT_STRATEGY_CONFIG: adding it would change the default config_hash of
+    # every existing run/window. When supplied it is validated and hashed, so a
+    # fee/board-lot change is a config change (and therefore a new hash).
+    "execution",
+}
+_KNOWN_EXECUTION_KEYS = {
+    "commission_rate",
+    "minimum_commission_cny",
+    "sell_stamp_duty_rate",
+    "transfer_fee_rate",
+    "slippage_per_side",
+    "board_lot",
+    "initial_nav",
 }
 _KNOWN_SELECTION_KEYS = {"mode", "lower", "upper", "portfolio_size"}
 _KNOWN_CONSTRAINT_KEYS = {
@@ -140,12 +238,20 @@ def validate_strategy_config(config: dict) -> dict:
         "constraints", config.get("constraints"), _KNOWN_CONSTRAINT_KEYS
     )
     _reject_unknown_nested("rebalance", config.get("rebalance"), _KNOWN_REBALANCE_KEYS)
+    _reject_unknown_nested("execution", config.get("execution"), _KNOWN_EXECUTION_KEYS)
 
     normalized = _deep_merge(DEFAULT_STRATEGY_CONFIG, config)
     if "score_model_version" not in config:
         # The score source must always be explicit — never silently defaulted,
         # so a typo cannot run the wrong (e.g. flipped vs default) source.
         normalized.pop("score_model_version", None)
+    if "execution" not in config:
+        # Costs are pinned by PAPER_EXECUTION unless the operator overrides them.
+        # Absent means "use the module defaults", not "silently adopt a hashed
+        # copy", so the default config hash stays byte-identical to before.
+        normalized.pop("execution", None)
+    else:
+        normalized["execution"] = validate_execution_config(normalized["execution"])
     version = str(normalized.get("score_model_version") or "").strip()
     if not version:
         raise ValueError("score_model_version is required")

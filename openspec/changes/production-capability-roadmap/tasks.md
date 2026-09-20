@@ -46,7 +46,11 @@
 - [ ] 2.2 券商 API 适配器以 default-off 标志接入（QMT/Ptrade 或等价通道）；执行路径
       paper/audit-first + 显式环境授权
 - [ ] 2.3 对账：成交回报 vs 目标、资金/持仓对账、下单幂等去重
+      （最小切片已落地 `strategy-live-loop-minimal`：只读 planned-vs-account 对账 +
+      容差越界 fail-loud；**未做**成交回报摄入与下单幂等去重，故本条仍未完成）
 - [ ] 2.4 kill-switch：一键停止订单生成/清仓（默认关闭的应急路径）
+      （最小切片已落地 `strategy-live-loop-minimal`：默认 OFF、文件持久化、记录
+      who/when/why 的**订单生成熔断**；**未做**清仓与自动触发，故本条仍未完成）
 - [ ] 2.5 告警体系：数据缺口、评分/分数分布漂移、回撤阈值、流水线失败、执行异常
 
 ## 3. 工程加固

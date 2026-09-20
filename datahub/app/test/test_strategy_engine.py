@@ -266,10 +266,17 @@ def test_rebalance_first_run_all_added():
 
 def _nav_case_prices():
     dates = ["2026-01-02", "2026-01-05"]
-    # two stocks both tradable across both dates
+    # two stocks both tradable across both dates. previous_close is supplied so
+    # the limit verdict is derivable (no session sits at a limit).
     return {
-        "a": {dates[0]: QuoteView(10.0, 10.5), dates[1]: QuoteView(10.5, 11.0)},
-        "b": {dates[0]: QuoteView(20.0, 21.0), dates[1]: QuoteView(21.0, 20.0)},
+        "a": {
+            dates[0]: QuoteView(10.0, 10.5, previous_close=10.0),
+            dates[1]: QuoteView(10.5, 11.0, previous_close=10.5),
+        },
+        "b": {
+            dates[0]: QuoteView(20.0, 21.0, previous_close=20.0),
+            dates[1]: QuoteView(21.0, 20.0, previous_close=21.0),
+        },
     }
 
 
@@ -294,7 +301,10 @@ def test_paper_nav_basic_mark_and_turnover():
 def test_paper_nav_entry_costs_reduce_nav_on_flat_prices():
     # open == close everywhere: any NAV < initial is pure cost drag.
     date = "2026-01-02"
-    prices = {"a": {date: QuoteView(10.0, 10.0)}, "b": {date: QuoteView(20.0, 20.0)}}
+    prices = {
+        "a": {date: QuoteView(10.0, 10.0, previous_close=10.0)},
+        "b": {date: QuoteView(20.0, 20.0, previous_close=20.0)},
+    }
     schedule = [{"date": date, "holdings": {"a": 0.5, "b": 0.5}}]
     result = simulate_paper_nav(prices=prices, schedule=schedule, initial_nav=100_000.0)
     nav = result["curve"][0]["nav"]
@@ -304,8 +314,12 @@ def test_paper_nav_entry_costs_reduce_nav_on_flat_prices():
 def test_paper_nav_skips_suspended_buy():
     dates = ["2026-01-02"]
     prices = {
-        "a": {dates[0]: QuoteView(10.0, 10.0, trade_status=1)},  # flat price
-        "b": {dates[0]: QuoteView(20.0, 21.0, trade_status=0)},  # suspended
+        "a": {
+            dates[0]: QuoteView(10.0, 10.0, trade_status=1, previous_close=10.0)
+        },  # flat price
+        "b": {
+            dates[0]: QuoteView(20.0, 21.0, trade_status=0, previous_close=20.0)
+        },  # suspended
     }
     schedule = [{"date": dates[0], "holdings": {"a": 0.5, "b": 0.5}}]
     result = simulate_paper_nav(prices=prices, schedule=schedule, initial_nav=100_000.0)
@@ -323,7 +337,8 @@ def test_paper_nav_suspended_held_name_valued_at_last_close():
     dates = ["2026-01-02", "2026-01-05"]
     prices = {
         "a": {
-            dates[0]: QuoteView(10.0, 12.0, trade_status=1),  # entry open 10
+            dates[0]: QuoteView(10.0, 12.0, trade_status=1, previous_close=10.0),
+            # entry open 10
             # day 2 suspended: no quote entry at all -> roll forward
         }
     }

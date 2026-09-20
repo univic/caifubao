@@ -29,6 +29,39 @@
 ```
 
 ## 进度记录
+### 2026-09-20 21:55 CST — 最小实盘环路（Codex 第 5 项）：涨跌停闸门、对账、停机开关
+
+- 状态：进行中（实现与门禁完成，待评审与合并）
+- 已完成：
+  - **共享可交易性判定 `strategy_engine/tradability.py`**：把
+    `trade_status`/开盘价有效/涨停不可买/跌停不可卖收敛为单一判定，标志缺失时 **fail-closed**，
+    并复用 `factor_lab.panel.price_limit`；生产 paper 净值路径
+    （`strategy_engine/nav.py` + `jobs/strategy_runner.py`）不再只认 `trade_status`，
+    被拦订单进入 `blocked_orders` 报告（不静默丢单）。
+  - **下单与费用规则**：`board_lot_rule` 支持科创板 200 股起（其余 100 股整手），卖出豁免最小
+    买入量以便清掉零股；新增**过户费** 0.001%/边（`factor_lab/metrics.py:TRANSFER_FEE_RATE`，
+    研究侧与 paper 侧共用同一常量，往返成本 +0.2bp）；费用常量集中一处，可选 `execution`
+    配置块进入 `config_hash`（缺省时哈希不变）。
+  - **对账层 `strategy_engine/reconcile.py`**：`reconcile_plan_vs_account` 输出逐票数量漂移、
+    现金漂移、缺失/多余持仓与 `breaks`，容差越界即 fail-loud（非零退出），并带 JSON 化的轻量 CLI。
+  - **停机开关 `strategy_engine/halt.py`**：文件持久化、默认关闭、记录 who/when/why 与历史；
+    订单生成**先查停机**，停机时返回 HALTED（不产出订单、不假装成功）；提供
+    `strategy halt|resume|status`（`scripts/caifubao`）。停机不推进前瞻窗口、不伪造 forward 证据。
+  - **OpenSpec change `strategy-live-loop-minimal`**（每个缺口一条 ADDED requirement + 场景）与
+    `docs/operations/strategy-live-loop.md`（含「计划期不取涨跌停标志、仅执行期拦截」的说明）。
+- 评审与修复：spec-guardian **PASS-WITH-FIXES**（无 BLOCKER）、qa-reviewer **1 P1 + 3 P2 + 4 P3**，
+  均已修复：对账在缺 `cash` 或出现非有限容差/数量时 **fail-loud**（新增
+  `cash_drift_unverifiable`，并拒 NaN/inf，CLI 退出非零）；补 `strategy-nav-fee-budget`/
+  `strategy-engine` 两个 **MODIFIED** delta；**印花税修正为 0.05%**（`SELL_STAMP_DUTY_RATE`
+  0.001 → 0.0005，往返成本 0.0035 → **0.00302**）；`holding_scan.ROUND_TRIP_COST` 改为从
+  `factor_lab.metrics` 派生（消除镜像漂移）；补混合批量未知涨跌停、CLI HALTED、真实零股卖出
+  测试；文档写明「拦截仅在成交/净值期、计划期不拦、被拦订单不落库」「停机文件被删除即恢复下单」
+  以及 `is_st` 缺失的残余漏洞。
+- 验证：`pytest app/test/` **1170 passed + 4 subtests**；`ruff check --select E4,E7,E9,F .` 与
+  `ruff format --check .` 通过；`openspec validate --all --strict` **30 passed**；链接检查通过。
+- 下一步：提交并开 Draft PR，待用户批准合并。
+- 阻塞：无。
+
 ### 2026-09-20 00:40 CST — 滚动样本外（purge + embargo）：年化 25.7% → 11.0%–12.0%
 
 - 状态：进行中（口径修正完成，前向验证仍未开始）

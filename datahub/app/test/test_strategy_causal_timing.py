@@ -252,7 +252,7 @@ def test_nav_uses_exact_track_and_extends_to_execution_date(paper_store, monkeyp
 
     def quotes(codes, start, end):
         assert (start, end) == (dt.datetime(2026, 9, 7), dt.datetime(2026, 9, 7))
-        return {"b": {"2026-09-07": QuoteView(10, 11)}}
+        return {"b": {"2026-09-07": QuoteView(10, 11, previous_close=10)}}
 
     monkeypatch.setattr(p.job, "_load_quotes_for_codes", quotes)
     monkeypatch.setattr(p.job, "_benchmark_returns_for_dates", lambda *_: {})

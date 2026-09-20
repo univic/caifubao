@@ -24,9 +24,11 @@ import sys
 from app.lib.strategy_engine.config import (
     DEFAULT_HORIZON,
     DEFAULT_STRATEGY_CONFIG,
+    resolve_execution,
     strategy_config_hash,
     validate_strategy_config,
 )
+from app.lib.strategy_engine.halt import ENV_HALT_FILE
 from app.lib.utilities import job_run_helper
 
 logger = logging.getLogger(__name__)
@@ -211,9 +213,17 @@ def run_strategy(
     config: dict | None = None,
     dry_run: bool = False,
     replace: bool = False,
+    halt_path: str | None = None,
 ) -> dict:
+    from app.lib.strategy_engine.halt import assert_not_halted
     from app.lib.strategy_engine.runner import assemble_daily_plan
     from app.model.strategy import StrategyPaperRun
+
+    # Kill switch FIRST: order generation must not produce a plan (not even a
+    # dry-run preview of one) while halted. Fails loudly -> the CLI/job records
+    # FAILED/HALTED rather than a silent empty success, and no forward evidence
+    # is created.
+    assert_not_halted(halt_path)
 
     date = datetime.datetime.combine(date.date(), datetime.time())
     decision_at = datetime.datetime.now(datetime.UTC)
@@ -503,7 +513,11 @@ def _load_quotes_for_codes(
     """Load StockDailyQuote open/close/trade_status for codes over a range.
 
     Returns {stock_code: {date.isoformat(): QuoteView}}. Suspended days keep
-    their quote row (trade_status=0) so the NAV engine rolls them forward.
+    their quote row (trade_status=0) so the NAV engine rolls them forward. The
+    quote's previous_close / isST / code are carried so the shared tradability
+    rule can derive the limit-up/limit-down verdict at execution time: without
+    them the verdict is unknown, and the engine refuses the order loudly rather
+    than filling on a limit-locked session.
     """
     from app.lib.scoring_engine.scoring_service import normalize_date
     from app.lib.strategy_engine.nav import QuoteView
@@ -521,6 +535,9 @@ def _load_quotes_for_codes(
             open_price=q.open,
             close_price=q.close,
             trade_status=q.trade_status,
+            previous_close=getattr(q, "previous_close", None),
+            stock_code=q.code,
+            is_st=bool(getattr(q, "isST", 0)),
         )
     return by_code
 
@@ -628,6 +645,7 @@ def run_nav(
         prices=prices,
         schedule=schedule,
         benchmark_returns=benchmark,
+        execution=resolve_execution(resolved),
         initial_nav=float(resolved.get("initial_nav", 1_000_000.0)),
     )
     attached = attach_nav_points(runs, result["curve"])
@@ -656,6 +674,10 @@ def run_nav(
         "execution_from": execution_from.date().isoformat(),
         "execution_to": execution_to.date().isoformat(),
         "unmatched_dates": [d.date().isoformat() for d in attached["unmatched_dates"]],
+        # Fail-loud: orders refused at the open (limit-locked sessions, unknown
+        # limit verdicts) are surfaced, not silently absent from the curve.
+        "blocked_orders": result.get("blocked_count", 0),
+        "blocked": result.get("blocked", []),
     }
 
 
@@ -838,6 +860,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.add_argument("--dry-run", action="store_true")
     p_run.add_argument("--replace", action="store_true")
+    p_run.add_argument(
+        "--halt-file",
+        default=None,
+        help=(
+            f"Path to the halt (kill-switch) flag file; defaults to ${ENV_HALT_FILE}"
+        ),
+    )
 
     p_report = sub.add_parser("report", help="Show the latest paper run for a date")
     p_report.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
@@ -871,6 +900,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_nav.add_argument("--model-version", default=None)
     p_nav.add_argument("--horizon", type=int, choices=[5, 20, 60], default=None)
 
+    p_halt = sub.add_parser(
+        "halt", help="Kill switch for order generation (roadmap 2.4)"
+    )
+    hsub = p_halt.add_subparsers(dest="halt_command", required=True)
+    p_engage = hsub.add_parser(
+        "engage", help="Engage the halt flag: the runner produces no orders"
+    )
+    p_engage.add_argument("--by", required=True, help="Operator identity")
+    p_engage.add_argument("--reason", required=True, help="Why the halt is engaged")
+    p_engage.add_argument("--halt-file", default=None)
+    p_resume = hsub.add_parser("resume", help="Lift the halt flag")
+    p_resume.add_argument("--by", required=True, help="Operator identity")
+    p_resume.add_argument("--reason", required=True, help="Why the halt is lifted")
+    p_resume.add_argument("--halt-file", default=None)
+    p_status = hsub.add_parser("status", help="Show the current halt state")
+    p_status.add_argument("--halt-file", default=None)
+
     p_fwd = sub.add_parser("forward", help="Certified forward evidence window (NEXT.1)")
     fsub = p_fwd.add_subparsers(dest="forward_command", required=True)
     p_cert = fsub.add_parser("certify", help="Open an ACTIVE forward window")
@@ -888,6 +934,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _run_with_tracking(args, config: dict | None) -> None:
     """Run with a datahub_job_runs freshness record (scoring_runner pattern)."""
+    from app.lib.strategy_engine.halt import HaltError
+
     scheduled_at = job_run_helper.compute_daily_schedule_at(
         STRATEGY_JOB_HOUR, STRATEGY_JOB_MINUTE
     )
@@ -905,6 +953,7 @@ def _run_with_tracking(args, config: dict | None) -> None:
             config=config,
             dry_run=args.dry_run,
             replace=args.replace,
+            halt_path=getattr(args, "halt_file", None),
         )
         if args.dry_run:
             # Preview only: nothing persisted -> record SKIPPED (not SUCCESS),
@@ -932,6 +981,20 @@ def _run_with_tracking(args, config: dict | None) -> None:
             },
         )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    except HaltError as exc:
+        # Kill switch: report HALTED and fail the job. No plan, no orders, no
+        # forward evidence — never a silent empty success.
+        job_run_helper.finish_job_run(
+            job_run, status=job_run_helper.STATUS_FAILED, error_message=str(exc)
+        )
+        print(
+            json.dumps(
+                {"status": "HALTED", "halted": True, "error": str(exc)},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        raise SystemExit(2) from None
     except Exception as exc:  # noqa: BLE001
         job_run_helper.finish_job_run(
             job_run, status=job_run_helper.STATUS_FAILED, error_message=str(exc)
@@ -974,6 +1037,24 @@ def main(argv: list[str] | None = None) -> None:
             result = forward_progress(
                 model_version=args.model_version, horizon=args.horizon
             )
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    elif args.command == "halt":
+        from app.lib.strategy_engine.halt import (
+            engage_halt,
+            read_halt_state,
+            resume_halt,
+        )
+
+        if args.halt_command == "engage":
+            result = engage_halt(
+                changed_by=args.by, reason=args.reason, halt_path=args.halt_file
+            )
+        elif args.halt_command == "resume":
+            result = resume_halt(
+                changed_by=args.by, reason=args.reason, halt_path=args.halt_file
+            )
+        else:
+            result = read_halt_state(args.halt_file)
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     elif args.command == "export":
         # json.loads is inside the guard: a malformed --config-json is a

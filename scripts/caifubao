@@ -276,8 +276,10 @@ cmd_score_equivalence_check() {
 # Paper-only: these record target portfolios and a paper NAV. None of them place
 # orders. `forward certify` opens the immutable forward-evidence window, which is
 # the promotion gate — it is never opened implicitly, requires `--yes`, and its
-# start date is the certification session (never backdated). Operator runbook:
-# docs/operations/strategy-forward-window.md.
+# start date is the certification session (never backdated). `halt` is the
+# default-OFF kill switch that stops order generation; `reconcile` is a read-only
+# planned-vs-actual diff. Operator runbooks: docs/operations/strategy-forward-window.md
+# and docs/operations/strategy-live-loop.md.
 
 # Read one option's value, failing with usage instead of a bash `unbound
 # variable` error when the value is missing.
@@ -290,10 +292,11 @@ _opt_value() {
 
 cmd_strategy_run() {
   local date="${1:-}"; shift || true
-  local config="" extra=()
+  local config="" halt_file="" extra=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --config-json) config="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --halt-file)   halt_file="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
       --replace)     extra+=(--replace); shift ;;
       --dry-run)     extra+=(--dry-run); shift ;;
       # run takes its score source from the config JSON (the certified config
@@ -310,6 +313,7 @@ cmd_strategy_run() {
   # on the bash 3.2 that ships with macOS.
   local args=(run --date "$date")
   if [[ -n "$config" ]]; then args+=(--config-json "$config"); fi
+  if [[ -n "$halt_file" ]]; then args+=(--halt-file "$halt_file"); fi
   if [[ ${#extra[@]} -gt 0 ]]; then args+=("${extra[@]}"); fi
   info "Running the paper strategy for $date..."
   _pod_exec "$PYTHON_BIN" -m app.jobs.strategy_runner "${args[@]}"
@@ -393,6 +397,69 @@ cmd_strategy_forward() {
     if [[ -n "$config" ]]; then args+=(--config-json "$config"); fi
   fi
   _pod_exec "$PYTHON_BIN" -m app.jobs.strategy_runner "${args[@]}"
+}
+
+# Kill switch (roadmap 2.4): persisted, default-OFF flag checked FIRST by order
+# generation. The flag path is never guessed: it comes from
+# CAIFUBAO_STRATEGY_HALT_FILE (or --halt-file), so an unconfigured store fails
+# the run closed. Runbook: docs/operations/strategy-live-loop.md.
+cmd_strategy_halt() {
+  local sub="${1:-}"; shift || true
+  local by="" reason="" halt_file=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --by)        by="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --reason)    reason="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --halt-file) halt_file="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      *)           die "Unknown option: $1" ;;
+    esac
+  done
+  case "$sub" in
+    engage|resume|status) ;;
+    *) die "Unknown strategy halt command: ${sub:-<none>} (use: engage|resume|status)" ;;
+  esac
+  local args=(halt "$sub")
+  if [[ "$sub" != "status" ]]; then
+    if [[ -z "$by" || -z "$reason" ]]; then
+      die "Usage: caifubao strategy halt $sub --by OPERATOR --reason TEXT [--halt-file PATH]"
+    fi
+    args+=(--by "$by" --reason "$reason")
+    if [[ "$sub" == "engage" ]]; then
+      warn "engaging the halt stops order generation immediately (no orders, no plan,"
+      warn "no forward evidence). Liable operator: ${by}"
+    fi
+  else
+    if [[ -n "$by" || -n "$reason" ]]; then
+      die "--by/--reason are only accepted by 'strategy halt engage|resume'"
+    fi
+  fi
+  if [[ -n "$halt_file" ]]; then args+=(--halt-file "$halt_file"); fi
+  _pod_exec "$PYTHON_BIN" -m app.jobs.strategy_runner "${args[@]}"
+}
+
+# Read-only planned-vs-actual reconciliation (roadmap 2.3). Exits non-zero on a
+# tolerance breach; no REST endpoint, no scheduler.
+cmd_strategy_reconcile() {
+  local plan="" account="" output="" quantity_tol="" cash_tol=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --plan)                plan="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --account)             account="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --output)              output="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --quantity-tolerance)  quantity_tol="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --cash-tolerance)      cash_tol="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      *)                     die "Unknown option: $1" ;;
+    esac
+  done
+  if [[ -z "$plan" || -z "$account" ]]; then
+    die "Usage: caifubao strategy reconcile --plan PLAN.json --account ACCOUNT.json [--quantity-tolerance N] [--cash-tolerance N] [--output PATH]"
+  fi
+  local args=(-m app.lib.strategy_engine.reconcile --plan "$plan" --account "$account")
+  if [[ -n "$quantity_tol" ]]; then args+=(--quantity-tolerance "$quantity_tol"); fi
+  if [[ -n "$cash_tol" ]]; then args+=(--cash-tolerance "$cash_tol"); fi
+  if [[ -n "$output" ]]; then args+=(--output "$output"); fi
+  info "Reconciling plan $plan against account $account..."
+  _pod_exec "$PYTHON_BIN" "${args[@]}"
 }
 
 # ---- System commands ----
@@ -677,6 +744,15 @@ Strategy (paper-only; no orders):
                                       (closes any ACTIVE predecessor; needs --yes)
   strategy forward close --model-version V --horizon H
                                       Close the ACTIVE forward window
+  strategy halt [engage|resume|status] [--by OPERATOR] [--reason TEXT] [--halt-file PATH]
+                                      Kill switch for order generation
+                                      (persisted, default OFF; engage/resume need
+                                      --by and --reason; path from
+                                      CAIFUBAO_STRATEGY_HALT_FILE unless --halt-file)
+  strategy reconcile --plan PLAN.json --account ACCOUNT.json
+                                      [--quantity-tolerance N] [--cash-tolerance N] [--output PATH]
+                                      Read-only planned-vs-actual diff
+                                      (exit non-zero on a tolerance breach)
 
 System:
   system health                       Full environment health check
@@ -741,7 +817,9 @@ main() {
         report)         cmd_strategy_report "$@" ;;
         nav)            cmd_strategy_nav "$@" ;;
         forward)        cmd_strategy_forward "$@" ;;
-        *)              die "Unknown strategy command: $cmd (use: run|report|nav|forward)" ;;
+        halt)           cmd_strategy_halt "$@" ;;
+        reconcile)      cmd_strategy_reconcile "$@" ;;
+        *)              die "Unknown strategy command: $cmd (use: run|report|nav|forward|halt|reconcile)" ;;
       esac
       ;;
     system)
