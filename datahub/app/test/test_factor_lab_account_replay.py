@@ -152,7 +152,7 @@ def build_panel(
     return path
 
 
-def run_replay(panel: Path, tmp_path: Path) -> dict:
+def run_replay(panel: Path, tmp_path: Path, extra: list[str] | None = None) -> dict:
     output = tmp_path / "out.json"
     argv = [
         "--panel",
@@ -171,6 +171,7 @@ def run_replay(panel: Path, tmp_path: Path) -> dict:
         "10",
         "--output",
         str(output),
+        *(extra or []),
     ]
     completed = subprocess.run(
         [sys.executable, str(SCRIPTS / "factor_lab_account_replay.py"), *argv],
@@ -280,6 +281,20 @@ def test_long_quote_gap_is_written_off(normal_report: dict) -> None:
     book = _variant(normal_report)
     assert book["delisted_positions"] == ["GONE"]
     assert book["delisted_write_off_cny"] > 0
+
+
+def test_date_window_restricts_sessions(tmp_path: Path) -> None:
+    """--start-date builds the in-sample arm on an OOS test window."""
+    panel = build_panel(tmp_path, all_limit_up=False)
+    dates = (
+        pd.to_datetime(pd.read_parquet(panel, columns=["date"])["date"])
+        .drop_duplicates()
+        .sort_values()
+    )
+    start = dates.iloc[40]
+    report = run_replay(panel, tmp_path, extra=["--start-date", str(start.date())])
+    assert _variant(report)["sessions"] == SESSIONS - 40
+    assert report["panel"] == str(panel)
 
 
 def test_variants_are_distinct(normal_report: dict) -> None:
