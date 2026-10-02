@@ -464,6 +464,16 @@ cmd_strategy_reconcile() {
 
 # ---- System commands ----
 
+# Local frozen ETF replay: no cluster, scores, MongoDB or broker connection.
+cmd_strategy_benchmark() {
+  local interpreter="${CFB_LOCAL_PYTHON:-$ROOT_DIR/datahub/.venv/bin/python}"
+  if [[ ! -x "$interpreter" ]]; then
+    die "Local Python is unavailable: $interpreter (set CFB_LOCAL_PYTHON to a Python 3.12 environment)"
+  fi
+  PYTHONPATH="$ROOT_DIR/datahub${PYTHONPATH:+:$PYTHONPATH}" \
+    "$interpreter" -m app.lib.strategy_engine.etf_benchmark "$@"
+}
+
 cmd_system_health() {
   info "Checking Caifubao dev environment health..."
   echo ""
@@ -765,6 +775,10 @@ System:
   system bootstrap-check              Check regenerated MongoDB data readiness
   system pod                          Print current datahub pod name
 
+  strategy benchmark --input INPUT.json [--output RESULT.json] --halt-file PATH
+    Local single-ETF buy-and-hold REPLAY (100k default; no cluster/database writes).
+    Uses datahub/.venv/bin/python; override with CFB_LOCAL_PYTHON.
+
 Dev (local):
   dev                                 Start backend + frontend
   lint                                Ruff + pytest on datahub
@@ -819,7 +833,8 @@ main() {
         forward)        cmd_strategy_forward "$@" ;;
         halt)           cmd_strategy_halt "$@" ;;
         reconcile)      cmd_strategy_reconcile "$@" ;;
-        *)              die "Unknown strategy command: $cmd (use: run|report|nav|forward|halt|reconcile)" ;;
+        benchmark)      cmd_strategy_benchmark "$@" ;;
+        *)              die "Unknown strategy command: $cmd (use: run|report|nav|forward|halt|reconcile|benchmark)" ;;
       esac
       ;;
     system)
