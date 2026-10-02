@@ -15,4 +15,8 @@
   fills, stale marks, malformed input, halt and CLI regression tests pass.
 - [x] 3.2 Relevant strategy tests, Ruff and OpenSpec strict pass.
 - [x] 3.3 Post-implementation spec, contract and QA reviewers complete.
-- [ ] 3.4 Branch conflict check, draft PR, CI green, then ready for review.
+- [x] 3.4 Branch conflict check, draft PR, CI green, then ready for review.
+
+PR #285: spec, contract and QA gates passed; 180 focused/regression tests and
+all required CI checks passed before marking ready for review. No merge or
+deployment is part of this change.
