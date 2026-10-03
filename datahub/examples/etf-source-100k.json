@@ -1,0 +1,98 @@
+{
+  "schema_version": "etf-source-v1",
+  "configuration": {
+    "instrument": {
+      "code": "sh510300",
+      "type": "domestic_equity_etf",
+      "tick_size": "0.001"
+    },
+    "initial_cash": "100000.00",
+    "allocation": "1",
+    "fees": {
+      "commission_rate": "0.00025",
+      "minimum_commission": "5.00",
+      "slippage_rate": "0"
+    },
+    "corporate_actions": []
+  },
+  "start_date": "2026-09-01",
+  "end_date": "2026-09-04",
+  "calendar": [
+    {
+      "exchange": "SSE",
+      "cal_date": "20260901",
+      "is_open": "1"
+    },
+    {
+      "exchange": "SSE",
+      "cal_date": "20260902",
+      "is_open": "1"
+    },
+    {
+      "exchange": "SSE",
+      "cal_date": "20260903",
+      "is_open": "1"
+    },
+    {
+      "exchange": "SSE",
+      "cal_date": "20260904",
+      "is_open": "1"
+    }
+  ],
+  "daily": [
+    {
+      "ts_code": "510300.SH",
+      "trade_date": "20260901",
+      "open": "4.000",
+      "close": "4.000",
+      "vol": "100"
+    },
+    {
+      "ts_code": "510300.SH",
+      "trade_date": "20260902",
+      "open": "4.000",
+      "close": "4.100",
+      "vol": "100"
+    },
+    {
+      "ts_code": "510300.SH",
+      "trade_date": "20260903",
+      "open": "4.100",
+      "close": "4.050",
+      "vol": "100"
+    },
+    {
+      "ts_code": "510300.SH",
+      "trade_date": "20260904",
+      "open": "4.050",
+      "close": "4.200",
+      "vol": "100"
+    }
+  ],
+  "execution": [
+    {
+      "ts_code": "510300.SH",
+      "trade_date": "20260901",
+      "trade_status": 1,
+      "up_limit": "4.400"
+    },
+    {
+      "ts_code": "510300.SH",
+      "trade_date": "20260902",
+      "trade_status": 1,
+      "up_limit": "4.400"
+    },
+    {
+      "ts_code": "510300.SH",
+      "trade_date": "20260903",
+      "trade_status": 1,
+      "up_limit": "4.510"
+    },
+    {
+      "ts_code": "510300.SH",
+      "trade_date": "20260904",
+      "trade_status": 1,
+      "up_limit": "4.455"
+    }
+  ]
+}
