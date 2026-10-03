@@ -101,5 +101,39 @@ PYTHONPATH=datahub datahub/.venv/bin/python -m pytest -q \
 本切片验收是手算一致、现金不透支、仅一次建仓、无收盘前瞻、缺行情不伪装新鲜、
 halt生效、输出原子写入且不覆盖输入/停机文件。没有收益优越性结论。
 
-接下来依次补：真实ETF数据和权威日历适配、分红/份额变动、持久化账户与成交导入、
+接下来依次补：源数据真实性与公司行为校验、分红/份额变动、持久化账户与成交导入、
 每日调度与最小账户页面。主动策略在基准闭环稳定后单独验证。
+
+## 6. 冻结行情与日历导出适配
+
+命令增加 `--source-format tushare-json`，输入为单个 `etf-source-v1` bundle：
+`configuration` 包含 instrument、initial_cash（可省略）、allocation、fees、
+corporate_actions；其余字段为 start_date、end_date、calendar、daily、execution。
+日期接受 YYYYMMDD 或 YYYY-MM-DD。配置和无公司行为声明沿用前述契约。
+
+合成源格式示例（不是真实行情）：
+
+```bash
+./scripts/caifubao strategy benchmark \
+  --input datahub/examples/etf-source-100k.json --source-format tushare-json \
+  --output /tmp/etf-source-result.json --halt-file /tmp/etf-demo-halt.json
+```
+
+- `calendar` 使用 [trade_cal](https://tushare.pro/document/2?doc_id=26) 形状，
+  每行 exchange、cal_date、is_open（0/1，可为字符串）。区间每个自然日都必须有行，
+  包括闭市日；两端必须开市，至少两个开市日。不要导出只含 is_open=1 的日历。
+- `daily` 使用 [fund_daily](https://tushare.pro/document/2?doc_id=127) 原始
+  open/close、ts_code、trade_date，可保留标准日线字段。复权字段拒绝。
+  沪市使用510300.SH形状，深市159xxx.SZ形状，须与instrument一致。
+  0价格转为缺失；负价或非有限价格拒绝。缺行情的开市日仍保留在账本中。
+- `execution` 独立提供 ts_code、trade_date、trade_status（整数0/1或null）、
+  up_limit（有效原始涨停价或null）。这些必须是开盘前已知的操作员声明；
+  缺行即未知。不能用日成交量推断开盘可交易，系统也不从昨收推算涨停价。
+  日线vol只作非负有限数校验，不影响买入。
+
+输入记录允许倒序，但重复日期、混合代码/交易所、范围外行和闭市日报价拒绝。
+输出新增 source_provenance，保留适配版本、整个bundle的规范JSON SHA256及
+operator_opening_declaration状态来源。同样保留 REPLAY 标记。
+这条路径离线，不自动调用供应商或认证数据真实性、交易日已完成状态；回放不依赖
+运行当天的时钟，未来合成区间也不代表真实已发生行情。真实导出须保留在本地，不提交
+供应商付费行情或任何token。修改成交量会改变源哈希，但不会改变成交。

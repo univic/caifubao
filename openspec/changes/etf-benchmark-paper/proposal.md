@@ -14,6 +14,8 @@ the ETF research panel is not a cash/units ledger and omits minimum commissions.
 - Report decisions, blocked fills, cash, units, fees, valuation freshness and
   end-state reconciliation artifacts without changing stock scoring or NAV.
 - Expose `scripts/caifubao strategy benchmark` locally, without cluster access.
+- Adapt frozen raw ETF daily exports, complete exchange calendars and independent
+  opening execution declarations; attach full-source provenance to source replay.
 
 ## Impact
 

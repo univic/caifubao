@@ -1,5 +1,13 @@
 # Contract decisions
 
+Source continuation: optional frozen etf-source-v1 bundle adapts Tushare-shaped
+raw daily/calendar rows plus operator opening execution declarations. No network.
+Calendar includes every natural day; open flags define sessions. Volume never
+controls orders. Zero raw prices become missing; adjusted columns are rejected.
+Source arrays are sorted; duplicates, mixed instruments and closed-session rows
+are rejected. Only source-mode output adds source_provenance hashing the entire
+bundle. Existing strict benchmark input/native output remain unchanged.
+
 - Input schema `etf-benchmark-v1`: `price_basis: raw`, `instrument` (`code`,
   `type: domestic_equity_etf`, `tick_size`), optional `initial_cash` (100000.00),
   required `allocation` in [0,1], `fees` (`commission_rate`, `minimum_commission`,

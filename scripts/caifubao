@@ -777,6 +777,7 @@ System:
 
   strategy benchmark --input INPUT.json [--output RESULT.json] --halt-file PATH
     Local single-ETF buy-and-hold REPLAY (100k default; no cluster/database writes).
+    --source-format tushare-json accepts a frozen raw export/calendar bundle.
     Uses datahub/.venv/bin/python; override with CFB_LOCAL_PYTHON.
 
 Dev (local):

@@ -367,6 +367,9 @@ def build_parser():
     parser.add_argument("--input", required=True, help="Frozen raw-price JSON input")
     parser.add_argument("--output", help="Atomic JSON result; defaults to stdout")
     parser.add_argument("--halt-file", help="Existing strategy halt store path")
+    parser.add_argument(
+        "--source-format", choices=("native", "tushare-json"), default="native"
+    )
     return parser
 
 
@@ -418,7 +421,14 @@ def main(argv=None):
             payload = json.load(
                 handle, parse_constant=reject_constant, object_pairs_hook=unique_object
             )
+        provenance = None
+        if args.source_format == "tushare-json":
+            from app.lib.strategy_engine.etf_source import adapt_etf_source
+
+            payload, provenance = adapt_etf_source(payload)
         result = replay_etf_benchmark(payload, halt_path=halt_path)
+        if provenance is not None:
+            result["source_provenance"] = provenance
         text = (
             json.dumps(
                 result, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False

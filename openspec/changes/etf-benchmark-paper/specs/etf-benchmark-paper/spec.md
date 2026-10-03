@@ -1,5 +1,29 @@
 ## ADDED Requirements
 
+### Requirement: Frozen source adapter
+The CLI SHALL optionally accept an etf-source-v1 bundle of configuration,
+start_date, end_date, calendar, daily and execution arrays. Calendar SHALL cover
+every natural day of the inclusive interval for the instrument exchange, with
+unique dates and explicit is_open flags; both bounds SHALL be open and at least
+two sessions SHALL exist. Row order SHALL not affect fills or valuations (the
+full-source provenance hash may change). Mixed instruments,
+duplicates, out-of-range rows and closed-session quotes SHALL be rejected.
+Only raw open/close SHALL be used; zero prices SHALL map to unavailable. Daily
+volume SHALL NOT determine opening tradability. Independent execution rows SHALL
+declare opening trade_status/up_limit; missing entries SHALL remain unknown.
+No price filling or limit inference SHALL occur. Source output SHALL include
+source_provenance with adapter_version, full-bundle canonical SHA256 source_hash
+and operator_opening_declaration status_basis. Native output SHALL be unchanged.
+Source compatibility SHALL NOT certify authenticity or corporate-action absence.
+
+#### Scenario: Calendar preserves missing quotes
+- **WHEN** an open session has no daily row
+- **THEN** it remains in the replay with unavailable prices
+
+#### Scenario: Volume does not influence opening orders
+- **WHEN** only daily volume changes
+- **THEN** fills are unchanged and the provenance hash changes
+
 ### Requirement: Explicit offline ETF benchmark contract
 The system SHALL provide a single domestic equity ETF buy-and-hold replay from
 local JSON, independent of scores, MongoDB, broker connections and forward

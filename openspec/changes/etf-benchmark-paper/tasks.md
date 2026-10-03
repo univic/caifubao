@@ -20,3 +20,10 @@
 PR #285: spec, contract and QA gates passed; 180 focused/regression tests and
 all required CI checks passed before marking ready for review. No merge or
 deployment is part of this change.
+
+## 4. Frozen source continuation
+
+- [x] 4.1 Define source/calendar/opening-state contract before coding.
+- [x] 4.2 Adapt raw exports without daily-volume look-ahead; retain provenance.
+- [x] 4.3 Validate source boundaries and native equivalence; review all gates.
+- [ ] 4.4 Update draft PR, check conflicts, pass CI and mark ready.
