@@ -8,7 +8,7 @@
 #
 # Commands:
 #   data
-#     sync                  Sync data from prod to dev MongoDB
+#     sync                  Import controlled snapshot into dev (compat alias)
 #     snapshot-export       Export a checksummed dev-import snapshot (manifest)
 #     snapshot-import       Verify and import a snapshot into dev (fail-closed)
 #     refresh-status        Refresh data_asset_status freshness
@@ -93,21 +93,9 @@ _pod_exec_json() {
 # ---- Data commands ----
 
 cmd_data_sync() {
-  local from_date="${1:-}"
-  local collections="${2:-quote,factor,signal,market,industry}"
-  local args=()
-  if [[ "$from_date" == "--full" ]]; then
-    args+=(--full)
-    from_date=""
-  elif [[ -n "$from_date" ]]; then
-    args+=(--from-date "$from_date")
-  fi
-  args+=(--collections "$collections")
-  info "Syncing $collections from prod to dev..."
-  if [[ -n "$from_date" ]]; then
-    info "  from: $from_date"
-  fi
-  _pod_exec "$PYTHON_BIN" -m app.jobs.data_sync_runner run "${args[@]}"
+  warn "'data sync' is now a compatibility alias for controlled snapshot import."
+  warn "It does not connect to any research or legacy-stable MongoDB."
+  cmd_data_snapshot_import "$@"
 }
 
 cmd_data_snapshot_export() {
