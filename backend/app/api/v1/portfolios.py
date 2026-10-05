@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 # Portfolio management APIs for MVP research portfolios.
 
+import csv
 import datetime
+import io
+import math
 
 from flask import Blueprint, jsonify, request
 from mongoengine import NotUniqueError, ValidationError
@@ -11,6 +14,11 @@ from app.model.portfolio import (
     PortfolioPosition,
     PortfolioSnapshot,
     PortfolioTransaction,
+)
+from app.model.execution_ledger import (
+    AccountReconciliation,
+    ExecutionFill,
+    OrderIntent,
 )
 from app.model.stock import IndividualStock, StockDailyQuote
 from app.lib.auth_decorators import block_service_tokens
@@ -401,3 +409,487 @@ def create_snapshot(portfolio_id):
             "created_at": _format_datetime(snapshot.created_at),
         }
     ), 201
+
+
+
+# --- Manual execution ledger -------------------------------------------------
+
+
+def _serialize_order_intent(intent):
+    return {
+        "id": str(intent.id),
+        "portfolio_id": str(intent.portfolio.id),
+        "stock_code": intent.stock_code,
+        "stock_name": intent.stock_name,
+        "side": intent.side,
+        "target_quantity": intent.target_quantity,
+        "target_price": intent.target_price,
+        "filled_quantity": intent.filled_quantity,
+        "status": intent.status,
+        "source_type": intent.source_type,
+        "source_ref": intent.source_ref,
+        "notes": intent.notes,
+        "created_at": _format_datetime(intent.created_at),
+        "updated_at": _format_datetime(intent.updated_at),
+    }
+
+
+def _serialize_execution_fill(fill):
+    return {
+        "id": str(fill.id),
+        "portfolio_id": str(fill.portfolio.id),
+        "intent_id": str(fill.intent.id) if fill.intent else None,
+        "external_fill_id": fill.external_fill_id,
+        "stock_code": fill.stock_code,
+        "stock_name": fill.stock_name,
+        "side": fill.side,
+        "quantity": fill.quantity,
+        "price": fill.price,
+        "fee": fill.fee,
+        "trade_time": _format_datetime(fill.trade_time),
+        "import_source": fill.import_source,
+        "portfolio_transaction_id": fill.portfolio_transaction_id,
+        "created_at": _format_datetime(fill.created_at),
+    }
+
+
+def _serialize_reconciliation(row):
+    return {
+        "id": str(row.id),
+        "portfolio_id": str(row.portfolio.id),
+        "as_of": _format_datetime(row.as_of),
+        "status": row.status,
+        "expected_cash": row.expected_cash,
+        "actual_cash": row.actual_cash,
+        "cash_drift": row.cash_drift,
+        "cash_tolerance": row.cash_tolerance,
+        "quantity_tolerance": row.quantity_tolerance,
+        "expected_positions": row.expected_positions,
+        "actual_positions": row.actual_positions,
+        "breaks": row.breaks,
+        "created_at": _format_datetime(row.created_at),
+    }
+
+
+def _intent_or_404(portfolio, intent_id):
+    try:
+        intent = OrderIntent.objects(id=intent_id, portfolio=portfolio).first()
+    except ValidationError:
+        intent = None
+    if intent is None:
+        return None, (
+            jsonify({"success": False, "message": "Order intent not found"}),
+            404,
+        )
+    return intent, None
+
+
+def _normalize_order_intent_payload(payload):
+    side = (payload.get("side") or "").strip().upper()
+    stock_code = (payload.get("stock_code") or "").strip()
+    target_quantity = _to_float(payload.get("target_quantity"))
+    target_price = payload.get("target_price")
+    if side not in {"BUY", "SELL"}:
+        raise ValueError("side must be BUY or SELL")
+    if not stock_code:
+        raise ValueError("stock_code is required")
+    if target_quantity <= 0 or not math.isfinite(target_quantity):
+        raise ValueError("target_quantity must be a positive finite number")
+    normalized_price = None
+    if target_price not in (None, ""):
+        normalized_price = _to_float(target_price)
+        if normalized_price <= 0 or not math.isfinite(normalized_price):
+            raise ValueError("target_price must be a positive finite number")
+    return {
+        "side": side,
+        "stock_code": stock_code,
+        "target_quantity": target_quantity,
+        "target_price": normalized_price,
+    }
+
+
+def _normalize_fill_payload(payload):
+    external_fill_id = (payload.get("external_fill_id") or "").strip()
+    stock_code = (payload.get("stock_code") or "").strip()
+    side = (payload.get("side") or "").strip().upper()
+    quantity = _to_float(payload.get("quantity"))
+    price = _to_float(payload.get("price"))
+    fee = _to_float(payload.get("fee"))
+    if not external_fill_id:
+        raise ValueError("external_fill_id is required")
+    if not stock_code:
+        raise ValueError("stock_code is required")
+    if side not in {"BUY", "SELL"}:
+        raise ValueError("side must be BUY or SELL")
+    if quantity <= 0 or not math.isfinite(quantity):
+        raise ValueError("quantity must be a positive finite number")
+    if price <= 0 or not math.isfinite(price):
+        raise ValueError("price must be a positive finite number")
+    if fee < 0 or not math.isfinite(fee):
+        raise ValueError("fee must be a non-negative finite number")
+    try:
+        trade_time = _parse_datetime(payload.get("trade_time"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("trade_time must be an ISO-8601 datetime") from exc
+    return {
+        "external_fill_id": external_fill_id,
+        "stock_code": stock_code,
+        "side": side,
+        "quantity": quantity,
+        "price": price,
+        "fee": fee,
+        "trade_time": trade_time,
+    }
+
+
+def _refresh_intent_status(intent):
+    filled_quantity = sum(
+        (row.quantity or 0.0) for row in ExecutionFill.objects(intent=intent)
+    )
+    intent.filled_quantity = round(filled_quantity, 6)
+    if intent.status != "CANCELLED":
+        if filled_quantity <= 0:
+            intent.status = "OPEN"
+        elif filled_quantity + 1e-9 < (intent.target_quantity or 0):
+            intent.status = "PARTIAL"
+        else:
+            intent.status = "FILLED"
+    intent.save()
+    return intent
+
+
+def _ingest_execution_fill(portfolio, payload, import_source="JSON"):
+    normalized = _normalize_fill_payload(payload)
+    existing = ExecutionFill.objects(
+        portfolio=portfolio,
+        external_fill_id=normalized["external_fill_id"],
+    ).first()
+    if existing is not None:
+        return existing, True
+
+    intent = None
+    intent_id = (payload.get("intent_id") or "").strip()
+    if intent_id:
+        try:
+            intent = OrderIntent.objects(id=intent_id, portfolio=portfolio).first()
+        except ValidationError as exc:
+            raise ValueError("intent_id is invalid") from exc
+        if intent is None:
+            raise ValueError("intent_id does not belong to this portfolio")
+        if intent.stock_code != normalized["stock_code"] or intent.side != normalized["side"]:
+            raise ValueError("fill stock_code/side must match linked intent")
+
+    stock_name = _stock_name(normalized["stock_code"], payload.get("stock_name"))
+    fill = ExecutionFill(
+        portfolio=portfolio,
+        intent=intent,
+        stock_code=normalized["stock_code"],
+        stock_name=stock_name,
+        side=normalized["side"],
+        quantity=normalized["quantity"],
+        price=normalized["price"],
+        fee=normalized["fee"],
+        trade_time=normalized["trade_time"],
+        external_fill_id=normalized["external_fill_id"],
+        import_source=import_source,
+    )
+    try:
+        fill.save(force_insert=True)
+    except NotUniqueError:
+        existing = ExecutionFill.objects(
+            portfolio=portfolio,
+            external_fill_id=normalized["external_fill_id"],
+        ).first()
+        if existing is None:
+            raise
+        return existing, True
+
+    try:
+        transaction = _apply_transaction(
+            portfolio,
+            {
+                "side": normalized["side"],
+                "stock_code": normalized["stock_code"],
+                "stock_name": stock_name,
+                "quantity": normalized["quantity"],
+                "price": normalized["price"],
+                "fee": normalized["fee"],
+                "trade_date": normalized["trade_time"],
+                "reason": "Imported execution fill",
+                "source_score_id": f"execution_fill:{normalized['external_fill_id']}",
+            },
+        )
+    except Exception:
+        fill.delete()
+        raise
+
+    fill.portfolio_transaction_id = str(transaction.id)
+    fill.save()
+    if intent is not None:
+        _refresh_intent_status(intent)
+    return fill, False
+
+
+def _normalize_actual_positions(raw_positions):
+    if not isinstance(raw_positions, list):
+        raise ValueError("positions must be a list")
+    result = {}
+    for row in raw_positions:
+        if not isinstance(row, dict):
+            raise ValueError("each position must be an object")
+        stock_code = (row.get("stock_code") or "").strip()
+        if not stock_code:
+            raise ValueError("position stock_code is required")
+        if stock_code in result:
+            raise ValueError(f"duplicate position stock_code: {stock_code}")
+        quantity = _to_float(row.get("quantity"))
+        if quantity < 0 or not math.isfinite(quantity):
+            raise ValueError("position quantity must be a non-negative finite number")
+        result[stock_code] = quantity
+    return result
+
+
+def _build_reconciliation(portfolio, payload):
+    if "cash" not in payload:
+        raise ValueError("cash is required")
+    actual_cash = _to_float(payload.get("cash"))
+    if not math.isfinite(actual_cash):
+        raise ValueError("cash must be finite")
+    cash_tolerance = _to_float(payload.get("cash_tolerance"), 0.01)
+    quantity_tolerance = _to_float(payload.get("quantity_tolerance"), 0.000001)
+    if (
+        cash_tolerance < 0
+        or quantity_tolerance < 0
+        or not math.isfinite(cash_tolerance)
+        or not math.isfinite(quantity_tolerance)
+    ):
+        raise ValueError("tolerances must be non-negative finite numbers")
+
+    actual = _normalize_actual_positions(payload.get("positions", []))
+    expected_rows = PortfolioPosition.objects(
+        portfolio=portfolio, quantity__gt=0
+    ).order_by("stock_code")
+    expected = {row.stock_code: float(row.quantity or 0.0) for row in expected_rows}
+
+    breaks = []
+    expected_cash = float(portfolio.cash or 0.0)
+    cash_drift = actual_cash - expected_cash
+    if abs(cash_drift) > cash_tolerance:
+        breaks.append(
+            {
+                "type": "CASH_DRIFT",
+                "expected": expected_cash,
+                "actual": actual_cash,
+                "drift": cash_drift,
+            }
+        )
+
+    for stock_code in sorted(set(expected) | set(actual)):
+        expected_qty = expected.get(stock_code, 0.0)
+        actual_qty = actual.get(stock_code, 0.0)
+        drift = actual_qty - expected_qty
+        if abs(drift) <= quantity_tolerance:
+            continue
+        if expected_qty > quantity_tolerance and actual_qty <= quantity_tolerance:
+            break_type = "MISSING_POSITION"
+        elif actual_qty > quantity_tolerance and expected_qty <= quantity_tolerance:
+            break_type = "UNEXPECTED_POSITION"
+        else:
+            break_type = "QUANTITY_DRIFT"
+        breaks.append(
+            {
+                "type": break_type,
+                "stock_code": stock_code,
+                "expected": expected_qty,
+                "actual": actual_qty,
+                "drift": drift,
+            }
+        )
+
+    try:
+        as_of = _parse_datetime(payload.get("as_of"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("as_of must be an ISO-8601 datetime") from exc
+
+    row = AccountReconciliation(
+        portfolio=portfolio,
+        as_of=as_of,
+        status="BREAK" if breaks else "PASS",
+        expected_cash=expected_cash,
+        actual_cash=actual_cash,
+        cash_drift=cash_drift,
+        cash_tolerance=cash_tolerance,
+        quantity_tolerance=quantity_tolerance,
+        expected_positions=[
+            {"stock_code": code, "quantity": expected[code]} for code in sorted(expected)
+        ],
+        actual_positions=[
+            {"stock_code": code, "quantity": actual[code]} for code in sorted(actual)
+        ],
+        breaks=breaks,
+    )
+    row.save()
+    return row
+
+
+@portfolios_bp.route("/<portfolio_id>/execution/intents", methods=["GET"])
+def list_order_intents(portfolio_id):
+    portfolio, error_response = _portfolio_or_404(portfolio_id)
+    if error_response:
+        return error_response
+    rows = OrderIntent.objects(portfolio=portfolio).order_by("-created_at").limit(200)
+    return jsonify({"items": [_serialize_order_intent(row) for row in rows]}), 200
+
+
+@portfolios_bp.route("/<portfolio_id>/execution/intents", methods=["POST"])
+def create_order_intent(portfolio_id):
+    portfolio, error_response = _portfolio_or_404(portfolio_id)
+    if error_response:
+        return error_response
+    payload = request.get_json(silent=True) or {}
+    try:
+        normalized = _normalize_order_intent_payload(payload)
+        intent = OrderIntent(
+            portfolio=portfolio,
+            stock_code=normalized["stock_code"],
+            stock_name=_stock_name(
+                normalized["stock_code"], payload.get("stock_name")
+            ),
+            side=normalized["side"],
+            target_quantity=normalized["target_quantity"],
+            target_price=normalized["target_price"],
+            source_type=(payload.get("source_type") or "MANUAL").strip(),
+            source_ref=(payload.get("source_ref") or "").strip() or None,
+            notes=(payload.get("notes") or "").strip() or None,
+        )
+        intent.save()
+    except (ValueError, ValidationError) as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    return jsonify(_serialize_order_intent(intent)), 201
+
+
+@portfolios_bp.route("/<portfolio_id>/execution/fills", methods=["GET"])
+def list_execution_fills(portfolio_id):
+    portfolio, error_response = _portfolio_or_404(portfolio_id)
+    if error_response:
+        return error_response
+    rows = ExecutionFill.objects(portfolio=portfolio).order_by("-trade_time").limit(500)
+    return jsonify({"items": [_serialize_execution_fill(row) for row in rows]}), 200
+
+
+@portfolios_bp.route("/<portfolio_id>/execution/fills", methods=["POST"])
+def create_execution_fill(portfolio_id):
+    portfolio, error_response = _portfolio_or_404(portfolio_id)
+    if error_response:
+        return error_response
+    payload = request.get_json(silent=True) or {}
+    try:
+        fill, duplicate = _ingest_execution_fill(portfolio, payload, import_source="JSON")
+    except (ValueError, ValidationError, NotUniqueError) as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    body = _serialize_execution_fill(fill)
+    body["duplicate"] = duplicate
+    return jsonify(body), 200 if duplicate else 201
+
+
+@portfolios_bp.route("/<portfolio_id>/execution/fills/import-csv", methods=["POST"])
+def import_execution_fills_csv(portfolio_id):
+    portfolio, error_response = _portfolio_or_404(portfolio_id)
+    if error_response:
+        return error_response
+    upload = request.files.get("file")
+    if upload is None:
+        return jsonify({"success": False, "message": "file is required"}), 400
+    try:
+        text = upload.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return jsonify({"success": False, "message": "CSV must be UTF-8"}), 400
+
+    reader = csv.DictReader(io.StringIO(text))
+    required = {
+        "external_fill_id",
+        "stock_code",
+        "side",
+        "quantity",
+        "price",
+        "fee",
+        "trade_time",
+    }
+    fieldnames = set(reader.fieldnames or [])
+    missing = sorted(required - fieldnames)
+    if missing:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "message": f"missing CSV columns: {', '.join(missing)}",
+                }
+            ),
+            400,
+        )
+
+    results = []
+    applied = 0
+    duplicates = 0
+    errors = 0
+    for row_number, row in enumerate(reader, start=2):
+        if not any((value or "").strip() for value in row.values()):
+            continue
+        try:
+            fill, duplicate = _ingest_execution_fill(
+                portfolio, row, import_source="CSV"
+            )
+            if duplicate:
+                duplicates += 1
+                result_status = "DUPLICATE"
+            else:
+                applied += 1
+                result_status = "APPLIED"
+            results.append(
+                {
+                    "row": row_number,
+                    "status": result_status,
+                    "fill": _serialize_execution_fill(fill),
+                }
+            )
+        except (ValueError, ValidationError, NotUniqueError) as exc:
+            errors += 1
+            results.append(
+                {"row": row_number, "status": "ERROR", "message": str(exc)}
+            )
+
+    return (
+        jsonify(
+            {
+                "applied": applied,
+                "duplicates": duplicates,
+                "errors": errors,
+                "items": results,
+            }
+        ),
+        200,
+    )
+
+
+@portfolios_bp.route("/<portfolio_id>/execution/reconciliations", methods=["GET"])
+def list_account_reconciliations(portfolio_id):
+    portfolio, error_response = _portfolio_or_404(portfolio_id)
+    if error_response:
+        return error_response
+    rows = AccountReconciliation.objects(portfolio=portfolio).order_by("-as_of").limit(
+        120
+    )
+    return jsonify({"items": [_serialize_reconciliation(row) for row in rows]}), 200
+
+
+@portfolios_bp.route("/<portfolio_id>/execution/reconciliations", methods=["POST"])
+def create_account_reconciliation(portfolio_id):
+    portfolio, error_response = _portfolio_or_404(portfolio_id)
+    if error_response:
+        return error_response
+    payload = request.get_json(silent=True) or {}
+    try:
+        row = _build_reconciliation(portfolio, payload)
+    except (ValueError, ValidationError) as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    return jsonify(_serialize_reconciliation(row)), 201
