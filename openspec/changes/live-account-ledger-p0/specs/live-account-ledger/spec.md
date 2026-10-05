@@ -2,6 +2,24 @@
 
 ## ADDED Requirements
 
+### Requirement: Explicit manual-live account opt-in
+
+Portfolio creation SHALL default to `account_mode=RESEARCH`. The system SHALL only
+allow execution-ledger endpoints for a Portfolio whose account mode is explicitly
+`MANUAL_LIVE`. A Portfolio SHALL expose a book type from
+`RESEARCH/CORE/QUANT/DISCRETIONARY`.
+
+#### Scenario: Existing or default research portfolio
+
+- **WHEN** a Portfolio is created without an account mode
+- **THEN** its account mode is RESEARCH and execution-ledger requests return 409
+
+#### Scenario: Explicit manual-live portfolio
+
+- **WHEN** a Portfolio is created with `account_mode=MANUAL_LIVE`
+- **THEN** execution-ledger requests are allowed and the default book type is QUANT
+  unless the caller explicitly selects another supported book type
+
 ### Requirement: Portfolio-scoped order intents
 
 The system SHALL allow a caller to persist a BUY or SELL order intent for an existing
