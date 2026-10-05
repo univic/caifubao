@@ -439,7 +439,6 @@ def create_snapshot(portfolio_id):
     ), 201
 
 
-
 # --- Manual execution ledger -------------------------------------------------
 
 
@@ -476,6 +475,7 @@ def _serialize_execution_fill(fill):
         "fee": fill.fee,
         "trade_time": _format_datetime(fill.trade_time),
         "import_source": fill.import_source,
+        "apply_status": fill.apply_status,
         "portfolio_transaction_id": fill.portfolio_transaction_id,
         "created_at": _format_datetime(fill.created_at),
     }
@@ -592,7 +592,8 @@ def _normalize_fill_payload(payload):
 
 def _refresh_intent_status(intent):
     filled_quantity = sum(
-        (row.quantity or 0.0) for row in ExecutionFill.objects(intent=intent)
+        (row.quantity or 0.0)
+        for row in ExecutionFill.objects(intent=intent, apply_status="APPLIED")
     )
     intent.filled_quantity = round(filled_quantity, 6)
     if intent.status != "CANCELLED":
@@ -615,7 +616,11 @@ def _ingest_execution_fill(portfolio, payload, import_source="JSON"):
         external_fill_id=normalized["external_fill_id"],
     ).first()
     if existing is not None:
-        return existing, True
+        if existing.apply_status == "APPLIED":
+            return existing, True
+        raise ValueError(
+            "execution fill is PENDING; reconcile the portfolio before retrying"
+        )
 
     intent = None
     intent_id = (payload.get("intent_id") or "").strip()
@@ -626,7 +631,10 @@ def _ingest_execution_fill(portfolio, payload, import_source="JSON"):
             raise ValueError("intent_id is invalid") from exc
         if intent is None:
             raise ValueError("intent_id does not belong to this portfolio")
-        if intent.stock_code != normalized["stock_code"] or intent.side != normalized["side"]:
+        if (
+            intent.stock_code != normalized["stock_code"]
+            or intent.side != normalized["side"]
+        ):
             raise ValueError("fill stock_code/side must match linked intent")
 
     stock_name = _stock_name(normalized["stock_code"], payload.get("stock_name"))
@@ -652,7 +660,11 @@ def _ingest_execution_fill(portfolio, payload, import_source="JSON"):
         ).first()
         if existing is None:
             raise
-        return existing, True
+        if existing.apply_status == "APPLIED":
+            return existing, True
+        raise ValueError(
+            "execution fill is PENDING; reconcile the portfolio before retrying"
+        )
 
     try:
         transaction = _apply_transaction(
@@ -674,6 +686,7 @@ def _ingest_execution_fill(portfolio, payload, import_source="JSON"):
         raise
 
     fill.portfolio_transaction_id = str(transaction.id)
+    fill.apply_status = "APPLIED"
     fill.save()
     if intent is not None:
         _refresh_intent_status(intent)
