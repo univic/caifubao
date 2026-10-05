@@ -97,7 +97,7 @@ def test_duplicate_fill_is_not_applied_twice(monkeypatch):
         portfolios, "_stock_name", lambda stock_code, fallback=None: fallback or stock_code
     )
 
-    portfolio = SimpleNamespace(id="portfolio-1")
+    portfolio = SimpleNamespace(id="portfolio-1", account_mode="MANUAL_LIVE")
     payload = {
         "external_fill_id": "broker-fill-001",
         "stock_code": "sh600000",
@@ -122,7 +122,7 @@ def test_duplicate_fill_is_not_applied_twice(monkeypatch):
 def test_csv_import_reports_applied_duplicate_and_error(client, monkeypatch):
     from app.api.v1 import portfolios
 
-    portfolio = SimpleNamespace(id="portfolio-1")
+    portfolio = SimpleNamespace(id="portfolio-1", account_mode="MANUAL_LIVE")
     monkeypatch.setattr(
         portfolios, "_portfolio_or_404", lambda _portfolio_id: (portfolio, None)
     )
@@ -200,7 +200,9 @@ def test_reconciliation_persists_pass_and_break(monkeypatch):
 
     monkeypatch.setattr(portfolios, "AccountReconciliation", FakeReconciliation)
 
-    portfolio = SimpleNamespace(id="portfolio-1", cash=1000.0)
+    portfolio = SimpleNamespace(
+        id="portfolio-1", cash=1000.0, account_mode="MANUAL_LIVE"
+    )
 
     matched = portfolios._build_reconciliation(
         portfolio,
@@ -231,3 +233,18 @@ def test_reconciliation_persists_pass_and_break(monkeypatch):
         "UNEXPECTED_POSITION",
     }
     assert len(saved) == 2
+
+
+
+def test_execution_routes_reject_research_portfolio(client, monkeypatch):
+    from app.api.v1 import portfolios
+
+    portfolio = SimpleNamespace(id="portfolio-1", account_mode="RESEARCH")
+    monkeypatch.setattr(
+        portfolios, "_portfolio_or_404", lambda _portfolio_id: (portfolio, None)
+    )
+
+    response = client.get("/api/portfolios/portfolio-1/execution/fills")
+
+    assert response.status_code == 409
+    assert "MANUAL_LIVE" in response.get_json()["message"]
