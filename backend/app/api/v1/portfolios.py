@@ -197,9 +197,9 @@ def _apply_transaction(portfolio, payload):
     stock_name = (
         _stock_name(stock_code, payload.get("stock_name")) if stock_code else None
     )
-    quantity = _strict_float(payload.get("quantity"), "quantity")
-    price = _strict_float(payload.get("price"), "price")
-    fee = _strict_float(payload.get("fee"), "fee", default=0.0)
+    quantity = _to_float(payload.get("quantity"))
+    price = _to_float(payload.get("price"))
+    fee = _to_float(payload.get("fee"))
     trade_date = _parse_datetime(payload.get("trade_date"))
 
     if side not in {"BUY", "SELL", "CASH_IN", "CASH_OUT", "DIVIDEND"}:
