@@ -60,6 +60,9 @@ class ExecutionFill(db.Document):
     fee = db.FloatField(default=0.0, min_value=0.0)
     trade_time = db.DateTimeField(required=True)
     import_source = db.StringField(default="JSON", choices=["JSON", "CSV"])
+    apply_status = db.StringField(
+        required=True, choices=["PENDING", "APPLIED"], default="PENDING"
+    )
     portfolio_transaction_id = db.StringField()
     created_at = db.DateTimeField(default=_utcnow)
 
