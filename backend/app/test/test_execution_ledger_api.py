@@ -66,6 +66,7 @@ def test_duplicate_fill_is_not_applied_twice(monkeypatch):
             self.id = "fill-1"
             self.created_at = None
             self.portfolio_transaction_id = None
+            self.apply_status = "PENDING"
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
@@ -116,7 +117,41 @@ def test_duplicate_fill_is_not_applied_twice(monkeypatch):
     second, duplicate = portfolios._ingest_execution_fill(portfolio, payload)
     assert duplicate is True
     assert second is first
+    assert second.apply_status == "APPLIED"
     assert len(apply_calls) == 1
+
+
+def test_pending_fill_fails_loud_without_reapplying(monkeypatch):
+    from app.api.v1 import portfolios
+
+    pending = SimpleNamespace(apply_status="PENDING")
+    apply_calls = []
+    monkeypatch.setattr(
+        portfolios,
+        "ExecutionFill",
+        SimpleNamespace(objects=lambda **_kwargs: FakeQuery([pending])),
+    )
+    monkeypatch.setattr(
+        portfolios,
+        "_apply_transaction",
+        lambda *_args, **_kwargs: apply_calls.append(True),
+    )
+
+    portfolio = SimpleNamespace(id="portfolio-1", account_mode="MANUAL_LIVE")
+    payload = {
+        "external_fill_id": "broker-fill-pending",
+        "stock_code": "sh600000",
+        "side": "BUY",
+        "quantity": 100,
+        "price": 10,
+        "fee": 5,
+        "trade_time": "2026-10-06T09:31:00+08:00",
+    }
+
+    with pytest.raises(ValueError, match="PENDING"):
+        portfolios._ingest_execution_fill(portfolio, payload)
+
+    assert apply_calls == []
 
 
 def test_csv_import_reports_applied_duplicate_and_error(client, monkeypatch):
@@ -144,6 +179,7 @@ def test_csv_import_reports_applied_duplicate_and_error(client, monkeypatch):
             fee=float(payload["fee"]),
             trade_time=payload["trade_time"],
             import_source=import_source,
+            apply_status="APPLIED",
             portfolio_transaction_id=f"txn-{external_id}",
             created_at=None,
         )
@@ -233,7 +269,6 @@ def test_reconciliation_persists_pass_and_break(monkeypatch):
         "UNEXPECTED_POSITION",
     }
     assert len(saved) == 2
-
 
 
 def test_execution_routes_reject_research_portfolio(client, monkeypatch):
