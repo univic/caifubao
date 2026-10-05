@@ -48,16 +48,25 @@ once.
 - **THEN** the system records the fill and applies exactly one corresponding Portfolio
   transaction
 
-#### Scenario: Re-submit an existing fill
+#### Scenario: Re-submit an applied fill
 
-- **WHEN** the same Portfolio and external fill identifier are submitted again
+- **WHEN** the same Portfolio and external fill identifier are submitted again after
+  its recorded fill reached APPLIED
 - **THEN** the system returns the recorded fill as a duplicate and does not create
   another Portfolio transaction or mutate cash/positions again
 
+#### Scenario: Previous fill application is unresolved
+
+- **WHEN** the same Portfolio and external fill identifier already exists in PENDING
+  because application did not complete cleanly
+- **THEN** the system fails loud, does not reapply the Portfolio transaction, and
+  requires reconciliation before operator recovery
+
 ### Requirement: Broker-neutral canonical CSV import
 
-The system SHALL accept UTF-8 CSV execution data with columns
-`external_fill_id,stock_code,side,quantity,price,fee,trade_time`.
+The system SHALL accept UTF-8 CSV execution data with required columns
+`external_fill_id,stock_code,side,quantity,price,fee,trade_time` and MAY accept
+optional `intent_id` and `stock_name` columns.
 
 #### Scenario: Import a mixed CSV batch
 
