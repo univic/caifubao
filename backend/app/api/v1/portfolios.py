@@ -476,6 +476,7 @@ def _serialize_execution_fill(fill):
         "trade_time": _format_datetime(fill.trade_time),
         "import_source": fill.import_source,
         "apply_status": fill.apply_status,
+        "apply_error": fill.apply_error,
         "portfolio_transaction_id": fill.portfolio_transaction_id,
         "created_at": _format_datetime(fill.created_at),
     }
@@ -681,12 +682,14 @@ def _ingest_execution_fill(portfolio, payload, import_source="JSON"):
                 "source_score_id": f"execution_fill:{normalized['external_fill_id']}",
             },
         )
-    except Exception:
-        fill.delete()
+    except Exception as error:
+        fill.apply_error = str(error)
+        fill.save()
         raise
 
     fill.portfolio_transaction_id = str(transaction.id)
     fill.apply_status = "APPLIED"
+    fill.apply_error = None
     fill.save()
     if intent is not None:
         _refresh_intent_status(intent)
