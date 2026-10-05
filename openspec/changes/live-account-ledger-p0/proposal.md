@@ -28,13 +28,18 @@ a broker, promote a strategy, or claim that any model is tradable.
     Portfolio cash/positions and a manually supplied account snapshot.
 - Add Portfolio-scoped REST APIs to create/list order intents, import fills in JSON or
   canonical CSV format, list fills, and run/list reconciliations.
-- A fill is ledger-affecting only after validation and idempotency checks. Accepted
-  fills reuse the existing Portfolio transaction semantics, so cash, position quantity,
+- A fill is ledger-affecting only after validation and idempotency checks. It is first
+  reserved as `PENDING`; after the existing Portfolio transaction path completes it
+  becomes `APPLIED`. If application raises or the process stops between those phases,
+  the PENDING record remains and later imports fail loud until the operator reconciles
+  the account, rather than risking a duplicate cash/position mutation. Accepted fills
+  reuse the existing Portfolio transaction semantics, so cash, position quantity,
   average cost, and realized P&L remain single-sourced.
 - Filling an intent updates its derived status from OPEN to PARTIAL/FILLED according to
   the cumulative imported quantity.
 - CSV import is deliberately broker-neutral. The canonical columns are:
-  `external_fill_id,stock_code,side,quantity,price,fee,trade_time`.
+  `external_fill_id,stock_code,side,quantity,price,fee,trade_time`; optional
+  `intent_id` and `stock_name` columns may link the fill back to an intent.
 - Reconciliation is fail-loud: cash drift, missing positions, unexpected positions, or
   quantity drift outside configured tolerances produce BREAK and explicit break items.
 
