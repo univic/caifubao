@@ -558,9 +558,9 @@ def _normalize_fill_payload(payload):
     external_fill_id = (payload.get("external_fill_id") or "").strip()
     stock_code = (payload.get("stock_code") or "").strip()
     side = (payload.get("side") or "").strip().upper()
-    quantity = _to_float(payload.get("quantity"))
-    price = _to_float(payload.get("price"))
-    fee = _to_float(payload.get("fee"))
+    quantity = _strict_float(payload.get("quantity"), "quantity")
+    price = _strict_float(payload.get("price"), "price")
+    fee = _strict_float(payload.get("fee"), "fee", default=0.0)
     if not external_fill_id:
         raise ValueError("external_fill_id is required")
     if not stock_code:
@@ -711,10 +711,7 @@ def _build_reconciliation(portfolio, payload):
         "quantity_tolerance",
         default=0.000001,
     )
-    if (
-        cash_tolerance < 0
-        or quantity_tolerance < 0
-    ):
+    if cash_tolerance < 0 or quantity_tolerance < 0:
         raise ValueError("tolerances must be non-negative finite numbers")
 
     actual = _normalize_actual_positions(payload.get("positions", []))
