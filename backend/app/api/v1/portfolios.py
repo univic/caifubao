@@ -519,9 +519,7 @@ def _require_manual_live_portfolio(portfolio):
             jsonify(
                 {
                     "success": False,
-                    "message": (
-                        "execution ledger requires account_mode=MANUAL_LIVE"
-                    ),
+                    "message": "execution ledger requires account_mode=MANUAL_LIVE",
                 }
             ),
             409,
@@ -532,9 +530,7 @@ def _require_manual_live_portfolio(portfolio):
 def _normalize_order_intent_payload(payload):
     side = (payload.get("side") or "").strip().upper()
     stock_code = (payload.get("stock_code") or "").strip()
-    target_quantity = _strict_float(
-        payload.get("target_quantity"), "target_quantity"
-    )
+    target_quantity = _strict_float(payload.get("target_quantity"), "target_quantity")
     target_price = payload.get("target_price")
     if side not in {"BUY", "SELL"}:
         raise ValueError("side must be BUY or SELL")
@@ -786,10 +782,12 @@ def _build_reconciliation(portfolio, payload):
         cash_tolerance=cash_tolerance,
         quantity_tolerance=quantity_tolerance,
         expected_positions=[
-            {"stock_code": code, "quantity": expected[code]} for code in sorted(expected)
+            {"stock_code": code, "quantity": expected[code]}
+            for code in sorted(expected)
         ],
         actual_positions=[
-            {"stock_code": code, "quantity": actual[code]} for code in sorted(actual)
+            {"stock_code": code, "quantity": actual[code]}
+            for code in sorted(actual)
         ],
         breaks=breaks,
     )
@@ -805,7 +803,11 @@ def list_order_intents(portfolio_id):
     live_error = _require_manual_live_portfolio(portfolio)
     if live_error:
         return live_error
-    rows = OrderIntent.objects(portfolio=portfolio).order_by("-created_at").limit(200)
+    rows = (
+        OrderIntent.objects(portfolio=portfolio)
+        .order_by("-created_at")
+        .limit(200)
+    )
     return jsonify({"items": [_serialize_order_intent(row) for row in rows]}), 200
 
 
@@ -847,7 +849,11 @@ def list_execution_fills(portfolio_id):
     live_error = _require_manual_live_portfolio(portfolio)
     if live_error:
         return live_error
-    rows = ExecutionFill.objects(portfolio=portfolio).order_by("-trade_time").limit(500)
+    rows = (
+        ExecutionFill.objects(portfolio=portfolio)
+        .order_by("-trade_time")
+        .limit(500)
+    )
     return jsonify({"items": [_serialize_execution_fill(row) for row in rows]}), 200
 
 
@@ -861,7 +867,9 @@ def create_execution_fill(portfolio_id):
         return live_error
     payload = request.get_json(silent=True) or {}
     try:
-        fill, duplicate = _ingest_execution_fill(portfolio, payload, import_source="JSON")
+        fill, duplicate = _ingest_execution_fill(
+            portfolio, payload, import_source="JSON"
+        )
     except (ValueError, ValidationError, NotUniqueError) as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
     body = _serialize_execution_fill(fill)
@@ -959,8 +967,10 @@ def list_account_reconciliations(portfolio_id):
     live_error = _require_manual_live_portfolio(portfolio)
     if live_error:
         return live_error
-    rows = AccountReconciliation.objects(portfolio=portfolio).order_by("-as_of").limit(
-        120
+    rows = (
+        AccountReconciliation.objects(portfolio=portfolio)
+        .order_by("-as_of")
+        .limit(120)
     )
     return jsonify({"items": [_serialize_reconciliation(row) for row in rows]}), 200
 
