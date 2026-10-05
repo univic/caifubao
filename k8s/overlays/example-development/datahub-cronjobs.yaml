@@ -216,8 +216,9 @@ metadata:
     app: caifubao-datahub
     job.caifubao.io/type: health-watcher
 spec:
-  # Post-close chain check: quote(18:00) -> signal(18:30) -> scoring(18:35) ->
-  # dev data-sync(19:15); run 20:00 weekdays to catch the whole chain.
+  # Post-close local health check. TASK-404 removes the online dev data-sync
+  # CronJob; controlled snapshot imports are separate Jobs/operator actions.
+  # Run at 20:00 weekdays so stale imported freshness remains visible.
   schedule: "0 20 * * 1-5"
   timeZone: Asia/Shanghai
   concurrencyPolicy: Forbid
