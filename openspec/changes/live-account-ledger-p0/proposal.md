@@ -17,6 +17,10 @@ a broker, promote a strategy, or claim that any model is tradable.
 
 ## What Changes
 
+- Extend Portfolio with an explicit `account_mode` boundary: existing/default portfolios
+  remain `RESEARCH`; execution-ledger routes only accept `MANUAL_LIVE`. Add
+  `book_type` values `RESEARCH/CORE/QUANT/DISCRETIONARY` so live capital can be
+  separated without storing broker account numbers.
 - Add backend execution-ledger models:
   - OrderIntent: the planned BUY/SELL quantity that a human may execute.
   - ExecutionFill: an imported broker/manual fill with an idempotency key.
