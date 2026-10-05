@@ -67,6 +67,7 @@ def test_duplicate_fill_is_not_applied_twice(monkeypatch):
             self.created_at = None
             self.portfolio_transaction_id = None
             self.apply_status = "PENDING"
+            self.apply_error = None
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
@@ -119,6 +120,57 @@ def test_duplicate_fill_is_not_applied_twice(monkeypatch):
     assert second is first
     assert second.apply_status == "APPLIED"
     assert len(apply_calls) == 1
+
+
+def test_failed_apply_keeps_pending_reservation(monkeypatch):
+    from app.api.v1 import portfolios
+
+    store = {}
+
+    class FakeFill:
+        def __init__(self, **kwargs):
+            self.apply_status = "PENDING"
+            self.apply_error = None
+            self.portfolio_transaction_id = None
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+        @classmethod
+        def objects(cls, **kwargs):
+            row = store.get((id(kwargs.get("portfolio")), kwargs.get("external_fill_id")))
+            return FakeQuery([row] if row else [])
+
+        def save(self, force_insert=False):
+            store[(id(self.portfolio), self.external_fill_id)] = self
+            return self
+
+    monkeypatch.setattr(portfolios, "ExecutionFill", FakeFill)
+    monkeypatch.setattr(
+        portfolios,
+        "_apply_transaction",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("ledger write failed")),
+    )
+    monkeypatch.setattr(
+        portfolios, "_stock_name", lambda stock_code, fallback=None: fallback or stock_code
+    )
+
+    portfolio = SimpleNamespace(id="portfolio-1", account_mode="MANUAL_LIVE")
+    payload = {
+        "external_fill_id": "broker-fill-failed",
+        "stock_code": "sh600000",
+        "side": "BUY",
+        "quantity": 100,
+        "price": 10,
+        "fee": 5,
+        "trade_time": "2026-10-06T09:31:00+08:00",
+    }
+
+    with pytest.raises(ValueError, match="ledger write failed"):
+        portfolios._ingest_execution_fill(portfolio, payload)
+
+    saved = store[(id(portfolio), "broker-fill-failed")]
+    assert saved.apply_status == "PENDING"
+    assert saved.apply_error == "ledger write failed"
 
 
 def test_pending_fill_fails_loud_without_reapplying(monkeypatch):
@@ -180,6 +232,7 @@ def test_csv_import_reports_applied_duplicate_and_error(client, monkeypatch):
             trade_time=payload["trade_time"],
             import_source=import_source,
             apply_status="APPLIED",
+            apply_error=None,
             portfolio_transaction_id=f"txn-{external_id}",
             created_at=None,
         )
