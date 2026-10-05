@@ -53,6 +53,20 @@ def _to_float(value, default=0.0):
         return default
 
 
+def _strict_float(value, field_name, default=None):
+    if value in (None, ""):
+        if default is None:
+            raise ValueError(f"{field_name} is required")
+        value = default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a number") from exc
+    if not math.isfinite(parsed):
+        raise ValueError(f"{field_name} must be finite")
+    return parsed
+
+
 def _portfolio_or_404(portfolio_id):
     try:
         portfolio = Portfolio.objects(id=portfolio_id).first()
@@ -92,6 +106,8 @@ def _serialize_portfolio(portfolio, include_summary=True):
         "description": portfolio.description,
         "base_currency": portfolio.base_currency,
         "benchmark": portfolio.benchmark,
+        "account_mode": getattr(portfolio, "account_mode", "RESEARCH"),
+        "book_type": getattr(portfolio, "book_type", "RESEARCH"),
         "initial_cash": portfolio.initial_cash,
         "cash": portfolio.cash,
         "status": portfolio.status,
@@ -181,9 +197,9 @@ def _apply_transaction(portfolio, payload):
     stock_name = (
         _stock_name(stock_code, payload.get("stock_name")) if stock_code else None
     )
-    quantity = _to_float(payload.get("quantity"))
-    price = _to_float(payload.get("price"))
-    fee = _to_float(payload.get("fee"))
+    quantity = _strict_float(payload.get("quantity"), "quantity")
+    price = _strict_float(payload.get("price"), "price")
+    fee = _strict_float(payload.get("fee"), "fee", default=0.0)
     trade_date = _parse_datetime(payload.get("trade_date"))
 
     if side not in {"BUY", "SELL", "CASH_IN", "CASH_OUT", "DIVIDEND"}:
@@ -309,11 +325,23 @@ def create_portfolio():
     if not name:
         return jsonify({"success": False, "message": "name is required"}), 400
     initial_cash = _to_float(payload.get("initial_cash"), 1_000_000.0)
+    account_mode = (payload.get("account_mode") or "RESEARCH").strip().upper()
+    if account_mode not in {"RESEARCH", "MANUAL_LIVE"}:
+        return (
+            jsonify({"success": False, "message": "unsupported account_mode"}),
+            400,
+        )
+    default_book_type = "QUANT" if account_mode == "MANUAL_LIVE" else "RESEARCH"
+    book_type = (payload.get("book_type") or default_book_type).strip().upper()
+    if book_type not in {"RESEARCH", "CORE", "QUANT", "DISCRETIONARY"}:
+        return jsonify({"success": False, "message": "unsupported book_type"}), 400
     portfolio = Portfolio(
         name=name,
         description=(payload.get("description") or "").strip(),
         base_currency=(payload.get("base_currency") or "CNY").strip(),
         benchmark=(payload.get("benchmark") or "sh000001").strip(),
+        account_mode=account_mode,
+        book_type=book_type,
         initial_cash=initial_cash,
         cash=initial_cash,
     )
@@ -484,10 +512,28 @@ def _intent_or_404(portfolio, intent_id):
     return intent, None
 
 
+def _require_manual_live_portfolio(portfolio):
+    if getattr(portfolio, "account_mode", "RESEARCH") != "MANUAL_LIVE":
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "message": (
+                        "execution ledger requires account_mode=MANUAL_LIVE"
+                    ),
+                }
+            ),
+            409,
+        )
+    return None
+
+
 def _normalize_order_intent_payload(payload):
     side = (payload.get("side") or "").strip().upper()
     stock_code = (payload.get("stock_code") or "").strip()
-    target_quantity = _to_float(payload.get("target_quantity"))
+    target_quantity = _strict_float(
+        payload.get("target_quantity"), "target_quantity"
+    )
     target_price = payload.get("target_price")
     if side not in {"BUY", "SELL"}:
         raise ValueError("side must be BUY or SELL")
@@ -497,8 +543,8 @@ def _normalize_order_intent_payload(payload):
         raise ValueError("target_quantity must be a positive finite number")
     normalized_price = None
     if target_price not in (None, ""):
-        normalized_price = _to_float(target_price)
-        if normalized_price <= 0 or not math.isfinite(normalized_price):
+        normalized_price = _strict_float(target_price, "target_price")
+        if normalized_price <= 0:
             raise ValueError("target_price must be a positive finite number")
     return {
         "side": side,
@@ -525,8 +571,10 @@ def _normalize_fill_payload(payload):
         raise ValueError("quantity must be a positive finite number")
     if price <= 0 or not math.isfinite(price):
         raise ValueError("price must be a positive finite number")
-    if fee < 0 or not math.isfinite(fee):
+    if fee < 0:
         raise ValueError("fee must be a non-negative finite number")
+    if not payload.get("trade_time"):
+        raise ValueError("trade_time is required")
     try:
         trade_time = _parse_datetime(payload.get("trade_time"))
     except (TypeError, ValueError) as exc:
@@ -559,6 +607,8 @@ def _refresh_intent_status(intent):
 
 
 def _ingest_execution_fill(portfolio, payload, import_source="JSON"):
+    if getattr(portfolio, "account_mode", "RESEARCH") != "MANUAL_LIVE":
+        raise ValueError("execution ledger requires account_mode=MANUAL_LIVE")
     normalized = _normalize_fill_payload(payload)
     existing = ExecutionFill.objects(
         portfolio=portfolio,
@@ -642,26 +692,28 @@ def _normalize_actual_positions(raw_positions):
             raise ValueError("position stock_code is required")
         if stock_code in result:
             raise ValueError(f"duplicate position stock_code: {stock_code}")
-        quantity = _to_float(row.get("quantity"))
-        if quantity < 0 or not math.isfinite(quantity):
+        quantity = _strict_float(row.get("quantity"), "position quantity")
+        if quantity < 0:
             raise ValueError("position quantity must be a non-negative finite number")
         result[stock_code] = quantity
     return result
 
 
 def _build_reconciliation(portfolio, payload):
-    if "cash" not in payload:
-        raise ValueError("cash is required")
-    actual_cash = _to_float(payload.get("cash"))
-    if not math.isfinite(actual_cash):
-        raise ValueError("cash must be finite")
-    cash_tolerance = _to_float(payload.get("cash_tolerance"), 0.01)
-    quantity_tolerance = _to_float(payload.get("quantity_tolerance"), 0.000001)
+    if getattr(portfolio, "account_mode", "RESEARCH") != "MANUAL_LIVE":
+        raise ValueError("execution ledger requires account_mode=MANUAL_LIVE")
+    actual_cash = _strict_float(payload.get("cash"), "cash")
+    cash_tolerance = _strict_float(
+        payload.get("cash_tolerance"), "cash_tolerance", default=0.01
+    )
+    quantity_tolerance = _strict_float(
+        payload.get("quantity_tolerance"),
+        "quantity_tolerance",
+        default=0.000001,
+    )
     if (
         cash_tolerance < 0
         or quantity_tolerance < 0
-        or not math.isfinite(cash_tolerance)
-        or not math.isfinite(quantity_tolerance)
     ):
         raise ValueError("tolerances must be non-negative finite numbers")
 
@@ -737,6 +789,9 @@ def list_order_intents(portfolio_id):
     portfolio, error_response = _portfolio_or_404(portfolio_id)
     if error_response:
         return error_response
+    live_error = _require_manual_live_portfolio(portfolio)
+    if live_error:
+        return live_error
     rows = OrderIntent.objects(portfolio=portfolio).order_by("-created_at").limit(200)
     return jsonify({"items": [_serialize_order_intent(row) for row in rows]}), 200
 
@@ -746,6 +801,9 @@ def create_order_intent(portfolio_id):
     portfolio, error_response = _portfolio_or_404(portfolio_id)
     if error_response:
         return error_response
+    live_error = _require_manual_live_portfolio(portfolio)
+    if live_error:
+        return live_error
     payload = request.get_json(silent=True) or {}
     try:
         normalized = _normalize_order_intent_payload(payload)
@@ -773,6 +831,9 @@ def list_execution_fills(portfolio_id):
     portfolio, error_response = _portfolio_or_404(portfolio_id)
     if error_response:
         return error_response
+    live_error = _require_manual_live_portfolio(portfolio)
+    if live_error:
+        return live_error
     rows = ExecutionFill.objects(portfolio=portfolio).order_by("-trade_time").limit(500)
     return jsonify({"items": [_serialize_execution_fill(row) for row in rows]}), 200
 
@@ -782,6 +843,9 @@ def create_execution_fill(portfolio_id):
     portfolio, error_response = _portfolio_or_404(portfolio_id)
     if error_response:
         return error_response
+    live_error = _require_manual_live_portfolio(portfolio)
+    if live_error:
+        return live_error
     payload = request.get_json(silent=True) or {}
     try:
         fill, duplicate = _ingest_execution_fill(portfolio, payload, import_source="JSON")
@@ -797,6 +861,9 @@ def import_execution_fills_csv(portfolio_id):
     portfolio, error_response = _portfolio_or_404(portfolio_id)
     if error_response:
         return error_response
+    live_error = _require_manual_live_portfolio(portfolio)
+    if live_error:
+        return live_error
     upload = request.files.get("file")
     if upload is None:
         return jsonify({"success": False, "message": "file is required"}), 400
@@ -876,6 +943,9 @@ def list_account_reconciliations(portfolio_id):
     portfolio, error_response = _portfolio_or_404(portfolio_id)
     if error_response:
         return error_response
+    live_error = _require_manual_live_portfolio(portfolio)
+    if live_error:
+        return live_error
     rows = AccountReconciliation.objects(portfolio=portfolio).order_by("-as_of").limit(
         120
     )
@@ -887,6 +957,9 @@ def create_account_reconciliation(portfolio_id):
     portfolio, error_response = _portfolio_or_404(portfolio_id)
     if error_response:
         return error_response
+    live_error = _require_manual_live_portfolio(portfolio)
+    if live_error:
+        return live_error
     payload = request.get_json(silent=True) or {}
     try:
         row = _build_reconciliation(portfolio, payload)
