@@ -786,8 +786,7 @@ def _build_reconciliation(portfolio, payload):
             for code in sorted(expected)
         ],
         actual_positions=[
-            {"stock_code": code, "quantity": actual[code]}
-            for code in sorted(actual)
+            {"stock_code": code, "quantity": actual[code]} for code in sorted(actual)
         ],
         breaks=breaks,
     )
@@ -803,11 +802,7 @@ def list_order_intents(portfolio_id):
     live_error = _require_manual_live_portfolio(portfolio)
     if live_error:
         return live_error
-    rows = (
-        OrderIntent.objects(portfolio=portfolio)
-        .order_by("-created_at")
-        .limit(200)
-    )
+    rows = OrderIntent.objects(portfolio=portfolio).order_by("-created_at").limit(200)
     return jsonify({"items": [_serialize_order_intent(row) for row in rows]}), 200
 
 
@@ -825,9 +820,7 @@ def create_order_intent(portfolio_id):
         intent = OrderIntent(
             portfolio=portfolio,
             stock_code=normalized["stock_code"],
-            stock_name=_stock_name(
-                normalized["stock_code"], payload.get("stock_name")
-            ),
+            stock_name=_stock_name(normalized["stock_code"], payload.get("stock_name")),
             side=normalized["side"],
             target_quantity=normalized["target_quantity"],
             target_price=normalized["target_price"],
@@ -849,11 +842,7 @@ def list_execution_fills(portfolio_id):
     live_error = _require_manual_live_portfolio(portfolio)
     if live_error:
         return live_error
-    rows = (
-        ExecutionFill.objects(portfolio=portfolio)
-        .order_by("-trade_time")
-        .limit(500)
-    )
+    rows = ExecutionFill.objects(portfolio=portfolio).order_by("-trade_time").limit(500)
     return jsonify({"items": [_serialize_execution_fill(row) for row in rows]}), 200
 
 
@@ -942,9 +931,7 @@ def import_execution_fills_csv(portfolio_id):
             )
         except (ValueError, ValidationError, NotUniqueError) as exc:
             errors += 1
-            results.append(
-                {"row": row_number, "status": "ERROR", "message": str(exc)}
-            )
+            results.append({"row": row_number, "status": "ERROR", "message": str(exc)})
 
     return (
         jsonify(
@@ -968,9 +955,7 @@ def list_account_reconciliations(portfolio_id):
     if live_error:
         return live_error
     rows = (
-        AccountReconciliation.objects(portfolio=portfolio)
-        .order_by("-as_of")
-        .limit(120)
+        AccountReconciliation.objects(portfolio=portfolio).order_by("-as_of").limit(120)
     )
     return jsonify({"items": [_serialize_reconciliation(row) for row in rows]}), 200
 
