@@ -17,7 +17,7 @@ help: ## Show this help
 	@echo "caifubao — Makefile targets"
 	@echo ""
 	@echo "  Data pipeline:"
-	@echo "    make data-sync              Sync prod→dev"
+	@echo "    make data-sync              Import latest controlled snapshot into dev"
 	@echo "    make snapshot-export        Export dev-import snapshot (manifest+sha256)"
 	@echo "    make snapshot-import        Verify and import latest snapshot (fail-closed)"
 	@echo "    make data-refresh-status    Refresh data_asset_status"
@@ -39,8 +39,8 @@ help: ## Show this help
 	@echo "    make check                  Full CI check"
 
 # ---- Data pipeline ----
-data-sync: ## Sync data from prod to dev
-	$(CFB) data sync $(DATE) quote,factor,signal,market,industry
+data-sync: ## Import the latest controlled snapshot into dev
+	$(CFB) data sync
 
 snapshot-export: ## Export a dev-import snapshot (versioned manifest + sha256)
 	$(CFB) data snapshot-export
