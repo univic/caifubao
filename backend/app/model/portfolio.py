@@ -10,6 +10,13 @@ class Portfolio(db.Document):
     description = db.StringField()
     base_currency = db.StringField(default="CNY")
     benchmark = db.StringField(default="sh000001")
+    account_mode = db.StringField(
+        choices=["RESEARCH", "MANUAL_LIVE"], default="RESEARCH"
+    )
+    book_type = db.StringField(
+        choices=["RESEARCH", "CORE", "QUANT", "DISCRETIONARY"],
+        default="RESEARCH",
+    )
     initial_cash = db.FloatField(default=1_000_000.0)
     cash = db.FloatField(default=1_000_000.0)
     status = db.StringField(choices=["ACTIVE", "ARCHIVED"], default="ACTIVE")
