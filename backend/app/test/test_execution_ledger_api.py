@@ -96,7 +96,9 @@ def test_duplicate_fill_is_not_applied_twice(monkeypatch):
     monkeypatch.setattr(portfolios, "ExecutionFill", FakeFill)
     monkeypatch.setattr(portfolios, "_apply_transaction", fake_apply_transaction)
     monkeypatch.setattr(
-        portfolios, "_stock_name", lambda stock_code, fallback=None: fallback or stock_code
+        portfolios,
+        "_stock_name",
+        lambda stock_code, fallback=None: fallback or stock_code,
     )
 
     portfolio = SimpleNamespace(id="portfolio-1", account_mode="MANUAL_LIVE")
@@ -137,7 +139,9 @@ def test_failed_apply_keeps_pending_reservation(monkeypatch):
 
         @classmethod
         def objects(cls, **kwargs):
-            row = store.get((id(kwargs.get("portfolio")), kwargs.get("external_fill_id")))
+            row = store.get(
+                (id(kwargs.get("portfolio")), kwargs.get("external_fill_id"))
+            )
             return FakeQuery([row] if row else [])
 
         def save(self, force_insert=False):
@@ -148,7 +152,9 @@ def test_failed_apply_keeps_pending_reservation(monkeypatch):
     monkeypatch.setattr(
         portfolios,
         "_apply_transaction",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("ledger write failed")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("ledger write failed")
+        ),
     )
     monkeypatch.setattr(
         portfolios, "_stock_name", lambda stock_code, fallback=None: fallback or stock_code
