@@ -24,8 +24,8 @@ platform via the unified CLI and Makefile.
 # Score a single stock
 ./scripts/caifubao score score-one sz000977
 
-# Sync latest data from the legacy stable source and score all stocks
-./scripts/caifubao data sync 2026-05-18
+# Import the latest controlled snapshot and score all stocks
+./scripts/caifubao data sync
 ./scripts/caifubao score score-all 2026-05-18
 ./scripts/caifubao data refresh-status
 
@@ -60,52 +60,30 @@ export CFB_API_BASE="https://<your-api-host>"
 
 ### Data Pipeline
 
-#### `data sync [FROM_DATE] [COLLECTIONS]` — migration-period legacy
-Sync data from the legacy stable MongoDB to dev. This is the **first step**
-after any change that updates the stable environment's data (quote update,
-factor recompute, etc.). The sync source is the retired legacy stable
-environment ("prod" in older text/CLI strings — a technical name, not live
-trading). This online direct connection is a **migration-period legacy**;
-the target flow is controlled snapshot/export followed by import/restore into
-dev (TASK-404). See
-[`docs/architecture/environment-model.md`](../architecture/environment-model.md).
+#### `data sync [SNAPSHOT_DIR] [SNAPSHOT_ID]` — snapshot-import compatibility alias
+After the TASK-404 Stage 1 cutover, `data sync` no longer opens an online
+MongoDB connection to research or the retired legacy stable environment. It is
+a compatibility alias for `data snapshot-import` and therefore uses the same
+fail-closed manifest/checksum/count validation and idempotent apply semantics.
 
-```
+```bash
 make data-sync
 ./scripts/caifubao data sync
-./scripts/caifubao data sync 2026-05-18 quote,factor,signal
-./scripts/caifubao data sync --full quote,factor,signal
+./scripts/caifubao data sync /work/snapshot snapshot-20261005T120000Z
 ```
 
-Collections: `quote` → `stock_daily_quote`, `factor` → `stock_factor_daily`,
-`signal` → `stock_signal_daily`, `market` → `finance_market`,
-`industry` → `stock_industry`.
+With no arguments, the importer resolves the latest snapshot under
+`SNAPSHOT_DIR` (default `/work/snapshot`). A concrete directory and
+snapshot id may be supplied when that snapshot is already accessible inside the
+datahub pod. Environment-specific object-storage transfer is intentionally kept
+outside this public CLI; deployment tooling should materialize the versioned
+snapshot before invoking the importer.
 
-Without `FROM_DATE`, date-based collections use the latest date already in dev
-from `data_sync_state` as a completed watermark and replay the preceding three
-calendar days before catching up to the stable source. The overlap makes retries idempotent
-and includes late corrections. A collection only receives a completed
-bootstrap marker after its entire sync finishes; a killed partial bootstrap
-therefore cannot silently become an incremental watermark.
-
-An empty or unmarked destination stays in full bootstrap mode. Run that first
-bootstrap as a controlled one-time Job without the daily CronJob's three-hour
-deadline, then verify the completion markers before enabling the schedule. Use
-`--full` only for explicit reconciliation; it reads every source document and
-can be expensive across a hybrid network. Low-frequency full reconciliation is
-an operator action, not a scheduled daily job. Full runs use a separate job
-family so an overlapping incremental runner cannot reap them as stale. Newest
-business dates are processed first.
-
-Date-based source and destination collections must have an index whose first
-field is `date`. The runner fails before reading data when this precondition is
-missing, rather than falling back to a multi-million-document collection scan
-and in-memory sort. Build large indexes one at a time during a maintenance
-window and verify the query plan before running sync; do not combine an index
-build with full-collection statistics on memory-constrained MongoDB nodes.
-
-**Important**: This syncs data but does NOT update `data_asset_status`.
-Run `data refresh-status` after syncing.
+The legacy online runner remains in the image temporarily for rollback during
+Stage 1, but dev no longer receives `MONGODB_SRC_*` credentials and no
+scheduled data-sync CronJob exists. Direct invocation of the legacy runner
+therefore fails closed. The runner and remaining legacy configuration are
+deleted in the Stage 2 cleanup after the observation window and rollback period.
 
 #### `data snapshot-export [COLLECTIONS] [FROM_DATE] [TO_DATE] [OUT_DIR]`
 Export a checksummed dev-import snapshot (manifest v1 + sidecar sha256) from
@@ -119,8 +97,9 @@ See [`openspec/changes/dev-snapshot-import`](../../openspec/changes/dev-snapshot
 Verify and import a snapshot into dev (fail-closed, two-pass): the manifest,
 checksums, counts and allow-list are verified before any write; date-partitioned
 collections apply by business-key upsert, snapshot-class collections are
-staged and swapped atomically. `data refresh-status` afterwards recomputes the
-data-quality page freshness.
+staged and swapped atomically. The importer refreshes `data_asset_status`
+from the imported contents after a successful apply; an explicit
+`data refresh-status` remains available for operator reconciliation.
 
 Daily stock jobs that include factors use one full-market Tushare
 `adj_factor(trade_date)` snapshot per target trading day and join it locally to

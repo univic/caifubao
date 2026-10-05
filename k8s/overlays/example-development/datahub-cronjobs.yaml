@@ -211,141 +211,14 @@ spec:
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: caifubao-datahub-data-sync
-  labels:
-    app: caifubao-datahub
-    job.caifubao.io/type: data-sync
-spec:
-  # Runs after prod's signal (18:30) and scoring (18:35) jobs so dev picks
-  # up the same day's signals; quotes/factors are synced too, scoring is not
-  # synced (dev-only gap, run scoring_runner manually if needed).
-  schedule: "15 19 * * 1-5"
-  timeZone: Asia/Shanghai
-  concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 900
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
-  jobTemplate:
-    spec:
-      backoffLimit: 1
-      activeDeadlineSeconds: 10800
-      ttlSecondsAfterFinished: 86400
-      template:
-        metadata:
-          labels:
-            app: caifubao-datahub
-            job.caifubao.io/type: data-sync
-        spec:
-          restartPolicy: Never
-          containers:
-          - name: data-sync-runner
-            image: caifubao-datahub:latest
-            imagePullPolicy: Always
-            command: ["python", "-m", "app.jobs.data_sync_runner"]
-            args:
-            - run
-            - --job-name
-            - datahub_data_sync_daily
-            - --job-family
-            - data_sync_daily
-            - --trigger
-            - cron
-            - --source
-            - k8s-cronjob
-            - --overlap-days
-            - "3"
-            - --scheduled-hour
-            - "18"
-            - --scheduled-minute
-            - "30"
-            env:
-            - name: MONGODB_SRC_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: backend-config
-                  key: MONGODB_SRC_HOST
-            - name: MONGODB_SRC_PORT
-              valueFrom:
-                configMapKeyRef:
-                  name: backend-config
-                  key: MONGODB_SRC_PORT
-            - name: MONGODB_SRC_NAME
-              valueFrom:
-                configMapKeyRef:
-                  name: backend-config
-                  key: MONGODB_SRC_NAME
-            - name: MONGODB_SRC_USER
-              valueFrom:
-                secretKeyRef:
-                  name: datahub-secret
-                  key: MONGODB_SRC_USER
-            - name: MONGODB_SRC_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: datahub-secret
-                  key: MONGODB_SRC_PASS
-            - name: MONGODB_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: backend-config
-                  key: MONGODB_HOST
-            - name: MONGODB_PORT
-              valueFrom:
-                configMapKeyRef:
-                  name: backend-config
-                  key: MONGODB_PORT
-            - name: MONGODB_NAME
-              valueFrom:
-                configMapKeyRef:
-                  name: backend-config
-                  key: MONGODB_NAME
-            - name: MONGODB_USER
-              valueFrom:
-                configMapKeyRef:
-                  name: backend-config
-                  key: MONGODB_USER
-            - name: MONGODB_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: datahub-secret
-                  key: MONGODB_PASSWORD
-            - name: APP_ENV
-              valueFrom:
-                configMapKeyRef:
-                  name: backend-config
-                  key: ENVIRONMENT
-            - name: LOG_LEVEL
-              value: INFO
-            - name: PYMONGO_LOG_LEVEL
-              value: INFO
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            resources:
-              requests:
-                memory: "256Mi"
-                cpu: "100m"
-              limits:
-                memory: "1Gi"
-                cpu: "500m"
-          imagePullSecrets:
-          - name: ccr-secret
----
-apiVersion: batch/v1
-kind: CronJob
-metadata:
   name: caifubao-datahub-health-watcher
   labels:
     app: caifubao-datahub
     job.caifubao.io/type: health-watcher
 spec:
-  # Post-close chain check: quote(18:00) -> signal(18:30) -> scoring(18:35) ->
-  # dev data-sync(19:15); run 20:00 weekdays to catch the whole chain.
+  # Post-close local health check. TASK-404 removes the online dev data-sync
+  # CronJob; controlled snapshot imports are separate Jobs/operator actions.
+  # Run at 20:00 weekdays so stale imported freshness remains visible.
   schedule: "0 20 * * 1-5"
   timeZone: Asia/Shanghai
   concurrencyPolicy: Forbid

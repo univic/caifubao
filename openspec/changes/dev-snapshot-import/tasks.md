@@ -20,10 +20,12 @@
   最近运行记录（无集群变更；2026-09-16 完成：research 全部 CronJob 处于
   挂起——无双写风险；旧 stable quote-index/quote-stock/signal/scoring/
   industry-sync 活跃；dev data-sync 活跃。细节见私有设计文档 §2.2）
-- [ ] 2.2 对齐修复：research `stock_industry` 规范键迁移（#247 后代码 vs 09-11
-  快照数据）；research 侧 FQ 全市场重算（`fq-adj-factor-fix` 5.2）
-- [ ] 2.3 补齐 research 缺失的调度型 writer：`daily_basic`（tushare
-  daily_basic）、`health-watcher` CronJob、`data_asset_status` 覆盖
+- [x] 2.2 对齐修复：research `stock_industry` 规范键迁移 + FQ 全市场重算
+  已于 2026-09-17 执行并验收（industry 5,212 条规范化；FQ pulled 5,219 /
+  written 16,656,156 / failed 0；详见私有 cutover 证据）
+- [x] 2.3 research 缺失的调度型 writer 模板已补齐：`daily_basic`、
+  `health-watcher`、`data_asset_status` 均以 suspend=true 起步并受私有
+  writer-switch 门控；实际启用仍计入 2.4
 - [ ] 2.4 逐 writer 切换（每次一个，验证后关旧）：quote-index → quote-stock
   （含 factor/FQ 阶段产出，不单独切换）→ daily_basic → signal → scoring →
   industry-sync；每个 writer ≥1 交易日验证窗口
@@ -44,9 +46,10 @@
   `renameCollection`）+ 导入状态记录（`snapshot_import_state`）+ freshness
   复用既有 initializer 重算——**代码已落地**
   （`snapshot_import_runner.py` + `./scripts/caifubao data snapshot-import`），
-  私有侧导入 Job 清单待私有 PR
-- [ ] 3.3 `data sync` CLI 语义切换为快照导入；移除 `MONGODB_SRC_*` 注入；停用
-  `caifubao-datahub-data-sync` CronJob（cutover 门 = 3.6 观察窗完成）
+  私有 launcher/对象存储接线已完成；首次真实导入仍待 3.8 权限核验与门控实跑
+- [ ] 3.3 `data sync` CLI 语义切换为快照导入；移除 `MONGODB_SRC_*` 注入；移除
+  `caifubao-datahub-data-sync` CronJob（cutover 门 = 3.6 观察窗完成）。
+  **2026-10-05：切换代码已预制为 Draft PR #286 + private #96，门禁完成前不得合并。**
 - [x] 3.4 `datahub-perf-optimization` 的 "Watermark-Based Incremental
   Prod-to-Dev Sync" requirement 以 MODIFIED delta 收敛为单一口径：同步语义
   切换为快照导入，并修正其陈旧的「按 `_id` 幂等 upsert」表述（现行为业务键
