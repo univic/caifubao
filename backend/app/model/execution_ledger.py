@@ -63,6 +63,7 @@ class ExecutionFill(db.Document):
     apply_status = db.StringField(
         required=True, choices=["PENDING", "APPLIED"], default="PENDING"
     )
+    apply_error = db.StringField()
     portfolio_transaction_id = db.StringField()
     created_at = db.DateTimeField(default=_utcnow)
 
