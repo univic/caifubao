@@ -157,7 +157,9 @@ def test_failed_apply_keeps_pending_reservation(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        portfolios, "_stock_name", lambda stock_code, fallback=None: fallback or stock_code
+        portfolios,
+        "_stock_name",
+        lambda stock_code, fallback=None: fallback or stock_code,
     )
 
     portfolio = SimpleNamespace(id="portfolio-1", account_mode="MANUAL_LIVE")
