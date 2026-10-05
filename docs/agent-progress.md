@@ -29,6 +29,31 @@
 ```
 
 ## 进度记录
+### 2026-10-05 19:27 CST — TASK-404 Final Cutover Stage 1 代码预制（未授权部署）
+
+- 状态：进行中（source/config 切换已预制为 Draft；运行门禁未完成，禁止合并/部署）
+- 已完成：
+  - public Draft **#286**：dev `data sync` 改为受控 snapshot-import 兼容别名；从 base
+    datahub Deployment 移除全部 `MONGODB_SRC_*`；从 dev 模板**彻底移除**
+    `caifubao-datahub-data-sync` CronJob（不是仅 suspend，避免旧源地址继续出现在
+    rendered manifest）；同步更新 Makefile、operator guide 与本 change tasks。
+  - private Draft **#96**：dev/research overlay 与 bootstrap/deploy secret 生成不再注入
+    `MONGODB_SRC_*`；rendered-manifest contract 对任何旧源变量 fail-closed，并断言
+    legacy data-sync CronJob 不存在；layout checker 只归一化 TASK-404 声明的 source
+    wiring 差异，其余 dev 资源继续做等价比较。
+  - 两 PR 均保持 Draft / mergeable=true；未执行任何集群写操作。
+- 验证：
+  - public 本仓 Kustomize、OpenSpec、Ruff、backend/datahub/frontend 测试均通过；
+    当前唯一红项为跨仓 `Private Deploy Dry Run`：它固定执行 private 默认 `main`，
+    而默认分支仍是 cutover 前契约，故在 paired private PR 合并前预期 fail-closed。
+  - private #96 `Environment Layout Check` 已通过，证明 paired public cutover source
+    在新 private contract 下可完整渲染且无旧源 wiring。
+- 下一步：先完成运行门禁——remaining research writers + backup/restore evidence；
+  首次真实 research snapshot-export → object storage → dev snapshot-import；dev
+  `renameCollectionSameDB` 权限核验；随后 ≥5 个交易日 freshness/count 观察窗。全部
+  通过后按 #286/#96 正文记录的跨仓顺序做短窗口协调合并，再独立退役旧 stable。
+- 阻塞：需要真实集群/数据面的门控执行与连续交易日证据；本轮不越过批准边界。
+
 ### 2026-09-20 21:55 CST — 最小实盘环路（Codex 第 5 项）：涨跌停闸门、对账、停机开关
 
 - 状态：进行中（实现与门禁完成，待评审与合并）
