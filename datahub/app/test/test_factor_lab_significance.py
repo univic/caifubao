@@ -109,3 +109,78 @@ def test_two_sided_test_is_symmetric_and_alpha_configurable():
     assert a == b
     assert a["reject_null"] is False
     assert result["multiple_testing"]["alpha"] == 0.01
+
+
+
+def test_newey_west_uses_positional_lagged_covariance():
+    """Pandas aligns Series by index; the lag covariance must not do that."""
+    import numpy as np
+    import pandas as pd
+
+    from app.lib.factor_lab.metrics import newey_west_t
+
+    values = pd.Series([2.0, 3.0, 5.0, 4.0, 7.0, 6.0], index=range(10, 16))
+    centered = values.to_numpy() - values.mean()
+    gamma_0 = float((centered**2).sum() / len(values))
+    gamma_1 = float((centered[1:] * centered[:-1]).sum() / len(values))
+    expected = round(
+        float(values.mean() / np.sqrt((gamma_0 + gamma_1) / len(values))), 3
+    )
+    assert newey_west_t(values, lag=1) == expected
+
+
+def test_evaluate_cli_accepts_significance_flags():
+    from app.jobs.factor_lab_runner import build_parser
+
+    args = build_parser().parse_args(
+        [
+            "evaluate",
+            "--panel",
+            "/tmp/panel.parquet",
+            "--all",
+            "--alpha",
+            "0.01",
+            "--hypotheses-count",
+            "51",
+        ]
+    )
+    assert args.alpha == 0.01
+    assert args.hypotheses_count == 51
+
+
+def test_evaluate_panel_returns_annotated_report(monkeypatch):
+    import pandas as pd
+
+    from app.jobs import factor_lab_runner
+    from app.lib.factor_lab import factors, metrics
+
+    frame = pd.DataFrame(
+        {"date": [pd.Timestamp("2026-01-05")], "stock_code": ["sh600000"]}
+    )
+    monkeypatch.setattr(factor_lab_runner, "_load_panel", lambda *a, **k: frame)
+    monkeypatch.setattr(factors, "compute", lambda *a: pd.Series([1.0]))
+    monkeypatch.setattr(
+        metrics,
+        "evaluate_factor",
+        lambda *a, **k: {
+            "horizons": {
+                "5": {
+                    "ic": {"t_stat_nw": 3.0, "n_dates": 150},
+                    "quantiles": {"top_minus_bottom": 0.01},
+                    "walk_forward": {},
+                    "gates": {"passed": True, "failures": []},
+                }
+            }
+        },
+    )
+    result = factor_lab_runner.evaluate_panel(
+        path="/tmp/unused.parquet",
+        factor="momentum_10",
+        horizons=[5],
+        hypotheses_count=51,
+    )
+    assert result["multiple_testing"]["family_size"] == 51
+    assert result["factors"]["momentum_10"]["horizons"]["5"][
+        "significance"
+    ]["reject_null"] is False
+    assert "significance=not_significant" in factor_lab_runner._summary(result)
