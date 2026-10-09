@@ -34,3 +34,8 @@ production signal/scoring changes, backend API, trading, or K8s changes.
   strategy, market-regime stability, or genuine forward performance.
 - No reconstruction of the complete history of previously tried hypotheses.
 - No replacement for pre-registration, purge/embargo, or rolling OOS replay.
+
+- Fix an existing positional-lag bug in the Newey-West covariance: Pandas
+  sliced Series were multiplied by aligning their original index labels,
+  producing same-date squared deviations instead of lagged products. Correct
+  this prerequisite before interpreting p-values.
