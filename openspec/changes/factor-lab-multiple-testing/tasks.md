@@ -15,3 +15,5 @@
       statistics, small samples, explicit family size, and invalid flags.
 - [ ] Run CI-pinned Ruff and focused Datahub pytest.
 - [ ] Run `openspec validate --all --strict` and required read-only QA gate.
+- [x] Correct the pre-existing positional-lag covariance bug and add its
+      regression test before using Newey-West values for p-values.
