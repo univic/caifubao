@@ -27,8 +27,10 @@ def _report(stats):
 
 def test_bonferroni_counts_all_attempted_pairs_and_dilutes_nominal_signal():
     original = _report(
-        {"a": {"5": (2.0, 180), "20": (None, 180)},
-         "b": {"5": (-4.0, 180), "20": (0.0, 180)}}
+        {
+            "a": {"5": (2.0, 180), "20": (None, 180)},
+            "b": {"5": (-4.0, 180), "20": (0.0, 180)},
+        }
     )
     result = annotate_multiple_testing(original)
     meta = result["multiple_testing"]
@@ -50,12 +52,16 @@ def test_bonferroni_counts_all_attempted_pairs_and_dilutes_nominal_signal():
 
 def test_missing_nonfinite_and_small_sample_cannot_pass():
     result = annotate_multiple_testing(
-        _report({"a": {
-            "1": (None, 200),
-            "5": (float("inf"), 200),
-            "20": (20.0, 30),
-            "60": (0.0, 200),
-        }})
+        _report(
+            {
+                "a": {
+                    "1": (None, 200),
+                    "5": (float("inf"), 200),
+                    "20": (20.0, 30),
+                    "60": (0.0, 200),
+                }
+            }
+        )
     )
     entries = result["factors"]["a"]["horizons"]
     assert entries["1"]["significance"]["status"] == "unavailable_nw_t"
@@ -109,7 +115,6 @@ def test_two_sided_test_is_symmetric_and_alpha_configurable():
     assert a == b
     assert a["reject_null"] is False
     assert result["multiple_testing"]["alpha"] == 0.01
-
 
 
 def test_newey_west_uses_positional_lagged_covariance():
@@ -180,7 +185,6 @@ def test_evaluate_panel_returns_annotated_report(monkeypatch):
         hypotheses_count=51,
     )
     assert result["multiple_testing"]["family_size"] == 51
-    assert result["factors"]["momentum_10"]["horizons"]["5"][
-        "significance"
-    ]["reject_null"] is False
+    entry = result["factors"]["momentum_10"]["horizons"]["5"]
+    assert entry["significance"]["reject_null"] is False
     assert "significance=not_significant" in factor_lab_runner._summary(result)
