@@ -89,7 +89,11 @@ def newey_west_t(series: pd.Series, lag: int) -> float | None:
             break
         weight = 1.0 - order / (lag + 1.0)
         covariance = float(
-            (demeaned.iloc[order:] * demeaned.iloc[:-order]).sum() / count
+            (
+                demeaned.iloc[order:].to_numpy()
+                * demeaned.iloc[:-order].to_numpy()
+            ).sum()
+            / count
         )
         variance += 2.0 * weight * covariance
     if variance <= 0:
