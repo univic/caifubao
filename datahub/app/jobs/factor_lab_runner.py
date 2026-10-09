@@ -272,7 +272,15 @@ def _load_panel(path, horizons=None):
 
 
 def evaluate_panel(
-    *, path, factor, horizons, all_factors=False, quantiles=10, top_fraction=0.1
+    *,
+    path,
+    factor,
+    horizons,
+    all_factors=False,
+    quantiles=10,
+    top_fraction=0.1,
+    alpha=0.05,
+    hypotheses_count=None,
 ) -> dict:
     """Evaluate one factor (or every registered factor) on a frozen panel."""
     import gc
@@ -280,6 +288,7 @@ def evaluate_panel(
     from app.lib.factor_lab.factors import REGISTRY, compute
     from app.lib.factor_lab.metrics import evaluate_factor
     from app.lib.factor_lab.panel import session_span
+    from app.lib.factor_lab.significance import annotate_multiple_testing
 
     panel = _load_panel(path, horizons=horizons)
     names = sorted(REGISTRY) if all_factors else [factor]
@@ -300,11 +309,15 @@ def evaluate_panel(
         )
         del values
         gc.collect()
-    return {
-        "panel": str(path),
-        "span": session_span(panel),
-        "factors": results,
-    }
+    return annotate_multiple_testing(
+        {
+            "panel": str(path),
+            "span": session_span(panel),
+            "factors": results,
+        },
+        alpha=alpha,
+        hypotheses_count=hypotheses_count,
+    )
 
 
 def _summary(report: dict) -> str:
@@ -317,7 +330,7 @@ def _summary(report: dict) -> str:
             walk = stats["walk_forward"].get("walk_forward_decay")
             lines.append(
                 "%-18s h%-3s ic=%+0.4f icir=%s t=%s tnw=%s pos=%s n_dates=%-5d "
-                "top-bottom=%s decay=%s gates=%s"
+                "top-bottom=%s decay=%s gates=%s significance=%s"
                 % (
                     name,
                     horizon,
@@ -332,6 +345,7 @@ def _summary(report: dict) -> str:
                     "PASS"
                     if stats["gates"]["passed"]
                     else ",".join(stats["gates"]["failures"]),
+                    stats["significance"]["status"],
                 )
             )
     return "\n".join(lines)
@@ -458,6 +472,8 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--horizons", default="5,20,60")
     evaluate.add_argument("--quantiles", type=int, default=10)
     evaluate.add_argument("--top-fraction", type=float, default=0.1)
+    evaluate.add_argument("--alpha", type=float, default=0.05)
+    evaluate.add_argument("--hypotheses-count", type=int, default=None)
     evaluate.add_argument("--output", default=None)
 
     scan = commands.add_parser(
@@ -536,6 +552,8 @@ def main(argv=None) -> int:
         all_factors=args.all,
         quantiles=args.quantiles,
         top_fraction=args.top_fraction,
+        alpha=args.alpha,
+        hypotheses_count=args.hypotheses_count,
     )
     if args.output:
         with open(args.output, "w", encoding="utf-8") as handle:
