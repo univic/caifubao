@@ -82,19 +82,15 @@ def newey_west_t(series: pd.Series, lag: int) -> float | None:
     if count < 3:
         return None
     demeaned = values - values.mean()
-    gamma_0 = float((demeaned**2).sum() / count)
+    demeaned_values = demeaned.to_numpy()
+    gamma_0 = float((demeaned_values**2).sum() / count)
     variance = gamma_0
     for order in range(1, max(0, int(lag)) + 1):
         if order >= count:
             break
         weight = 1.0 - order / (lag + 1.0)
-        covariance = float(
-            (
-                demeaned.iloc[order:].to_numpy()
-                * demeaned.iloc[:-order].to_numpy()
-            ).sum()
-            / count
-        )
+        products = demeaned_values[order:] * demeaned_values[:-order]
+        covariance = float(products.sum() / count)
         variance += 2.0 * weight * covariance
     if variance <= 0:
         return None
