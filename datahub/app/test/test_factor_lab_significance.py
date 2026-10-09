@@ -170,7 +170,14 @@ def test_evaluate_panel_returns_annotated_report(monkeypatch):
         lambda *a, **k: {
             "horizons": {
                 "5": {
-                    "ic": {"t_stat_nw": 3.0, "n_dates": 150},
+                    "ic": {
+                        "ic_mean": 0.02,
+                        "icir": 0.5,
+                        "t_stat": 2.0,
+                        "t_stat_nw": 3.0,
+                        "positive_share": 0.6,
+                        "n_dates": 150,
+                    },
                     "quantiles": {"top_minus_bottom": 0.01},
                     "walk_forward": {},
                     "gates": {"passed": True, "failures": []},
