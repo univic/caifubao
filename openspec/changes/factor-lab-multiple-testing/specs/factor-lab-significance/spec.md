@@ -61,3 +61,17 @@ whether family size was declared or derived from this invocation.
 - GIVEN three evaluated pairs and `--hypotheses-count 2`
 - WHEN the report is generated
 - THEN the command fails with a clear error, not a misleading corrected result
+
+### Requirement: Newey-West covariance pairs positional lagged observations
+
+The Newey-West long-run variance SHALL multiply observations at positions
+`i` and `i-k` for lag `k`, irrespective of Pandas index labels.
+It SHALL NOT align two lagged Series by their original labels, which
+erroneously produces overlapping same-date squared deviations.
+
+#### Scenario: Lagged covariance differs from same-date variance
+
+- GIVEN a synthetic IC series with distinguishable lag-one covariance
+- WHEN `newey_west_t(series, lag=1)` is evaluated
+- THEN it matches the manually calculated positional lag-one covariance
+- AND its result does not depend on the Series index labels
