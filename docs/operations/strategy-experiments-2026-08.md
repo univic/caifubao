@@ -952,3 +952,59 @@ P(≥+50%)=19.2%，中位最大涨幅 +19.7%、中位最大回撤 **−14.9%**�
 **仍未完成 / 不可声称**：以上全部为 `REPLAY`，**不是前瞻验证**；120 个交易日 ledger
 窗口只是季度策略的下限；未做真正滚动训练/测试与 purge/embargo 的样本外拆分；
 未接券商执行。策略仍属研究与演示，不构成投资建议。
+
+## 2026-10-19：平衡 50k 核心-卫星回放与 50k 执行层（实现记录，无新业绩声明）
+
+**边界**：这是实现与流程记录，**不是**新的收益结论；所有回放均为
+`evidence_kind=REPLAY`，不计入 120 日前视证据，不构成投资建议。
+
+- **账户结构**：平衡档 50/40/10；50k 核心采用 lot-feasible 三 ETF
+  40/30/30（10,000 沪深300 / 7,500 黄金 / 7,500 纳指）。四腿 25/25/25/25
+  因 treasury 一手约 1 万 > 6,250 的 leg，在 50k 被显式拒绝，延后到 AUM ≥100k。
+- **卫星**：冻结 `riq_v1` 的新 20,000 元构建（top-10、`fwd_h20`、21 会话
+  lag、季度、2N buffer）；它与 50k 研究账本不是同一条曲线。
+- **组合**：季度 ±5pp 漂移带；只移动超出目标的名义额，按
+  `max(5, 0.0005*moved)` 计一次转移成本；sleeve 内现金不扫。
+- **回放产物**：`strategy_replays` 保存 curve/decisions/fills/blocked/
+  metrics/limitations；`forward_sessions=0/120` 且 `forward_eligible=false`；
+  同一 `replay_id` 只允许同 input hash 的幂等重建。
+- **执行层**：`strategy_account_plan.py` 生成 sell-first、整手/科创板 200、
+  费用感知、现金下限、可对账的订单预览；不写库、不下单。
+- **生存者/ST**：`audit_panel` 已能输出逐年覆盖与 `survivorship_gap`；delisted/
+  namechange backfill 只写研究 parquet。当前面板仍无退市 cohort，因此历史
+  收益仍应视为上界；补全后的 OOS 重跑是独立步骤，尚未执行。
+- **运维**：C1 的 DEGRADED 语义已实现但尚未部署到 research 集群；2026-10-19
+  的 quote-stock 仍因 2 只股票校验失败而没有完成当日 signal/scoring。
+
+### 2026-10-19 首个 balanced 50k 核心-卫星 replay（研究记录）
+
+- **ID**：`balanced_50k_20220124_20260316_50000_v1`，写入 research 库
+  `strategy_replays`；`evidence_kind=REPLAY`、`forward_sessions=0/120`。
+- **区间**：2022-01-24 → 2026-03-16，1,000 个交易日；37 个决策、282 笔成交、
+  5 笔受阻订单。
+- **结构**：核心 25,000（510300 40% / 518880 30% / 513100 30%）+ 卫星
+  20,000（冻结 `riq_v1`，top-10、`fwd_h20`、21 会话 lag）+ 现金 5,000；
+  季度 ±5pp 跨 sleeve 漂移带。
+- **研究指标**（非前瞻、非实盘）：累计 **+90.86%**、年化 **+16.90%**、
+  Sharpe **1.42**、最大回撤 **−10.50%**、年换手 **2.45×**、费用 **¥2,261.5**、
+  平均现金 **9.28%**、基准（510300 价格指数）**+6.46%**。
+- **必须一起读的限制**：这是**窗口化回放**（权重使用全面板 IC，含样本内成分），
+  不是滚动 OOS；面板无退市 cohort、ST 为当前快照，收益应视为上界；核心按收盘
+  价、季度模拟，与月频静态配置证据不可直接等同；QDII 溢价/限购、跨 sleeve
+  名义额转移与 20k 卫星的整手/最低佣金均已按限制披露。**不能把 +16.9% 当作
+  预期收益或上钱依据。**
+- **复核**：artifact 通过 `build_replay_artifact` 校验；datahub 1278 passed；
+  contract-reviewer / qa-reviewer 最终 PASS（P1/P2 已修）。
+
+### 2026-10-19 C4 生存者/ST 审计（research 面板）
+
+- 面板：5,221 codes、7,560,639 rows、1,629 sessions、2020-01-02→2026-09-18。
+- 逐年：2020 年 3,934 codes → 2026 年 5,221 codes；1,689 个 code 在面板开始后
+  首次出现；**12 个 code 在 2026 年内停止更新**（delisted cohort 仅 12）。
+- ST 行占比 **0.00%–0.61%**（2020 年 0.61%，2025 年 0.25%，2026 年 0%），
+  `st_flag_basis=current_snapshot`；BSE 占比恒 0。
+- **判定**：没有提供完整退市/ST补集，因此 `survivorship_gap=true`；12 个
+  消失 code 只说明“有极小的 cohort”，不能证明退市样本完整。历史收益仍按
+  上界读；完整 OOS 重跑仍是独立操作步骤。
+- 审计命令（research 集群只读 Job）：`research_universe_audit.py --panel
+  /data/lab_live.parquet`；退出码 0，未写任何生产集合。

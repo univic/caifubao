@@ -25,6 +25,7 @@ backend/app/tmp/
 backend/app/log/
 backend/venv
 backend/venv312
+backend/.deps/
 # No trailing slash: also ignore a worktree's `datahub/.venv` symlink, which
 # Git does not treat as a directory.
 **/.venv

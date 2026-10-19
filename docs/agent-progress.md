@@ -29,6 +29,52 @@
 ```
 
 ## 进度记录
+### 2026-10-19 22:30 CST — 平衡 50k 核心-卫星（C1–C5）+ 策略重放前端
+
+- 状态：进行中（代码/测试/评审/首个 replay 种子完成；待部署镜像与 120 日前向证据）
+- 已完成：
+  - **C1 数据降级语义**：新增 `DEGRADED` 状态与 `pipeline_degradation` 策略
+    （失败上限 `max(5, ceil(0.002*attempted))`、覆盖率 0.99、严格开关
+    `DATAHUB_QUOTE_STRICT_VALIDATION`）；非核心指数结构性缺失走
+    `index_validation.skipped_indices`，核心指数失败仍 FAILED；signal
+    依赖门接受满足覆盖率+MA 因子证据的 DEGRADED（scoring 保持原语义）；health watcher 与
+    `/api/datahub/status` 不再把 DEGRADED 当干净。
+  - **C2 回放产物**：新增 `StrategyReplay`（`strategy_replays`）、纯 builder
+    （REPLAY-only、0/120、不可变 input/content hash）、运营 runner；后端只读
+    list/detail API（JWT + service token 阻断，20/200 分页）。
+  - **C3 50k 执行计划**：`account_plan.build_plan` + CLI，sell-first、整手/科创板
+    200、BSE 拒绝、费用感知、现金下限、可对账 projected positions；纯函数、无
+    Mongo/券商。
+  - **C4 生存者/ST**：纯 `factor_lab.universe.audit_panel` + 只读 audit CLI +
+    research-only delisted/namechange backfill CLI（不写生产集合）；回放产物携带
+    `survivorship_gap` 与上界限制。
+  - **C5 核心-卫星**：50k 核心改为 lot-feasible 三 ETF 40/30/30
+    （10,000/7,500/7,500）；25/25/25/25 在 50k 因 treasury 一手>leg 被拒绝、延后到
+    ≥100k；卫星为冻结 `riq_v1` 的新 20k 构建；组合 50/40/10、±5pp 漂移带、
+    名义额转移计费、缺失价格 fail-closed。
+  - **前端**：`/strategy-replays` 列表与详情（NAV/回撤/基准图、决策时间线、
+    展开成交/受阻订单、REPLAY·0/120、研究免责声明与限制）。
+  - **OpenSpec**：`openspec/changes/balanced-core-satellite/`（proposal/design/
+    tasks + 6 个 capability delta），已过 `spec-guardian` 三轮评审
+    （PASS-WITH-FIXES，剩余项已修）。
+- 验证：datahub **1278 passed + 4 subtests**；backend replay API **13 passed** +
+  datahub status **3 passed**；ruff check/format 通过；前端 `npm run lint` /
+  `npm run build` 通过；`openspec validate --all --strict` **31/31**；
+  contract-reviewer / qa-reviewer 最终 **PASS**（P1/P2 已修）。
+- 首个真实 replay：`balanced_50k_20220124_20260316_50000_v1` 已写入 research
+  `strategy_replays`（1,000 sessions / 37 decisions / 282 fills / 5 blocked；
+  收益与回撤见 experiments 文档，REPLAY/窗口化/幸存者偏差限制随 artifact 携带）。
+- 真实 Mongo round-trip 已验证：后端 list/detail 200，返回 curve=1000、
+  decisions=37、fills=282、blocked=5；修复了 read model 缺 `created_at/updated_at`
+  导致 `FieldDoesNotExist` 的集成问题（backend 17 passed）。
+- 下一步：部署 datahub/backend/frontend 镜像使新代码生效；修复 2026-10-19 两只
+  quote 失败并补跑 signal/scoring；把 replay 的 120 日证据路径与真实部署衔接。
+  C4 审计已跑：5,221 codes / 1,689 首次出现 / 12 个 2026 年消失 / ST 0.00–0.61%，
+  无完整退市补集 → `survivorship_gap=true`；完整 OOS 重跑仍待执行。
+- 阻塞：部署通道只允许 `develop`→dev、`main`→research，当前 feature 分支不能
+  直接发布；2026-10-19 手工补跑仍因旧镜像的 2 只 quote 失败（sh601059/sh601198）
+  而 FAILED；需合并/发布后再验证 C1 降级与补链。
+
 ### 2026-09-20 21:55 CST — 最小实盘环路（Codex 第 5 项）：涨跌停闸门、对账、停机开关
 
 - 状态：进行中（实现与门禁完成，待评审与合并）

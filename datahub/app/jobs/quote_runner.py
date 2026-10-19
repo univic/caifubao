@@ -35,7 +35,7 @@ def _load_default_runtime(as_of_date: datetime.datetime | None = None) -> Any:
 
 
 def _normalize_summary(target: str, summary: dict[str, Any], include_factors: bool):
-    return {
+    normalized = {
         "target": target,
         "include_factors": include_factors,
         "status": summary.get("status"),
@@ -46,6 +46,22 @@ def _normalize_summary(target: str, summary: dict[str, Any], include_factors: bo
         "as_of_date": summary.get("as_of_date"),
         "phase_stats": summary.get("phase_stats", {}),
     }
+    # Preserve the bounded-degradation evidence in the persisted run summary.
+    for key in ("quote_validation", "index_validation"):
+        if summary.get(key) is not None:
+            normalized[key] = summary[key]
+    if summary.get("degraded"):
+        normalized["degraded"] = True
+    return normalized
+
+
+def _combine_target_status(statuses: list[str]) -> str:
+    """Aggregate per-target statuses: any failure fails, degradation stays visible."""
+    if "FAILED" in statuses:
+        return "FAILED"
+    if "DEGRADED" in statuses:
+        return "DEGRADED"
+    return "SUCCESS"
 
 
 def run_quote_job(
@@ -134,9 +150,9 @@ def run_quote_job(
                 "target": TARGET_ALL,
                 "include_factors": include_factors,
                 "results": completed_results,
-                "status": "SUCCESS"
-                if all(item["status"] == "SUCCESS" for item in completed_results)
-                else "FAILED",
+                "status": _combine_target_status(
+                    [item["status"] for item in completed_results]
+                ),
                 "pulled_total": sum(item["pulled_total"] for item in completed_results),
                 "written_total": sum(
                     item["written_total"] for item in completed_results
@@ -146,6 +162,14 @@ def run_quote_job(
                 ),
                 "as_of_date": completed_results[0]["as_of_date"],
             }
+            for key in ("quote_validation", "index_validation"):
+                # Index and stock targets carry one validation record each.
+                for item in completed_results:
+                    if item.get(key) is not None:
+                        result[key] = item[key]
+                        break
+            if result["status"] == "DEGRADED":
+                result["degraded"] = True
         if job_run:
             job_run_helper.finish_job_run(
                 job_run,
