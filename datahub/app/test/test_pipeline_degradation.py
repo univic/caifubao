@@ -576,3 +576,21 @@ def test_all_target_status_is_degraded_when_one_target_degrades(monkeypatch):
     assert result["status"] == "DEGRADED"
     assert captured["status"] == "DEGRADED"
     assert captured["summary"]["index_validation"]["skipped_indices"] == ["sh000015"]
+
+
+def test_a_local_only_refresh_failure_is_skipped_not_failed():
+    from app.lib.utilities.pipeline_degradation import evaluate_validation
+
+    result = evaluate_validation(
+        obj_type="stock",
+        attempted_symbols=0,
+        validated_symbols=0,
+        failed_codes=["sh601059"],
+        attempted_codes=set(),
+        skipped_codes=["sh601059"],
+    )
+    assert result["failure_reason"] is None
+    assert result["degraded"] is False
+    assert result["failed_count"] == 0
+    assert result["skipped_count"] == 1
+    assert result["skipped_symbols"] == ["sh601059"]
