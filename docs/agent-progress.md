@@ -29,6 +29,36 @@
 ```
 
 ## 进度记录
+### 2026-10-20 07:40 CST — research release 完成；C1 local-only hotfix；10-19 链路恢复
+
+- 状态：已完成
+- 已完成：
+  - **代码发布**：PR #290（C1–C5 + replay UI）合入 develop（`ba111dd`）；
+    release PR #292 合入 main（`038920a`）并部署 research
+    backend/frontend/datahub；随后发现 local-only quote 失败仍会硬失败，
+    以 #293 修复、#294 发布 hotfix 到 main（`3756ab7`）。
+  - **research 镜像**：backend/frontend/datahub 均为 `sha-3756ab7`；
+    datahub Deployment 与 quote-stock/quote-index/signal/scoring 四个
+    CronJob 已切到该镜像（CronJob 不随 Deployment 自动更新，需发布后核对）。
+  - **C1 验证**：手工补跑 2026-10-19 quote-stock，`status=SUCCESS`，
+    `quote_validation.skipped_symbols=['sh601059','sh601198']`，
+    `failed_count=0`；FQ/MA 正常写入。quote-index 为 `DEGRADED`
+    （2 个非核心指数结构性缺失，符合预期）。
+  - **10-19 链路恢复**：signal `SUCCESS`（pulled 5,186 / written 2,667 /
+    failed 0）；scoring `SUCCESS`；最新 quote/signal/score 日期均为
+    **2026-10-19**。
+  - **Replay 验证**：research 后端 `/api/strategy/replays` 200，返回
+    `balanced_50k_20220124_20260316_50000_v1`（curve 1,000 / decisions 37 /
+    fills 282 / blocked 5）；前端 `/strategy-replays` 路由 200。
+  - **运维**：发布时 research `datahub-secret` 的 `TUSHARE_TOKEN` 被覆盖，
+    已从旧 stable secret 恢复；如后续 release 再次覆盖，需在部署前核对。
+- 验证：datahub **1280 passed + 4 subtests**；backend 17 passed；前端 lint/build
+  通过；OpenSpec 31/31；真实 10-19 数据链与 API/页面 smoke 均通过。
+- 下一步：把 `DATAHUB_INDEX_SKIP_ALLOWLIST` 固化到 research 部署配置（避免
+  index DEGRADED 每天告警）；执行 C4 完整退市/ST 补集与 OOS 重跑；启动
+  120 日前向记录。**当前 replay 仍是 REPLAY/0-120，不是上钱依据。**
+- 阻塞：无（CronJob 镜像需发布后手工核对，已记录为部署 checklist 项）。
+
 ### 2026-10-19 22:30 CST — 平衡 50k 核心-卫星（C1–C5）+ 策略重放前端
 
 - 状态：进行中（代码/测试/评审/首个 replay 种子完成；待部署镜像与 120 日前向证据）

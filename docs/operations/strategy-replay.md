@@ -157,3 +157,19 @@ explicit operator step; do not claim an unbiased return until that rerun exists.
   cadence for the combined account.
 - Cross-sleeve rebalancing is a costed notional transfer, not an ETF lot trade.
 - The 50k satellite is a new ¥20k build; it is not the documented ¥50k ledger.
+
+## 8. 2026-10-19/20 部署验证记录
+
+- research backend/frontend/datahub 镜像：`sha-3756ab7`（main `3756ab7`）。
+- datahub Deployment 与 quote-stock / quote-index / signal / scoring 四个
+  CronJob 均已切到该镜像；**CronJob 不会随 Deployment 自动更新**，每次发布后
+  必须核对 `spec.jobTemplate.spec.template.spec.containers[0].image`。
+- 2026-10-19 补跑结果：quote-stock `SUCCESS`（local-only
+  `sh601059`/`sh601198` 进入 `skipped_symbols`）、signal `SUCCESS`、
+  scoring `SUCCESS`；quote-index `DEGRADED`（2 个非核心指数结构性缺失）。
+- research 后端 `/api/strategy/replays` 返回 seeded replay；前端
+  `/strategy-replays` 路由可访问。
+- 发布时 `datahub-secret` 的 `TUSHARE_TOKEN` 曾被覆盖；部署前应核对 secret
+  至少包含 `MONGODB_PASSWORD` 与 `TUSHARE_TOKEN`。
+- 建议在 research 部署配置中固化 `DATAHUB_INDEX_SKIP_ALLOWLIST`，把已知结构性
+  缺失的非核心指数列入，避免 health watcher 每天报 DEGRADED。
