@@ -130,3 +130,19 @@ caps, and the environment/configuration switch SHALL be explicit.
 - GIVEN the strict switch is enabled
 - WHEN one symbol fails validation
 - THEN the run status is `FAILED`
+
+### Requirement: Local codes absent from the remote spot universe SHALL be skipped
+
+A local code that is absent from the remote spot universe SHALL be treated as a
+skipped symbol, not an attempted refresh. Its refresh failure SHALL NOT count in
+the coverage denominator and SHALL NOT fail the market refresh. The code SHALL
+be reported in `quote_validation.skipped_symbols` with `skipped_count`; the
+run's `failed_count` and failure decision SHALL exclude it.
+
+#### Scenario: A local-only code refreshes NO_DATA
+
+- GIVEN a local code is missing from the remote spot list
+- WHEN its queued refresh returns `NO_DATA`
+- THEN `quote_validation.skipped_symbols` contains the code
+- AND `failed_count` is zero for that code
+- AND the run does not fail because of it

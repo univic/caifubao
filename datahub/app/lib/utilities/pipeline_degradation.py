@@ -133,8 +133,9 @@ def evaluate_validation(
     is_index = obj_type == "index"
     attempted = max(int(attempted_symbols or 0), 0)
     validated = min(max(int(validated_symbols or 0), 0), attempted)
-    failed = _unique(failed_codes)
-    skipped = _unique(skipped_codes) if is_index else []
+    skipped = _unique(skipped_codes)
+    skipped_set = set(skipped)
+    failed = [code for code in _unique(failed_codes) if code not in skipped_set]
     attempted_set = {str(code) for code in attempted_codes if code}
     strict_enabled = quote_strict_validation() if strict is None else bool(strict)
     allowed_skips = (
@@ -163,6 +164,13 @@ def evaluate_validation(
                 "allowlisted_skips": [
                     code for code in skipped if code in allowed_skips
                 ],
+            }
+        )
+    else:
+        payload.update(
+            {
+                "skipped_symbols": skipped,
+                "skipped_count": len(skipped),
             }
         )
 
