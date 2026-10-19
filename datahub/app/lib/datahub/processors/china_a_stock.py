@@ -27,6 +27,7 @@ from app.lib.utilities.progress_bar import progress_bar
 from app.lib.utilities import trading_day_helper
 from app.lib.utilities import data_asset_status_helper
 from app.lib.utilities import data_capability_helper
+from app.lib.utilities import pipeline_degradation
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,25 @@ STATUS_WRITE_CHUNK_SIZE = 1000
 def _chunked(values, chunk_size):
     for start in range(0, len(values), chunk_size):
         yield values[start : start + chunk_size]
+
+
+def _is_skippable_index_history(obj_type, code, result):
+    """True for a non-core index the source has no history for at all.
+
+    Such an absence is structural (the index is not published on the history
+    endpoint), not a source outage, so it is skipped instead of failed and it
+    must not feed the consecutive-failure circuit breaker.
+    """
+    return (
+        obj_type == "index"
+        and code not in pipeline_degradation.core_index_codes()
+        and bool(result.get("no_available_history"))
+        and int(result.get("validated_count", 0) or 0) == 0
+    )
+
+
+def _validation_status_key(obj_type):
+    return "index_validation" if obj_type == "index" else "quote_validation"
 
 
 def _build_index_quote_upsert_operation(index_obj, row):
@@ -191,6 +211,7 @@ class ChinaAStock(object):
             "as_of_date": None,
             "phase_stats": {},
         }
+        degraded = False
         current_phase = None
         try:
             for phase_name, phase_func in phases:
@@ -208,6 +229,15 @@ class ChinaAStock(object):
                 summary["pulled_total"] += phase_summary["pulled_count"]
                 summary["written_total"] += phase_summary["written_count"]
                 summary["validated_total"] += phase_summary["validated_count"]
+                # Bounded validation gaps are degraded, not failed: keep the
+                # counters in the run summary so downstream gates and analysts
+                # can see exactly how much of the universe validated.
+                for validation_key in ("quote_validation", "index_validation"):
+                    validation = phase_summary.get(validation_key)
+                    if validation:
+                        summary[validation_key] = validation
+                        if validation.get("degraded"):
+                            degraded = True
                 if self.most_recent_trading_day:
                     summary["as_of_date"] = self.most_recent_trading_day.isoformat()
                 logger.info(
@@ -229,6 +259,9 @@ class ChinaAStock(object):
                             job_name,
                             phase_name,
                         )
+            if degraded:
+                summary["degraded"] = True
+                summary["status"] = "DEGRADED"
             return summary
         except Exception:
             summary["status"] = "FAILED"
@@ -260,11 +293,20 @@ class ChinaAStock(object):
     def _normalize_phase_result(phase_result):
         if phase_result is None:
             return {"pulled_count": 0, "written_count": 0, "validated_count": 0}
-        return {
+        normalized = {
             "pulled_count": phase_result.get("pulled_count", 0),
             "written_count": phase_result.get("written_count", 0),
             "validated_count": phase_result.get("validated_count", 0),
         }
+        # Carry the degradation evidence (and only that) into phase_stats so
+        # the persisted run record exposes why a run degraded.
+        for validation_key in ("quote_validation", "index_validation"):
+            validation = phase_result.get(validation_key)
+            if validation:
+                normalized[validation_key] = validation
+        if phase_result.get("degraded"):
+            normalized["degraded"] = True
+        return normalized
 
     def check_prerequisite(self, allow_update=False):
         self.check_market_data_existence()
@@ -401,8 +443,11 @@ class ChinaAStock(object):
         status_msg = ""
         written_quote_count = 0
         validated_quote_count = 0
+        validated_quote_symbols = 0
         required_quote_attempt_count = 0
+        attempted_quote_codes: set[str] = set()
         failed_quote_codes = []
+        skipped_index_codes: list[str] = []
         check_counter_dict = {
             "GOOD": 0,
             "UPD": 0,
@@ -452,6 +497,45 @@ class ChinaAStock(object):
                 is_suspended
                 and result.get("freshness_status", result.get("status")) == STATUS_STALE
             )
+
+        def record_quote_result(code, validation_failed, result, is_suspended):
+            """Classify one refresh result; update the run-level counters.
+
+            The circuit breaker (a source outage) keeps failing the run
+            immediately. A non-core index with no history is a structural
+            absence: it is skipped, and skipping must reset the breaker.
+            """
+            nonlocal consecutive_history_failures, validated_quote_symbols
+            if validation_failed and not is_allowed_suspension_gap(
+                is_suspended, result
+            ):
+                if _is_skippable_index_history(obj_type, code, result):
+                    skipped_index_codes.append(code)
+                    consecutive_history_failures = 0
+                    logger.info(
+                        "Stock Market %s - Skipping non-core index %s: the "
+                        "history source returned no data",
+                        self.market.name,
+                        code,
+                    )
+                else:
+                    failed_quote_codes.append(code)
+                    consecutive_history_failures += 1
+            else:
+                consecutive_history_failures = 0
+                if validation_failed:
+                    logger.info(
+                        "Allowing stale quote for temporarily suspended stock %s",
+                        code,
+                    )
+                elif code in attempted_quote_codes:
+                    validated_quote_symbols += 1
+            if consecutive_history_failures >= HISTORY_FAILURE_CIRCUIT_LIMIT:
+                raise RuntimeError(
+                    "Stock history source appears unavailable: "
+                    f"{consecutive_history_failures} consecutive "
+                    f"failed history pulls; sample={failed_quote_codes[-10:]}"
+                )
 
         remote_code_set = (
             set(remote_data_df["code"].tolist()) if "code" in remote_data_df else set()
@@ -535,6 +619,7 @@ class ChinaAStock(object):
                             if flag in ["UPD", "INC", "FULL"]:
                                 if not is_temporarily_suspended:
                                     required_quote_attempt_count += 1
+                                    attempted_quote_codes.add(code)
                                 prog_bar_msg = (
                                     f"Doing {flag} update for {code} - {name}"
                                 )
@@ -574,30 +659,12 @@ class ChinaAStock(object):
                                         or hist_result.get("freshness_status")
                                         != STATUS_OK
                                     )
-                                    if (
-                                        quote_validation_failed
-                                        and not is_allowed_suspension_gap(
-                                            is_temporarily_suspended, hist_result
-                                        )
-                                    ):
-                                        failed_quote_codes.append(code)
-                                        consecutive_history_failures += 1
-                                    else:
-                                        consecutive_history_failures = 0
-                                        if quote_validation_failed:
-                                            logger.info(
-                                                "Allowing stale quote for temporarily suspended stock %s",
-                                                code,
-                                            )
-                                    if (
-                                        consecutive_history_failures
-                                        >= HISTORY_FAILURE_CIRCUIT_LIMIT
-                                    ):
-                                        raise RuntimeError(
-                                            "Stock history source appears unavailable: "
-                                            f"{consecutive_history_failures} consecutive "
-                                            f"failed history pulls; sample={failed_quote_codes[-10:]}"
-                                        )
+                                    record_quote_result(
+                                        code,
+                                        quote_validation_failed,
+                                        hist_result,
+                                        is_temporarily_suspended,
+                                    )
                             elif flag in ["GOOD", "WARN"]:
                                 pending_refresh_targets[code] = stock_obj
                                 suspension_by_code[code] = is_temporarily_suspended
@@ -615,6 +682,7 @@ class ChinaAStock(object):
                     if allow_update:
                         if not is_temporarily_suspended:
                             required_quote_attempt_count += 1
+                            attempted_quote_codes.add(code)
                         # create absent stock index and create data retrieve task.
                         new_stock_result = self.handle_new_stock(
                             obj_type=obj_type, code=code, name=name
@@ -631,25 +699,12 @@ class ChinaAStock(object):
                             new_stock_result.get("code") == "GOOD"
                             and new_stock_result.get("freshness_status") != STATUS_OK
                         )
-                        if (
-                            new_quote_validation_failed
-                            and not is_allowed_suspension_gap(
-                                is_temporarily_suspended, new_stock_result
-                            )
-                        ):
-                            failed_quote_codes.append(code)
-                            consecutive_history_failures += 1
-                        else:
-                            consecutive_history_failures = 0
-                        if (
-                            consecutive_history_failures
-                            >= HISTORY_FAILURE_CIRCUIT_LIMIT
-                        ):
-                            raise RuntimeError(
-                                "Stock history source appears unavailable: "
-                                f"{consecutive_history_failures} consecutive "
-                                f"failed history pulls; sample={failed_quote_codes[-10:]}"
-                            )
+                        record_quote_result(
+                            code,
+                            new_quote_validation_failed,
+                            new_stock_result,
+                            is_temporarily_suspended,
+                        )
                         upd_counter_dict["NEW"] += 1
                 prog_bar(i, remote_data_num, prog_bar_msg)
             msg_str = (
@@ -698,6 +753,7 @@ class ChinaAStock(object):
                     )
                     if not is_temporarily_suspended:
                         required_quote_attempt_count += 1
+                        attempted_quote_codes.add(code)
                     new_stock_result = self.handle_new_stock(
                         obj_type=obj_type, code=code, name=name
                     )
@@ -714,19 +770,12 @@ class ChinaAStock(object):
                         new_stock_result.get("code") == "GOOD"
                         and new_stock_result.get("freshness_status") != STATUS_OK
                     )
-                    if new_quote_validation_failed and not is_allowed_suspension_gap(
-                        is_temporarily_suspended, new_stock_result
-                    ):
-                        failed_quote_codes.append(code)
-                        consecutive_history_failures += 1
-                    else:
-                        consecutive_history_failures = 0
-                    if consecutive_history_failures >= HISTORY_FAILURE_CIRCUIT_LIMIT:
-                        raise RuntimeError(
-                            "Stock history source appears unavailable: "
-                            f"{consecutive_history_failures} consecutive "
-                            f"failed history pulls; sample={failed_quote_codes[-10:]}"
-                        )
+                    record_quote_result(
+                        code,
+                        new_quote_validation_failed,
+                        new_stock_result,
+                        is_temporarily_suspended,
+                    )
                     check_counter_dict["NEW"] += 1
                     upd_counter_dict["NEW"] += 1
                     prog_bar(i, remote_data_num)
@@ -747,6 +796,7 @@ class ChinaAStock(object):
                 if status_value == STATUS_OK:
                     if code in snapshot_codes:
                         snapshot_validated_count += 1
+                        validated_quote_symbols += 1
                     continue
                 if is_allowed_suspension_gap(
                     suspension_by_code.get(code, False), {"status": status_value}
@@ -760,12 +810,23 @@ class ChinaAStock(object):
             validated_quote_count += snapshot_validated_count
             update_partial_phase_result()
 
+        validation = pipeline_degradation.evaluate_validation(
+            obj_type=obj_type,
+            attempted_symbols=required_quote_attempt_count,
+            validated_symbols=validated_quote_symbols,
+            failed_codes=failed_quote_codes,
+            attempted_codes=attempted_quote_codes,
+            skipped_codes=skipped_index_codes,
+            enforce=allow_update,
+        )
         status = {
             "code": status_code,
             "msg": status_msg,
             "pulled_count": remote_data_num,
             "written_count": written_quote_count,
             "validated_count": validated_quote_count,
+            "degraded": validation["degraded"],
+            _validation_status_key(obj_type): validation,
         }
         self._partial_phase_result = status
         if (
@@ -779,10 +840,23 @@ class ChinaAStock(object):
                 "Stock quote refresh attempted updates but wrote zero quote rows "
                 "(validated zero source rows)"
             )
-        if allow_update and failed_quote_codes:
+        if validation["failure_reason"]:
+            label = "Index" if obj_type == "index" else "Quote"
             raise RuntimeError(
-                "Quote validation failed for "
-                f"{len(failed_quote_codes)} symbols; sample={failed_quote_codes[:10]}"
+                f"{label} validation failed for {len(failed_quote_codes)} "
+                f"symbols; sample={failed_quote_codes[:10]}"
+            )
+        if validation["degraded"]:
+            logger.warning(
+                "Stock Market %s - %s refresh degraded: %s of %s symbols validated "
+                "(coverage=%s, failed=%s, sample=%s)",
+                self.market.name,
+                obj_type,
+                validation["validated_symbols"],
+                validation["attempted_symbols"],
+                validation["coverage_rate"],
+                validation["failed_count"],
+                validation["failed_codes"][:10],
             )
         return status
 
@@ -1214,6 +1288,9 @@ class ChinaAStock(object):
         written_count = 0
         validated_count = 0
         freshness_status = None
+        # Distinguishes "the source has no history for this index at all" (a
+        # structural absence the caller may skip) from a hard failure.
+        no_available_history = False
         try:
             index_obj = StockIndex.objects(code=code).only("code", "name").first()
             quote_df = zh_a_daily.get_zh_a_index_hist_daily_quote(
@@ -1263,6 +1340,7 @@ class ChinaAStock(object):
                 else:
                     status_code = "FAIL"
                     status_msg = "No available data for update"
+                    no_available_history = True
             else:
                 status_code = "FAIL"
                 status_msg = "INDEX CODE CAN NOT BE FOUND IN LOCAL DB"
@@ -1270,6 +1348,7 @@ class ChinaAStock(object):
         except KeyError:
             status_code = "FAIL"
             status_msg = "the interface did not return valid dataframe, possibly due to no quote data"
+            no_available_history = True
         # except Exception as e:
         #     status_code = 'ERR'
         #     status_msg = ';'.join(traceback.format_exception(e))
@@ -1279,6 +1358,7 @@ class ChinaAStock(object):
             "written_count": written_count,
             "validated_count": validated_count,
             "freshness_status": freshness_status,
+            "no_available_history": no_available_history,
         }
         return status
 

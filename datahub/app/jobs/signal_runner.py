@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.lib.utilities import job_run_helper
+from app.lib.utilities import pipeline_degradation
 from app.lib.signal_factory import SignalUpdateError
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,9 @@ DEPENDENCY_JOB_FAMILY = "quote_daily"
 DEPENDENCY_JOB_NAME = "datahub_quote_stock_daily"
 DEPENDENCY_JOB_HOUR = 18
 DEPENDENCY_JOB_MINUTE = 0
+# A DEGRADED upstream run is only usable when its validated coverage clears
+# this floor and the MA factor phase actually wrote rows.
+DEPENDENCY_QUOTE_COVERAGE_FLOOR = pipeline_degradation.QUOTE_COVERAGE_FLOOR
 
 
 @dataclass(frozen=True)
@@ -189,17 +193,85 @@ def run_signal(
     return result
 
 
-def _check_dependency() -> bool:
-    """Check whether the upstream quote job is ready for signal generation.
+def _quote_validation_evidence(record) -> dict[str, Any]:
+    """Extract the persisted ``quote_validation`` dict from an upstream run.
+
+    The quote processor records it in the data-integrity phase stats; the
+    quote runner also copies it to the run summary. Either location is
+    accepted so old and new records both work.
+    """
+    phase_stats = record.phase_stats or {}
+    quote_phase = phase_stats.get("check_stock_data_integrity") or {}
+    validation = quote_phase.get("quote_validation")
+    if not validation:
+        validation = (getattr(record, "summary", None) or {}).get("quote_validation")
+    return validation or {}
+
+
+def _dependency_evidence(record) -> dict[str, Any]:
+    """Collect the observable evidence a dependency decision is based on."""
+    phase_stats = record.phase_stats or {}
+    quote_phase = phase_stats.get("check_stock_data_integrity") or {}
+    ma_phase = phase_stats.get("update_ma_factor") or {}
+    validation = _quote_validation_evidence(record)
+    quote_validated = int(quote_phase.get("validated_count", 0) or 0)
+    ma_written = int(ma_phase.get("written_count", 0) or 0)
+    coverage = validation.get("coverage_rate")
+    return {
+        "status": getattr(record, "status", None),
+        "quote_validated_count": quote_validated,
+        "ma_factor_written_count": ma_written,
+        "coverage_rate": float(coverage) if coverage is not None else None,
+        "validated_symbols": validation.get("validated_symbols"),
+        "attempted_symbols": validation.get("attempted_symbols"),
+        "failed_count": validation.get("failed_count"),
+        "failed_codes": list(validation.get("failed_codes") or []),
+    }
+
+
+def _degraded_dependency_decision(record) -> dict[str, Any]:
+    """Decide whether a DEGRADED upstream quote run is usable downstream.
+
+    Degraded runs are accepted only with positive coverage evidence (at or
+    above the floor) *and* persisted MA factors; a degraded run with no factor
+    evidence is rejected instead of silently computing signals from stale
+    factors.
+    """
+    evidence = _dependency_evidence(record)
+    coverage = evidence["coverage_rate"]
+    accepted = bool(
+        coverage is not None
+        and coverage >= DEPENDENCY_QUOTE_COVERAGE_FLOOR
+        and evidence["ma_factor_written_count"] > 0
+    )
+    return {
+        "accepted": accepted,
+        "path": "degraded" if accepted else "rejected",
+        "upstream_status": evidence["status"],
+        "coverage_rate": coverage,
+        "validated_symbols": evidence["validated_symbols"],
+        "attempted_symbols": evidence["attempted_symbols"],
+        "failed_count": evidence["failed_count"],
+        "failed_codes": evidence["failed_codes"],
+        "ma_factor_written_count": evidence["ma_factor_written_count"],
+    }
+
+
+def _evaluate_dependency() -> dict[str, Any]:
+    """Evaluate the upstream quote gate and return the decision + evidence.
 
     Always uses the upstream job's schedule time (DEPENDENCY_JOB_HOUR/MINUTE),
     regardless of this job's own scheduled_at, to correctly match the upstream
     job's recorded scheduled_at value.
 
-    Two paths satisfy the dependency:
+    Three paths satisfy the dependency:
 
     1. A SUCCESS record for today (the historical gate).
-    2. A record (RUNNING or FAILED) whose persisted phases cover everything
+    2. A DEGRADED record for today whose persisted ``quote_validation`` coverage
+       is at or above the floor *and* whose MA factor phase wrote rows. A
+       bounded validation gap keeps the chain usable; a degraded run without
+       factor evidence is rejected.
+    3. A record (RUNNING or FAILED) whose persisted phases cover everything
        signals need: the stock data-integrity phase (validated_count > 0)
        **and** the MA factor phase (written_count > 0). This covers runs whose
        quotes and factors were persisted but whose process died before
@@ -221,10 +293,22 @@ def _check_dependency() -> bool:
         target="stock",
         include_factors=True,
         scheduled_at=upstream_scheduled_at,
-        statuses=[job_run_helper.STATUS_SUCCESS],
+        statuses=[job_run_helper.STATUS_SUCCESS, job_run_helper.STATUS_DEGRADED],
     )
     if latest is not None:
-        return True
+        if latest.status == job_run_helper.STATUS_DEGRADED:
+            decision = _degraded_dependency_decision(latest)
+            logger.info(
+                "Upstream quote run %s is DEGRADED (coverage=%s, "
+                "ma_factor_written=%s, failed=%s): %s",
+                DEPENDENCY_JOB_NAME,
+                decision["coverage_rate"],
+                decision["ma_factor_written_count"],
+                decision["failed_count"],
+                "accepted" if decision["accepted"] else "rejected",
+            )
+            return decision
+        return {"accepted": True, "path": "success", "upstream_status": latest.status}
 
     record = job_run_helper.latest_job_run(
         job_family=DEPENDENCY_JOB_FAMILY,
@@ -235,14 +319,40 @@ def _check_dependency() -> bool:
         statuses=[job_run_helper.STATUS_RUNNING, job_run_helper.STATUS_FAILED],
     )
     if record is None:
-        return False
-    phase_stats = record.phase_stats or {}
-    quote_phase = phase_stats.get("check_stock_data_integrity", {})
-    ma_phase = phase_stats.get("update_ma_factor", {})
-    return (
-        int(quote_phase.get("validated_count", 0) or 0) > 0
-        and int(ma_phase.get("written_count", 0) or 0) > 0
+        return {"accepted": False, "path": "missing", "upstream_status": None}
+    evidence = _dependency_evidence(record)
+    accepted = (
+        evidence["quote_validated_count"] > 0
+        and evidence["ma_factor_written_count"] > 0
     )
+    return {
+        "accepted": accepted,
+        "path": "crash_recovery" if accepted else "rejected",
+        "upstream_status": evidence["status"],
+        "quote_validated_count": evidence["quote_validated_count"],
+        "ma_factor_written_count": evidence["ma_factor_written_count"],
+    }
+
+
+def _check_dependency() -> bool:
+    """Check whether the upstream quote job is ready for signal generation."""
+    return _evaluate_dependency()["accepted"]
+
+
+def dependency_decision(skip: bool = False) -> dict[str, Any]:
+    """Return the dependency gate decision plus the evidence behind it.
+
+    ``dependency_ready`` keeps the historical boolean surface; ``main`` records
+    this dict in the job summary so an accepted degraded run (or a rejected
+    one) is auditable.
+    """
+    if skip:
+        logger.warning(
+            "Dependency check bypassed by --skip-dependency-check; the runner "
+            "will not verify today's upstream quote+factor run."
+        )
+        return {"accepted": True, "path": "bypassed"}
+    return _evaluate_dependency()
 
 
 def dependency_ready(skip: bool = False) -> bool:
@@ -254,13 +364,7 @@ def dependency_ready(skip: bool = False) -> bool:
     explicitly. The bypass is deliberately opt-in, logged, and recorded in the
     job run.
     """
-    if skip:
-        logger.warning(
-            "Dependency check bypassed by --skip-dependency-check; the runner "
-            "will not verify today's upstream quote+factor run."
-        )
-        return True
-    return _check_dependency()
+    return dependency_decision(skip=skip)["accepted"]
 
 
 SCHEDULED_TRIGGERS = ("cron", "startup")
@@ -404,12 +508,14 @@ def main(argv: list[str] | None = None) -> None:
         scheduled_at = job_run_helper.utc_now_naive()
 
     # Check upstream dependency (operator bypass for historical rebuilds)
-    if not dependency_ready(args.skip_dependency_check):
+    dependency = dependency_decision(args.skip_dependency_check)
+    if not dependency["accepted"]:
         logger.warning(
-            "Dependency check failed: no SUCCESS record found for %s (stock+factors) "
-            "at scheduled_at=%s. Skipping signal run.",
+            "Dependency check failed: no usable %s (stock+factors) run found "
+            "at scheduled_at=%s (decision=%s). Skipping signal run.",
             DEPENDENCY_JOB_NAME,
             scheduled_at,
+            dependency,
         )
         context = job_run_helper.JobRunContext(
             job_name=args.job_name,
@@ -431,6 +537,7 @@ def main(argv: list[str] | None = None) -> None:
                 "dependency_job_name": DEPENDENCY_JOB_NAME,
                 "dependency_target": "stock",
                 "dependency_include_factors": True,
+                "dependency": dependency,
                 "signal": args.signal,
                 "mode": args.mode,
                 "dependency_check_bypassed": bool(args.skip_dependency_check),
@@ -479,6 +586,7 @@ def main(argv: list[str] | None = None) -> None:
             "signal": args.signal,
             "mode": args.mode,
             "market": args.market,
+            "dependency": dependency,
             "dependency_check_bypassed": bool(args.skip_dependency_check),
             "pulled_total": result.get("pulled_count", 0),
             "written_total": result.get("written_count", 0),
@@ -503,6 +611,7 @@ def main(argv: list[str] | None = None) -> None:
             summary={
                 "signal": args.signal,
                 "mode": args.mode,
+                "dependency": dependency,
                 "written_total": int(getattr(exc, "written_count", 0) or 0),
                 "failed_codes": list(getattr(exc, "failed_codes", [])),
                 "dependency_check_bypassed": bool(args.skip_dependency_check),
