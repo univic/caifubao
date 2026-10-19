@@ -24,10 +24,17 @@ import math
 import pandas as pd
 
 #: The paper/backtest execution model, mirrored so a factor's net edge is
-#: comparable with what the strategy layer would realise.
+#: comparable with what the strategy layer would realise. These rate constants
+#: are the single source of truth: `strategy_engine.config` imports them, so the
+#: paper/live-loop cost model and research cannot drift apart.
 SLIPPAGE_PER_SIDE = 0.001
 COMMISSION_RATE = 0.00025
-SELL_STAMP_DUTY_RATE = 0.001
+#: A-share stamp duty is sell-side only and was halved to 0.05 % on 2023-08-28
+#: (from 0.1 %).
+SELL_STAMP_DUTY_RATE = 0.0005
+#: A-share transfer fee (过户费), charged on BOTH sides of a trade. The rate has
+#: been 0.001 % per side since 2023-08-28 (halved from 0.002 %).
+TRANSFER_FEE_RATE = 0.00001
 
 #: Default gate thresholds, aligned with `autoresearch/profile.yaml`'s hard gates
 #: where an analogue exists.
@@ -37,8 +44,18 @@ MAX_PROFIT_CONCENTRATION = 0.4
 
 
 def round_trip_cost() -> float:
-    """Fraction of notional lost to one buy + one sell."""
-    return 2 * SLIPPAGE_PER_SIDE + 2 * COMMISSION_RATE + SELL_STAMP_DUTY_RATE
+    """Fraction of notional lost to one buy + one sell.
+
+    Buy leg: slippage + commission + transfer fee. Sell leg: slippage +
+    commission + transfer fee + stamp duty. Stamp duty is sell-side only; the
+    transfer fee is charged on both sides (current A-share rule).
+    """
+    return (
+        2 * SLIPPAGE_PER_SIDE
+        + 2 * COMMISSION_RATE
+        + 2 * TRANSFER_FEE_RATE
+        + SELL_STAMP_DUTY_RATE
+    )
 
 
 def _rank_ic(frame: pd.DataFrame, factor: str, label: str) -> float | None:

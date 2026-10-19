@@ -38,12 +38,11 @@ caifubao/
 │   ├── main.py           # 应用入口
 │   └── requirements.txt   # Python 依赖
 ├── frontend/               # 前端应用
-├── k8s/                    # Kubernetes 部署配置
+├── k8s/                    # Kubernetes 部署配置（公开示例）
 │   ├── base/              # 基础配置
-│   ├── overlays/          # 环境特定配置
-│   │   ├── development/   # 开发环境
-│   │   └── production/    # 生产环境
-│   └── deploy.sh          # 部署脚本
+│   └── overlays/          # 脱敏示例 overlay（example-development、
+│                          #   example-research、example-production；
+│                          #   均为示例名称，不代表业务环境语义）
 └── README.md            # 项目说明
 ```
 
@@ -89,7 +88,9 @@ BARK_URL=https://your.bark.url
 
 - `__init__.py` - 基础配置
 - `dev_config.py` - 开发环境配置
-- `production_config.py` - 生产环境配置
+- `production_config.py` - 生产环境配置（`APP_ENV=PRODUCTION` 是应用进程配置的
+  历史/技术命名，与部署环境和资金阶段无关，见
+  [`docs/architecture/environment-model.md`](docs/architecture/environment-model.md) §13）
 
 ## 运行方式
 
@@ -356,8 +357,17 @@ repository 中配置：
 发送部署事件：`develop` 分支发布对应 `dev` 域，`main` 分支发布对应
 `research` 域（P0-3 起；此前为 `development` / `production`）。
 `.github/workflows/deploy-dispatch.yml` 提供手动分发入口，接受 `dev` /
-`research` 目标。建议在 private repo 的 `production` environment 上启用
-required reviewers 或手动 approval，把自动 dispatch 和生产准入控制分开。
+`research` 目标。TASK-303 切流后，research 部署使用 private repo 受保护的
+`research` GitHub Environment；`production` Environment 是技术/历史名称，仅剩
+tailscale operator bootstrap workflow 在用（自动 dispatch 与部署准入控制已在
+该 Environment 上分离）。
+
+> 环境语义（domain × stage 两轴、`production`/`prod` 等技术名称与业务语义的
+> 区别、`prod` 尚未启用）以权威文档
+> [`docs/architecture/environment-model.md`](docs/architecture/environment-model.md)
+> 为准。注意：`main` 分支构建推送的 `prod`/`latest` 是镜像 channel 技术标签，
+> 对应部署 channel 为 research stable（实际部署使用 `sha-<sha>` 不可变 tag），
+> 不代表实盘能力。
 
 ## 启动脚本说明
 
@@ -485,6 +495,7 @@ web_server (API)
 完整文档索引见 [`docs/README.md`](docs/README.md)。常用入口：
 
 - 规则与工作流：[`RULES.md`](RULES.md)、[`AGENTS.md`](AGENTS.md)、[`.project-rules.md`](.project-rules.md)
+- 环境模型（权威）：[`docs/architecture/environment-model.md`](docs/architecture/environment-model.md) — domain/stage 两轴、数据所有权、`prod` 未启用声明
 - 运维 CLI：[`docs/operations/agent-cli.md`](docs/operations/agent-cli.md)
 - 系统能力与数据：[`docs/capability-inventory.md`](docs/capability-inventory.md)
 - 历史/研究记录：[`docs/autoresearch/`](docs/autoresearch/)，已过期文档见 [`docs/archive/`](docs/archive/README.md)

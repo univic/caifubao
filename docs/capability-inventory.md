@@ -8,6 +8,12 @@
 > 实盘交易能力；真实执行、promote 与前瞻证据认证均有独立门禁（见
 > `openspec/changes/production-capability-roadmap/`）。自 2026-05-22（#100）以来
 > develop 新增 118 个提交、PR 编号至 #237，本轮据此刷新。
+>
+> 环境口径：本文中「prod→dev 同步」「prod」等表述指**旧 stable（retired
+> production，迁移期数据权威环境）→ dev 的在线同步**，是 TASK-404 完成前的迁移期
+> 遗留，不代表实盘 production——`prod`（trading/production）目标态**尚未启用**。
+> 环境模型以 [`architecture/environment-model.md`](./architecture/environment-model.md)
+> 为准。
 
 ---
 
@@ -24,7 +30,7 @@
 | 停牌/交易状态 | ✅ 已实现 | `trade_status` 字段，风险惩罚与 paper/回测可交易性判定使用 |
 | 数据新鲜度追踪 | ✅ 已实现 | `data_as_of`、`generated_at`、`freshness` 元数据 |
 | 数据质量检查 | ✅ 已实现 | 覆盖率、缺失日统计、BSE 排除、新股 MA 窗口适用性 |
-| 估值/市值基本面 | ✅ 已实现 | `stock_daily_basic`（`datahub/app/model/daily_basic.py`）：pe_ttm/pb/ps_ttm/dv_ttm/total_mv/circ_mv/turnover_rate，按 trade_date 的 point-in-time 快照；`daily_basic_backfill` 支持断点续传，已接入 prod→dev 数据同步（#175/#176） |
+| 估值/市值基本面 | ✅ 已实现 | `stock_daily_basic`（`datahub/app/model/daily_basic.py`）：pe_ttm/pb/ps_ttm/dv_ttm/total_mv/circ_mv/turnover_rate，按 trade_date 的 point-in-time 快照；`daily_basic_backfill` 支持断点续传，已接入 stable→dev 数据同步（#175/#176；在线同步为迁移期遗留） |
 | Tushare 数据源 | ✅ 已实现 | 历史行情、`adj_factor`、`daily_basic`、股票池四个接口；全部调用按 300/min 限速节流、带重试与空结果显式失败（`datahub/app/lib/datahub/data_source/interface/tushare_interface.py`） |
 | 全市场股票池 | ✅ 已实现 | `stock_basic_active`（tushare `pro.stock_basic`，`list_status='L'`），用于股票池刷新（#130） |
 | 财务报表（ROE、营收增速等三表） | ❌ 未实现 | 仅采集 daily_basic 估值/市值，利润表/资产负债表/现金流量表未采集 |
@@ -62,6 +68,9 @@
 | 真实相对强弱 | ✅ 已实现 | 对标沪深 300/中证 500 指数的 alpha；已注册并接入评分管道（权重 10/10/8），依赖 index_quotes/alpha_map 输入 |
 | 基本面估值因子（EP/BP/DV 等） | 📋 已规划 | `stock_daily_basic` 已入库、研究审计已完成（估值正 IC 且 size 中性后不消失）；结论为作独立/regime 分量，**未注册为评分分量**，也未混入 flip_wide（`docs/autoresearch/runs/h20-excess-alpha/fundamental-factor-audit-2019-2026.md`） |
 | 持有期 × buffer 扫描 | ✅ 已实现 | `datahub/app/lib/strategy_engine/holding_scan.py` + `factor_lab_runner holding-scan`（#236）；持有期扫描已合并并附实测报告。注意 `--buffers` 轴被 QA 判定**结构性无效**（每期硬到期先清空账本，滞回永不生效），实际等价于纯持有期扫描 |
+| 50k 执行计划 | ✅ 已实现 | `strategy_engine/account_plan.py` + `scripts/strategy_account_plan.py`（balanced-core-satellite）：sell-first、整手/科创板 200、BSE 拒绝、费用感知、现金下限、可对账 projected positions；只读、不下单 |
+| 生存者/ST 覆盖审计 | ✅ 已实现 | `factor_lab/universe.py:audit_panel` + `scripts/research_universe_audit.py` / `research_universe_backfill.py`（balanced-core-satellite）：逐年 codes/entrants/leavers/ST/BSE、`survivorship_gap`；backfill 只写研究 parquet |
+| 策略回放产物 | ✅ 已实现 | `model/strategy_replay.py` + `strategy_engine/replay.py` + `jobs/strategy_replay_runner.py`（balanced-core-satellite）：REPLAY-only curve/decisions/fills/metrics，`forward_sessions=0/120`、input/content hash 不可变 |
 | ETF lab / 小账户研究模块 | ✅ 已实现 | `datahub/app/lib/etf_lab`（pool/panel/measure + 多资产 rotation）与 `datahub/app/lib/small_book`（8 分量评分重建）已随 #236 合入；研究结论为负结果/配置型，不构成 alpha |
 | 不可变研究工件契约 | 📋 已规划 | `openspec/changes/artifact-contract/` 已定义 artifact_id/artifact_hash/`input_snapshot` 契约，但 0/13 任务实现；当前各报告/导出的哈希与溯源语义尚未统一 |
 
@@ -105,6 +114,7 @@
 | 前瞻证据认证 + 120 交易日计数器 | ✅ 已实现 | `StrategyForwardWindow`（append-only，按 model_version+horizon ACTIVE 唯一）+ `strategy forward certify/close/progress`：仅窗口内决策先于执行日开盘的 COMPLETED 记录标 FORWARD，计数 distinct 信号日/120，缺口如实报告；FORWARD 计划不可改写，NAV 仅为派生（#207、`strategy-forward-evidence-capture`） |
 | 研究级目标组合导出 | ✅ 已实现 | `lib/strategy_engine/export.py` + `strategy_runner export`：COMPLETED run 的 BUY/SELL/HOLD 目标权重与金额、CSV/JSON；固定 `grade=RESEARCH` + 非投资建议免责声明，歧义 config_hash fail closed；不写库不下单（#220、`strategy-target-export`） |
 | 可信股票择时评估器 | ✅ 已实现 | `backend/app/services/timing_evaluator.py`（依赖自由、纯函数）+ `backtest_runner timing-pool` CLI：对显式冻结 cohort 聚合 timing vs buy_hold 成对证据，未达门槛输出 UNVALIDATED/研究级（#237、`stock-timing-evaluator-p0`） |
+| 核心-卫星回放 | ✅ 已实现 | `strategy_engine/core_satellite.py` + `scripts/core_satellite_backtest.py`（balanced-core-satellite）：50k 三 ETF 40/30/30 + `riq_v1` 20k 卫星 + 10% 现金、季度 ±5pp 带、费用化转移；研究级 REPLAY |
 | Point-in-time 前视审计模拟 | ✅ 已实现 | `datahub/research/pit_sim/`（pit_sim/pit_value/pit_drift_check）：50k 纸面模拟只读 `date <= D` 的行，窗口内价格仅用于估值；2026-08-01→09-11 实测报告（#231） |
 | 组合层面整体回测 | ❌ 未实现 | 多股回测存在，但未接入 Portfolio 持仓做组合整体回测 |
 | 换手/再平衡预算 | ❌ 未实现 | roadmap 1.3 剩余：再平衡的换手/交易预算未落地（`strategy-forward-window.md` §6 明示） |
@@ -125,6 +135,7 @@
 | 股票评分详情 | ✅ 已实现 | 时间周期卡片(分数/推荐/分位数)、验证指标、评分历史图表 |
 | 评分解释查看 | ✅ 已实现 | 分量分解(原始值/归一化值/权重/贡献值/证据)、输入新鲜度 |
 | 回测创建/结果查看 | ✅ 已实现 | 参数表单、指标展示、交易列表、每日权益 |
+| 策略重放页 | ✅ 已实现 | `/strategy-replays` 列表 + 详情（balanced-core-satellite）：NAV/基准/回撤图、决策时间线、展开成交/受阻订单、REPLAY·0/120、研究免责声明与限制 |
 | 回测权益曲线图 | ✅ 已实现 | BacktestResultView 权益曲线图表（#182） |
 | 策略发现工作台 | ✅ 已实现 | DiscoveryView（1123 行）：策略扫描/可执行性/参数景观/CSV 导出（#103） |
 | 投资组合管理 | ✅ 已实现 | 手动记账(BUY/SELL/CASH_IN/CASH_OUT/DIVIDEND)、持仓、交易历史、快照 |
@@ -155,11 +166,11 @@
 | 数据新鲜度契约 | ✅ 已实现 | 下游可判断 missing/stale/blocked 状态，避免靠空值猜测；`data_as_of` 已在 OpenClaw 各端点填充（#103） |
 | CI/CD | ✅ 已实现 | GitHub Actions 基础流水线；部署环境按 dev/research 分派（#210） |
 | K8s 部署示例 | ✅ 已实现 | `k8s/` 目录，含 base/overlays/services + compute-worker |
-| 研究环境 overlay | ✅ 已实现 | `k8s/overlays/example-research/`（#214）；研究集群迁移已收尾，research 激活仍待修复 bootstrap 镜像 tag 不变量（#215） |
+| 研究环境 overlay | ✅ 已实现 | `k8s/overlays/example-research/`（#214）；TASK-303 切流、research 激活与首轮部署验证均已完成，目标为 `caifubao-research` + 受保护的 `research` GitHub Environment |
 | 数据管道调度 | ✅ 已实现 | CronJob 依赖链(信号 → 评分 → 验证)，上游失败则跳过；quote/signal/scoring 已拆分为独立 CronJob（#144） |
 | 任务依赖管理 | ✅ 已实现 | `job_run_helper` 检查上游任务 SUCCESS 状态 |
 | Dry-run 支持 | ✅ 已实现 | 评分回填支持 dry-run 模式 |
-| 幂等性保证 | ✅ 已实现 | 默认 skip 已有记录，显式 replace 才覆盖；prod→dev 同步按业务键 upsert（#151） |
+| 幂等性保证 | ✅ 已实现 | 默认 skip 已有记录，显式 replace 才覆盖；stable→dev 同步按业务键 upsert（#151） |
 | 评分质量自动监控 | ✅ 已实现 | `/api/decisions/quality`：滚动命中率、分布偏移检测、模型漂移检测(P50/P90) |
 | 决策日志（DecisionJournal） | ✅ 已实现 | `DecisionJournal` 模型含推荐内容/信心/目标价/止损 + `executed`/成交价量/`realized_pnl` 全链字段，`/api/decisions/journal*` 四端点（#104/#108） |
 | Compute-Worker K3s 部署 | ✅ 已实现 | node-type=compute 亲和性、资源限制、存活探针 |
@@ -194,7 +205,7 @@
 | 研究数据湖导出 Runner | ✅ 已实现 | `parquet_export_runner export --dataset all/daily_quotes/factors/signals` |
 | 行情/信号/评分任务拆分 | ✅ 已实现 | 拆分出独立 CronJob，避免单任务超时被 kill 拖垮全链（#144） |
 | 任务进度持久化 + 陈旧 RUNNING 回收 | ✅ 已实现 | 阶段级 `phase_stats` 持久化、原子 catchup claim、启动时回收 stale RUNNING（#142/#144） |
-| 数据同步（prod→dev） | ✅ 已实现 | 增量、按业务键幂等 upsert；MongoDB 声明漂移已收敛（#151/#164/#176） |
+| 数据同步（stable→dev） | ✅ 已实现 | 增量、按业务键幂等 upsert；MongoDB 声明漂移已收敛（#151/#164/#176）。来源为旧 stable（retired production）；在线直连为迁移期遗留，目标为受控快照导入（TASK-404） |
 | 数据源健康与快速失败 | ✅ 已实现 | 批量新鲜度刷新；死掉的历史数据源 fail fast（#140） |
 | 因子评估向量化 | ✅ 已实现 | `evaluate`/`_build_dataset` 接受预载 `quote_frame`，前向收益 `groupby.shift(-h)`，decay 复用同一数据集；dev 实测 434.4s → 49.9s（8.7×），DB 往返归零（#232） |
 | data-sync 失败自动补跑 | ❌ 未实现 | roadmap P2：dev data-sync 失败后无自动补跑，次日调度才重试 |
@@ -235,7 +246,6 @@
 | 评分模型成功标准未在全市场验证 | **高** | 20.x：研究层 walk-forward 已做，但「SCORE 策略是否优于 BUY_HOLD」等生产链验收标准在全市场仍未闭环 |
 | 真实执行能力零实现，且默认必须保持关闭 | **高** | roadmap 2.2-2.4：无券商适配器/对账/下单幂等/kill-switch；任何执行路径都需另行授权、Spec Gate 与验证 |
 | 持久化审计日志 + service token 限流未实现 | 中 | roadmap 1.2：无 RequestAudit 审计链、无 rate-limit；当前 last_used_* 是覆盖写 |
-| 研究环境（research overlay）激活阻塞 | 中 | #215：research 的激活路径缺失，需先修 bootstrap 镜像 tag 不变量；research 集群迁移本身已完成 |
 
 ### P1 — 阶段修正
 
@@ -266,7 +276,7 @@
 | signal decay 专项测试缺失 | 低 | 12d.6 部分修复：hybrid 阈值测试已补齐，signal decay 逻辑仍无专门测试 |
 | data-sync 失败自动补跑 | 低 | 失败后次日 19:15 才重试；方案见 `docs/operations/roadmap-2026-08.md` |
 | strategy_daily CronJob 未接线 | 中 | `strategy_daily` 未在任何 overlay 定义，当前为 operator cadence；非交易日会异常结束（fail loud），需先决策「优雅跳过 vs 接受告警」 |
-| MongoDB 运维遗留（prod 迁移、副本集 HA、定时备份启用） | 中 | dev 已迁 vm-8-15；prod 暂留 vm-4-12，副本集 HA 与 backup CronJob 解挂待决策（`docs/operations/mongodb-node-migration.md`） |
+| MongoDB 运维遗留（旧 stable 迁移、副本集 HA、定时备份启用） | 中 | dev 已迁独立数据节点；旧 stable（retired production，非实盘 `prod`）暂留原节点，副本集 HA 与 backup CronJob 解挂待决策（节点名与细节见 `docs/operations/mongodb-node-migration.md`） |
 
 ---
 

@@ -136,10 +136,13 @@
 - `source_freshness`：每 code 计算一份，与 `generated_at` 一样仅在插入时
   写入，表示生成时的来源快照，重跑不触碰旧文档。
 - stale 增量仅用于 anchor 之前上游未被修正的日常路径。`force`
-  为权威全历史重建：先 upsert 完整因子输入对应的命中集，再精确删除
-  不再命中的旧键，避免写入中途失败时先破坏旧权威集；
-  落库成功后才推进 status。任何计算、bulk write 或 status write 失败都
-  向调用方传播，不把该 code 记为成功。
+  为权威全历史重建：先 upsert 可评估 signal 名的完整因子输入对应的命中集，
+  再精确删除这些 signal 名中不再命中的旧键（prune 范围收窄为本次实际重建的
+  signal 名，避免误删 skip 名的历史行），避免写入中途失败时先破坏旧权威集；
+  落库成功后才推进 status。真实的计算、bulk write 或 status write 失败都
+  向调用方传播，不把该 code 记为成功；而「必需因子列缺席或整列无值」是
+  **不可评估前置条件**：按 `(code, signal_name)` 记 skip，不写行、不删除、
+  不推进该 signal 名的 freshness（见 specs/signals-mvp delta）。
 - 全市场 status 刷新从最终落库数据一次 `$group`，再批量 upsert；
   `data_count` 是实际持久化命中数，而不是本次构造的 operation 数。
 - 语义不变量：任何日期的信号命中集、strength、direction、factor_snapshot

@@ -207,6 +207,12 @@ or manually running factor, signal, scoring, export, or backup stages.
 
 #### Post-bootstrap re-enable (current cluster state)
 
+> **Historical note (2026-09-16):** "production"/"prod" in this section names the
+> legacy stable environment as it was called in 2026-08 (today: retired
+> production, migration-period data owner). It is not live trading; the future
+> `prod` (`trading/production`) target is not enabled. See
+> [`../architecture/environment-model.md`](../architecture/environment-model.md).
+
 The 2026-08 production bootstrap passed the quote gate (full market via
 tushare, frozen `as_of_date`, snapshot-driven daily updates) and the daily
 routine is now enabled in dependency order:

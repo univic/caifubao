@@ -134,6 +134,11 @@
 - [x] 3.6 引入信号 anchor：cross 信号只算 `date > anchor` 窗口（含 shift(1) lookback）；状态型信号只写最新交易日
 - [x] 3.7 状态刷新批量化（仿 `refresh_market_statuses`）；count 改一次 `$group` 聚合（G2 一并完成）
 - [x] 3.8 等价性验证：增量与 force 全量对同一最新日的业务 payload 逐字段相等（`generated_at`/`source_freshness` 仅为插入快照）
+- [x] 3.8a 历史不足的 `(code, signal_name)` 改记 skip：显式前置判定（必需因子列缺失/无非空值 → 该 signal 名不可评估）→ `skipped_codes`/`skipped_signal_count`，不写行、不推进 freshness；force 只对已重建的 signal 名做 prune；真实失败仍 FAILED
+  注：修复生产中观测到的失败类别——新股/次新股 factor 行存在但 `ma_60` 字段缺席（稀疏投影），
+  `build_signal_frame` 抛 `ValueError("Missing factor fields…")` 被 runner 记为 per-code FAIL 并使
+  整批 `SignalUpdateError`（2026-09 全市场重算中 5/8 分片因此 fail-fast）。信号命中集不变：
+  同一 code 仍会计算其可评估的 signal 名（如 ma10_cross_ma20）。
 
 ### FQ 回填改造（F1/Q5）
 

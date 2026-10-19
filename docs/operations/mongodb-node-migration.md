@@ -1,5 +1,10 @@
 # MongoDB 单副本节点迁移流程（Runbook）
 
+> **历史状态注记（2026-09-16）**：本文写作时的「prod」指当时的稳定运行环境
+> （现称**旧 stable / retired production**，迁移期数据权威环境），不代表实盘
+> production——`prod`（trading/production）目标态尚未启用。现行环境口径见
+> [`../architecture/environment-model.md`](../architecture/environment-model.md)。
+
 > 适用范围：把单副本 MongoDB StatefulSet（静态 local PV，`Retain`）从一个节点
 > 迁移到另一个节点，数据零丢失、停机窗口约 40 分钟。流程源自 2026-08-29 dev
 > 环境实战（`<源节点> → <目标节点>`，节点名脱敏），恢复路径已两次全量验证

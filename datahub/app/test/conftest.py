@@ -33,6 +33,18 @@ from unittest.mock import MagicMock, patch
 # Set test environment
 os.environ["APP_ENV"] = "test"
 
+# The strategy runner's kill switch (roadmap 2.4) has NO silent default path: an
+# unconfigured halt store fails order generation closed. Tests that exercise
+# order generation therefore need a halt file; point it at a per-run temporary
+# path. `test_strategy_halt.py` removes/overrides it to pin the unconfigured and
+# halted behaviour.
+if not os.environ.get("CAIFUBAO_STRATEGY_HALT_FILE"):
+    import tempfile
+
+    os.environ["CAIFUBAO_STRATEGY_HALT_FILE"] = os.path.join(
+        tempfile.mkdtemp(prefix="caifubao-halt-test-"), "halt.json"
+    )
+
 # akshare is only reachable at module level in the interface module
 # (``akshare.stock_zh_a_spot()`` etc.) and unit tests never call those
 # functions. Provide a stub so the test suite can run on machines without

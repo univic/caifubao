@@ -53,9 +53,12 @@ import math
 
 import pandas as pd
 
-#: Mirrors `metrics.round_trip_cost()`; duplicated as a plain constant so this
-#: module has no import edge into the factor lab.
-ROUND_TRIP_COST = 2 * 0.001 + 2 * 0.00025 + 0.001
+from app.lib.factor_lab.metrics import round_trip_cost as _round_trip_cost
+
+#: Derived from `metrics.round_trip_cost()` rather than restated, so the scan's
+#: friction can never drift from the paper/backtest execution model again (it
+#: silently had: the constant claimed 0.0035 while the model moved on).
+ROUND_TRIP_COST = _round_trip_cost()
 
 #: Turnover-penalty weights, aligned with `autoresearch/profile.yaml`.
 TURNOVER_FREE_ALLOWANCE = 6.0

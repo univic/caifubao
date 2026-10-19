@@ -10,7 +10,10 @@ each `(code, signal_name)`, and SHALL NOT modify existing signal documents
 whose computed values are unchanged. A signal document records a historical
 match, while the status anchor records how far evaluation completed even when
 no signal matched. `generated_at` and `source_freshness` SHALL be immutable
-generation-time snapshots written only on document insert.
+generation-time snapshots written only on document insert. The factory SHALL
+classify a `(code, signal_name)` whose required factor window carries no
+evaluable values as an unevaluable precondition and report it as skipped,
+while genuine calculation, persistence, and status failures SHALL still fail.
 
 #### Scenario: Cross signals computed only after the anchor
 
@@ -66,6 +69,44 @@ generation-time snapshots written only on document insert.
   already committed remain recoverable because the next stale selection
   requires all signal-name anchors to equal the upstream target
 - **AND** downstream callers SHALL NOT treat that code as successfully current
+- **AND** only genuine failures (for example MongoDB read/write errors, factor
+  rows that raise during load or parse, quote-loading errors, or a status bulk
+  write failure) SHALL fail the code; an unevaluable precondition SHALL instead
+  be reported as skipped under the "Insufficient factor history is skipped, not
+  failed" scenario. Non-numeric required-factor values are coerced to null, and
+  a required factor field for which no row yields a value is an unevaluable
+  precondition rather than a malformed-row failure
+
+#### Scenario: Insufficient factor history is skipped, not failed
+
+- **GIVEN** a selected stock whose factor rows exist but a required factor
+  field carries no evaluable value (for example a listing whose history has
+  not reached the configured MA window, so the field is absent)
+- **WHEN** the signal factory evaluates that stock
+- **THEN** it SHALL classify only the affected `(code, signal_name)` pairs as
+  skipped and SHALL NOT raise for them
+- **AND** it SHALL still compute and persist the signal names whose required
+  factors are evaluable
+- **AND** it SHALL NOT write or delete any signal row for a skipped signal name
+- **AND** it SHALL NOT advance `latest_data_date` or `last_success_at` for a
+  skipped signal name, so the next stale selection still requires it
+- **AND** a stock with no factor rows at all SHALL be skipped rather than
+  failed in force mode
+- **AND** a code that stays evaluable for at least one signal name SHALL remain
+  successful (GOOD) absent a genuine failure in an evaluable signal name, SHALL
+  NOT appear in `failed_codes`, and SHALL have its skipped signal names reported
+  by the factory without failing the code
+- **AND** the runner SHALL report a code whose configured signal names are all
+  unevaluable in `skipped_codes` with `skipped_count`, SHALL report the number
+  of skipped `(code, signal_name)` pairs in `skipped_signal_count`, SHALL NOT put
+  such a code in `failed_codes`, and SHALL finish the run successfully when no
+  genuine failure occurred
+- **AND** a run in which every selected code is skipped SHALL finish SUCCESS
+  with `failed_count` zero and SHALL write no signal status
+- **AND** such a fully skipped run SHALL be distinguishable from a run that had
+  nothing to do: it SHALL record an `all_skipped` marker in the run summary and
+  log a warning, so a global upstream factor outage is not silently accepted as
+  current
 
 #### Scenario: Statuses are derived from committed signal rows
 
@@ -85,5 +126,7 @@ generation-time snapshots written only on document insert.
 - **AND** SHALL upsert the replacement set before deleting persisted signals
   that no longer match, so an upsert failure cannot first destroy the old set
 - **AND** SHALL upsert matching rows by `(stock_code, date, signal_name)`
+- **AND** SHALL delete persisted signals that no longer match only for the
+  signal names it rebuilt, leaving rows of skipped signal names untouched
 - **AND** SHALL advance the evaluated-through anchor only after the replacement
   set is fully persisted

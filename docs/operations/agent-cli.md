@@ -4,6 +4,14 @@ This is the canonical operations guide for AI agents (OpenClaw, Claude, etc.)
 interacting with the Caifubao dev environment. It describes how to operate the
 platform via the unified CLI and Makefile.
 
+> **Environment vocabulary.** This guide operates the `dev` running target
+> (development/dev). Historical text and CLI help strings in this repo say data
+> is synced "from prod": that name is a **technical/historical label for the
+> legacy stable environment** (retired production, migration-period data owner)
+> — it does not mean live trading, and the future `prod` (`trading/production`)
+> is **not enabled**. Authoritative definitions:
+> [`docs/architecture/environment-model.md`](../architecture/environment-model.md).
+
 ## Quick Reference
 
 ```bash
@@ -16,7 +24,7 @@ platform via the unified CLI and Makefile.
 # Score a single stock
 ./scripts/caifubao score score-one sz000977
 
-# Sync latest data from prod and score all stocks
+# Sync latest data from the legacy stable source and score all stocks
 ./scripts/caifubao data sync 2026-05-18
 ./scripts/caifubao score score-all 2026-05-18
 ./scripts/caifubao data refresh-status
@@ -38,7 +46,7 @@ The CLI connects to the **K3s development cluster** by default.
 |:---|:---|:---|
 | `KUBECONFIG` | `~/.kube/config` if present, else `/etc/rancher/k3s/k3s.yaml` | Path to k3s kubeconfig (the `/etc/rancher/k3s` path only exists on the K3s server host) |
 | `CFB_NAMESPACE` | `caifubao-dev` | K8s namespace |
-| `CFB_API_BASE` | *(unset)* | Base URL of the API used by the `curl` verification examples below. Real dev/prod hosts live in the private deployment repo or your local env — this repository only ships placeholders. |
+| `CFB_API_BASE` | *(unset)* | Base URL of the API used by the `curl` verification examples below. Real dev/stable hosts live in the private deployment repo or your local env — this repository only ships placeholders. |
 
 The CLI executes commands inside the `caifubao-datahub` pod via `kubectl exec`.
 No local Python dependencies are required.
@@ -52,9 +60,15 @@ export CFB_API_BASE="https://<your-api-host>"
 
 ### Data Pipeline
 
-#### `data sync [FROM_DATE] [COLLECTIONS]`
-Sync data from prod MongoDB to dev. This is the **first step** after any change
-that updates prod data (quote update, factor recompute, etc.).
+#### `data sync [FROM_DATE] [COLLECTIONS]` — migration-period legacy
+Sync data from the legacy stable MongoDB to dev. This is the **first step**
+after any change that updates the stable environment's data (quote update,
+factor recompute, etc.). The sync source is the retired legacy stable
+environment ("prod" in older text/CLI strings — a technical name, not live
+trading). This online direct connection is a **migration-period legacy**;
+the target flow is controlled snapshot/export followed by import/restore into
+dev (TASK-404). See
+[`docs/architecture/environment-model.md`](../architecture/environment-model.md).
 
 ```
 make data-sync
@@ -69,7 +83,7 @@ Collections: `quote` → `stock_daily_quote`, `factor` → `stock_factor_daily`,
 
 Without `FROM_DATE`, date-based collections use the latest date already in dev
 from `data_sync_state` as a completed watermark and replay the preceding three
-calendar days before catching up to prod. The overlap makes retries idempotent
+calendar days before catching up to the stable source. The overlap makes retries idempotent
 and includes late corrections. A collection only receives a completed
 bootstrap marker after its entire sync finishes; a killed partial bootstrap
 therefore cannot silently become an incremental watermark.
@@ -92,6 +106,21 @@ build with full-collection statistics on memory-constrained MongoDB nodes.
 
 **Important**: This syncs data but does NOT update `data_asset_status`.
 Run `data refresh-status` after syncing.
+
+#### `data snapshot-export [COLLECTIONS] [FROM_DATE] [TO_DATE] [OUT_DIR]`
+Export a checksummed dev-import snapshot (manifest v1 + sidecar sha256) from
+the local environment's data domain: per-collection JSONL.gz files with BSON
+-safe encoding, verified before the manifest is written. Optional
+`--upload-uri s3://<bucket>/<prefix>` pushes the snapshot under
+`<prefix>/<snapshot_id>/` using the parquet exporter's object-storage env.
+See [`openspec/changes/dev-snapshot-import`](../../openspec/changes/dev-snapshot-import/proposal.md).
+
+#### `data snapshot-import [SNAPSHOT_DIR] [SNAPSHOT_ID]`
+Verify and import a snapshot into dev (fail-closed, two-pass): the manifest,
+checksums, counts and allow-list are verified before any write; date-partitioned
+collections apply by business-key upsert, snapshot-class collections are
+staged and swapped atomically. `data refresh-status` afterwards recomputes the
+data-quality page freshness.
 
 Daily stock jobs that include factors use one full-market Tushare
 `adj_factor(trade_date)` snapshot per target trading day and join it locally to
@@ -131,6 +160,79 @@ Output example:
   }
 }
 ```
+
+#### `writer-switch-verify` (datahub verification job module)
+
+Read-only parity check between the research environment (default `MONGODB_*`)
+and the legacy stable environment (`MONGODB_SRC_*`, attached as a one-off
+read-only secret). It refuses to run when the legacy credentials are missing
+(never a vacuous self-comparison), writes only its own `datahub_job_runs`
+record plus the stale-RUNNING cleanup that run tracking performs through
+`job_run_helper`, and exits `0` on PASS / `1` on FAIL. Run it inside the
+datahub pod:
+
+```bash
+python -m app.jobs.writer_switch_verify \
+  --trade-date 2026-09-16 --collections quote,factor --samples 20
+```
+
+Field equality is governed by a declared per-collection field scope. Observed
+fields that the declaration does not classify fail the run by name — both in
+the sampled basket and via a full-day key discovery over every document on the
+reference date. FQ/HFQ fields and the MA factors computed from `close_hfq` are
+declared *derived* and are excluded from legacy parity because legacy stable is
+frozen pre-fq-adj-factor-fix; the report and job-run summary record the
+excluded class, that reason, and a stable `scope_version`. Research-populated
+fields (`isST`, `peTTM`, `psTTM`, `pbMRQ`, `pcfNcfTTM`) must be present and
+non-null on research; their absence on stable is informational, but a non-null
+value that differs on both sides FAILS.
+
+The tushare source verification is **ON by default** and is required for an R1
+acceptance: `--skip-source-tushare` exists only for offline debugging, and a
+PASS produced with it is explicitly not an R1 acceptance (`r1_acceptance:
+false` in the report). The source check always verifies the `quote`
+collection (`stock_daily_quote`) regardless of `--collections`; it samples
+supported individual stocks only, and fails when fewer codes are available
+than `--samples`.
+
+Count differences are reported per declared class, each with its own verdict
+and tolerance. `individual_stock` uses `--tolerance`; `stock_index` uses a
+strict coverage-superset rule (research must have at least as many rows as
+stable, must clear the declared `min_research_rows` floor — 562, the measured
+acceptance universe — and must contain every stable index code within the
+declared missing-code allowance); `unsupported_universe` is a declared class
+that is *enforcing* where the writer applies the supported-universe filter
+(`research_excludes`: research must not carry BSE/unsupported symbols) and
+*report-only* where it does not. The `daily_basic` writer maps every tushare
+`ts_code` through `from_tushare_ts_code` and bulk-upserts every row, so BSE
+rows are expected in `stock_daily_basic` once it is enabled; its
+`unsupported_universe` class is therefore `report_only` with a recorded
+`basis`/`reason`, and its count is reported for visibility only, never
+deciding the run. For the `relative` and `coverage_superset` classes a zero
+row count on either side FAILS (the superset class additionally fails when
+research drops below the legacy count or below the declared floor); the
+enforcing `research_excludes` class is the inverse — it fails when research
+keeps rows beyond the declared allowance. The reported total is never used as
+the verdict. A supported row the instrument source
+(`basic_stock.object_type`) cannot classify FAILS.
+
+The recompute-window discontinuity scan is a companion operator step, not a
+flag on this tool: run
+`check_fq_factor_integrity.py --jump-scan --from-date … --to-date …` over the
+recomputed window and record its output alongside the verifier's report. That
+companion run satisfies the spec's window clause; `writer-switch-verify` does
+not grow a window flag.
+
+| Flag | Default | Description |
+|:---|:---|:---|
+| `--collections` | all | Comma-separated aliases (`quote,daily_basic,factor,signal,scoring`); blank values are rejected |
+| `--trade-date` | expected latest completed session | Completed session under test. When omitted the reference is the expected latest session from `finance_market.trade_calendar` with a 15:00 Asia/Shanghai cutoff (falling back to the per-collection latest research date, recorded as `reference_source`), so two mutually stale environments cannot pass; an explicit date pins a historical acceptance. A raw latest date beyond the reference is reported as an in-progress session, not used as the reference |
+| `--samples` | `20` | Minimum sampled business keys per collection (and per source-check code set) |
+| `--tolerance` | `0.005` | Max relative count difference for `relative` count classes |
+| `--compare-derived` | off | Also compare FQ/HFQ-derived fields; any mismatch then FAILS |
+| `--verify-source-tushare` | on | Verify sampled codes' `fq_factor`/`close_hfq`/OHLC-hfq against tushare `pro.adj_factor` itself; a source error, empty response, or unusable series FAILS (never skipped, never legacy parity) |
+| `--skip-source-tushare` | — | Offline debugging only: skip the source check; the resulting PASS is NOT an R1 acceptance |
+| `--job-name` / `--job-family` / `--trigger` / `--source` | `datahub_writer_switch_verify` / `writer_switch_verify` / `manual` / `cli` | `datahub_job_runs` tracking fields |
 
 ### Scoring
 
@@ -191,7 +293,7 @@ that date):
 
 **`--apply` is required to run the comparison** and rewrites that date's
 predictions with `replace=True` twice: per-stock first, batched last — so the
-persisted state ends up as the batched (production) path produces it. The
+persisted state ends up as the batched (current default) path produces it. The
 command exits `1` when any field diverges, so wrap it in `set -e` / CI to fail
 closed; roll back the batch path with `DATAHUB_SCORING_BATCH=0` if it does.
 
@@ -203,8 +305,9 @@ closed; roll back the batch path with `DATAHUB_SCORING_BATCH=0` if it does.
 **Which environment.** Run the primary check in **dev** (the CLI's default
 namespace `caifubao-dev`):
 
-- dev is prod-synced at full-market scale, and its datahub pod (the one
-  `_pod_exec` targets) has the same spec as the production scoring pod
+- dev is synced from the legacy stable environment at full-market scale, and
+  its datahub pod (the one
+  `_pod_exec` targets) has the same spec as the stable scoring pod
   (`1Gi`/`500m`), so the before/after numbers are comparable and the 1 GiB
   window-frame bound is actually exercised;
 - `stock_signal_daily` can only be synced into dev-like environments
@@ -217,16 +320,17 @@ namespace `caifubao-dev`):
   want the "industry metrics present" branch exercised rather than the neutral
   one.
 
-Use **research** only as a supplement — it is production-shaped (full history,
+Use **research** only as a supplement — it is stable-shaped (full history,
 same schedules) and therefore good for larger/multi-day coverage, and it already
 has industry metrics for earlier dates. There, pass an isolated
 `--model-version` (e.g. `score_v2_202605b-c1check`) so the check cannot rewrite
 the version that research/autoresearch reads, and do not use research timings as
-the production before/after (different cluster, and the research scoring Job is
+the legacy-stable before/after (different cluster, and the research scoring Job is
 `2Gi`/`1000m`).
 
-Never pass `--apply` against **production**: it rewrites that day's predictions
-with `replace=True`. For prod, collect the after numbers from
+Never pass `--apply` against the **legacy stable environment**: it rewrites that
+day's predictions with `replace=True`. For the stable environment, collect the
+after numbers from
 `datahub_job_runs` (`completed_at - started_at`; the collection has no
 `elapsed_seconds` field) after deployment (perf task 5.3/5.4).
 
@@ -480,7 +584,7 @@ It exits non-zero when required collections are missing.
 ### Workflow 1: Score a stock after syncing latest data
 
 ```bash
-# 1. Sync latest data from prod
+# 1. Sync latest data from the legacy stable source
 ./scripts/caifubao data sync $(date +%Y-%m-%d)
 
 # 2. Check if the stock has data
@@ -496,7 +600,7 @@ It exits non-zero when required collections are missing.
 curl -s "$CFB_API_BASE/api/scores/sz000977/$(date +%Y-%m-%d)/explanation?horizon=5"
 ```
 
-### Workflow 2: Full market update after prod data refresh
+### Workflow 2: Full market update after stable-source data refresh
 
 ```bash
 # 1. Sync data
@@ -518,7 +622,7 @@ curl -s "$CFB_API_BASE/api/market/comprehensive?date=$(date +%Y-%m-%d)"
 # 1. Check everything is running
 ./scripts/caifubao system health
 
-# 2. Sync full data from prod
+# 2. Sync full data from the legacy stable source
 ./scripts/caifubao data sync 2026-01-01
 
 # 3. Refresh freshness
@@ -560,10 +664,12 @@ the entire logical run. Do not resume a Job created from an older image.
 - `backend/` — exposes Flask APIs, auth, light aggregation
 - `frontend/` — consumes backend APIs, renders UX
 - Dev quote/factor/signal/scoring CronJobs — suspended by default; dev gets its
-  market data from prod via the daily `data-sync` CronJob instead of pulling
-  sources itself. Use the CLI for manual operations.
-- Prod quote/signal/scoring CronJobs — enabled and run the daily routine (see
-  below).
+  market data from the legacy stable environment via the daily `data-sync`
+  CronJob instead of pulling sources itself (migration-period legacy pending
+  TASK-404). Use the CLI for manual operations.
+- Legacy stable ("prod" in job names — a technical name) quote/signal/scoring
+  CronJobs — still enabled on the retired stable environment and running the
+  daily routine (see below).
 - MongoDB backup CronJob — public template is suspended by default; private
   overlays must provide real object-storage config before enabling it
 
@@ -571,14 +677,15 @@ the entire logical run. Do not resume a Job created from an older image.
 
 | CronJob | Schedule | Purpose |
 |:---|:---|:---|
-| prod `caifubao-datahub-quote-stock` | `0 18 * * 1-5` | Pull latest quotes + factors only (`DATAHUB_STOCK_HISTORY_SOURCE=tushare`, `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare`); UPD path writes settlement snapshots. Signals/scoring are NOT produced here — they run as the standalone jobs below, gated on this job's persisted data |
-| prod `caifubao-datahub-signal` | `30 18 * * 1-5` | Compute MA-cross signals from fresh factors (incremental, stale-only by default) |
-| prod `caifubao-datahub-scoring` | `35 18 * * 1-5` | Score latest trading day for all horizons (skips already-complete cohorts) |
-| dev `caifubao-datahub-data-sync` | `15 19 * * 1-5` | Sync prod MongoDB → dev (quotes, factors, signals, market, industry; runs after prod signal/scoring so dev gets the same day's signals) |
+| stable `caifubao-datahub-quote-stock` | `0 18 * * 1-5` | Pull latest quotes + factors only (`DATAHUB_STOCK_HISTORY_SOURCE=tushare`, `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare`); UPD path writes settlement snapshots. Signals/scoring are NOT produced here — they run as the standalone jobs below, gated on this job's persisted data |
+| stable `caifubao-datahub-signal` | `30 18 * * 1-5` | Compute MA-cross signals from fresh factors (incremental, stale-only by default) |
+| stable `caifubao-datahub-scoring` | `35 18 * * 1-5` | Score latest trading day for all horizons (skips already-complete cohorts) |
+| dev `caifubao-datahub-data-sync` | `15 19 * * 1-5` | Sync legacy stable MongoDB → dev (quotes, factors, signals, market, industry; runs after stable signal/scoring so dev gets the same day's signals) |
 
 The quote, signal, and scoring jobs run in dependency order (quote → signal →
-scoring). Dev's data-sync runs **after prod's signal and scoring jobs** (19:15)
-so it picks up the same day's rows, including signals. Note prod→dev sync does
+scoring). Dev's data-sync runs **after the stable environment's signal and
+scoring jobs** (19:15)
+so it picks up the same day's rows, including signals. Note stable→dev sync does
 **not** copy `stock_score_predictions`; dev scoring must be produced by running
 `scoring_runner` manually.
 
@@ -634,9 +741,10 @@ and spot-sourced universes still replay history. A stock refresh that
 attempts updates but writes zero quote rows fails before factor and scoring
 phases.
 
-### Data sync (prod → dev)
+### Data sync (legacy stable → dev, migration-period)
 The `data sync` command uses the `MONGODB_SRC_*` environment variables
-configured in the datahub pod. It reads from prod MongoDB and upserts into
+configured in the datahub pod. It reads from the legacy stable environment's
+MongoDB and upserts into
 dev MongoDB. Syncable collections: `stock_daily_quote`, `stock_factor_daily`,
 `stock_signal_daily`, `finance_market`, `stock_industry`.
 The scheduled path is incremental by destination watermark with a three-day
@@ -651,13 +759,13 @@ database: first verify the restore baseline or complete a controlled full sync.
 ### Key collections in dev MongoDB
 | Collection | Records | Source |
 |:---|:---|:---|
-| `stock_daily_quote` | ~18.5M | prod sync |
-| `stock_factor_daily` | ~16.5M | prod sync |
-| `stock_signal_daily` | ~50K | prod sync |
+| `stock_daily_quote` | ~18.5M | stable sync |
+| `stock_factor_daily` | ~16.5M | stable sync |
+| `stock_signal_daily` | ~50K | stable sync |
 | `stock_score_predictions` | varies | local compute |
 | `data_asset_status` | ~38K | local compute |
 | `data_sync_state` | one row per dated sync collection | local sync control |
-| `basic_stock` | ~6.4K | prod sync |
+| `basic_stock` | ~6.4K | stable sync |
 
 ### Secrets lifecycle
 The `MONGODB_SRC_PASSWORD` follows this path from source to container:

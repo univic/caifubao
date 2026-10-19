@@ -349,6 +349,16 @@ def run_grid_search(args):
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
+def _bypassed_dependency_run(record) -> bool:
+    """True when the signal run bypassed the daily dependency check.
+
+    Such a run may have written historical rows, but it never established the
+    current day's signal freshness, so it must not satisfy the scoring gate.
+    """
+    extra = getattr(record, "extra", None) or {}
+    return bool(extra.get("dependency_check_bypassed"))
+
+
 def _dependency_state() -> str:
     """Return whether the upstream signal job is ready, running, or failed.
 
@@ -362,6 +372,10 @@ def _dependency_state() -> str:
     2. A record with written_total > 0 (preserved on partial failures — the
        signal run finishes FAILED but keeps the signals it persisted). This
        keeps scoring from stalling when the signal job failed part-way.
+
+    A signal run that bypassed the daily dependency check (an operator
+    historical rebuild) never establishes the current day's signal freshness,
+    so it satisfies neither path — see the datahub-runners delta.
        A RUNNING record only passes when progress persistence has already
        recorded real writes; the signal runner does not yet persist per-phase
        progress, so in practice this branch is reserved for future parity with
@@ -377,7 +391,7 @@ def _dependency_state() -> str:
         scheduled_at=upstream_scheduled_at,
         statuses=[job_run_helper.STATUS_SUCCESS],
     )
-    if latest is not None:
+    if latest is not None and not _bypassed_dependency_run(latest):
         return _DEPENDENCY_READY
 
     record = job_run_helper.latest_job_run(
@@ -386,6 +400,10 @@ def _dependency_state() -> str:
         scheduled_at=upstream_scheduled_at,
         statuses=[job_run_helper.STATUS_RUNNING, job_run_helper.STATUS_FAILED],
     )
+    if record is not None and _bypassed_dependency_run(record):
+        # An operator bypass run proves nothing about today's signals, even
+        # when it persisted historical rows.
+        record = None
     if record is None:
         # Close the transition race where the upstream record changes from
         # RUNNING to SUCCESS between the two queries above.
@@ -395,7 +413,9 @@ def _dependency_state() -> str:
             scheduled_at=upstream_scheduled_at,
             statuses=[job_run_helper.STATUS_SUCCESS],
         )
-        return _DEPENDENCY_READY if latest is not None else _DEPENDENCY_FAILED
+        if latest is not None and not _bypassed_dependency_run(latest):
+            return _DEPENDENCY_READY
+        return _DEPENDENCY_FAILED
     if int(record.written_total or 0) > 0:
         return _DEPENDENCY_READY
     if record.status == job_run_helper.STATUS_RUNNING:

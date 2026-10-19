@@ -25,6 +25,7 @@ backend/app/tmp/
 backend/app/log/
 backend/venv
 backend/venv312
+backend/.deps/
 # No trailing slash: also ignore a worktree's `datahub/.venv` symlink, which
 # Git does not treat as a directory.
 **/.venv
@@ -47,3 +48,5 @@ migration/
 /tmp/
 datahub/research/autoresearch/h20_excess_alpha/snapshot.parquet
 docs/autoresearch/runs/h20-excess-alpha/latest-report.json
+.venv-build/
+tmp-timing-test/

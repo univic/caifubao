@@ -42,3 +42,14 @@
 - [ ] 5.1 发布新镜像；部署 dev → 验证 → 部署 prod
 - [ ] 5.2 重算全市场 FQ 因子（真实复权）
 - [ ] 5.3 重跑 50 只股票评分+验证实验
+
+## 6. Acceptance instrument (R1/R2, writer_switch_verify)
+
+- [x] 6.1 R2：按集合/行类声明 required/derived/research-populated/stable-only/excluded 字段作用域，未声明字段名点失败（抽样 + 全量当日键发现）
+- [x] 6.2 R2：derived 默认排除并记录 excluded class、原因（legacy stable frozen pre-fq-adj-factor-fix）与稳定 `scope_version`；`--compare-derived` 打开后不一致即 FAIL
+- [x] 6.3 R2：research-populated 字段必须在 research 非空可访问，记录 writer/source/code revision 及 revision 来源；stable 缺省为信息性，但两侧非空不一致 FAIL
+- [x] 6.4 R2：计数按已声明类分别判定（individual_stock/stock_index/unsupported_universe），零行一侧 FAIL；index 用严格 superset + `min_research_rows` 562 + code 级 superset；总数不作为判据
+- [x] 6.5 R1：tushare `adj_factor` 源校验默认开启（`--skip-source-tushare` 仅离线调试，PASS 不算 R1 验收）；错误/空/无可用因子 FAIL，无效行按 writer 语义跳过；5e-4 舍入容差入报告
+- [x] 6.6 时效语义：`--trade-date` 显式钉住；省略时以 `finance_market.trade_calendar` + 15:00 Asia/Shanghai 推导应完成会话，避免双方共同陈旧通过
+- [x] 6.7 抽样池不再 1000 上限截断；池完整性（pool_size vs 当日行数）入报告并 FAIL 校验
+- [x] 6.8 修复合同/QA 复核发现：默认开启源校验、index 塌缩、抽样偏置、声明作用域断言、unsupported 类、数值类型严格、CLI/job-run 与评分抽样测试

@@ -86,3 +86,11 @@
   向量化、线程池为主）
 - 不改变 API 契约与鉴权；`stock_signal_daily` 的 dev_only 同步规则保持不变
 - 阶段 3 的 C3/W1/W2 不阻塞阶段 1/2 的独立合并
+
+G1 的一处显式语义变化（已写入 specs delta）：对「因子历史不足以计算某
+signal」的 `(code, signal_name)`，由当前的抛错/整批 FAILED 改为记入
+`skipped_codes`（该 signal 名不写行、不推进 freshness，run 在无真实失败时
+成功）；真实的计算/持久化/状态写入失败仍记 `failed_codes` 并使 run 失败。
+同一处还有两项配套行为变化：force 的 prune 范围由「全部配置 signal 名」收窄
+为「本次实际重建的 signal 名」（避免误删 skip 名的历史行），且 force 遇到
+完全无 factor 行时由 `RuntimeError` 改为 skip。信号命中集的最终收敛态不变。

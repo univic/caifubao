@@ -25,6 +25,10 @@
       流程（本 change 不授权 promote）
 - [ ] 0.4 生产环境部署验证：datahub prod 配额（2 核/2Gi，私有 #60）dispatch 部署并跑一次
       单日 ranked 计时回填对比
+      （注：本项的「生产环境」指 `trading/production` 目标态运行目标 `prod`——该目标
+      **尚未启用**，当前不存在任何实盘运行时；本项保持 open 直至 `prod` 启用，在此
+      之前无可执行主体。本文其他处出现的旧 stable / research 部署验证不属于本项。
+      环境模型见 `docs/architecture/environment-model.md`）
 - [ ] 0.5 MVP 收尾：capability-inventory.md 刷新到当前（H20/flip/strategy/perf 均已合入）；
       openspec 已完成 change 逐个 close/archive
 
@@ -42,7 +46,11 @@
 - [ ] 2.2 券商 API 适配器以 default-off 标志接入（QMT/Ptrade 或等价通道）；执行路径
       paper/audit-first + 显式环境授权
 - [ ] 2.3 对账：成交回报 vs 目标、资金/持仓对账、下单幂等去重
+      （最小切片已落地 `strategy-live-loop-minimal`：只读 planned-vs-account 对账 +
+      容差越界 fail-loud；**未做**成交回报摄入与下单幂等去重，故本条仍未完成）
 - [ ] 2.4 kill-switch：一键停止订单生成/清仓（默认关闭的应急路径）
+      （最小切片已落地 `strategy-live-loop-minimal`：默认 OFF、文件持久化、记录
+      who/when/why 的**订单生成熔断**；**未做**清仓与自动触发，故本条仍未完成）
 - [ ] 2.5 告警体系：数据缺口、评分/分数分布漂移、回撤阈值、流水线失败、执行异常
 
 ## 3. 工程加固

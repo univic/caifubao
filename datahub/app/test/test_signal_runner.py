@@ -24,6 +24,7 @@ class FakeSignalService:
         return {
             "written_count": len(selected_codes or []),
             "skipped_count": 0,
+            "skipped_codes": [],
             "failed_count": 0,
             "failed_codes": [],
         }
@@ -60,6 +61,101 @@ def test_force_signal_run_requests_authoritative_rebuild():
 
     assert service.calls == [("sh600000", True)]
     assert result["written_count"] == 1
+
+
+def test_force_signal_run_reports_unevaluable_codes_as_skipped():
+    class ShortHistorySignalService(FakeSignalService):
+        def update_code(self, code, *, force=False):
+            self.calls.append((code, force))
+            if code == "sz301583":
+                return {
+                    "code": "SKIP",
+                    "written_count": 0,
+                    "message": "insufficient factor history",
+                    "skipped_signals": ["MA10_CROSS_MA20", "PRICE_ABOVE_MA60"],
+                }
+            return {"code": "GOOD", "written_count": 1, "message": None}
+
+    service = ShortHistorySignalService()
+
+    result = run_signal(
+        SIGNAL_MA_CROSS,
+        mode=MODE_FORCE,
+        codes=["sh600000", "sz301583"],
+        configs=_configs(service),
+        market_loader=lambda name: object(),
+    )
+
+    assert result["written_count"] == 1
+    assert result["skipped_count"] == 1
+    assert result["skipped_codes"] == ["sz301583"]
+    assert result["skipped_signal_count"] == 2
+    assert result["failed_count"] == 0
+    assert result["failed_codes"] == []
+
+
+def test_stale_signal_run_propagates_skipped_codes():
+    class SkippingMarketService(FakeSignalService):
+        def update_market(self, market=None, selected_codes=None):
+            return {
+                "written_count": 0,
+                "skipped_count": 1,
+                "skipped_codes": ["sz301583"],
+                "skipped_signal_count": 3,
+                "failed_count": 0,
+                "failed_codes": [],
+            }
+
+    service = SkippingMarketService()
+
+    result = run_signal(
+        SIGNAL_MA_CROSS,
+        mode=MODE_STALE,
+        configs=_configs(service),
+        market_loader=lambda name: object(),
+    )
+
+    assert result["skipped_codes"] == ["sz301583"]
+    assert result["skipped_signal_count"] == 3
+    assert result["failed_count"] == 0
+
+
+def test_signal_run_marks_a_fully_skipped_batch():
+    class AllSkippedService(FakeSignalService):
+        def update_code(self, code, *, force=False):
+            self.calls.append((code, force))
+            return {
+                "code": "SKIP",
+                "written_count": 0,
+                "message": "no factor data",
+                "skipped_signals": ["MA10_CROSS_MA20"],
+            }
+
+    result = run_signal(
+        SIGNAL_MA_CROSS,
+        mode=MODE_FORCE,
+        codes=["sz301583", "sh603448"],
+        configs=_configs(AllSkippedService()),
+        market_loader=lambda name: object(),
+    )
+
+    assert result["written_count"] == 0
+    assert result["skipped_count"] == 2
+    assert result["failed_count"] == 0
+    assert result["all_skipped"] is True
+
+
+def test_signal_run_is_not_marked_all_skipped_when_something_was_written():
+    result = run_signal(
+        SIGNAL_MA_CROSS,
+        mode=MODE_FORCE,
+        codes=["sh600000"],
+        configs=_configs(FakeSignalService()),
+        market_loader=lambda name: object(),
+    )
+
+    assert result["written_count"] == 1
+    assert result["all_skipped"] is False
 
 
 def test_force_signal_run_raises_when_service_returns_fail():
@@ -114,10 +210,49 @@ def test_force_signal_run_preserves_partial_written_count_on_failure():
 class _FakeRunRecord:
     """Minimal stand-in for a DatahubJobRun used by _check_dependency."""
 
-    def __init__(self, status="SUCCESS", phase_stats=None, written_total=0):
+    def __init__(
+        self, status="SUCCESS", phase_stats=None, written_total=0, summary=None
+    ):
         self.status = status
         self.phase_stats = phase_stats or {}
         self.written_total = written_total
+        self.summary = summary or {}
+
+
+def _degraded_phase_stats(*, ma_factor_written=9836, coverage=0.999617):
+    phase_stats = {
+        "check_stock_data_integrity": {
+            "written_count": 5221,
+            "validated_count": 5221,
+            "quote_validation": {
+                "attempted_symbols": 5223,
+                "validated_symbols": 5221,
+                "failed_count": 2,
+                "failed_codes": ["sh600001", "sz000002"],
+                "coverage_rate": coverage,
+                "degraded": True,
+            },
+        }
+    }
+    if ma_factor_written:
+        phase_stats["update_ma_factor"] = {"written_count": ma_factor_written}
+    return phase_stats
+
+
+def _fake_dependency_queries(monkeypatch, latest=None, legacy=None):
+    import app.jobs.signal_runner as signal_runner
+
+    def fake_latest_job_run(**kwargs):
+        if "SUCCESS" in kwargs.get("statuses", []):
+            return latest
+        if kwargs.get("statuses") == ["RUNNING", "FAILED"]:
+            return legacy
+        raise AssertionError("unexpected query")
+
+    monkeypatch.setattr(
+        "app.jobs.signal_runner.job_run_helper.latest_job_run", fake_latest_job_run
+    )
+    return signal_runner
 
 
 def test_signal_dependency_accepts_success_record(monkeypatch):
@@ -126,7 +261,7 @@ def test_signal_dependency_accepts_success_record(monkeypatch):
     records = [_FakeRunRecord(status="SUCCESS")]
 
     def fake_latest_job_run(**kwargs):
-        if kwargs.get("statuses") == ["SUCCESS"]:
+        if "SUCCESS" in kwargs.get("statuses", []):
             return records[0]
         raise AssertionError("success path must not fall through to the record query")
 
@@ -155,7 +290,7 @@ def test_signal_dependency_accepts_persisted_data_despite_failed_run(monkeypatch
     ]
 
     def fake_latest_job_run(**kwargs):
-        if kwargs.get("statuses") == ["SUCCESS"]:
+        if "SUCCESS" in kwargs.get("statuses", []):
             return records[0]
         if kwargs.get("statuses") == ["RUNNING", "FAILED"]:
             return records[1]
@@ -191,7 +326,7 @@ def test_signal_dependency_accepts_running_upstream_with_full_evidence(monkeypat
     ]
 
     def fake_latest_job_run(**kwargs):
-        if kwargs.get("statuses") == ["SUCCESS"]:
+        if "SUCCESS" in kwargs.get("statuses", []):
             return records[0]
         if kwargs.get("statuses") == ["RUNNING", "FAILED"]:
             return records[1]
@@ -218,7 +353,7 @@ def test_signal_dependency_rejects_running_upstream_without_evidence(monkeypatch
     ]
 
     def fake_latest_job_run(**kwargs):
-        if kwargs.get("statuses") == ["SUCCESS"]:
+        if "SUCCESS" in kwargs.get("statuses", []):
             return records[0]
         if kwargs.get("statuses") == ["RUNNING", "FAILED"]:
             return records[1]
@@ -250,7 +385,7 @@ def test_signal_dependency_rejects_missing_ma_factor_phase(monkeypatch):
     ]
 
     def fake_latest_job_run(**kwargs):
-        if kwargs.get("statuses") == ["SUCCESS"]:
+        if "SUCCESS" in kwargs.get("statuses", []):
             return records[0]
         if kwargs.get("statuses") == ["RUNNING", "FAILED"]:
             return records[1]
@@ -272,7 +407,7 @@ def test_signal_dependency_rejects_run_without_written_quotes(monkeypatch):
     ]
 
     def fake_latest_job_run(**kwargs):
-        if kwargs.get("statuses") == ["SUCCESS"]:
+        if "SUCCESS" in kwargs.get("statuses", []):
             return records[0]
         if kwargs.get("statuses") == ["RUNNING", "FAILED"]:
             return records[1]
@@ -293,3 +428,321 @@ def test_signal_dependency_rejects_missing_record(monkeypatch):
     )
 
     assert signal_runner._check_dependency() is False
+
+
+def test_signal_dependency_accepts_degraded_run_with_coverage_and_factor_evidence(
+    monkeypatch,
+):
+    signal_runner = _fake_dependency_queries(
+        monkeypatch,
+        latest=_FakeRunRecord(
+            status="DEGRADED",
+            phase_stats=_degraded_phase_stats(),
+        ),
+    )
+
+    decision = signal_runner.dependency_decision()
+
+    assert decision["accepted"] is True
+    assert decision["path"] == "degraded"
+    assert decision["coverage_rate"] == 0.999617
+    assert decision["attempted_symbols"] == 5223
+    assert decision["validated_symbols"] == 5221
+    assert decision["failed_codes"] == ["sh600001", "sz000002"]
+    assert decision["ma_factor_written_count"] == 9836
+    assert signal_runner._check_dependency() is True
+    assert signal_runner.dependency_ready() is True
+
+
+def test_signal_dependency_rejects_degraded_run_without_factor_evidence(monkeypatch):
+    signal_runner = _fake_dependency_queries(
+        monkeypatch,
+        latest=_FakeRunRecord(
+            status="DEGRADED",
+            phase_stats=_degraded_phase_stats(ma_factor_written=0),
+        ),
+    )
+
+    decision = signal_runner.dependency_decision()
+
+    assert decision["accepted"] is False
+    assert decision["path"] == "rejected"
+    assert decision["ma_factor_written_count"] == 0
+    assert signal_runner._check_dependency() is False
+
+
+def test_signal_dependency_rejects_degraded_run_below_coverage_floor(monkeypatch):
+    signal_runner = _fake_dependency_queries(
+        monkeypatch,
+        latest=_FakeRunRecord(
+            status="DEGRADED",
+            phase_stats=_degraded_phase_stats(coverage=0.5),
+        ),
+    )
+
+    assert signal_runner._check_dependency() is False
+
+
+def test_signal_dependency_accepts_degraded_run_from_summary_fallback(monkeypatch):
+    """A DEGRADED record whose evidence only lives in the run summary works."""
+    phase_stats = {
+        "check_stock_data_integrity": {"written_count": 5221, "validated_count": 5221},
+        "update_ma_factor": {"written_count": 9836},
+    }
+    signal_runner = _fake_dependency_queries(
+        monkeypatch,
+        latest=_FakeRunRecord(
+            status="DEGRADED",
+            phase_stats=phase_stats,
+            summary={
+                "quote_validation": {
+                    "coverage_rate": 0.999617,
+                    "failed_count": 2,
+                }
+            },
+        ),
+    )
+
+    assert signal_runner._check_dependency() is True
+
+
+def test_signal_dependency_crash_recovery_path_is_unchanged(monkeypatch):
+    signal_runner = _fake_dependency_queries(
+        monkeypatch,
+        latest=None,
+        legacy=_FakeRunRecord(
+            status="FAILED",
+            phase_stats={
+                "check_stock_data_integrity": {
+                    "written_count": 5209,
+                    "validated_count": 5209,
+                },
+                "update_ma_factor": {"written_count": 9836},
+            },
+        ),
+    )
+
+    decision = signal_runner.dependency_decision()
+
+    assert decision["accepted"] is True
+    assert decision["path"] == "crash_recovery"
+    assert signal_runner._check_dependency() is True
+
+
+def test_main_records_degraded_dependency_evidence(monkeypatch):
+    import app.jobs.signal_runner as signal_runner
+
+    captured = _stub_main_dependencies(monkeypatch, ready=True)
+    monkeypatch.setattr(
+        signal_runner,
+        "dependency_decision",
+        lambda skip=False: {
+            "accepted": True,
+            "path": "degraded",
+            "coverage_rate": 0.999617,
+            "failed_count": 2,
+            "ma_factor_written_count": 9836,
+        },
+    )
+
+    signal_runner.main(["--mode", "force", "--trigger", "manual", "--source", "test"])
+
+    assert captured["summary"]["dependency"]["path"] == "degraded"
+    assert captured["summary"]["dependency"]["coverage_rate"] == 0.999617
+
+
+def test_dependency_ready_bypasses_the_check_without_querying_records(monkeypatch):
+    import app.jobs.signal_runner as signal_runner
+
+    def fail_latest_job_run(**kwargs):
+        raise AssertionError("a bypass must not query upstream job runs")
+
+    monkeypatch.setattr(
+        "app.jobs.signal_runner.job_run_helper.latest_job_run", fail_latest_job_run
+    )
+
+    assert signal_runner.dependency_ready(skip=True) is True
+
+
+def test_dependency_ready_without_bypass_uses_the_daily_gate(monkeypatch):
+    import app.jobs.signal_runner as signal_runner
+
+    calls = {"n": 0}
+
+    def fail_latest_job_run(**kwargs):
+        calls["n"] += 1
+        return None
+
+    monkeypatch.setattr(
+        "app.jobs.signal_runner.job_run_helper.latest_job_run", fail_latest_job_run
+    )
+
+    assert signal_runner.dependency_ready() is False
+    assert calls["n"] == 2  # SUCCESS query, then RUNNING/FAILED query
+
+
+def test_parse_args_exposes_the_operator_bypass_flag():
+    import app.jobs.signal_runner as signal_runner
+
+    default_args = signal_runner.parse_args([])
+    assert default_args.skip_dependency_check is False
+
+    bypass_args = signal_runner.parse_args(["--skip-dependency-check"])
+    assert bypass_args.skip_dependency_check is True
+
+
+def test_parse_args_help_documents_the_bypass(capsys):
+    import app.jobs.signal_runner as signal_runner
+
+    with pytest.raises(SystemExit):
+        signal_runner.parse_args(["--help"])
+
+    assert "--skip-dependency-check" in capsys.readouterr().out
+
+
+def test_validate_bypass_rejects_scheduled_triggers():
+    import app.jobs.signal_runner as signal_runner
+
+    args = signal_runner.parse_args(
+        ["--mode", "force", "--skip-dependency-check", "--trigger", "cron"]
+    )
+
+    with pytest.raises(ValueError, match="scheduled triggers"):
+        signal_runner.validate_bypass(args)
+
+
+def test_validate_bypass_requires_force_mode():
+    import app.jobs.signal_runner as signal_runner
+
+    args = signal_runner.parse_args(
+        ["--mode", "stale", "--skip-dependency-check", "--trigger", "manual"]
+    )
+
+    with pytest.raises(ValueError, match="requires --mode force"):
+        signal_runner.validate_bypass(args)
+
+
+def test_validate_bypass_accepts_an_operator_force_run():
+    import app.jobs.signal_runner as signal_runner
+
+    args = signal_runner.parse_args(
+        ["--mode", "force", "--skip-dependency-check", "--trigger", "manual"]
+    )
+
+    signal_runner.validate_bypass(args)  # does not raise
+
+
+def test_dependency_ready_warns_exactly_once(caplog):
+    import app.jobs.signal_runner as signal_runner
+
+    with caplog.at_level("WARNING"):
+        assert signal_runner.dependency_ready(skip=True) is True
+
+    bypass_warnings = [
+        record for record in caplog.records if "bypassed" in record.getMessage()
+    ]
+    assert len(bypass_warnings) == 1
+
+
+def _stub_main_dependencies(monkeypatch, ready=True):
+    import app.jobs.signal_runner as signal_runner
+
+    captured = {}
+
+    def fake_create(context):
+        captured["extra"] = dict(context.extra)
+        captured["trigger"] = context.trigger
+        return "job-run"
+
+    def fake_finish(job_run, status=None, summary=None, error_message=None):
+        captured["status"] = status
+        captured["summary"] = dict(summary or {})
+        return job_run
+
+    def fake_skipped(context, *, summary=None):
+        captured["extra"] = dict(context.extra)
+        captured["status"] = "SKIPPED"
+        captured["summary"] = dict(summary or {})
+
+    monkeypatch.setattr(signal_runner, "_init_db_connection", lambda: None)
+    monkeypatch.setattr(
+        signal_runner,
+        "dependency_decision",
+        lambda skip=False: {
+            "accepted": ready,
+            "path": "success" if ready else "missing",
+        },
+    )
+    monkeypatch.setattr(
+        signal_runner,
+        "run_signal",
+        lambda *args, **kwargs: {
+            "pulled_count": 0,
+            "written_count": 0,
+            "skipped_count": 0,
+            "skipped_codes": [],
+            "skipped_signal_count": 0,
+            "all_skipped": False,
+            "failed_count": 0,
+            "failed_codes": [],
+        },
+    )
+    monkeypatch.setattr(signal_runner.job_run_helper, "create_job_run", fake_create)
+    monkeypatch.setattr(signal_runner.job_run_helper, "finish_job_run", fake_finish)
+    monkeypatch.setattr(
+        signal_runner.job_run_helper, "mark_job_run_skipped", fake_skipped
+    )
+    return captured
+
+
+def test_main_records_the_bypass_marker_in_extra_and_summary(monkeypatch):
+    import app.jobs.signal_runner as signal_runner
+
+    captured = _stub_main_dependencies(monkeypatch, ready=True)
+
+    signal_runner.main(
+        [
+            "--signal",
+            "ma-cross",
+            "--mode",
+            "force",
+            "--skip-dependency-check",
+            "--trigger",
+            "manual",
+            "--source",
+            "operator",
+        ]
+    )
+
+    assert captured["extra"]["dependency_check_bypassed"] is True
+    assert captured["summary"]["dependency_check_bypassed"] is True
+    assert captured["status"] == "SUCCESS"
+
+
+def test_main_records_false_marker_when_the_gate_skips(monkeypatch):
+    import app.jobs.signal_runner as signal_runner
+
+    captured = _stub_main_dependencies(monkeypatch, ready=False)
+
+    signal_runner.main(["--signal", "ma-cross", "--mode", "stale", "--trigger", "cron"])
+
+    assert captured["extra"]["dependency_check_bypassed"] is False
+    assert captured["summary"]["dependency_check_bypassed"] is False
+    assert captured["summary"]["reason"] == "dependency_failed"
+
+
+def test_main_rejects_the_bypass_for_a_scheduled_trigger(monkeypatch):
+    import app.jobs.signal_runner as signal_runner
+
+    _stub_main_dependencies(monkeypatch, ready=True)
+
+    with pytest.raises(ValueError, match="scheduled triggers"):
+        signal_runner.main(
+            [
+                "--mode",
+                "force",
+                "--skip-dependency-check",
+                "--trigger",
+                "cron",
+            ]
+        )

@@ -88,6 +88,78 @@ kubectl -n caifubao-research cp \
 #   -l job.caifubao.io/type=lab-runner
 ```
 
+## Composite research backtest (`datahub/scripts/`)
+
+`datahub/scripts/factor_lab_composite_backtest.py` is the read-only research
+backtest behind the 2026-09 results recorded in
+[`strategy-experiments-2026-08.md`](./strategy-experiments-2026-08.md). Like the
+rest of the lab it never writes to MongoDB and is never imported by scoring,
+signal, strategy or API code; it consumes the panel through the schema and label
+semantics described above.
+
+```bash
+# research backtest over the panel (read-only; prints one JSON report).
+# The launcher's --type lab-backtest mounts the panel claim and runs
+# `python scripts/factor_lab_composite_backtest.py` from the image.
+k8s/jobs-internal/run-datahub-job.sh --namespace caifubao-research \
+  --type lab-backtest --node-name ubuntu-5700x -- \
+  --panel /data/lab_2026q3.parquet --label fwd_h60 --step 60 \
+  --sizes 30,50,100 --mode composite --output /data/composite_report.json
+```
+
+Anywhere with the datahub dependencies the script also runs directly:
+
+```bash
+python datahub/scripts/factor_lab_composite_backtest.py --help
+```
+
+Modes (`--mode`, repeatable): `composite` (equal-weight-with-causal-sign and
+walk-forward ICIR books across sizes, with per-year/period metrics),
+`liquidity` (threshold sweep by trailing 20-session mean trade amount),
+`capacity` (square-root impact grid; `k` is a parameter, not a measured
+constant), `overlay` (market-breadth filter computed at the rebalance close),
+`accounts` (100-share lots sized from the raw T+1 open, CNY 5 minimum commission,
+cash drag), `sprint` (extreme small-account sweep over holding steps that have a
+matching `fwd_h{step}` label, with and without friction) and `oos` (one stitched
+rolling out-of-sample curve; see below). Defaults run every mode except `oos` and
+`sprint`, which must be named.
+
+### Rolling out-of-sample (`--mode oos`)
+
+`--mode oos` splits the panel into consecutive folds of `--train-sessions`
+(default 500) training sessions followed by `--test-sessions` (default 250) test
+sessions, rolling forward by `test_sessions`. For each fold the composite ICIR
+weights are frozen using only IC dates `d <= test_start_index - label_horizon - 1
+- embargo`, so no training label overlaps the test window (purge = horizon + 1;
+`--embargo` defaults to 0 and adds extra spacing; it must be >= 0). The frozen
+book is replayed on the test window only, quarterly (`--step` defaults to 60 for
+this mode), equal weight, top `--names` (default 10) with the 2N hold-while-in-band
+buffer, and the daily fold returns are stitched into one out-of-sample curve. The
+report carries the `config` block, a per-fold table and the stitched metrics; a
+panel shorter than one full fold is refused. A mixed run such as `--mode oos
+--mode composite` needs an explicit `--step` because the two families default to
+different steps.
+
+```bash
+python datahub/scripts/factor_lab_composite_backtest.py \
+  --panel /data/lab.parquet --mode oos --label fwd_h20 \
+  --train-sessions 500 --test-sessions 250 --embargo 0 \
+  --names 10 --step 60 --output /data/oos_report.json
+```
+
+The in-sample arm for the same window is the account replay restricted to those
+sessions (`factor_lab_account_replay.py --start-date ... --end-date ...`), which
+reports the requested window back in its top-level `start_date`/`end_date`.
+
+Honesty notes baked into the output: `equal_weight_raw` applies no direction and
+is reported only to show that naive equal weighting is not a strategy; the
+IC-sign and ICIR weights use ICs realised strictly before each rebalance; blocked
+labels are never rolled forward (limit-up entries, limit-down exits,
+suspensions); capacity numbers are model-based and this is research, not
+investment advice. The `oos` report is a replay on a survival-biased panel, not
+forward evidence. Output note: the script's stdout is the JSON document only (the
+app log handler is bound to stderr).
+
 ## Holding-period x buffer scan
 
 `evaluate` answers "does this factor sort returns?". `holding-scan` answers the
@@ -122,9 +194,9 @@ stdout). Semantics:
   basket and the benchmark, exactly as in `evaluate`.
 
 Caveat: the registered lab factors are simple price/volume expressions, not the
-production scoring engine's eight-component `flip_wide` construction. Use this
+current scoring engine's eight-component `flip_wide` construction. Use this
 command to find the holding-period/turnover trade-off of a *factor family*, then
-re-run the chosen cell against the production signal before quoting a number as
+re-run the chosen cell against the current scoring signal before quoting a number as
 the strategy's.
 
 ## ETF and small-book replay boundary

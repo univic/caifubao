@@ -474,3 +474,69 @@ def test_equivalence_runner_pins_requested_scoring_mode(monkeypatch):
 
     assert scoring_runner.run_equivalence_check_cmd(args) == 0
     assert [item["scoring_mode"] for item in constructed] == ["raw", "raw"]
+
+
+def test_scoring_dependency_rejects_a_bypassed_signal_run(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+
+    class _BypassedRecord:
+        def __init__(self):
+            self.status = "SUCCESS"
+            self.written_total = 3
+            self.extra = {"dependency_check_bypassed": True}
+
+    def fake_latest_job_run(**kwargs):
+        if kwargs.get("statuses") == ["SUCCESS"]:
+            return _BypassedRecord()
+        if kwargs.get("statuses") == ["RUNNING", "FAILED"]:
+            return None
+        raise AssertionError("unexpected query")
+
+    monkeypatch.setattr(
+        "app.jobs.scoring_runner.job_run_helper.latest_job_run", fake_latest_job_run
+    )
+
+    # A historical operator rebuild is not evidence that today's signals exist.
+    assert scoring_runner._check_dependency() is False
+
+
+def test_scoring_dependency_rejects_a_bypassed_failed_run_with_writes(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+
+    class _BypassedFailedRecord:
+        status = "FAILED"
+        written_total = 500
+        extra = {"dependency_check_bypassed": True}
+
+    def fake_latest_job_run(**kwargs):
+        if kwargs.get("statuses") == ["SUCCESS"]:
+            return None
+        if kwargs.get("statuses") == ["RUNNING", "FAILED"]:
+            return _BypassedFailedRecord()
+        raise AssertionError("unexpected query")
+
+    monkeypatch.setattr(
+        "app.jobs.scoring_runner.job_run_helper.latest_job_run", fake_latest_job_run
+    )
+
+    assert scoring_runner._check_dependency() is False
+
+
+def test_scoring_dependency_still_accepts_a_normal_success_run(monkeypatch):
+    import app.jobs.scoring_runner as scoring_runner
+
+    class _NormalRecord:
+        status = "SUCCESS"
+        written_total = 0
+        extra = {"dependency_check_bypassed": False}
+
+    def fake_latest_job_run(**kwargs):
+        if kwargs.get("statuses") == ["SUCCESS"]:
+            return _NormalRecord()
+        raise AssertionError("success path must not fall through")
+
+    monkeypatch.setattr(
+        "app.jobs.scoring_runner.job_run_helper.latest_job_run", fake_latest_job_run
+    )
+
+    assert scoring_runner._check_dependency() is True

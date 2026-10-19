@@ -10,6 +10,11 @@
 - 写清相关公共 PR、提交或文件；避免重复完整交接文档。
 - 不记录凭据、内部地址、真实域名、私有 overlay 或其他敏感部署信息。
 - 接手任务前先读最新几条；完成阶段性工作后及时更新。
+- 词汇注记（2026-09-16 起）：历史条目中的「prod」指当时的稳定运行环境（现称
+  **旧 stable / retired production**），不代表实盘——`prod`（trading/production）
+  目标态尚未启用；现行口径见
+  [`architecture/environment-model.md`](./architecture/environment-model.md)。
+  新条目请使用两轴词汇（domain × stage）。
 
 ## 条目模板
 
@@ -24,6 +29,705 @@
 ```
 
 ## 进度记录
+### 2026-10-19 22:30 CST — 平衡 50k 核心-卫星（C1–C5）+ 策略重放前端
+
+- 状态：进行中（代码/测试/评审/首个 replay 种子完成；待部署镜像与 120 日前向证据）
+- 已完成：
+  - **C1 数据降级语义**：新增 `DEGRADED` 状态与 `pipeline_degradation` 策略
+    （失败上限 `max(5, ceil(0.002*attempted))`、覆盖率 0.99、严格开关
+    `DATAHUB_QUOTE_STRICT_VALIDATION`）；非核心指数结构性缺失走
+    `index_validation.skipped_indices`，核心指数失败仍 FAILED；signal
+    依赖门接受满足覆盖率+MA 因子证据的 DEGRADED（scoring 保持原语义）；health watcher 与
+    `/api/datahub/status` 不再把 DEGRADED 当干净。
+  - **C2 回放产物**：新增 `StrategyReplay`（`strategy_replays`）、纯 builder
+    （REPLAY-only、0/120、不可变 input/content hash）、运营 runner；后端只读
+    list/detail API（JWT + service token 阻断，20/200 分页）。
+  - **C3 50k 执行计划**：`account_plan.build_plan` + CLI，sell-first、整手/科创板
+    200、BSE 拒绝、费用感知、现金下限、可对账 projected positions；纯函数、无
+    Mongo/券商。
+  - **C4 生存者/ST**：纯 `factor_lab.universe.audit_panel` + 只读 audit CLI +
+    research-only delisted/namechange backfill CLI（不写生产集合）；回放产物携带
+    `survivorship_gap` 与上界限制。
+  - **C5 核心-卫星**：50k 核心改为 lot-feasible 三 ETF 40/30/30
+    （10,000/7,500/7,500）；25/25/25/25 在 50k 因 treasury 一手>leg 被拒绝、延后到
+    ≥100k；卫星为冻结 `riq_v1` 的新 20k 构建；组合 50/40/10、±5pp 漂移带、
+    名义额转移计费、缺失价格 fail-closed。
+  - **前端**：`/strategy-replays` 列表与详情（NAV/回撤/基准图、决策时间线、
+    展开成交/受阻订单、REPLAY·0/120、研究免责声明与限制）。
+  - **OpenSpec**：`openspec/changes/balanced-core-satellite/`（proposal/design/
+    tasks + 6 个 capability delta），已过 `spec-guardian` 三轮评审
+    （PASS-WITH-FIXES，剩余项已修）。
+- 验证：datahub **1278 passed + 4 subtests**；backend replay API **13 passed** +
+  datahub status **3 passed**；ruff check/format 通过；前端 `npm run lint` /
+  `npm run build` 通过；`openspec validate --all --strict` **31/31**；
+  contract-reviewer / qa-reviewer 最终 **PASS**（P1/P2 已修）。
+- 首个真实 replay：`balanced_50k_20220124_20260316_50000_v1` 已写入 research
+  `strategy_replays`（1,000 sessions / 37 decisions / 282 fills / 5 blocked；
+  收益与回撤见 experiments 文档，REPLAY/窗口化/幸存者偏差限制随 artifact 携带）。
+- 真实 Mongo round-trip 已验证：后端 list/detail 200，返回 curve=1000、
+  decisions=37、fills=282、blocked=5；修复了 read model 缺 `created_at/updated_at`
+  导致 `FieldDoesNotExist` 的集成问题（backend 17 passed）。
+- 下一步：部署 datahub/backend/frontend 镜像使新代码生效；修复 2026-10-19 两只
+  quote 失败并补跑 signal/scoring；把 replay 的 120 日证据路径与真实部署衔接。
+  C4 审计已跑：5,221 codes / 1,689 首次出现 / 12 个 2026 年消失 / ST 0.00–0.61%，
+  无完整退市补集 → `survivorship_gap=true`；完整 OOS 重跑仍待执行。
+- 阻塞：部署通道只允许 `develop`→dev、`main`→research，当前 feature 分支不能
+  直接发布；2026-10-19 手工补跑仍因旧镜像的 2 只 quote 失败（sh601059/sh601198）
+  而 FAILED；需合并/发布后再验证 C1 降级与补链。
+
+### 2026-09-20 21:55 CST — 最小实盘环路（Codex 第 5 项）：涨跌停闸门、对账、停机开关
+
+- 状态：进行中（实现与门禁完成，待评审与合并）
+- 已完成：
+  - **共享可交易性判定 `strategy_engine/tradability.py`**：把
+    `trade_status`/开盘价有效/涨停不可买/跌停不可卖收敛为单一判定，标志缺失时 **fail-closed**，
+    并复用 `factor_lab.panel.price_limit`；生产 paper 净值路径
+    （`strategy_engine/nav.py` + `jobs/strategy_runner.py`）不再只认 `trade_status`，
+    被拦订单进入 `blocked_orders` 报告（不静默丢单）。
+  - **下单与费用规则**：`board_lot_rule` 支持科创板 200 股起（其余 100 股整手），卖出豁免最小
+    买入量以便清掉零股；新增**过户费** 0.001%/边（`factor_lab/metrics.py:TRANSFER_FEE_RATE`，
+    研究侧与 paper 侧共用同一常量，往返成本 +0.2bp）；费用常量集中一处，可选 `execution`
+    配置块进入 `config_hash`（缺省时哈希不变）。
+  - **对账层 `strategy_engine/reconcile.py`**：`reconcile_plan_vs_account` 输出逐票数量漂移、
+    现金漂移、缺失/多余持仓与 `breaks`，容差越界即 fail-loud（非零退出），并带 JSON 化的轻量 CLI。
+  - **停机开关 `strategy_engine/halt.py`**：文件持久化、默认关闭、记录 who/when/why 与历史；
+    订单生成**先查停机**，停机时返回 HALTED（不产出订单、不假装成功）；提供
+    `strategy halt|resume|status`（`scripts/caifubao`）。停机不推进前瞻窗口、不伪造 forward 证据。
+  - **OpenSpec change `strategy-live-loop-minimal`**（每个缺口一条 ADDED requirement + 场景）与
+    `docs/operations/strategy-live-loop.md`（含「计划期不取涨跌停标志、仅执行期拦截」的说明）。
+- 评审与修复：spec-guardian **PASS-WITH-FIXES**（无 BLOCKER）、qa-reviewer **1 P1 + 3 P2 + 4 P3**，
+  均已修复：对账在缺 `cash` 或出现非有限容差/数量时 **fail-loud**（新增
+  `cash_drift_unverifiable`，并拒 NaN/inf，CLI 退出非零）；补 `strategy-nav-fee-budget`/
+  `strategy-engine` 两个 **MODIFIED** delta；**印花税修正为 0.05%**（`SELL_STAMP_DUTY_RATE`
+  0.001 → 0.0005，往返成本 0.0035 → **0.00302**）；`holding_scan.ROUND_TRIP_COST` 改为从
+  `factor_lab.metrics` 派生（消除镜像漂移）；补混合批量未知涨跌停、CLI HALTED、真实零股卖出
+  测试；文档写明「拦截仅在成交/净值期、计划期不拦、被拦订单不落库」「停机文件被删除即恢复下单」
+  以及 `is_st` 缺失的残余漏洞。
+- 验证：`pytest app/test/` **1170 passed + 4 subtests**；`ruff check --select E4,E7,E9,F .` 与
+  `ruff format --check .` 通过；`openspec validate --all --strict` **30 passed**；链接检查通过。
+- 下一步：提交并开 Draft PR，待用户批准合并。
+- 阻塞：无。
+
+### 2026-09-20 00:40 CST — 滚动样本外（purge + embargo）：年化 25.7% → 11.0%–12.0%
+
+- 状态：进行中（口径修正完成，前向验证仍未开始）
+- 已完成：
+  - **新增 `--mode oos`**（`datahub/scripts/factor_lab_composite_backtest.py`）：train 500 /
+    test 250 交易日滚动切分，测试窗连续不重叠；每折权重只用
+    `d <= test_start - label_horizon - 1 - embargo` 的 IC（purge = 标签长度 + 1，
+    正好卡掉会用到 `open(test_start+1)` 的那条标签），只在测试窗内从现金重放，
+    拼接为样本外曲线；输出每折诊断（`ic_first_date`/`ic_cutoff`/`ic_dates_used`/
+    `purged_ic_dates`/`test_total_return`）与完整 `config`。`--embargo` 拒绝负值，
+    输出改为纯 JSON（原有模式的 JSON/`--output` 字节不变，stdout 变干净）。
+  - **同窗口对照**（`/data/lab_live.parquet`，2022-01-24 ~ 2026-03-16，1,000 个交易日，
+    `--step 60 --names 10 --aum 50000`）：样本内 +155.2% / **25.7%** / −27.4%；
+    滚动样本外 embargo 0 +53.5% / **11.0%** / **−49.1%**；embargo 21 +59.2% / 12.0% / −48.2%。
+    → **一半以上的历史超额来自样本内估权重**，且样本外回撤几乎翻倍。
+  - **验证**：新增 `test_factor_lab_oos.py`（8 用例，合成面板；含负 embargo 拒绝、
+    混合模式缺 `--step` 报错）与账户回放日期窗用例；另有集成方对账回归（refactor 后
+    三个既有变体与原合并值一致）与独立 QA 复跑（HEAD vs 工作树各模式 JSON 字节一致）。
+- 验证：`pytest app/test/` **1120 passed + 4 subtests**；`ruff check --select E4,E7,E9,F`
+  与 `ruff format --check` 通过；`openspec validate --all --strict` 29 passed 全绿；链接检查通过；
+  research 集群实跑 OOS 与窗口样本内各一次成功。
+- 下一步：合并本 PR（需用户批准）；随后待 2026-09-21 行情落库后执行 ledger 首次 `mark`。
+- 阻塞：无。
+
+### 2026-09-19 23:10 CST — 账户级回放对账 + 机制单测 + 幸存者核查；冻结前瞻候选
+
+- 状态：进行中（口径修正与机制验证完成，前向验证未开始）
+- 已完成：
+  - **口径对账（PR #281 收敛项 1、4）**：`datahub/scripts/factor_lab_account_replay.py`
+    新增第三个变体「决策时可见性 + 调仓日采样」，并输出年化换手 `turnover_annual`。
+    同一规则、同一账户约束下（`/data/lab_live.parquet`，`--step 60 --names 10 --aum 50000`，
+    2020-01 ~ 2026-09-18）：旧口径（事后筛选 + 调仓日采样）+661.8% / 34.3% / −12.3%；
+    决策时 + 调仓日采样 +606.3% / 32.8% / −12.1%；决策时 + 逐日净值
+    **+495.7% / 30.6% / −25.2%**，年换手 6.5×–6.7×，退市写销 2 只 / ¥7.56。
+    结论：事后筛选主要污染**风险口径**（回撤 −12% 是采样假象，逐日为 −25.2%），
+    不是收益口径（年化仅差 1.5pp）；旧回撤数字作废。
+  - **机制单测（收敛项 2）**：新增 `datahub/app/test/test_factor_lab_account_replay.py`
+    （9 用例，纯合成面板）：涨停不可买且持续涨停时账本恒为空（0% / 现金 100%）、
+    跌停拦住调仓卖出并在下一交易日重试成功、>20 日无报价写入退市写销且不删仓、
+    `close_hfq → close` 回退、停牌/缺价闸门。
+  - **幸存者 / ST / 股票池核查（收敛项 3）**：面板 5,221 只代码，1,668 只（32%）
+    2020-01 后才出现，但**没有任何代码消失**（退市股整体缺失 → 收益高估、尾部低估）；
+    `is_st` 占比仅 0.28%–0.82%（真实 A 股 2%–5%），ST 剔除几乎不生效；`is_bse` 恒为 0
+    （数据源层已排除 BSE）。故 30.6% 年化应视为**上界**。
+  - **冻结前瞻候选**：主候选 `riq_v1`（5 因子 + 滞后 21 + 季度调仓 + 等权 top-10 + 2N 缓冲带）；
+    对照为单因子 `reversal_10` / `amihud_20` 与市值/流动性匹配基准；A/E 底部反转仅作
+    增量实验并计入等待期机会成本。结果与偏差全部记入
+    `docs/operations/strategy-experiments-2026-08.md`（`evidence_kind=REPLAY`）。
+- 验证：`pytest app/test/` 全绿（含 9 个新用例）；`ruff check --select E4,E7,E9,F` 与
+  `ruff format --check` 通过；对账 job（research 集群）与只读 universe job 成功返回。
+- 下一步：合并 PR #281（需用户批准）；随后执行 ledger 首次 `mark`（需 2026-09-21 会话）；
+  再按 §8 逐步启用剩余 writer（每步单独批准）。
+- 阻塞：无。
+
+### 2026-09-18 22:40 CST — research 日更链路全线启用（signal + scoring 计划任务）；策略研究首轮闭环
+
+- 状态：进行中（4 个 writer 已启用并验证；策略研究得到可用结论，待产品化）
+- 已完成：
+  - **计划任务启用（用户批准，逐步执行）**：先 `DATAHUB_SIGNAL_SUSPEND=false` → 部署验证 →
+    再 `DATAHUB_SCORING_SUSPEND=false`；`ACTIVE_WRITERS_ACK` 精确点名
+    `caifubao-datahub-quote-index,caifubao-datahub-quote-stock,caifubao-datahub-signal,caifubao-datahub-scoring`；
+    两次 `datahub-deploy.yml` dispatch（research、镜像 `sha-ef79aa59733e`）均 success，
+    `verify-rendered-manifest.sh` 的多 writer 契约通过；终态 **4 启用 / 6 挂起**。
+  - **启用后实测（补跑当日调度窗口）**：`kubectl create job --from=cronjob/...` 跑当日 slot——
+    signal 依赖门禁通过、pulled 5,186 / **written 3,589** / failed 0 / SUCCESS；
+    scoring 的门禁由该 signal SUCCESS 记录满足、2026-09-18 三个 horizon **16,695 条** / SUCCESS。
+  - **数据新鲜度**：quote / factor / signal / score 全部到 **2026-09-18**
+    （09-18 行数 5,771 / 5,204 / 3,589 / 16,695）；`stock_daily_basic` 仍止于 07-31
+    （其 writer 保持挂起，属预期）。
+  - **研究结论（修复后数据，2020-01→2026-09-17）**：季度 h=60 + 缓冲带 + 走前 ICIR 合成，
+    top-100 净 CAGR 16.7% / Sharpe 0.85 / 回撤 −21.3%，top-30 23.9% / 1.03 / −19.7%；
+    叠加市场宽度风控可把回撤压到 **−12.2%**（CAGR 9.9%）；容量在 k=0.10 冲击模型下约
+    **¥5 千万–1 亿**；小账户：¥1 万不可用（86% 买不到一手）、**¥3 万 6–8 名**可用、
+    **¥10 万 8–12 名**舒适区（整手现金拖累 8%–11%、佣金 ≤0.35%/年）；3 名持仓回撤 −33% 不划算。
+  - **文档**：#270/#271/#272/#273/#274 均已合并（因子层、走前 ICIR、容量与衰减、
+    风控与小账户、集中度与 ¥1 万–100 万网格），实验记录集中在
+    `docs/operations/strategy-experiments-2026-08.md`。
+- 验证：两次 deploy run success；CronJob 终态 4 启用 / 6 挂起；两个补跑 job 均 SUCCESS 且
+  台账记 `signal_daily` / `scoring_daily`；数据新鲜度如上；研究侧全部为只读回测
+  （面板 7,555,430 行），无未来函数（权重走前、T+1 开盘入场）。
+- 下一步：① 把面板导出/因子评估/组合回测脚本固化进 `datahub/scripts/`（走 Spec Gate）；
+  ② small_book/paper 纸面执行；③ 按 §8 逐个启用其余 writer（daily-basic、asset-status、
+  industry-sync、health-watcher、parquet-export、backup）；④ 策略容量/冲击建模产品化。
+- 阻塞：GitHub 网络间歇性不可达（push/PR 需重试）；无其他阻塞。
+
+### 2026-09-18 21:11 CST — 步骤 3 全链条收官（factor→signal→scoring 重算与验收）与修复后数据的首轮因子/组合研究
+
+- 状态：进行中（signal/scoring 重算与验收已完成；策略层首轮结论已产出，容量问题待解）
+- 已完成：
+  - **#268 信号计算健壮性已合并并生产验证**：因子历史不足的 `(code, signal_name)`
+    由整批 FAILED 改为 skip（不写/不删/不推进 freshness，force 的 prune 收窄到本次重建的
+    signal 名）。用修复后镜像对 `sh688806`/`sz001232`/`sz001248` 补跑 force：
+    **written=3、skipped_signal_count=6、failed=0、作业 SUCCESS**，3 行历史残差已补齐；
+    job-run 台账带 `dependency_check_bypassed=true`。
+  - **信号重算验收**：8 分片全部 code 处理完成；独立重算比对 **148,800 行、强度零差异**；
+    `get_codes_requiring_update()==0`；总量 9,543,088 行 / 5,198 只 code、日期到 2026-09-17。
+  - **#269 依赖门禁开关已合并**：`--skip-dependency-check` 代码强制「仅 force + 非计划
+    触发器」，marker 写入 extra 与全部 summary；同时**关闭 scoring 下游漏洞**（绕过运行
+    不再满足 scoring 依赖，SUCCESS/RUNNING/FAILED 三路径均排除）。
+  - **scoring 全区间重算完成**：默认模型 `score_v2_202605b`、2026-08-26→09-17、17 个交易日、
+    **283,815 条**、单日 16,695 条 × 3 horizon、**耗时 15 分 04 秒**（单日探针实测 58s）；
+    重算后同窗口推荐变化 **26%–35%**，量化了坏复权价对历史结论的扭曲。
+  - **因子层研究（修复后 2020-01→2026-09-17）**：面板 7,555,430 行 / 5,565 只 code /
+    8,797 交易日。h=20 结构为**反转/低波**：`amihud_20` IC **+0.081**（净价差 **+1.32%**）、
+    `reversal_10` +0.049、`gap_1` +0.024 为正；`trend_60` −0.084（净价差 **−2.67%**）、
+    `momentum_20/60`、`rsi_14`、`volatility_20`（−0.099，但 gates=performance_decay）
+    等为负（买低分位）。h5 幅度减半、h1 扣费后无优势。
+  - **组合层回测**：等权五因子（top-100 等权、20 日调仓、扣 0.35% 往返）净 CAGR **18.7%** /
+    Sharpe 0.74 / 回撤 −28.7%；**纯走前 ICIR 合成**（244 日回看，无未来函数）**15.7% /
+    0.66 / −27.5%**，分年超额 6/7 年为正；**加流动性下限（剔除成交额最低 30%）后仅剩
+    5.9% / 0.34**（该域基准 4.8% / 0.31）→ 收益主要来自非流动性/小市值溢价，**容量是硬约束**。
+    单一 `amihud_20`（24.5% / Sharpe 0.90 / 换手 44%）仍是最强单腿。
+  - **文档**：#270（因子层结果与数据修复验收）已合并；#271（走前 ICIR 与流动性下限发现，
+    含对「ICIR 优于等权」判断的修正）已开并置 Ready。
+- 验证：datahub 全量 `pytest` **1101 passed + 4 subtests**；`ruff check --select E4,E7,E9,F`
+  与 `ruff format --check` 通过；`openspec validate --all --strict` **27 passed**；
+  `check_links.py` 通过；prune/跳过/绕过/scoring 排除等新增用例 14+ 条。
+  集群侧实测：lab 面板导出 ~6 分钟、逐 horizon 评估各 ~3.5 分钟、scoring 15 分 04 秒、
+  组合回测 ~3 分钟。
+- 下一步：① 按成交额分档做**容量/冲击成本建模**，量化可承载资金规模；② 流动性约束由
+  单一 30% 门槛改**梯度权重**，看能否兼顾 edge 与容量；③ 诊断 2026 超额是回撤还是溢价
+  衰减；④ 合并 #271；⑤ 若容量可接受，进 small-book/paper 做含涨跌停与最小手数的可交易性
+  检查；⑥ 按 §8 逐个启用 writer（signal/scoring 计划任务）。
+- 阻塞：GitHub 网络间歇性不可达（push/PR 需重试）；无其他阻塞。
+
+### 2026-09-18 06:35 CST — 信号运维：新增 `--skip-dependency-check` 历史重算开关；scoring 单日成本实测 58s
+
+- 状态：进行中（开关实现+测试完成，待评审/合并；scoring 全区间重算进行中）
+- 已完成：
+  - **运维开关**：`signal_runner` 新增 `--skip-dependency-check`（仅操作者显式传入，
+    且**代码强制**只允许 `--mode force` + 非计划触发器：cron/startup 直接拒绝）。历史全量
+    重算不依赖「今日」行情，而日更依赖门禁会在北京时间跨日后把重试变成**静默空跑**
+    （k8s Job 报 SUCCESS、一行未写、台账记 dependency SKIP）——本日两个分片的 16:14Z
+    重试即为此类。开关会把 `dependency_check_bypassed` 写进 job-run 的 extra 与
+    **所有** summary（success / failed / dependency SKIP）并打一条 WARNING。
+  - **关闭下游漏洞（评审发现）**：`scoring_runner._dependency_state()` 原先只看
+    `signal_daily` 的当天 SUCCESS/写入证据，因此一次「绕过门禁的 3 只 code 历史重算」
+    会顺带解锁当天 scoring。现按 job-run 的 `dependency_check_bypassed` 标记排除，
+    绕过运行不再满足 scoring 依赖（SUCCESS/RUNNING/FAILED 三条路径都排除）。
+  - **spec delta**：`datahub-perf-optimization/specs/datahub-runners` 新增
+    "Historical Signal Rebuilds May Bypass the Daily Dependency Gate" 需求与四个场景
+    （显式绕过可继续且留痕；计划/增量运行不可绕过；绕过不建立当日 signal freshness、
+    不满足 scoring 依赖；绕过不改变选中集合/模式/计数与信号文档语义）。
+  - **scoring 成本实测**：`--type scoring -- backfill --from 2026-08-26 --to 2026-08-26 --replace`
+    单日 **58 秒**（22:27:32→22:28:30Z，succeeded=1/failed=0）；2026-08-26 分数行
+    11,100 → **16,695**（补齐 horizon 60），`updated_at` 更新为本次运行、`generated_at`
+    仍为原插入时间（replace 语义）。据此全区间 08-26→09-17 预计约 16 分钟。
+  - 私有 #92（launcher 增 `--type scoring`）已合并；本次单日探针与全区间重算均走该通道。
+- 验证：`pytest`（datahub 全量）1101 passed + 4 subtests；`ruff check --select E4,E7,E9,F` +
+  `ruff format --check` 通过；`openspec validate --all --strict` 27 passed；
+  `--type scoring --dry-run` 渲染命令/参数与 nodeName 正确。新增用例覆盖：绕过不查询上游
+  记录、默认路径仍走两次门禁、cron/增量组合被拒、WARNING 恰好一次、main() 三条结果的
+  extra+summary 标记、scoring 对绕过记录（SUCCESS/FAILED 带写入）判为 not ready。
+- 下一步：该 PR 评审合并 → 发新镜像 → 用 `--skip-dependency-check` 对
+  `sh688806`/`sz001232`/`sz001248` 三只 code 跑 force 任务补掉 3 行 ma-cross 残差并作为
+  #268 的生产端验证；scoring 全区间结果验收；随后进入策略研究。
+- 阻塞：无。
+### 2026-09-18 00:20 CST — 信号计算健壮性：因子历史不足的 `(code, signal_name)` 由 FAILED 改为 skip（消除全市场重算反复失败）
+
+- 状态：进行中（实现与测试完成；待只读评审与 PR 合并，合并后发镜像重跑 incapables 集合）
+- 已完成：
+  - **根因定位**：`_load_factor_df` 用 `.only("date","ma_10","ma_20","ma_60")` 稀疏投影，
+    新股/次新股在历史未达 MA 窗口时字段**整体缺席**（不是空值），`build_signal_frame`
+    抛 `ValueError("Missing factor fields…")` → runner 记 per-code FAIL →
+    `SignalUpdateError` 使**整批 fail-fast**（2026-09-17 全市场信号重算 5/8 分片因此中断）。
+    实测：`sz301583` 41 条 factor 行中 `ma_10` 41 / `ma_20` 31 / `ma_60` 0；`sz001232`
+    24 条中 24/14/0；`sh603448`、`sh688801`、`sh601091` 等 factor 行为 0（force 模式原走
+    `RuntimeError`）。此前记录的 389 只「incapable」中 344 只是北交所代码
+    （`basic_stock` 中 `data_capabilities.ma_factor=False`，走既有 capability SKIP，本非故障源），
+    真正的故障类是 45 只 10–59 个交易日历史的主板/创业板/科创板新股。
+  - **修复**：新增显式前置判定 `_unevaluable_signals(factor_df)`——必需因子列缺席或整列为空
+    即该 signal 名不可评估，按 `(code, signal_name)` 粒度记 skip：不写行、不删除、不推进
+    `latest_data_date`/`last_success_at`（下次 stale 选择仍会选中它）；同一 code 仍会计算其
+    可评估的 signal 名（如新股照常算 ma10_cross_ma20）。force 的 prune 范围收窄为**本次
+    实际重建的 signal 名**，避免误删 skip 名的历史行；force + 无任何 factor 行改为 skip
+    （原 `RuntimeError`，同样不删除行）。真实的读库/写库/状态写入失败、stock 不存在、
+    缺 `close` 仍记 FAILED 并使 run 失败。
+  - **可观测性**：`skipped_codes`（整只 code 不可评估）与 `skipped_signal_count`
+    （按 `(code, signal_name)` 计数的历史不足 skip 总数，含部分可评估的 code）贯通
+    `update_market` → runner result → job-run summary；整批全 skip 的 run 另记
+    `all_skipped` 标记并打 WARNING（避免把上游因子整体停摆当成「无 stale 可做」，
+    scoring 依赖 signal run 的 SUCCESS）；每个 code 恰好一条 INFO 日志
+    （capability skip 与历史不足 skip 都在 factory 内记录，调用方不重复打）。
+  - **遗留缺口（另行跟进）**：`get_codes_requiring_update` 以 MA_10/MA_20/MA_60 三者齐备为
+    共同分母，因此只有 10–59 个交易日历史的新股不会被夜间 stale 选中（其 ma-cross 本可计算）；
+    本次 force 重跑会补上这些行，日常路径的「按 config 选择」规则需另立小任务。
+  - **Spec**：`openspec/changes/datahub-perf-optimization` 的 `signals-mvp` 增补
+    "Insufficient factor history is skipped, not failed" 场景，在 "Failure does not
+    advance signal freshness" 与 force 权威区间场景中加入 carve-out/prune 约束；
+    `datahub-runners` 增补 skip vs fail 的 run 结果口径；proposal/tasks 记录该显式语义变化。
+- 验证：
+  - `datahub` 全量 `pytest app/test/` → **1009 passed + 4 subtests**（本分支基线为 develop
+    当前 tip）；`ruff check --select E4,E7,E9,F` 通过、`ruff format --check` 通过。
+  - 新增/调整用例：稀疏因子列只 skip 对应 signal 名且 prune 收窄、全列缺失整 code skip、
+    force 空因子不再抛错且不删行、混合批次 skip/failed 计数与状态刷新范围、
+    runner 两条路径的 `skipped_codes` 透传。
+  - `npx -y @fission-ai/openspec@1.1.1 validate --all --strict` → 27 passed。
+- 下一步：只读评审（qa-reviewer + spec-guardian 复核 delta 与实现一致）→ Draft PR → 合并后
+  用新镜像对 incapables 集合重跑 force 任务（确认 `failed_count=0`、`skipped_codes` 与
+  ma-cross 命中被写入），再进入 scoring 重算与策略研究。
+- 阻塞：无（GitHub 网络间歇性不可达，push/PR 需重试）。
+### 2026-09-17 08:50 CST — P0-5/TASK-404：research 部署与 quote 链启用完成、数据补至 09-16；§5.2 验收结果与判据调整结论
+
+- 状态：进行中（步骤 2/3 已完成；writer 逐个启用进行中——`quote-index` + `quote-stock` 已激活）
+- 已完成：
+  - **research datahub 部署**（用户批准）：10 个 CronJob 就位（8 writer + parquet-export +
+    mongodb-s3-backup）**初始全部挂起**；datahub 镜像 `sha-73b8d34f7a37`；rollout 成功。
+  - **writer 启用通道跑通**：仓库变量（创建用 `POST`、更新用 `PATCH`；`PUT` 是 secrets 的方法，
+    实测 404）+ 一次 `datahub-deploy.yml` dispatch 即**精确激活**目标 writer；两个活跃时
+    `ACTIVE_WRITERS_ACK` 精确点名集合，其余 writer 保持挂起（逐次用
+    `kubectl get cronjobs` 核对）。文档修正见私有 #91。
+  - **数据补齐到 2026-09-16**（手工 Job，钉 ubuntu-5700x 节点本地 Mongo）：
+    指数 pulled 562/written **1,686**；股票 pulled 5,564/written **15,618**；
+    FQ pulled **5,206**/written **16,631,343**；MA factor pulled **5,201**/written **15,932**。
+    逐日 09-14/15/16 = **5,769/5,767/5,768** 行，其中 fq/hfq 覆盖 **5,203/5,205/5,206**
+    （= 总行数 − 562 指数行，股票覆盖完整）；`stock_factor_daily` 最大日期 **09-16**、当日 5,201 行。
+  - **§5.2 writer-verify**（trade_date 09-16，20 抽样，私有 Job）：
+    `stock_daily_quote` = freshness 两侧同日 ✅ / count **5,768 vs 5,403**（差 6.3%）/
+    抽样见 research 独有 `isST`/`pbMRQ`/`pcfNcfTTM`；`stock_factor_daily` = freshness 同日 ✅ /
+    count **5,201 vs 5,201**（0.0%）✅ / MA 字段不一致（5%~28%）。整体 FAIL。
+- 关键结论（判据层面）：验证器行为正确，但"逐字段一致"判据在**旧 stable 未做 FQ 重算
+  （缺口 2 仍在）+ 两侧 schema 已漂移**的前提下无法成立，且差异方向指向 **research 正确**
+  （stable 的 MA 仍基于 08-31 断层前的坏复权价）。建议 §5.2/§9.0 改用：字段作用域比较
+  （排除 FQ 派生字段与新增字段）+ 以 tushare `adj_factor` 对照与断层扫描作为 FQ 正确性判据；
+  该扩展需改 `writer_switch_verify`（公开代码，走 Spec Gate + 评审）。
+- 验证：FQ 断层扫描（同一扫描器/窗口）2026-08-31 由 4,673 只(84.0%)降为 **0**、全市场最大
+  单日变化 186.4× → **50.2%**；每次 writer 启用后核对 suspend 向量（单 writer 隔离、ACK 生效）。
+- 下一步：启用 `signal`(18:30)/`scoring`(18:35) 并补齐 09-14..09-16；按研究窗口重算
+  factor → signal → scoring 历史（研究窗口内旧值受坏复权价污染）；`writer_switch_verify`
+  增加字段作用域选项；随后在修正后的数据上开展策略研究。
+- 阻塞：无（后续集群/数据变更按批准推进）。
+
+### 2026-09-17 02:45 CST — P0-5/TASK-404 §8 步骤 2/3 在 research 执行完成并验收通过；策略研究前置结论
+
+- 状态：已完成（步骤 2 industry 键迁移、步骤 3 FQ 全市场重算；执行经用户批准）
+- 已完成：
+  - **步骤 2**：`stock_industry` 规范键迁移——预览 renamed 5,212/unrecognized 0 → 执行
+    renamed **5,212** → 二次预览 **renamed 0/merged 0**（幂等验收）；迁移前副本
+    `stock_industry_pre_normalize_20260917` 保留。
+  - **步骤 3**：FQ 全市场重算（`--type fq-backfill`，镜像 `sha-73b8d34f7a37`）——
+    pulled **5,219** 只 / written **16,656,156** 行 / **failed 0**；只读断层扫描
+    （窗口 2026-07-01..09-17，交易日历相邻，270,341 对比较，前后同参）：
+    **2026-08-31 跳变 4,673 只（84.0% universe，最大 186.4×）→ 0**，全市场最大单日
+    变化 **50.2%**（除权/涨跌停量级），最高异常日降为 7 只/0.13%；重算前快照
+    `stock_daily_quote_fq_pre_fix`（2026-06-01 起 426,115 行）保留。
+  - **部署链路修复**（私有 #89，QA 两轮 PASS）：8 个 `DATAHUB_*_SUSPEND` 此前无人
+    透传（仓库变量翻转被静默忽略）+ 清单校验步骤缺 env（合法启用会 fail-closed）；
+    现全链透传、校验数据驱动、≥2 个活跃 writer 需 `ACTIVE_WRITERS_ACK` 点名。
+  - 私有 #90 记录步骤 2/3 证据与 §9.0 数据状态。
+- 关键结论（影响策略研究）：`close_hfq` 被 scoring/factor(MA)/etf_lab/market_regime/
+  small_book 消费 → **修复前的 factor/signal/scoring 历史仍基于坏复权价，须按研究
+  窗口重算**；research 行情仍止于 2026-09-11（writer 全挂起）。
+- 验证：见上（前后对照数字来自同一扫描器同一窗口）；无法用全量 S3 备份路径
+  （节点网络限制），已用定向快照并在文档留痕。
+- 下一步：批准 research datahub 部署（8 writer 挂起起步）→ 按 §5.1 逐个启用
+  （quote-index → quote-stock 含 factor/FQ → 视需要 daily-basic/signal/scoring）→
+  按研究窗口重算 factor/signal/scoring → 策略研究。
+- 阻塞：无（后续集群/数据变更按设计需用户逐项批准）。
+
+### 2026-09-17 02:20 CST — P0-5/TASK-404 执行 runbook 补齐（步骤 6-9）+ 执行就绪核验
+
+- 状态：已完成（全部剩余步骤的命令级 runbook 就绪；执行仍待用户逐项批准）
+- 已完成：
+  - 私有 PR（`docs/architecture/data-authority-cutover.md` §9）：步骤 6 首次快照
+    导出/导入（导入前的只读权限核验、对象存储交接与 data-lake env 显式挂载、
+    fail-closed/staging 语义与 dry-run 不清扫）；步骤 7 dev 切换的**跨仓库**清单
+    ——公开侧仅删 `k8s/base/datahub.yaml:47-71` 的 5 个 `MONGODB_SRC_*`（strategic
+    merge 会保留 base 同名 env，只删私有 patch 无效），私有侧同步删除正向断言、
+    新增"dev 渲染不得出现 `MONGODB_SRC_*`"反向断言、overlay/secret/`REQUIRE_
+    MONGODB_SRC_PASSWORD` 门、data-sync 挂起（`op: add /spec/suspend`）并 bump
+    layout check 的 pinned ref；步骤 8 观察窗每日核对项；步骤 9 退役顺序
+    （§6.3 判据 1-4 为前置，命名空间删除单独最终变更）。每步含回滚。
+  - 评审：qa-reviewer 两轮 FAIL（首轮 2 P1 + 4 P2 + 5 P3；次轮 2 P1 + 3 P3——
+    跨仓库归属、`--snapshot-uri` 缺 `<snapshot_id>` 段、`:47-71` 行号、
+    `op: add` vs `replace`、pinned ref 文件位置）→ 全部修正。
+- 验证（执行就绪核验，2026-09-17，以公开 develop `586ccd7` + 私有 main 为准）：
+  datahub **1004 passed + 4 subtests**；ruff check/format 通过；openspec
+  `--all --strict` **27/27**；`prepare-worktree` → `verify-overlay --environment all`
+  → `verify-rendered-manifest`（dev+research 契约）→ `verify-suspend-switch`
+  （10 个 patched CronJob 全部通过）→ `verify-environment-layout`（对比私有 main
+  基线）全绿。
+- 下一步：按 §8/§9 逐项批准执行——步骤 2/3 的只读预览可先批；随后步骤 4-9。
+- 阻塞：无（集群/数据变更按设计需用户逐项批准）。
+
+### 2026-09-17 01:20 CST — P0-5/TASK-404 步骤 4/5 前置就绪：单 writer 切换预检（私有 #87）
+
+- 状态：已完成（步骤 5 的每次切换前置检查与 runbook 就绪；执行仍待用户批准）
+- 已完成：
+  - 新增 `scripts/verify-suspend-switch.sh`：在 `prepare-worktree.sh` 产物上渲染
+    基线与"仅某变量为 false"的清单，断言基线全挂起、翻转单个变量只解除其自身
+    writer、其余逐字不变；并断言补丁 target 全部存在于渲染（kustomize 会静默忽略
+    不存在的 target）、**变量↔CronJob 接线与 EXPECTED_WIRING 显式映射一致**
+    （交叉接线会 FAIL）、补丁必须使用开关变量（硬编码值 FAIL）。
+  - 渲染失败/中断不再污染工作树：恢复逻辑挂 EXIT/INT/TERM；实测强制渲染失败、
+    SIGINT、SIGTERM 后 kustomization md5 不变、无残留临时目录。
+  - 文档：k8s README 修正陈旧"7 个 writer"为当前 8 个 + parquet/backup 开关，
+    并把预检写入每次切换前置；§8 步骤 4 指明备份开关的**根 key
+    `MONGODB_BACKUP_SUSPEND`**（直接写 `BACKUP_SUSPEND` 是静默无效 key），
+    步骤 5 指明预检 + `--type writer-verify` 验收记录。
+- 验证：正常跑 10 个 patched CronJob 全部 ok；故障注入（重复变量、交叉接线、
+  删除补丁、陈旧模板集、字面量、baseline 未挂起、错误路径）逐一 FAIL；qa-reviewer
+  两轮（首轮 FAIL 2 P2 + 6 P3 → 全修 → 复审 PASS）；`verify-overlay --environment all`
+  通过、check_links 通过。
+- 下一步：步骤 2/3 只读预览（industry dry-run、FQ 基线扫描）→ 步骤 4 解除备份挂起
+  → 步骤 5 逐 writer 切换（每次先跑本预检，再用 `writer-verify` 出验收数字）。
+- 阻塞：无（集群/数据变更按设计需用户逐项批准）。
+
+### 2026-09-16 23:30 CST — P0-5/TASK-404 §8 步骤 3 验收仪器与 runbook 就绪（只读扫描 + 全市场重算接线）
+
+- 状态：已完成（步骤 3 命令与验收判据就绪；执行仍待用户批准）
+- 已完成：
+  - 公开 #260（`fq_factor_integrity` 只读全市场 FQ 断层扫描 + probe 脚本
+    `--jump-scan`）与私有 #86（`run-datahub-job.sh` 新增 `fq-integrity` 只读 /
+    `fq-backfill` 写类型；launcher 区分脚本入口 `python scripts/..` 与模块入口
+    `python -m ..`；步骤 3 runbook：只读基线 → 强制备份 → 重算 → 复扫验收 →
+    恢复式回滚）均已合并。
+  - 验收判据：修复前 2026-08-31 基线 ≈4,676/5,204 只（≈89%）单日跳变 >10%；
+    重算后该日必须退出 top 榜并回落到除权日量级（数十只）。扫描按交易日历判定
+    相邻（长假后首个交易日不再被当作缺口丢弃）、排除指数行、零因子与重复日期
+    分别计数、不内建通过阈值。
+  - 评审：spec-gate NOT REQUIRED（只读诊断，阈值留在私有 runbook）；qa-reviewer
+    两轮 PASS，全部 P2/P3 已修（长假盲区、零因子伪 100% 跳变、重复日期决胜顺序、
+    非有限阈值反转、CLI 干净报错、universe 强制）。
+- 验证：测试 19→22 项，全仓 1001→1004 passed + 4 subtests；ruff（CI 钉版）+
+  format 通过；openspec 27/27；私有 overlay 校验与三路渲染核对通过。
+- 下一步：步骤 3 执行（用户批准后）：基线扫描 → 备份 → `--type fq-backfill` →
+  复扫对照；证据回填 `fq-adj-factor-fix` 5.2/5.3 与 `datahub-perf-optimization`
+  3.12（注意 5.2 不得在 `dev-snapshot-import` 2.2 仍依赖时关闭）。
+- 阻塞：无（集群/数据变更按设计需用户逐项批准）。
+
+### 2026-09-16 21:40 CST — P0-5/TASK-404：切片 1/2 预备/3 全部前置合入主线，进入逐项批准的集群执行阶段
+
+- 状态：已完成（四项前置全部合并；后续步骤均为需逐项批准的集群/数据变更）
+- 已完成：按既定顺序合并四个 PR——私有 #83（`2ffb2ef`，数据权威切换设计 + 挂起门控/Job 接线/验证器类型）、公开 #257（`69ff15b`，8 个 research writer 挂起模板 + daily-basic/health-watcher/asset-status）、公开 #256（`76f5197`，快照导入契约 + export/import 工具 + S3 传输 + 文档）、公开 #258（`7f7507a`，只读 writer 切换验证器）。合并顺序的 fail-closed 依赖实测成立：#83 入 main 后 #257 的 Private Deploy Dry Run 由红转绿。
+- 验证：每个 PR 合并前 CI 全绿（含 Private Deploy Dry Run、OpenSpec 27/27、datahub 965→982 passed）；develop 合并提交 CI 绿；私有侧 pin 改为 develop 提交 `7f7507a` 后 `verify-environment-layout` 本地通过。
+- 下一步：§8 清单逐项批准执行——步骤 2 industry 键迁移 → 步骤 3 FQ 全市场重算 → 步骤 4 解除 `mongodb-s3-backup` 挂起 → 步骤 5 逐 writer 切换（每次启用后用 `writer-verify` 出验收数字）→ 步骤 6 首次快照实跑 → 步骤 7 dev 切换 → 步骤 8 观察窗 → 步骤 9 退役。
+- 阻塞：无（全部剩余动作按设计需用户逐项批准）。
+
+
+
+### 2026-09-16 20:10 CST — P0-5/TASK-404 切片 2 执行支撑：writer 切换验证器（只读）
+
+- 状态：已完成（切片 2 步骤 5 的验收指标从手工查询变为可执行校验）
+- 已完成：
+  - 公开 `datahub/app/jobs/writer_switch_verify.py` + 17 项测试：只读比对
+    research vs 旧 stable（§5.2 指标——freshness 相等、当日计数相对差
+    ≤0.5%（分母 max(research,stable)）、≥20 业务键抽样逐字段比对（scoring
+    确定步长固定样本、其余种子随机；簿记字段排除））；复用 sync_engine 的
+    只读源连接；除自身 job_runs 记录外零写入；缺 `MONGODB_SRC_*` 时拒绝
+    运行（防"自己比自己"空转通过）；退出码 0/1。
+  - 私有接线：run-datahub-job.sh 新增 writer-verify 类型；jobs README 记录
+    一次性只读 secret + 每 writer 调用；§5.2 验证表指向可执行工具。
+  - 评审：spec-gate NOT REQUIRED（只读比对、无新数据语义、§5.2 的规范源
+    是私有设计文档；实现前 9 项设计发现已全部吸收）。
+- 验证：17 项新测试 + 全仓 922 passed + 4 subtests 无回归；ruff（CI 钉版）+ format 通过；contract/qa 复审 PASS。
+- 下一步：步骤 5 逐 writer 切换时即用本工具出验收数字（须用户批准）。
+- 阻塞：无（合并与集群执行均需用户逐项批准）。
+### 2026-09-16 19:05 CST — P0-5/TASK-404 任务 3.4/3.5：同步契约收敛与文档收口（门控前代码侧收尾）
+
+- 状态：已完成（3.4/3.5 勾选；3.3/3.6-3.8 仍为门控执行步骤）
+- 已完成：
+  - `datahub-perf-optimization` 水位同步 requirement 以 MODIFIED delta 收敛：
+    在线引擎定性为冻结的迁移期遗留；日期分区集合按业务键 upsert、
+    `finance_market` 等无业务键快照类集合保留 `_id` upsert；补 3 日重放
+    窗口、per-collection 水位推进、dev-only signal 跳过规则与"不得扩列"
+    场景（contract 评审 2 P2 + 2 P3 全修复）。
+  - `agent-cli.md`：`data sync` 段标为 migration-period legacy；新增
+    snapshot-export/snapshot-import 两节（含 out_dir 位置参数）。
+  - 环境模型 §12：指向已落地的契约与工具，保留迁移期定性（"Docs stay
+    honest"场景满足）。
+- 验证：openspec validate --all --strict（1.1.1）通过；ruff（CI 钉版）通过；
+  965 passed 无回归；check_links 通过。
+- 下一步：合并顺序 私有 #83 → 公开 #257 → 公开 #256；随后 §8 门控执行
+  （首次快照实跑 → 观察窗 3.6 → dev 切换 3.3/3.7 → 退役）。
+- 阻塞：无（剩余步骤需用户逐项批准）。
+### 2026-09-16 17:35 CST — P0-5/TASK-404 切片 2 预备：research writer 挂起门控与新 writer 模板
+
+- 状态：已完成（清单+门控全部落地；启用 writer 仍是逐项批准的切换步骤）
+- 已完成：
+  - `example-research/datahub-cronjobs.yaml`：7 个 datahub CronJob 全部硬编码
+    `suspend: true`（修复"重部署静默解除现场挂起"隐患）；新增 daily-basic
+    （18:20，`daily_basic_backfill` 增量默认即调度语义，无 scheduler 参数——
+    runner 不产 job-run，已记偏差）、health-watcher（20:00，dev 同形）与
+    asset-status（18:40，`data_asset_status_initializer` 重算，补缺口 4 的
+    initializer 半边）三个挂起模板。
+  - 私有接线：research kustomization 以 8 个 `DATAHUB_*_SUSPEND` env 补丁驱动
+    实际挂起值；`write-actions-env.sh`/`prepare-worktree.sh`/`env/root/
+    .env.example` 全链透传；`verify-rendered-manifest.sh` research 分支
+    fail-closed 断言 8 个 writer 渲染为挂起 + 新 writer 的 datahub-secret
+    引用；layout check 排除共享 .env 并显式断言 8 键；pinned public sha 升至
+    引入三个模板的提交。
+  - 评审：spec-gate NOT REQUIRED；qa-reviewer FAIL（1 P1：write-actions-env
+    缺 heredoc 透传；1 P1：本分支曾误提交本地构建产物——已重写历史清除并
+    gitignore）→ 全部修复并本地复验。
+- 验证：`kubectl kustomize` example-research 10 CronJob 全挂起；私有
+  prepare → verify-overlay → verify-rendered-manifest（dev+research）→
+  environment-layout-check 本地全绿；Private PR #83 CI 绿。
+- 下一步：合并顺序 **先私有 #83 后公开 #257**（dry-run 派发固定检出私有
+  默认分支）；随后按 §8 批准流程逐项执行。
+- 阻塞：无（剩余步骤需用户逐项批准；#257 的 dry-run 门在 #83 合并后自愈）。
+### 2026-09-16 16:05 CST — P0-5/TASK-404 切片 3 收口：S3 传输 + 私有 Job 接线 + 评审闭环
+### 2026-09-16 14:30 CST — P0-5/TASK-404 切片 3（代码部分）：受控快照导出/导入工具落地
+### 2026-09-16 13:40 CST — P0-5/TASK-404 切片 2 步骤 0：集群只读盘点完成（无双写风险）
+
+- 状态：已完成（只读，无任何集群变更）
+- 已完成：对 research/旧 stable/dev 三个命名空间做 CronJob/Deployment 只读盘点：
+  research 全部 CronJob（含 parquet-export、mongodb-s3-backup）**均处于挂起**，
+  lastScheduleTime 停留在 2026-09-10 → 当前不存在第二套每日链路，**无双写风险**，
+  切换流程无需"先整体挂起"步骤；旧 stable 的 quote-index/quote-stock/signal/
+  scoring（最近调度 2026-09-15）与 industry-sync（下次 2026-10-01）活跃——即
+  切片 2 要逐个关闭的 writer 集合；dev 的 data-sync（19:15）与 health-watcher
+  活跃——在线直连仍在每日运行。两个新发现：旧 stable 2026-09-15 的 quote-index
+  Job pod 为 Error（quote-stock/scoring 正常），验证 research quote-index 前需
+  归因；research 备份 CronJob 挂起 → research 备份启用 + restore drill 列为
+  退役旧 stable 的前置项。结果已写入私有设计文档 §2.2/§5.0/§8。
+- 验证：`kubectl get cronjobs/deploy,pods`（三命名空间，只读）；OpenSpec
+  validate（CI 钉版 1.1.1 与 latest 均 27/27——本日发现 1.1.1 要求 SHALL 位于
+  requirement 开头文本，已修正两个 requirement 的措辞位置，语义不变）。
+- 下一步：用户批准后执行切片 2 步骤 2-4（industry 键迁移、FQ 重算、补
+  daily_basic/health-watcher 调度 writer + 解除 research 备份挂起）；随后逐
+  writer 切换（每步独立批准）。
+- 阻塞：无。
+### 2026-09-16 13:05 CST — P0-5/TASK-404 切片 1：数据权威切换设计与快照导入契约（设计轮，无集群操作）
+
+- 状态：已完成（切片 1 = 设计 + OpenSpec 契约；切片 2/3 为待批准执行步骤）；集群零变更
+- 已完成：
+  - dev 对旧 stable 在线直连的消除进入执行设计：切片 1 盘点在线同步面 6 collection +
+    `data_sync_state` 控制面、research 侧调度现状（CronJob 共 5 个、无 suspend 标志、无
+    daily_basic/factor/health-watcher/data-sync job）与前置对齐缺口（research
+    `stock_industry` 仍为迁移前 dotted 键；FQ 全市场重算（`fq-adj-factor-fix` 5.2）未执行；
+    无 health-watcher/data_asset_status 覆盖）。
+  - 新增 OpenSpec change **`dev-snapshot-import`**（spec-guardian 判定 GATE REQUIRED，独立
+    最小 change）：ADDED-only 导入契约——封闭 allow-list、版本化 manifest（sha256/计数/
+    `data_as_of`/producer 镜像 SHA）、fail-closed、按 collection 类幂等（业务键 upsert /
+    快照类 `--drop`）、freshness 传播、条件性 CLI/`MONGODB_SRC_*` 过渡 SHALL；不预声明
+    切片 2 迁移、不授权任何集群变更；与 `datahub-perf-optimization` 在线同步 requirement 的
+    重叠由切片 3 MODIFIED delta 收敛（tasks 3.4）。
+  - 切片 1 设计文档落在私有仓库 `docs/architecture/data-authority-cutover.md`（collection 级
+    owner/writer/reader 盘点、research/data 每日生产链、逐 writer 切换顺序与验证指标、快照
+    导入管线与旧 stable 退役判据、9 步执行清单——每项集群操作需用户逐项批准且自带回滚）。
+- 验证：`openspec validate --all --strict` 通过（27/27）；两仓库变更文件相对链接全解析；
+  键位事实对照 `sync_engine.py`（`SYNC_UPSERT_KEYS`、dev_only 门）与 overlay 文件核实。
+  在案留痕（对账上一条目）：research Environment 的 `TUSHARE_TOKEN` 已于 2026-09-16
+  由运维补齐并实测生效（前一日志 10:00 条目中的"待补"状态已解除）。
+- 下一步：无（本轮交付完成：Draft PR public
+  https://github.com/univic/caifubao/pull/256 + private
+  https://github.com/univic/caifubao-private/pull/83 ；切片 2 步骤 0 与切片 3
+  实现待用户批准后另起轮次）。
+- 阻塞：无（切片 2/3 集群操作需用户逐项批准，属流程设计而非阻塞）。
+### 2026-09-16 11:35 CST — 环境定位文档收敛：两轴环境模型（domain × stage）落地 public/private（PR #255 + private #82）
+
+- 状态：已完成（文档范围）；PR 保持 Draft，合并需用户明确批准
+- 已完成（完成范围）：
+  - **public 新增权威文档 `docs/architecture/environment-model.md`**：两轴定义
+    （domain：development/data/research/trading × stage：dev/stable/paper/
+    production）、有效/无效组合、运行目标当前态/目标态、数据所有权、
+    Data→Research→Trading 制品流、dev 快照导入边界、FQ/HFQ 外部输入与派生职责
+    （research 可在自己边界内独立重算；datahub 为迁移期实现位置）、`prod`
+    （trading/production）**未启用**声明、技术名称≠业务语义对照、快速问答。
+  - **当前/目标环境映射**（权威文档 §5/§6）：`dev`=development/dev（运行中，数据
+    暂经在线同步取自旧 stable＝迁移期遗留）；`research`=research/stable（运行中，
+    TASK-303 切流已落地）；旧 stable（历史名 production）＝retired、冻结、无部署
+    路径、迁移期仍承载每日链路并作为 dev 同步源；`trading-paper`=trading/paper
+    （仅 default-deny 骨架，未启用）；`prod`=trading/production（不存在、未启用，
+    全系统无真实执行能力）。
+  - **入口链接与冲突修正**：`README.md`（TASK-303 后 research Environment 口径、
+    `prod`/`latest` 为 channel 技术标签且部署用 `sha-<sha>`）、`docs/README.md`
+    （新增"架构与环境"入口）、`k8s/README.md`（示例名澄清）、
+    `docs/operations/agent-cli.md`（同步来源改标旧 stable/迁移期，"prod"全部标注
+    为技术/历史名，命令行为零变更）、`docs/capability-inventory.md`（环境口径
+    注记）、`openspec/changes/production-capability-roadmap/tasks.md` 0.4 注记。
+  - **历史注记**：`roadmap-2026-08.md`、`mongodb-resilience.md`、
+    `mongodb-node-migration.md` 顶部加"历史状态/已被取代"说明；
+    `factor-lab.md` "production" 用语改为 current；进度日志词汇注记加入记录规则。
+    未重写任何历史事实。
+  - **OpenSpec**：新增最小 change `environment-model`（4 条 ADDED requirements，
+    全部针对公共文档语义；spec-guardian 判定 GATE REQUIRED）。
+  - **private 仓库（`docs/environment-model` 分支）**：以 target-architecture 为
+    设计基础收敛——target-architecture（两轴+运行目标表+FQ/HFQ 职责+不变式 13）、
+    migration-contract（Terminology 一节：目标/已部署/别名/退役/未启用）、
+    refactoring-roadmap（TASK-404 标注 open、迁移期遗留标注）、
+    task-303-cutover（状态更正为 landed）、k8s-README.private（environments/
+    dev|research|trading 布局、环境说明重写、自动部署触发更正、RBAC/Environment
+    指南 development/research、PROD_*/prod tag 历史命名注记）、README
+    （Environment Model 一节、overlays/research 装配口径、deploy/verify 示例改
+    research）。
+- 修改文件：public 15 个 .md（含新增 4 个）；private 7 个 .md。无任何代码、
+  workflow、overlay、脚本或集群行为变更。
+- 验证：`openspec validate --all --strict` 26/26 通过；两仓库变更文件相对链接
+  全部可解析；agent-cli 命令行序列字节级不变（仅措辞/标签）；public 新增行无私
+  有部署敏感值（节点名等既有提及按 qa-reviewer 建议做角色化改写）；分支冲突
+  vs origin/develop、origin/main 均 clean。
+- Reviewer 结论：spec-guardian＝GATE REQUIRED（独立最小 change）；qa-reviewer＝
+  **PASS**（1 P2 节点名→已改角色描述，6 P3 已修或记录）；contract-reviewer＝
+  **PASS** 0 P1（1 P2 workflow/script 输入拆分表述→已修，3 P3 已修或确认保留
+  §11 摘要+规范性引用定位）。
+- 合并前独立复审补充修正：部署输入契约现明确为仅 `development` 是 `dev` 的兼容
+  别名、`production` 已退役并 fail loudly；capability inventory 中 research 激活
+  旧阻塞已删除；实盘券商凭证严格限定到通过全部门禁后的 trading/production，
+  trading/paper 只允许 sandbox/paper 凭证。Private 运维文档同步移除仍可执行的旧
+  production 命令，改用 research overlay、namespace、Environment 与 `RESEARCH_*`。
+- PR：public <https://github.com/univic/caifubao/pull/255>（Draft, base develop）；
+  private <https://github.com/univic/caifubao-private/pull/82>（Draft, base main）。
+  不自行合并。
+- 下一步（剩余的非文档漂移，均需独立任务/授权）：
+  1. publish workflow 的 job 级 GitHub Environment 仍按分支解析为
+     `development`/`production`（backend/datahub/frontend/mongodb-tools-publish
+     第 21 行），而 dispatch payload 已用 `dev`/`research`——建议后续 PR 对齐
+     Environment 命名（涉及 GitHub 配置与 secrets，需用户批准）。
+  2. `main` 构建仍推送 `prod`/`latest` channel tag（部署目标 research）——建议
+     后续改名为 `research`/`stable` channel（需协调私有 overlay 默认值）。
+  3. TASK-404 未完成：dev 仍在线直连旧 stable Mongo（`data sync`），快照导入
+     工具链未建；TASK-404 落地前相关文档均已标注"迁移期遗留"。
+  4. 旧 stable namespace 的退役（deprecation change）与 `trading-paper` 骨架
+     之后的 paper 运行时仍未启动（分别属 roadmap 独立变更）。
+  5. `scripts/caifubao`/Makefile 帮助文案仍写 "prod→dev"（代码文件，本轮按
+     "不改业务代码"未动，建议随 TASK-404 一并改）。
+- 阻塞：无（文档范围已闭环；合并与上述运行时事项等待用户决策）。
+### 2026-09-16 10:00 CST — 阶段总结：P3 解阻塞 → 行业分量修复 → 构建通道打通（本轮闭环）
+
+- 状态：已完成（四项指令全部落地并实测）；仅 P3 前向窗口仍等 09-16 收盘
+- 已完成（按依赖顺序，细节见下方 07:00 / 09:33 / 09:56 三条）：
+  1. **#248**（PIT 工件持久化 + K8s 示例/runbook）：spec-guardian **not required** 并已记录到 PR 正文与评论；
+     按复核修正 runbook 门禁（改为 P0 实际门禁，集中度/decay 归为归档 MVP 的另一套）与 RWO 措辞。
+     合并 **`9211d5f`**。
+  2. **#247**（industry 键格式缺陷）：合并 **`cbfc2bf`**（含本轮补的 H20 快照前视守卫与"同分类取较早锚点"合并规则）。
+  3. **行业代码迁移（数据拥有环境 → dev）**：dev 的 `MONGODB_SRC_*` 对 prod 实测只读，故 prod 迁移在
+     `caifubao` 命名空间用其自身凭据执行；prod 与 dev 各改键 **5212** 条、**0 dotted**、**83 个一级行业**、
+     最近交易日可交易代码覆盖 **5198/5402 = 96.22%**，`sh600036 → J66 货币金融服务`。
+  4. **`industry_daily_metrics` 重建**：prod **2241 行**（`score_v2_202605b` h5/h20/h60，最新 2026-09-15）、
+     dev **332 行**（`flip_wide_shadow_v1` h20@09-04、`score_v2_202605b` h5/h20/h60@09-11）；
+     评分日早于分类 `assigned_at`（2026-09-02）的日期按 **PIT 守卫**为 0 行 → 历史指标不可由当前分类表回填。
+  5. **组件验证**：`industry_momentum(sh600036)` 在 prod 与 dev 均**非中性**
+     （prod h5 0.525/0.551、h20 0.532/0.686、h60 0.669；dev h60 0.687），修复前恒为 0.5。
+  6. **构建通道打通**：#250 单文件方案经 qa-reviewer 复核后关闭（私有 `deploy-dry-run` 依赖 develop 才有的
+     `k8s/overlays/example-research/` 布局，且会依赖 main 缺失的模块/Dockerfile ARG）；改为**单提交提升**
+     #251（新提交树 == `origin/develop^{tree}`）→ main **`8b1b108`**。随后
+     dev 镜像 **`sha-7affd47d2a6b`**、research 镜像 **`sha-8b1b108c7b54`** 均实测：镜像内含
+     `app/services/timing_evaluator.py`、`CAIFUBAO_BUILD_REVISION` 非空、`backtest_runner timing-pool --help` 可运行；
+     dev/research 部署 run 均 success。
+  7. **研究侧结论（07:00 条）**：个股择时 REPLAY（`flip_wide_shadow_v1` h20，104 个交易日）与同股买入持有
+     大致打平，P0 门禁判 `gate_passed=false`（样本不足）；并发现 **2026-08-31 全市场复权断层**
+     （`fq_factor` 30.95→6.66、4,676/5,204 只跳变 >10%，dev/prod 一致），历史 HFQ 回测暂不可解释
+     （`fq-adj-factor-fix` 5.1/5.2 未执行）。
+- 验证：以上数字与 run 结论均为实测，无未验证声明；本轮写入面仅限 `stock_industry`（改键）、
+  `industry_daily_metrics`（新建）、相应 `datahub_job_runs` 与索引，预测/评分结果未改动。
+- 下一步（优先级序）：
+  1. **prod 仍是旧镜像 `sha-4316a3580d11`，且流水线无 prod 部署目标** → 其每月 industry-sync
+     （`0 12 1 * *`，下次 **2026-10-01 12:00**）会用旧代码把 dotted 键**写回**。需决策：
+     单独批准一次 prod 镜像更新（无 overlay，只能手工 set image）／10-01 后重跑迁移／接受重复行（建议第一项）。
+  2. 私有侧 research GitHub Environment 补 `TUSHARE_TOKEN`（否则下次 bootstrap/secret 重建复发）。
+  3. 执行 FQ 全市场重算（`fq-adj-factor-fix` 5.2）→ 历史回放方可解释。
+  4. 注册表补 `scoring_mode=ranked` → 解除 P1 模型 pin 阻塞。
+  5. **09-16 收盘后**：`capture-pit-inputs` → `score-pit-artifacts`(dry-run) → 决定前向窗口起点
+     （当前 09-16 universe 工件行业快照为空，建议重新生成 universe 后再开窗）。
+- 阻塞：无（本轮）；P3 前向窗口受 09-16 收盘时间约束。
+### 2026-09-16 09:56 CST — 构建通道修复验证：dev/research 镜像已带 timing_evaluator 与构建修订；research secret 缺 TUSHARE_TOKEN 已补齐
+
+- 状态：已完成
+- 已完成：
+  - **main 触发的构建**（source `8b1b108`，PR #251 提升后）：镜像 `sha-8b1b108c7b54`，
+    私有部署 `environment=research` 成功（run `35045874335`）。research 实测
+    `/app/app/services/timing_evaluator.py` 存在、`CAIFUBAO_BUILD_REVISION=8b1b108c7b54ab68fd8e381a2a610efbc600f107`、
+    `backtest_runner timing-pool --help` 可运行。
+  - **develop 触发的构建**（`workflow_dispatch`，source `7affd47`）：镜像 `sha-7affd47d2a6b` 部署到 dev
+    （run `35045085408` success）。dev 实测同样：模块存在、`CAIFUBAO_BUILD_REVISION=7affd47d2a6b9b24dd882211a9d437b98b9722b1`、
+    `timing-pool --help` 可运行。至此上一轮记录的"镜像缺两个要素"已闭环。
+  - **一次真实故障与修复**：首次 research 部署（run `35044821667`）失败——提升后的 base 需要
+    `TUSHARE_TOKEN`，而 research 的 `datahub-secret` 只有 `MONGODB_PASSWORD`，Pod 进入
+    `CreateContainerConfigError`、rollout 超过 progress deadline，旧 Pod 已被替换（research datahub 短暂不可用）。
+    已用同类环境（dev/prod）同名 token 补该键（不回显值），Pod 立即恢复 1/1；随后重派 research 部署转 **success**。
+    - **跟进（私有侧）**：research 的 GitHub Environment 需补 `TUSHARE_TOKEN`，否则下次
+      bootstrap/secret 重建会复发。
+  - **残留（非阻塞，需另立小改）**：publish workflow 的 job 级 `environment:`
+    仍解析为 `development`/`production`（GitHub Environment，用于取 registry/dispatch secret），
+    而部署 payload 已用 `dev`/`research`；与 develop 现状一致，未在本轮改动。
+- 验证：三个 Pod 内实测（模块、修订、CLI）与两次私有部署 run 结论（dev `35045085408` success、
+  research `35045874335` success）；research/datahub 与 dev/datahub 均 1/1。
+- 下一步：P3 前向——09-16 收盘后跑 `capture-pit-inputs` → `score-pit-artifacts`（dry-run），
+  再决定前向窗口起点（当前 09-16 universe 工件行业快照为空，建议重新生成后开窗）。
+- 阻塞：无。
+### 2026-09-16 09:33 CST — 收口 #248/#247：Spec Gate、行业代码迁移（prod→dev）、指标重建与覆盖率验证；publish workflow 提升到 main
+
+- 状态：已完成（本轮范围）
+- 已完成：
+  - **#248 Spec Gate**：spec-guardian 判 **not required**（复用既有 P2a/P2b/P1/P0 合同、无新语义），
+    结论已写入 PR #248 正文与评论。按复核意见修正：runbook 的"门禁"改为 P0 实际门禁
+    （≥50 请求代码 / ≥50 证据可用 / 覆盖率 ≥90% / ≥120 观测交易日 / ≥5 笔完成交易），
+    单票集中度与 walk-forward decay 明确标注为**归档 MVP strategy-discovery** 的另一套门禁；
+    不再用 `ReadWriteOnce` 暗示采集阶段互斥。已合并（`9211d5f`）。
+  - **#247 合并**（`cbfc2bf`），dev 镜像 `sha-cbfc2bf17787` 部署完成。
+  - **行业代码迁移（数据拥有环境 → dev）**：dev 侧 `MONGODB_SRC_*` 对 prod 实测**只读**
+    （建索引与写 `datahub_job_runs` 均 Unauthorized），因此在 `caifubao` 命名空间用其**自身凭据**
+    跑一次性 Job（同一新镜像）：
+    - **prod**：dry-run `scanned 5212 / renamed 5212 / merged 0 / unrecognized 0` → 正式 `renamed 5212`；
+      结果 **0 dotted / 5212 canonical / 83 个一级行业**，最近交易日可交易代码覆盖 **5198/5402 = 96.22%**，
+      `sh600036 → J66 货币金融服务`。
+    - **dev**：同样 5212 → canonical、**0 dotted**、覆盖率 **96.22%**。
+  - **`industry_daily_metrics` 重建**（只写指标、不重跑评分、不改预测）：
+    - **prod 2241 行**（`score_v2_202605b` h5/h20/h60，最新 2026-09-15，83 个行业）；
+    - **dev 332 行**（`flip_wide_shadow_v1` h20 @2026-09-04；`score_v2_202605b` h5/h20/h60 @2026-09-11）。
+    - **PIT 守卫按设计生效**：凡评分日早于分类 `assigned_at`（2026-09-02）的日期一律 0 行 ——
+      历史 `industry_daily_metrics` **不能**由当前分类表回填（与本 change 的非目标一致）。
+  - **组件级验证**：`industry_momentum` 对 `sh600036` 在 prod 与 dev 均返回**非中性**值
+    （prod h5 0.525/0.551、h20 0.532/0.686、h60 0.669；dev h60 0.687，行业 J66）——修复前恒为 0.5。
+  - **构建通道修复**：单文件 PR #250 经 qa-reviewer 复核后**关闭**（私有 `deploy-dry-run` 依赖 develop 才有的
+    `k8s/overlays/example-research/` 布局，main 目标的单文件 PR 无法通过 Required Checks；且会让 main 上的
+    新 workflow 依赖 main 缺失的 `backend/app/services/timing_evaluator.py` 与 Dockerfile ARG）。
+    改为按仓库既有 release 约定做**单提交提升**（PR #251）：新提交树与 `develop` **逐 tree 相同**
+    （校验 `git write-tree` == `origin/develop^{tree}`），提升前核对 main 独有路径均有 develop 对应物
+    （`openspec/archive`、`docs/archive`、`skills/`、折叠进 RULES 的 agent 指引、前端重构删除的旧文件），
+    合并为 **`8b1b108`**。
+- 验证：以上 dry-run/apply 计数、覆盖率、指标行数与组件值均为实测；迁移/重建/检查 Job 全部 `Complete`。
+  写入面仅限：`stock_industry`（键改写 5212 条）、`industry_daily_metrics`（新建 2241/332 行）、
+  相应 `datahub_job_runs` 记录与 `ensure_indexes` 建索引；预测与评分结果未被改动。
+- 下一步：① 验证 main 触发构建（research）与 develop 触发构建（dev）均带
+  `app/services/timing_evaluator.py` 与非空 `CAIFUBAO_BUILD_REVISION`；② 09-16 收盘后跑
+  `capture-pit-inputs` → `score-pit-artifacts`（dry-run）；③ 决定 P3 前向窗口起点——当前 09-16
+  universe 工件的行业快照为空，建议修复落地后再生成新 universe 工件开窗。
+- 阻塞：无（本轮）；P3 前向窗口仍受 09-16 收盘时间约束。
 ### 2026-09-16 07:00 CST — 个股择时实跑（REPLAY）：策略链跑通、认证版三处阻塞；发现 2026-08-31 全市场复权断层
 
 - 状态：进行中（研究结论已出；认证链路与历史口径均待外部条件）
@@ -68,7 +772,6 @@
   → `score-pit-artifacts`（dry-run）→ 授权后再决定 `--apply` → 拼 P1 manifest → `timing-replay`；
   ⑤ 之后才谈开 120 日前向窗口。
 - 阻塞：认证版择时结论需 09-16 收盘后的真实前向工件与 operator 授权；历史口径结论需 FQ 重算才成立。
-
 ### 2026-09-15 23:42 CST — P3 解阻塞：#245(P2b) 上 dev + PIT 工件持久化 + industry 代码格式缺陷修复
 
 - 状态：进行中（两个 Draft PR 待评审/合并；集群侧 P3 运行前置已就绪）
@@ -121,7 +824,6 @@
   个股各一条基线开始），用真实但封存的每日 P2a→P2b 工件连续积累样本，再由 P1 做费后、无前瞻
   replay；在样本与验收阈值冻结前不宣称可获利，也不启用 `--apply` 写线上 prediction。
 - 阻塞：无。
-
 ### 2026-09-15 22:08 CST — P2b PR #245 首轮 CI 全绿，准备转 Ready
 
 - 状态：已完成
@@ -135,7 +837,6 @@
   将 PR #245 转 Ready；合并由 orchestrator/用户决定。后续建议进入 P3：用真实、封存的前向工件
   连续积累样本并运行 P1 单股/ETF replay，不在本 PR 执行真实 `--apply`。
 - 阻塞：无。未连接真实 Mongo、未执行 `--apply`、未写线上 prediction。
-
 ### 2026-09-15 22:05 CST — P2b 实现与强制门禁全绿，待提交及 PR CI
 
 - 状态：进行中
@@ -150,7 +851,6 @@
 - 下一步：提交并推送 `codex/timing-pit-consumer-p2b`，创建 Draft PR，等待所有 CI 绿后转 Ready；
   最后回写 PR/CI 状态并勾选 OpenSpec task 4.4。
 - 阻塞：无。未连接真实 Mongo、未执行 `--apply`、未写线上 prediction。
-
 ### 2026-09-15 21:56 CST — P2b Merkle 完整性与生产语义对齐完成，进入全量门禁
 
 - 状态：进行中
@@ -168,7 +868,6 @@
   contract-reviewer、qa-reviewer 复审并修完所有发现；随后与 `origin/develop` 冲突检查、提交、
   推送、建 Draft PR、等待 CI 全绿后转 Ready。
 - 阻塞：无。尚未连接真实 Mongo、未执行 `--apply`、未写线上 prediction。
-
 ### 2026-09-15 15:38 CST — P2b 核心实现完成，全量 datahub 879 项通过
 
 - 状态：进行中
@@ -184,7 +883,6 @@
 - 下一步：执行 contract-reviewer 与 qa-reviewer；修复所有 P1 并复审，随后更新进度、提交、
   与 `origin/develop` 做冲突检查、创建 Draft PR、等待 CI 全绿后转 Ready。
 - 阻塞：无。尚未连接真实 Mongo、未执行 `--apply`、未写线上 prediction。
-
 ### 2026-09-15 15:17 CST — P2b 真实回放适配层：#244 已合并，离线 PIT 消费器启动
 
 - 状态：进行中
@@ -199,7 +897,6 @@
 - 阻塞：无。为避免不可变证据的哈希自引用，拟将 prediction 的
   `cohort_artifact_sha256` 绑定已封存且包含完整读集的 P2a input artifact 哈希；该语义将在 Spec
   Gate 中明确，并由 P1 集成测试验证。
-
 ### 2026-09-14 12:30 CST — PR #236 收口勘误：修正缓冲区与换仓成本语义
 
 - 状态：进行中
@@ -211,7 +908,6 @@
 - 下一步：完成全量测试、OpenSpec 严格校验、最终评审和 CI 后合并 PR #236；真实面板重跑
   作为独立回放适配层工作，不把旧数字包装为已验证结论。
 - 阻塞：原 908MB 冻结面板不在公开仓库内，因此本 PR 无法重算修复后的历史指标。
-
 ### 2026-09-14 06:54 CST — 小资金（5~10 万）策略搜索：五族检验均无可外推 alpha；交付配置型结论 + 修 3 个实现缺陷
 
 - 状态：已完成（研究阶段）；前瞻验证需未来 ≥120 个交易日，只能交接
@@ -250,7 +946,6 @@
 - 阻塞：无。
 
 ---
-
 ### 2026-09-13 00:04 CST — research 恢复演练 13/13 通过；旧库仍被 dev 每日读取，清理顺序需调整
 
 - 状态：已完成（演练本身）；清理动作阻塞于 TASK-404
@@ -283,7 +978,6 @@
   已定位的变更面：dev 的 `MONGODB_SRC_*`（backend-config + datahub-secret）、渲染契约断言、
   `write-actions-env.sh`/`prepare-worktree.sh`；research 已有的 Parquet 导出可作为快照介质复用。
 - 阻塞：清理动作在 TASK-404 落地前不可执行（dev 每日同步依赖旧库）。演练与文档本身无阻塞。
-
 ### 2026-09-12 18:34 CST — dev 声明漂移已收敛；research data-lake export smoke 通过
 
 - 状态：已完成（TASK-302 smoke 闭环；所有 research CronJob 继续 suspended）
@@ -302,7 +996,6 @@
 - 下一步：按用户决定，暂不启用定时 Mongo backup；后续只需周期性人工确认备份路径。迁移遗留继续保留，
   待单独批准并满足回滚观察期后再清理。
 - 阻塞：无。
-
 ### 2026-09-12 16:21 CST — research 手工 backup smoke 通过；备份负载固定到 5700X
 
 - 状态：已完成（本切片；备份 CronJob 按决策仍保持 suspended）
@@ -334,7 +1027,6 @@
   `vm-4-12-ubuntu` 且 `claimName: mongodb-pvc`，而 live dev 的 MongoDB 与备份 CronJob 实际都在
   `ubuntu-5700x`、挂 `mongodb-pvc-5700x`。按当前声明重新 apply 会把 dev 指回旧 PV/旧节点，属真实
   风险，应作为独立变更修正。
-
 ### 2026-09-12 12:18 CST — research 集群迁移收尾：TASK-303 切换已合并；research 激活被 bootstrap 镜像 tag 不变量阻塞（交接 codex）
 
 - 状态：阻塞（research 的激活路径缺失，需先修下方第 1~4 点）
@@ -387,7 +1079,6 @@
   另有一处残留：research 命名空间对象仍带 production 的环境标签（P0-4 clone 用 production overlay 引导所致），
   基于 patch 的部署路径不会纠正它。当前无功能影响（Service 仅按 `app` 选择，无 NetworkPolicy），
   但它是旧映射的可见残留，应在上述整体 apply 时一并收敛。
-
 ### 2026-09-07 22:40 CST — 1.3a 合并（#204）+ #199 backfill 复测结论
 
 - 状态：已完成
@@ -408,7 +1099,6 @@
 - 下一步：1.3a 遗留（roadmap 交接节）——1.3 其余组合约束、NEXT.1 不可变前瞻捕获与
   每日 operator 运行、真实执行（默认关闭）；均未授权未启动，待用户分配。
 - 阻塞：无。
-
 ### 2026-09-07 21:36 CST — #202 已合并；DSH 接续费用预算切片
 
 - 状态：已完成（合并与交接记录；DSH 后续实现尚未开始）
@@ -423,7 +1113,6 @@
   修正并走三审/Draft PR CI；其他组合约束和不可变前瞻捕获保持待办。
 - 阻塞：无。DSH 交接已落文档，本会话未直接启动其进程；未手动部署、未 operator 写库、
   未 promote/真实下单；所有当前 paper 产物仍为 REPLAY，120 日前瞻未启动。
-
 ### 2026-09-07 21:27 CST — P0 paper 因果时序修复：PR #202 与 CI 完成
 
 - 状态：已完成（P0 代码与验证；PR #202，提交 982e8a9；未合并/部署）
@@ -438,7 +1127,6 @@
 - 下一步：PR #202 审阅/合并；随后组合预算/约束与不可变前瞻捕获分片。120 交易日前瞻仍未启动；
   未运行 operator 写库、未 promote、未执行真实交易。
 - 阻塞：无；合并与部署尚未发生。
-
 ### 2026-09-07 07:44 CST — #199 合并 + 私有部署落地 + C5 实测 + flip_wide 09-04 前瞻首日
 
 - 状态：已完成
@@ -459,7 +1147,6 @@
 - 下一步：遗留项——C6 增量验证门槛（last_verified_date，spec SHALL）、2.9 日历 bisect、
   2.11 Q4 死代码、task 4.4 纸面日更（可把 09-04 作为 day-1 建立每日 shadow 跟踪）。
 - 阻塞：无。
-
 ### 2026-09-07 00:08 CST — datahub-perf 2.6+2.7 合并：#197（ranked 收尾内存化 + 验证批量路径）
 
 - 状态：已完成
@@ -481,7 +1168,6 @@
   （5.3）；待用户 dispatch datahub_deploy 部署配额提升（私有 #60）后测 dev 单日 ranked
   耗时对比。
 - 阻塞：无。
-
 ### 2026-09-06 20:30 CST — task 3.3 实跑完成：flip_wide 生产链全市场 replay + 校准对比
 
 - 状态：已完成（代码/工具/DB 执行全链路打通；选择有效性需 ≥120 天窗口）
@@ -507,8 +1193,6 @@
 - 阻塞：无（本轮目标达成；未 promote 任何模型版本，线上默认评分不变）。
 
 ---
-
-
 ### 2026-09-06 18:50 CST — 排查"dev 集群不可达"：根因是 CLI KUBECONFIG 默认值 bug，非集群故障
 
 - 状态：已完成（#194 已合并；dev 集群确认可达、全健康）
@@ -529,7 +1213,6 @@
   模型版本，线上默认评分不变。
 
 ---
-
 ### 2026-09-06 09:30 CST — Stage C 代码链全部完成：#192 合并（slice 3 NAV 接线 + 4.4 runbook）
 
 - 状态：已完成（代码侧全部合并；仅剩 task 3.3/4.4 operator 实跑需 DB 授权）
@@ -553,7 +1236,6 @@
   评分不变。
 
 ---
-
 ### 2026-09-06 00:30 CST — Stage C 代码链完成：#189/#190/#191 合并
 
 - 状态：已完成（Stage A task-3.3 工具 + Stage C slice 1/2 全部合并；DB 执行步骤待 operator）
@@ -578,7 +1260,6 @@
   需 operator 授权（dev 集群不可达）；未 promote 任何模型版本，线上默认评分不变。
 
 ---
-
 ### 2026-09-05 23:55 CST — 实盘就绪评估 + #189 合并 + Stage C 切片 1（PR #190）
 
 - 状态：进行中（#188/#189 已合并；Stage C 切片 1 三门禁评审中）
@@ -604,7 +1285,6 @@
   不可达）；未 promote 任何模型版本，线上默认评分不变。
 
 ---
-
 ### 2026-09-05 22:59 CST — 复核 PR #188：补齐 backend compare 空配置注册表回退
 
 - 状态：已完成（PR #188 ready，最新补丁与全套 CI 均通过；待用户决定是否合并）
@@ -623,7 +1303,6 @@
 - 阻塞：仅等待用户合并决定；未 promote 模型、未改变线上默认评分。
 
 ---
-
 ### 2026-09-05 15:10 CST — 3.2 全链路完成 + 三门禁 GATE_OK + PR #188 CI 绿
 
 - 状态：进行中（PR #188 draft 就绪；待用户合并批准后完成 task 3.2/4.4）
@@ -652,7 +1331,6 @@
   （用户 15:10 选择暂不合并；未 promote 任何模型版本，线上默认评分不变）。
 
 ---
-
 ### 2026-09-05 14:15 CST — 接手推进：翻转评分校准改用 percentile，负尾不再丢失
 
 - 状态：进行中（`codex/fix/flipped-score-calibration` 本地实现与验证完成；review/PR 门禁待完成）
@@ -673,7 +1351,6 @@
   模型版本，也未改变线上默认评分。
 
 ---
-
 ### 2026-09-05 13:30 CST — codex 第一阶段完成：方向缺陷修复 + 模型注册表 + 版本约束 + 记录同步
 
 - 状态：已完成（#182-#187 合并/就绪；codex 三阶段第一阶段 #1-#5 全闭环）
@@ -705,7 +1382,6 @@
 - 阻塞：无。
 
 ---
-
 ### 2026-09-05 00:40 CST — H20 研究链闭环：多 regime 审计 + 基本面因子 + flip_wide 候选与可执行化
 
 - 状态：已完成（#180 单股执行示例 + 收益率曲线；候选生产化待评分构造层版本化）
@@ -737,7 +1413,6 @@
 - 阻塞：无（评分生产数据停更 08-28 待恢复）。
 
 ---
-
 ### 2026-09-02 12:20 CST — PR #169/#170 合并 + prod 08-31 评分补跑完成
 
 - 状态：已完成
@@ -747,7 +1422,6 @@
 - 阻塞：无（研究侧对 dev industry 数据缺失保持已知限制，结论方向不变）。
 
 ---
-
 ### 2026-09-02 02:40 CST — H20 autoresearch bootstrap 完成（snapshot + baseline）
 
 - 状态：已完成
@@ -757,7 +1431,6 @@
 - 阻塞：基线被硬门挡回（117 个可交易日 < 120；walk_forward_decay 5.80 > 0.20），不是管线故障而是样本/过拟合门按设计触发。
 
 ---
-
 ### 2026-09-01 13:55 CST — 5700X dev 迁移收口 + 增量 data-sync 上线
 
 - 状态：已完成（prod 08-31 评分补跑待授权）
@@ -786,7 +1459,6 @@
 - 阻塞：prod 08-31 scoring 补跑会写生产数据，待用户明确授权；其余无。
 
 ---
-
 ### 2026-08-31 22:38 CST — Spegel 混合节点镜像分发上线
 
 - 状态：已完成
@@ -796,7 +1468,6 @@
 - 阻塞：镜像发布链路无阻塞；跨节点首次缺失大层仍受链路带宽限制，稳定基础层可由缓存复用。
 
 ---
-
 ### 2026-08-31 21:52 CST — prod 08-31 数据更新核查
 
 - 状态：阻塞
@@ -806,7 +1477,6 @@
 - 阻塞：评分任务在 18:35 检查不到 18:30 已成功的 signal_daily 记录而跳过；需修复后才可恢复当日评分更新。
 
 ---
-
 ### 2026-08-31 21:49 CST — dev 工作面迁移至已恢复节点
 
 - 状态：已完成
@@ -816,7 +1486,6 @@
 - 阻塞：无；旧 dev MongoDB PV/PVC 已保留，用于回滚。
 
 ---
-
 ### 2026-08-29 21:00 CST — PR #162 合入 develop（策略实验 + 链路验证 + 08-28 断链修复）
 
 - 状态：已完成（本轮目标闭环）
@@ -835,7 +1504,6 @@
 - 阻塞：无。
 
 ---
-
 ### 2026-08-29 20:35 CST — 全链路验证完成 + prod 08-28 断链修复 + 策略结论定稿
 
 - 状态：进行中
@@ -868,7 +1536,6 @@
 - 阻塞：无。
 
 ---
-
 ### 2026-08-29 18:40 CST — vm-4-12 失联处置完成：T0 止血 + dev MongoDB 迁移 + 首次备份
 
 - 状态：已完成
@@ -883,7 +1550,6 @@
 - 阻塞：无。
 
 ---
-
 ### 2026-08-29 13:20 CST — 全量样本确认评分反向 + 策略文档就绪
 
 - 状态：进行中
@@ -903,7 +1569,6 @@
 - 阻塞：无（dev MongoDB 已迁至 vm-8-15，节点全 Ready；prod MongoDB 暂留 vm-4-12）。
 
 ---
-
 ### 2026-08-29 12:15 CST — 节点稳定确认 + #158 发布 main + TUSHARE 验证
 
 - 状态：进行中
@@ -913,8 +1578,6 @@
 - 阻塞：无。
 
 ---
-
-
 ### 2026-08-29 12:08 CST — Backend 与 MongoDB 调度解耦
 
 - 状态：已完成

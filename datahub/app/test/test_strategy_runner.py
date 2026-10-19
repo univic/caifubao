@@ -547,12 +547,12 @@ def test_run_nav_happy_path_opens_positions_and_moves_nav(monkeypatch):
         "_load_quotes_for_codes",
         lambda codes, f, t: {
             "a": {
-                "2026-04-13": QuoteView(10.0, 10.5),
-                "2026-04-14": QuoteView(10.5, 11.0),
+                "2026-04-13": QuoteView(10.0, 10.5, previous_close=10.0),
+                "2026-04-14": QuoteView(10.5, 11.0, previous_close=10.5),
             },
             "b": {
-                "2026-04-13": QuoteView(20.0, 21.0),
-                "2026-04-14": QuoteView(21.0, 20.0),
+                "2026-04-13": QuoteView(20.0, 21.0, previous_close=20.0),
+                "2026-04-14": QuoteView(21.0, 20.0, previous_close=21.0),
             },
         },
     )
