@@ -448,6 +448,7 @@ class ChinaAStock(object):
         attempted_quote_codes: set[str] = set()
         failed_quote_codes = []
         skipped_index_codes: list[str] = []
+        skipped_quote_codes: list[str] = []
         check_counter_dict = {
             "GOOD": 0,
             "UPD": 0,
@@ -542,6 +543,7 @@ class ChinaAStock(object):
         )
         local_code_set = set(local_data_dict.keys())
         local_only_codes = sorted(local_code_set - remote_code_set)
+        local_only_code_set = set(local_only_codes)
         # prepare the progress bar
         prog_bar = progress_bar()
 
@@ -806,6 +808,19 @@ class ChinaAStock(object):
                         code,
                     )
                     continue
+                if code in local_only_code_set:
+                    # A local code absent from the remote spot universe is not
+                    # an attempted refresh: the source no longer lists it.
+                    # Report it as a skipped symbol instead of failing the whole
+                    # market refresh.
+                    skipped_quote_codes.append(code)
+                    logger.warning(
+                        "Stock Market %s - Skipping local-only code %s: the "
+                        "source no longer lists it",
+                        self.market.name,
+                        code,
+                    )
+                    continue
                 failed_quote_codes.append(code)
             validated_quote_count += snapshot_validated_count
             update_partial_phase_result()
@@ -816,7 +831,7 @@ class ChinaAStock(object):
             validated_symbols=validated_quote_symbols,
             failed_codes=failed_quote_codes,
             attempted_codes=attempted_quote_codes,
-            skipped_codes=skipped_index_codes,
+            skipped_codes=skipped_index_codes or skipped_quote_codes,
             enforce=allow_update,
         )
         status = {

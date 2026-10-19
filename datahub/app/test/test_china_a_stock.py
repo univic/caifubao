@@ -501,7 +501,7 @@ class TestChinaAStockHelpers(TestCase):
                     allow_update=True,
                 )
 
-    def test_local_active_stock_missing_from_spot_participates_in_validation(self):
+    def test_local_active_stock_missing_from_spot_is_skipped(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
 
         processor = object.__new__(ChinaAStock)
@@ -549,14 +549,17 @@ class TestChinaAStockHelpers(TestCase):
                 return_value=2,
             ),
         ):
-            with self.assertRaisesRegex(RuntimeError, missing.code):
-                processor.check_data_integrity(
-                    obj_type="stock",
-                    local_data_list=DummyQuerySet([present, missing]),
-                    remote_data_df=remote,
-                    hist_handler="get_hist_stock_quote_data",
-                    allow_update=True,
-                )
+            result = processor.check_data_integrity(
+                obj_type="stock",
+                local_data_list=DummyQuerySet([present, missing]),
+                remote_data_df=remote,
+                hist_handler="get_hist_stock_quote_data",
+                allow_update=True,
+            )
+        validation = result["quote_validation"]
+        assert validation["failure_reason"] is None
+        assert validation["failed_count"] == 0
+        assert validation["skipped_symbols"] == [missing.code]
 
     def test_good_quote_recalculates_stored_freshness(self):
         from app.lib.datahub.processors.china_a_stock import ChinaAStock
