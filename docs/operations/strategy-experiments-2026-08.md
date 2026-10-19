@@ -995,3 +995,16 @@ P(≥+50%)=19.2%，中位最大涨幅 +19.7%、中位最大回撤 **−14.9%**�
   预期收益或上钱依据。**
 - **复核**：artifact 通过 `build_replay_artifact` 校验；datahub 1278 passed；
   contract-reviewer / qa-reviewer 最终 PASS（P1/P2 已修）。
+
+### 2026-10-19 C4 生存者/ST 审计（research 面板）
+
+- 面板：5,221 codes、7,560,639 rows、1,629 sessions、2020-01-02→2026-09-18。
+- 逐年：2020 年 3,934 codes → 2026 年 5,221 codes；1,689 个 code 在面板开始后
+  首次出现；**12 个 code 在 2026 年内停止更新**（delisted cohort 仅 12）。
+- ST 行占比 **0.00%–0.61%**（2020 年 0.61%，2025 年 0.25%，2026 年 0%），
+  `st_flag_basis=current_snapshot`；BSE 占比恒 0。
+- **判定**：没有提供完整退市/ST补集，因此 `survivorship_gap=true`；12 个
+  消失 code 只说明“有极小的 cohort”，不能证明退市样本完整。历史收益仍按
+  上界读；完整 OOS 重跑仍是独立操作步骤。
+- 审计命令（research 集群只读 Job）：`research_universe_audit.py --panel
+  /data/lab_live.parquet`；退出码 0，未写任何生产集合。

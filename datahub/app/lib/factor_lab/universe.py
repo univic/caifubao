@@ -290,11 +290,20 @@ def audit_panel(frame, *, listed_codes=None, st_flag_basis=None) -> dict:
         )
 
     limitations = []
-    survivorship_gap = len(leavers) == 0
+    # A handful of codes stopping inside the panel is not proof of a complete
+    # delisted cohort. Without a supplied listing/supplement the gap stays
+    # flagged, so a replay cannot present its return as unbiased.
+    survivorship_gap = len(leavers) == 0 or listed_codes is None
     if survivorship_gap:
+        if len(leavers) == 0:
+            reason = "the panel contains no delisted cohort"
+        else:
+            reason = (
+                "no complete delisted/ST supplement was supplied to prove the "
+                f"{len(leavers)}-code disappearance cohort is complete"
+            )
         limitations.append(
-            "survivorship: the panel contains no delisted cohort, so this "
-            "replay's returns are an upper bound"
+            f"survivorship: {reason}, so this replay's returns are an upper bound"
         )
     if basis == ST_FLAG_BASIS_CURRENT:
         limitations.append(

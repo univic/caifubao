@@ -66,7 +66,11 @@
   收益与回撤见 experiments 文档，REPLAY/窗口化/幸存者偏差限制随 artifact 携带）。
 - 下一步：部署 datahub/backend/frontend 镜像使新代码生效；修复 2026-10-19 两只
   quote 失败并补跑 signal/scoring；把 replay 的 120 日证据路径与真实部署衔接。
-- 阻塞：无（部署需重建镜像；research 集群当前仍运行旧镜像，页面暂不可见）。
+  C4 审计已跑：5,221 codes / 1,689 首次出现 / 12 个 2026 年消失 / ST 0.00–0.61%，
+  无完整退市补集 → `survivorship_gap=true`；完整 OOS 重跑仍待执行。
+- 阻塞：部署通道只允许 `develop`→dev、`main`→research，当前 feature 分支不能
+  直接发布；2026-10-19 手工补跑仍因旧镜像的 2 只 quote 失败（sh601059/sh601198）
+  而 FAILED；需合并/发布后再验证 C1 降级与补链。
 
 ### 2026-09-20 21:55 CST — 最小实盘环路（Codex 第 5 项）：涨跌停闸门、对账、停机开关
 

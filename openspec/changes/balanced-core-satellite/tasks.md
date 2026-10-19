@@ -66,7 +66,7 @@
 - [x] 6.2 Research backfill CLI for delisted `stock_basic` + `namechange` to a
       research parquet; no production writes.
 - [x] 6.3 Wire the flag into the replay artifact; tests with synthetic frames.
-- [ ] 6.4 Run a limited acceptance and record residual gaps; full OOS rerun is an
+- [x] 6.4 Run a limited acceptance and record residual gaps; full OOS rerun is an
       explicit operator step.
 
 ## 7. Frontend

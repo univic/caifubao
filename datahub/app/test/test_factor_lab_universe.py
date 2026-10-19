@@ -102,7 +102,7 @@ def test_one_disappearing_code_clears_the_gap_flag():
         _row("sz000001", "2024-01-02"),
         _row("sz000001", "2024-12-31"),
     )
-    report = universe.audit_panel(frame)
+    report = universe.audit_panel(frame, listed_codes=["sh600000", "sz000001"])
 
     assert report["survivorship_gap"] is False
     assert report["delisted_cohort"] == 1
@@ -785,8 +785,9 @@ def test_audit_cli_prints_the_report_and_never_writes(tmp_path, capsys):
     assert status == 0
     report = json.loads(capsys.readouterr().out)
     assert report["panel_path"] == str(path)
-    assert report["survivorship_gap"] is False
+    assert report["survivorship_gap"] is True
     assert report["delisted_cohort"] == 1
+    assert any("upper bound" in line for line in report["limitations"])
     assert report["st_flag_basis"] == "current_snapshot"
     assert report["st_flag_point_in_time"] is False
     assert _years(report)[2024]["disappeared"] == 1
