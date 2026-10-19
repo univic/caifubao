@@ -64,6 +64,9 @@
 - 首个真实 replay：`balanced_50k_20220124_20260316_50000_v1` 已写入 research
   `strategy_replays`（1,000 sessions / 37 decisions / 282 fills / 5 blocked；
   收益与回撤见 experiments 文档，REPLAY/窗口化/幸存者偏差限制随 artifact 携带）。
+- 真实 Mongo round-trip 已验证：后端 list/detail 200，返回 curve=1000、
+  decisions=37、fills=282、blocked=5；修复了 read model 缺 `created_at/updated_at`
+  导致 `FieldDoesNotExist` 的集成问题（backend 17 passed）。
 - 下一步：部署 datahub/backend/frontend 镜像使新代码生效；修复 2026-10-19 两只
   quote 失败并补跑 signal/scoring；把 replay 的 120 日证据路径与真实部署衔接。
   C4 审计已跑：5,221 codes / 1,689 首次出现 / 12 个 2026 年消失 / ST 0.00–0.61%，

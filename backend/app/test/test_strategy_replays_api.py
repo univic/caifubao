@@ -438,3 +438,12 @@ class TestStrategyReplayDetailAPI:
                 headers=headers,
             )
             assert response.status_code == 405
+
+
+def test_read_model_declares_the_datahub_timestamps():
+    """The datahub writer persists created_at/updated_at; the read model must
+    declare them or a real Mongo fetch raises FieldDoesNotExist."""
+    from app.model.strategy_replay import StrategyReplay
+
+    assert "created_at" in StrategyReplay._fields
+    assert "updated_at" in StrategyReplay._fields

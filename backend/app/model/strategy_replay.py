@@ -53,6 +53,8 @@ class StrategyReplay(Document):
 
     data_as_of = StringField()
     generated_at = DateTimeField()
+    created_at = DateTimeField()
+    updated_at = DateTimeField()
     research_grade = StringField(default="RESEARCH")
     disclaimer = StringField()
     survivorship_gap = BooleanField(default=True)
