@@ -101,6 +101,12 @@ _PANEL_FIELDS = (
     "trade_amount",
     "is_bse",
     "is_st",
+    "pe_ttm",
+    "pb",
+    "ps_ttm",
+    "dv_ttm",
+    "total_mv",
+    "turnover_rate",
 )
 
 
@@ -222,7 +228,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def load_panel(path: str, labels: tuple[str, ...]) -> pd.DataFrame:
-    columns = [field for field in _PANEL_FIELDS]
+    import pyarrow.parquet as pq
+
+    available = set(pq.ParquetFile(path).schema.names)
+    columns = [field for field in _PANEL_FIELDS if field in available]
     frame = pd.read_parquet(
         path, columns=columns + [c for c in labels if c not in columns]
     )

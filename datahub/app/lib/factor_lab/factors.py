@@ -160,6 +160,92 @@ REGISTRY = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Point-in-time valuation and microstructure signals.
+#
+# These read columns merged from ``stock_daily_basic`` (``pe_ttm``/``pb``/
+# ``ps_ttm``/``dv_ttm``/``total_mv``) or OHLC. Every value is a within-date
+# percentile rank, and the valuation ranks drop the bottom 30 % by market cap
+# so the tested signal cannot simply re-select the microcap tail that made the
+# original RIQ OOS look strong.
+# ---------------------------------------------------------------------------
+
+
+def _rank_by_date(panel: pd.DataFrame, values: pd.Series) -> pd.Series:
+    return values.groupby(panel["date"], observed=True).rank(pct=True)
+
+
+def _size_rank(panel: pd.DataFrame) -> pd.Series:
+    size = pd.to_numeric(panel["total_mv"], errors="coerce")
+    return _rank_by_date(panel, size.where(size > 0))
+
+
+def _size_filtered_rank(
+    panel: pd.DataFrame, values: pd.Series, *, min_size_pct: float = 0.30
+) -> pd.Series:
+    rank = _rank_by_date(panel, values)
+    return rank.where(_size_rank(panel) >= min_size_pct)
+
+
+def ep_value(panel: pd.DataFrame) -> pd.Series:
+    pe = pd.to_numeric(panel["pe_ttm"], errors="coerce")
+    return _size_filtered_rank(panel, 1.0 / pe.where(pe > 0))
+
+
+def bp_value(panel: pd.DataFrame) -> pd.Series:
+    pb = pd.to_numeric(panel["pb"], errors="coerce")
+    return _size_filtered_rank(panel, 1.0 / pb.where(pb > 0))
+
+
+def sp_value(panel: pd.DataFrame) -> pd.Series:
+    ps = pd.to_numeric(panel["ps_ttm"], errors="coerce")
+    return _size_filtered_rank(panel, 1.0 / ps.where(ps > 0))
+
+
+def dv_value(panel: pd.DataFrame) -> pd.Series:
+    dv = pd.to_numeric(panel["dv_ttm"], errors="coerce")
+    return _size_filtered_rank(panel, dv.where(dv >= 0))
+
+
+def value_composite(panel: pd.DataFrame) -> pd.Series:
+    ranks = [ep_value(panel), bp_value(panel), sp_value(panel), dv_value(panel)]
+    return sum(ranks) / sum(rank.notna().astype(float) for rank in ranks)
+
+
+def intraday_rank(panel: pd.DataFrame) -> pd.Series:
+    close = _price(panel)
+    open_hfq = pd.to_numeric(panel["open_hfq"], errors="coerce")
+    open_raw = pd.to_numeric(panel["open"], errors="coerce")
+    open_price = open_hfq.where(open_hfq > 0, open_raw)
+    return _rank_by_date(panel, close / open_price.where(open_price > 0) - 1.0)
+
+
+def overnight_rank(panel: pd.DataFrame) -> pd.Series:
+    return _rank_by_date(panel, gap(panel))
+
+
+def low_turnover(panel: pd.DataFrame) -> pd.Series:
+    turnover = pd.to_numeric(panel["turnover_rate"], errors="coerce")
+    return _rank_by_date(panel, -turnover)
+
+
+REGISTRY.update(
+    {
+        "ep_value": (ep_value, "EP rank, size-filtered (bottom 30% excluded)"),
+        "bp_value": (bp_value, "BP rank, size-filtered (bottom 30% excluded)"),
+        "sp_value": (sp_value, "SP rank, size-filtered (bottom 30% excluded)"),
+        "dv_value": (dv_value, "dividend-yield rank, size-filtered"),
+        "value_composite": (
+            value_composite,
+            "equal-weight EP/BP/SP/DV rank, size-filtered",
+        ),
+        "intraday_rank": (intraday_rank, "intraday close/open return rank"),
+        "overnight_rank": (overnight_rank, "overnight gap rank"),
+        "low_turnover": (low_turnover, "low-turnover rank"),
+    }
+)
+
+
 def compute(panel: pd.DataFrame, name: str) -> pd.Series:
     """Factor values for ``name``, aligned to the panel's row order."""
     if name not in REGISTRY:

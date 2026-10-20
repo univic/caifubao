@@ -554,7 +554,18 @@ def _noisy_panel(sessions=80, names=4, seed=20260913):
                     change_rate=0.0,
                 )
             )
-    return panel_mod.build_panel(rows, horizons=(5,))
+    frame = panel_mod.build_panel(rows, horizons=(5,))
+    # Valuation/microstructure columns used by the new point-in-time signals.
+    # Deterministic, positive and cross-sectionally varied so the size filter
+    # and the within-date ranks are exercised.
+    position = pd.Series(range(len(frame)), index=frame.index)
+    frame["pe_ttm"] = 5.0 + (position % 20)
+    frame["pb"] = 0.5 + (position % 10) / 10.0
+    frame["ps_ttm"] = 1.0 + (position % 12) / 10.0
+    frame["dv_ttm"] = (position % 8) / 2.0
+    frame["total_mv"] = 1000.0 + (position % 7) * 100.0
+    frame["turnover_rate"] = 1.0 + (position % 9)
+    return frame
 
 
 def test_registry_factors_are_look_ahead_free_and_finite():
