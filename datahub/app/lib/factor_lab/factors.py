@@ -184,7 +184,7 @@ def _size_filtered_rank(
     panel: pd.DataFrame, values: pd.Series, *, min_size_pct: float = 0.30
 ) -> pd.Series:
     rank = _rank_by_date(panel, values)
-    return rank.where(_size_rank(panel) >= min_size_pct)
+    return rank.where(_size_rank(panel) > min_size_pct)
 
 
 def ep_value(panel: pd.DataFrame) -> pd.Series:
@@ -209,7 +209,9 @@ def dv_value(panel: pd.DataFrame) -> pd.Series:
 
 def value_composite(panel: pd.DataFrame) -> pd.Series:
     ranks = [ep_value(panel), bp_value(panel), sp_value(panel), dv_value(panel)]
-    return sum(ranks) / sum(rank.notna().astype(float) for rank in ranks)
+    # Row-wise mean of the available legs: a loss-maker with no PE still gets
+    # its BP/SP/DV rank instead of being silently dropped from the universe.
+    return pd.concat(ranks, axis=1).mean(axis=1)
 
 
 def intraday_rank(panel: pd.DataFrame) -> pd.Series:

@@ -594,6 +594,12 @@ def test_registry_factors_are_look_ahead_free_and_finite():
         "low_hfq",
         "trade_amount",
         "previous_close",
+        "pe_ttm",
+        "pb",
+        "ps_ttm",
+        "dv_ttm",
+        "total_mv",
+        "turnover_rate",
     ):
         mutated.loc[targets, column] = mutated.loc[targets, column] * 10.0
     mutated.loc[targets, "volume"] = mutated.loc[targets, "volume"] * 10
