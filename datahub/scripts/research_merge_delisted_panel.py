@@ -30,8 +30,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.lib.factor_lab.panel import build_panel  # noqa: E402
-
-HORIZONS = (1, 5, 20, 60)
+from app.lib.utilities.data_capability_helper import is_bse_stock_code  # noqa: E402
 
 
 def _is_st_interval(name: str, start: str, end: str | None, date: pd.Timestamp) -> bool:
@@ -67,6 +66,7 @@ def build_delisted_panel(
     universe: pd.DataFrame,
     *,
     sessions,
+    horizons=(1, 5, 20, 60),
 ) -> pd.DataFrame:
     """Build one factor-lab-shaped panel for the delisted quotes."""
     if quotes.empty:
@@ -76,13 +76,26 @@ def build_delisted_panel(
     quotes["trade_date"] = quotes["trade_date"].astype(str)
     adj = adj.copy()
     adj["trade_date"] = adj["trade_date"].astype(str)
+    if adj.empty:
+        raise ValueError("adj_factor frame is empty; refusing raw/raw-as-HFQ merge")
     frame = quotes.merge(adj, on=["ts_code", "trade_date"], how="left")
-    frame["adj_factor"] = (
-        frame.groupby("code")["adj_factor"].ffill().bfill().fillna(1.0)
-    )
-    frame = frame.loc[~frame["code"].astype(str).str.startswith("bj")].copy()
+    frame = frame.loc[~frame["code"].map(is_bse_stock_code)].copy()
     if frame.empty:
         raise ValueError("no non-BSE delisted quotes")
+    matched = int(frame["adj_factor"].notna().sum())
+    if matched == 0:
+        raise ValueError(
+            "adj_factor join matched zero rows; refusing raw/raw-as-HFQ merge"
+        )
+    frame["adj_factor"] = frame.groupby("code")["adj_factor"].ffill()
+    missing_adj = frame["adj_factor"].isna()
+    if missing_adj.any():
+        sample = sorted(frame.loc[missing_adj, "code"].unique())[:5]
+        raise ValueError(
+            f"adj_factor missing for {int(missing_adj.sum())} rows; sample={sample}"
+        )
+    if (frame["adj_factor"] <= 0).any():
+        raise ValueError("adj_factor must be positive")
     universe = universe.copy()
     st_by_code = dict(zip(universe["code"], universe["namechange_intervals"]))
     frame["is_st"] = False
@@ -108,15 +121,19 @@ def build_delisted_panel(
                 "high_hfq": high * adj_value if high else None,
                 "low_hfq": low * adj_value if low else None,
                 "volume": row.get("vol"),
-                "trade_amount": row.get("amount"),
+                # tushare ``amount`` is in 千元; every ingestion path stores
+                # trade_amount in 元, so convert here or amihud becomes 1000x.
+                "trade_amount": float(row["amount"]) * 1000
+                if pd.notna(row.get("amount"))
+                else None,
                 "change_rate": row.get("pct_chg"),
                 "previous_close": row.get("pre_close"),
                 "trade_status": 1 if close_price and close_price > 0 else 0,
-                "is_bse": False,
+                "is_bse": bool(is_bse_stock_code(str(row["code"]))),
                 "is_st": bool(row["is_st"]),
             }
         )
-    return build_panel(rows, HORIZONS, sessions=sessions)
+    return build_panel(rows, horizons, sessions=sessions)
 
 
 def merge_panels(panel: pd.DataFrame, delisted: pd.DataFrame) -> pd.DataFrame:
@@ -142,6 +159,17 @@ def main(argv: list[str] | None = None) -> int:
     panel = pd.read_parquet(args.panel)
     panel["date"] = pd.to_datetime(panel["date"]).dt.normalize()
     sessions = sorted(panel["date"].drop_duplicates())
+    if not sessions:
+        raise SystemExit("panel has no sessions in the requested window")
+    horizons = tuple(
+        sorted(
+            int(column[len("fwd_h") :])
+            for column in panel.columns
+            if column.startswith("fwd_h") and column[len("fwd_h") :].isdigit()
+        )
+    )
+    if not horizons:
+        raise SystemExit("panel has no fwd_h* label columns; refusing to build labels")
     if args.start_date:
         sessions = [day for day in sessions if day >= pd.Timestamp(args.start_date)]
     if args.end_date:
@@ -160,6 +188,9 @@ def main(argv: list[str] | None = None) -> int:
         "panel_codes": int(panel["stock_code"].nunique()),
         "delisted_codes": int(delisted["stock_code"].nunique()),
         "delisted_rows": int(len(delisted)),
+        "horizons": list(horizons),
+        "trade_amount_unit": "CNY",
+        "adj_rows": int(len(adj)),
         "merged_codes": int(merged["stock_code"].nunique()),
         "merged_rows": int(len(merged)),
         "duplicate_rows_kept_existing": int(len(panel) + len(delisted) - len(merged)),

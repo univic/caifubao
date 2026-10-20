@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "scripts"
@@ -89,6 +90,10 @@ def test_merge_adds_delisted_rows_and_st_interval():
     delisted = merge.build_delisted_panel(quotes, adj, universe, sessions=days)
     assert delisted["stock_code"].nunique() == 1
     assert delisted["is_st"].any()
+    # tushare amount is 千元; the panel stores 元.
+    assert delisted["trade_amount"].iloc[0] == 5000 * 1000
+    with pytest.raises(ValueError, match="adj_factor frame is empty"):
+        merge.build_delisted_panel(quotes, adj.iloc[0:0], universe, sessions=days)
     merged = merge.merge_panels(panel, delisted)
     assert merged["stock_code"].nunique() == 2
     assert len(merged) == len(panel) + len(delisted)
