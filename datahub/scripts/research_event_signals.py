@@ -75,7 +75,7 @@ def _rsi(frame, window=14):
 def _size_ok(frame, min_size_pct=0.30):
     size = pd.to_numeric(frame["total_mv"], errors="coerce")
     rank = size.groupby(frame["date"]).rank(pct=True)
-    return rank >= min_size_pct
+    return rank > min_size_pct
 
 
 def build_score(frame):
@@ -83,7 +83,7 @@ def build_score(frame):
     open_price = frame["open_hfq"].where(frame["open_hfq"] > 0, frame["open"])
     rsi = _rsi(frame)
     rolling_high = close.groupby(frame["stock_code"], sort=False).transform(
-        lambda s: s.rolling(60, min_periods=30).max()
+        lambda s: s.rolling(250, min_periods=120).max()
     )
     dd60 = close / rolling_high.where(rolling_high > 0) - 1.0
     volume = pd.to_numeric(frame["volume"], errors="coerce")
@@ -157,6 +157,10 @@ def main(argv: list[str] | None = None) -> int:
             "turnover_annual": result["turnover_annual"],
             "cash_share_avg": result["cash_share_avg"],
             "failed_entry_fills": result["failed_entry_fills"],
+            "failed_exit_fills": result["failed_exit_fills"],
+            "delisted_positions": result["delisted_positions"],
+            "delisted_write_off_cny": result["delisted_write_off_cny"],
+            "fees_paid": result["fees_paid"],
             "final_nav": result["final_nav"],
         }
     payload = {

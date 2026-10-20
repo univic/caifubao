@@ -30,7 +30,12 @@ def merge_basic(panel: pd.DataFrame, basic: pd.DataFrame) -> pd.DataFrame:
     """Left-join valuation fields; panel rows are never dropped."""
     if panel.empty:
         raise ValueError("panel is empty")
+    if set(FIELDS) & set(panel.columns):
+        raise ValueError(
+            "panel already carries valuation fields; refusing a stale re-merge"
+        )
     basic = basic.copy()
+    basic = basic.drop_duplicates(["code", "date"])
     basic["date"] = pd.to_datetime(basic["date"]).dt.normalize()
     panel = panel.copy()
     panel["date"] = pd.to_datetime(panel["date"]).dt.normalize()
@@ -45,6 +50,8 @@ def merge_basic(panel: pd.DataFrame, basic: pd.DataFrame) -> pd.DataFrame:
     missing = [field for field in FIELDS if field not in merged.columns]
     if missing:
         raise ValueError(f"valuation fields missing after merge: {missing}")
+    if len(merged) != len(panel):
+        raise ValueError("valuation merge changed the panel row count")
     return merged
 
 
