@@ -61,7 +61,7 @@
     **−15.23%/年、−14.08% DD、1/5 正收益月**。候选被 holdout 否决，
     不上钱。
   - 同目标 60%/10 只的固定种子 holdout 对照：**−2.47%/年、−6.26% DD、
-    2/5 正收益、实际最多 6 只；实际暴露低于因子账户，不是干净的
+    2/5 正收益、实际最多 6 只**；实际暴露低于因子账户，不是干净的
     同暴露基准，但说明因子选择没有跑赢静态篮子。
   - 新增 research-only `factor_lab/ledger.py`：因果 T+1、严格实际持仓上限、
     单一连续账户、公司行动/退市退出接口、按股数记账、`lots×100` 核销、
@@ -74,6 +74,30 @@
   除非引入新数据源并重新做独立 holdout。
 - 阻塞：无（审计包与 dividend/delist 已补；退市退出价和元数据覆盖仍是
   已知限制，已记录）。
+### 2026-10-21 00:25 CST — 财报质量因子：无质量溢价，正结果来自低毛利倾斜
+
+- 状态：已完成（负面结论）
+- 已完成：
+  - **财务数据**：research-only `stock_financial_indicator` + 按代码 Tushare
+    `fina_indicator` 回补；143,476 个 vintage、5,798 个代码；224 个退市面板
+    代码单独补齐（3 个 Tushare 无数据），重跑幂等。
+  - **PIT 合并**：`research_merge_financials.py` 按 `ann_date <= D` as-of merge、
+    同日取最大 `end_date`、无前向填充；7,745,658 行面板，**96.27%** 行有已公告
+    报告；输出 `lab_live_with_delisted_valuation_financials.parquet`。
+  - **质量因子**：ROE、毛利率、净利率、资产周转、低负债、增长、经营现金流及
+    复合；日期 × CSRC 一级行业内 rank，剔除市值后 30%，缺腿不删股票。
+  - **滚动 OOS**（同 RIQ 协议）：`quality_composite` **−30.81% 累计 / −8.60%
+    年化 / −56.63% DD**；`quality_roe` −4.21%、`quality_growth` −6.65%、
+    `quality_operating_cash` −6.53%、`quality_low_leverage` −0.59%。
+    `quality_gross_margin` 为 **+9.20%**，但 IC 为负、四折权重均为 −1，实际是
+    **做多低毛利**的低质量倾斜，且 DD −40.0%，不是质量溢价。
+  - **结论**：质量族未通过“正、稳、可解释”；不注册评分组件，不调整 5 万配置；
+    静态多资产核心仍是唯一可辩护基线。
+- 验证：datahub 全量 **1,318 passed**；ruff/format 通过；`openspec validate
+  --all --strict` **32/32**；合并行数与覆盖率由 Job 输出核对。
+- 下一步：若继续财报方向，先补历史行业归属与 Tushare 重述 vintage 语义，再做
+  严格行业中性；否则不重复参数搜索。
+- 阻塞：无。
 
 ### 2026-10-20 15:00 CST — 新信号源首轮：估值/规模中性、盘内/隔夜、事件 A/E
 
