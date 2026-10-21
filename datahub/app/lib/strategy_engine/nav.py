@@ -158,6 +158,43 @@ def _fit_buy_quantity(
     return minimum + lo * increment
 
 
+# ---------------------------------------------------------------------------
+# Public cost-model surface.
+#
+# The account planner (``account_plan.build_plan``) previews the very fills this
+# engine books, so it must share the one cost model instead of restating the
+# rates. These thin wrappers expose the internal helpers without changing engine
+# behaviour (the engine still calls its private functions directly).
+# ---------------------------------------------------------------------------
+
+
+def exec_price(price: float, side: str, cfg: dict) -> float:
+    """Slippage-adjusted fill price for one side (BUY pays up, SELL down)."""
+    normalized = (side or "").strip().upper()
+    if normalized not in ("BUY", "SELL"):
+        raise ValueError(f"side must be BUY or SELL, got {side!r}")
+    return _exec_price(float(price), normalized, cfg)
+
+
+def order_cost(exec_price: float, quantity, side: str, cfg: dict) -> dict:
+    """Fee breakdown for one side: commission (minimum-aware), sell stamp duty
+    and the two-way transfer fee, plus the notional ``value``."""
+    normalized = (side or "").strip().upper()
+    if normalized not in ("BUY", "SELL"):
+        raise ValueError(f"side must be BUY or SELL, got {side!r}")
+    return _order_cost(float(exec_price), quantity, normalized, cfg)
+
+
+def fit_buy_quantity(budget, exec_price, minimum, increment, cfg) -> int:
+    """Largest board-legal BUY quantity whose fee-inclusive spend fits budget.
+
+    Public wrapper around ``_fit_buy_quantity`` for the pre-trade account
+    planner: returns 0 when even the board minimum cannot fit, so the caller
+    skips the name (an unaffordable order is never partially filled).
+    """
+    return _fit_buy_quantity(budget, exec_price, minimum, increment, cfg)
+
+
 def simulate_paper_nav(
     *,
     prices: dict[str, dict[str, QuoteView]],  # stock_code -> {date: QuoteView}

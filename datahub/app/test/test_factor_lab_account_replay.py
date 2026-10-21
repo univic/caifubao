@@ -304,3 +304,17 @@ def test_variants_are_distinct(normal_report: dict) -> None:
         "decision_time_daily",
     }
     assert "turnover_annual" in _variant(normal_report)
+
+
+def test_detail_includes_decisions_fills_and_nav(tmp_path: Path) -> None:
+    panel = build_panel(tmp_path, all_limit_up=False)
+    report = run_replay(panel, tmp_path, ["--detail"])
+    arm = report["decision_time_daily"]
+    assert arm["decisions"], "detail mode must record decisions"
+    assert arm["fills"], "detail mode must record fills"
+    decision_ids = {row["decision_id"] for row in arm["decisions"]}
+    assert all(fill["decision_id"] in decision_ids for fill in arm["fills"])
+    assert len(arm["nav"]) == arm["sessions"]
+    for decision in arm["decisions"]:
+        assert decision["execution_date"] > decision["date"]
+        assert isinstance(decision["target_holdings"], list)

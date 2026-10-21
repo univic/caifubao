@@ -204,6 +204,24 @@ _EVAL_COLUMNS = (
     "change_rate",
     "previous_close",
     "trade_status",
+    "total_mv",
+    "pe_ttm",
+    "pb",
+    "ps_ttm",
+    "dv_ttm",
+    "industry",
+    "financial_ann_date",
+    "financial_end_date",
+    "roe",
+    "grossprofit_margin",
+    "netprofit_margin",
+    "assets_turn",
+    "debt_to_assets",
+    "netprofit_yoy",
+    "or_yoy",
+    "tr_yoy",
+    "ocf_yoy",
+    "q_ocf_to_sales",
 )
 
 
@@ -249,6 +267,8 @@ def _load_panel(path, horizons=None):
 
     frame = pd.read_parquet(path, columns=wanted)
     frame["stock_code"] = frame["stock_code"].astype("category")
+    if "industry" in frame.columns:
+        frame["industry"] = frame["industry"].astype("category")
     if not _panel_is_grouped(frame):
         frame.sort_values(
             ["stock_code", "date"], kind="stable", ignore_index=True, inplace=True
@@ -259,7 +279,13 @@ def _load_panel(path, horizons=None):
         # (measured: "limit_up_entry" -> NaN), silently emptying the coverage
         # diagnostics.
         parsed = split_label_column(column)
-        if column == "stock_code" or column == "date":
+        if column in (
+            "stock_code",
+            "date",
+            "industry",
+            "financial_ann_date",
+            "financial_end_date",
+        ):
             continue
         if parsed and parsed[0].startswith("blocked"):
             continue
@@ -288,8 +314,18 @@ def evaluate_panel(
         raise KeyError(f"unknown factor(s): {', '.join(unknown)}")
 
     results = {}
+    skipped = {}
     for name in names:
-        values = compute(panel, name)
+        try:
+            values = compute(panel, name)
+        except KeyError as exc:
+            # ``--all`` on a price/volume export must still work: quality
+            # factors require the financial-merged panel, and a single-factor
+            # request should fail loudly instead of silently skipping.
+            if not all_factors:
+                raise
+            skipped[name] = str(exc)
+            continue
         results[name] = evaluate_factor(
             panel,
             values,
@@ -304,6 +340,7 @@ def evaluate_panel(
         "panel": str(path),
         "span": session_span(panel),
         "factors": results,
+        "skipped_factors": skipped,
     }
 
 

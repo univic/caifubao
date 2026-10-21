@@ -4,15 +4,18 @@ Usage:
     python -m app.jobs.health_watcher [--hours 24] [--webhook URL] [--fail-on-issues]
 
 Checks (read-only):
-1. Recent FAILED/SKIPPED job runs in ``datahub_job_runs``.
+1. Recent FAILED/SKIPPED/DEGRADED job runs in ``datahub_job_runs``. DEGRADED
+   runs are reported as not-clean: the pipeline stayed usable, but part of the
+   universe did not validate.
 2. Data freshness: ``data_asset_status`` NO_DATA counts and STALE counts per
    asset type (quote / factor / signal), with latest-date distributions.
 
 Outputs a JSON report to stdout (and posts it to the webhook URL when
 configured via env ``HEALTH_WEBHOOK_URL`` or ``--webhook``). Exits 1 (with
-``--fail-on-issues``) when issues are found — FAILED jobs or NO_DATA assets;
-STALE assets are reported but not fatal (suspended stocks legitimately go
-stale). A CronJob turns the exit code into a visible failure signal.
+``--fail-on-issues``) when issues are found — FAILED or DEGRADED jobs, or
+NO_DATA assets; STALE assets are reported but not fatal (suspended stocks
+legitimately go stale). A CronJob turns the exit code into a visible failure
+signal.
 
 This is the P0 alerting gap from docs/operations/roadmap-2026-08.md: job
 failures went unnoticed for 3 consecutive trading days (2026-08-26..28).
@@ -48,6 +51,21 @@ WATCHED_JOB_NAMES = (
 FRESHNESS_ASSET_TYPES = ("quote", "factor", "signal")
 
 
+def _validation_details(record) -> dict[str, Any]:
+    """Best-effort extraction of the persisted quote/index validation dict."""
+    summary = record.summary or {}
+    validation = summary.get("quote_validation") or summary.get("index_validation")
+    if validation:
+        return validation
+    for phase in (record.phase_stats or {}).values():
+        if not isinstance(phase, dict):
+            continue
+        validation = phase.get("quote_validation") or phase.get("index_validation")
+        if validation:
+            return validation
+    return {}
+
+
 def _build_report(
     *,
     failed_jobs: list[dict[str, Any]],
@@ -55,18 +73,32 @@ def _build_report(
     stale_assets: list[dict[str, Any]],
     no_data_assets: list[dict[str, Any]],
     latest_dates: dict[str, Counter],
+    degraded_jobs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Assemble the JSON report; pure function for testability.
 
-    Issues (make the report unhealthy): FAILED job runs and NO_DATA assets.
-    STALE assets are reported for visibility but are not fatal — suspended
-    stocks legitimately stay STALE (e.g. the 4 known prod suspension cases).
+    Issues (make the report unhealthy): FAILED and DEGRADED job runs and
+    NO_DATA assets. A DEGRADED run kept the chain usable, but it is explicitly
+    *not* clean: the operator must still see the partial coverage. STALE assets
+    are reported for visibility but are not fatal — suspended stocks
+    legitimately stay STALE (e.g. the 4 known prod suspension cases).
     """
+    degraded_jobs = degraded_jobs or []
     issues: list[str] = []
     for entry in failed_jobs:
         issues.append(
             f"job {entry['job_name']} FAILED at {entry['started_at']} "
             f"(error: {(entry.get('error_message') or 'none')[:120]})"
+        )
+    for entry in degraded_jobs:
+        details = []
+        if entry.get("coverage_rate") is not None:
+            details.append(f"coverage={entry['coverage_rate']}")
+        if entry.get("failed_count"):
+            details.append(f"failed={entry['failed_count']}")
+        detail_text = f" ({', '.join(details)})" if details else ""
+        issues.append(
+            f"job {entry['job_name']} DEGRADED at {entry['started_at']}{detail_text}"
         )
     if no_data_assets:
         issues.append(f"{len(no_data_assets)} NO_DATA assets")
@@ -78,6 +110,7 @@ def _build_report(
         "job_runs": {
             "failed": failed_jobs,
             "skipped": skipped_jobs,
+            "degraded": degraded_jobs,
         },
         "freshness": {
             "stale_assets": stale_assets[:20],
@@ -98,10 +131,15 @@ def run_checks(*, hours: int = 24) -> dict[str, Any]:
 
     failed_jobs: list[dict[str, Any]] = []
     skipped_jobs: list[dict[str, Any]] = []
+    degraded_jobs: list[dict[str, Any]] = []
     for record in (
         job_run_helper.DatahubJobRun.objects(
             job_name__in=list(WATCHED_JOB_NAMES),
-            status__in=[job_run_helper.STATUS_FAILED, job_run_helper.STATUS_SKIPPED],
+            status__in=[
+                job_run_helper.STATUS_FAILED,
+                job_run_helper.STATUS_SKIPPED,
+                job_run_helper.STATUS_DEGRADED,
+            ],
             started_at__gte=cutoff,
         )
         .order_by("-started_at")
@@ -115,6 +153,13 @@ def run_checks(*, hours: int = 24) -> dict[str, Any]:
         }
         if record.status == job_run_helper.STATUS_FAILED:
             failed_jobs.append(entry)
+        elif record.status == job_run_helper.STATUS_DEGRADED:
+            validation = _validation_details(record)
+            entry["coverage_rate"] = validation.get("coverage_rate")
+            entry["failed_count"] = validation.get("failed_count")
+            entry["failed_codes"] = list(validation.get("failed_codes") or [])
+            entry["skipped_indices"] = list(validation.get("skipped_indices") or [])
+            degraded_jobs.append(entry)
         else:
             skipped_jobs.append(entry)
 
@@ -162,6 +207,7 @@ def run_checks(*, hours: int = 24) -> dict[str, Any]:
         stale_assets=stale_assets,
         no_data_assets=no_data_assets,
         latest_dates=latest_dates,
+        degraded_jobs=degraded_jobs,
     )
 
 

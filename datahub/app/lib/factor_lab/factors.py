@@ -160,6 +160,196 @@ REGISTRY = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Point-in-time valuation and microstructure signals.
+#
+# These read columns merged from ``stock_daily_basic`` (``pe_ttm``/``pb``/
+# ``ps_ttm``/``dv_ttm``/``total_mv``) or OHLC. Every value is a within-date
+# percentile rank, and the valuation ranks drop the bottom 30 % by market cap
+# so the tested signal cannot simply re-select the microcap tail that made the
+# original RIQ OOS look strong.
+# ---------------------------------------------------------------------------
+
+
+def _rank_by_date(panel: pd.DataFrame, values: pd.Series) -> pd.Series:
+    return values.groupby(panel["date"], observed=True).rank(pct=True)
+
+
+def _size_rank(panel: pd.DataFrame) -> pd.Series:
+    size = pd.to_numeric(panel["total_mv"], errors="coerce")
+    return _rank_by_date(panel, size.where(size > 0))
+
+
+def _size_filtered_rank(
+    panel: pd.DataFrame, values: pd.Series, *, min_size_pct: float = 0.30
+) -> pd.Series:
+    rank = _rank_by_date(panel, values)
+    return rank.where(_size_rank(panel) > min_size_pct)
+
+
+def ep_value(panel: pd.DataFrame) -> pd.Series:
+    pe = pd.to_numeric(panel["pe_ttm"], errors="coerce")
+    return _size_filtered_rank(panel, 1.0 / pe.where(pe > 0))
+
+
+def bp_value(panel: pd.DataFrame) -> pd.Series:
+    pb = pd.to_numeric(panel["pb"], errors="coerce")
+    return _size_filtered_rank(panel, 1.0 / pb.where(pb > 0))
+
+
+def sp_value(panel: pd.DataFrame) -> pd.Series:
+    ps = pd.to_numeric(panel["ps_ttm"], errors="coerce")
+    return _size_filtered_rank(panel, 1.0 / ps.where(ps > 0))
+
+
+def dv_value(panel: pd.DataFrame) -> pd.Series:
+    dv = pd.to_numeric(panel["dv_ttm"], errors="coerce")
+    return _size_filtered_rank(panel, dv.where(dv >= 0))
+
+
+def value_composite(panel: pd.DataFrame) -> pd.Series:
+    ranks = [ep_value(panel), bp_value(panel), sp_value(panel), dv_value(panel)]
+    # Row-wise mean of the available legs: a loss-maker with no PE still gets
+    # its BP/SP/DV rank instead of being silently dropped from the universe.
+    return pd.concat(ranks, axis=1).mean(axis=1)
+
+
+def intraday_rank(panel: pd.DataFrame) -> pd.Series:
+    close = _price(panel)
+    open_hfq = pd.to_numeric(panel["open_hfq"], errors="coerce")
+    open_raw = pd.to_numeric(panel["open"], errors="coerce")
+    open_price = open_hfq.where(open_hfq > 0, open_raw)
+    return _rank_by_date(panel, close / open_price.where(open_price > 0) - 1.0)
+
+
+def overnight_rank(panel: pd.DataFrame) -> pd.Series:
+    return _rank_by_date(panel, gap(panel))
+
+
+def low_turnover(panel: pd.DataFrame) -> pd.Series:
+    turnover = pd.to_numeric(panel["turnover_rate"], errors="coerce")
+    return _rank_by_date(panel, -turnover)
+
+
+# ---------------------------------------------------------------------------
+# Point-in-time reported quality.
+#
+# The columns come from the ``stock_financial_indicator`` as-of merge: only
+# reports announced by the panel date, never a restatement announced later.
+# Each quality rank is within date *and* CSRC level-1 industry, and drops the
+# bottom 30 % by market cap. The composite averages the legs a name actually
+# has, so a missing gross margin does not remove a name that reports ROE.
+# ---------------------------------------------------------------------------
+
+
+def _industry_size_rank(
+    panel: pd.DataFrame, values: pd.Series, *, higher_is_better: bool = True
+) -> pd.Series:
+    if "industry" not in panel.columns:
+        raise KeyError(
+            "quality factors require an 'industry' column; run "
+            "research_merge_financials.py first"
+        )
+    values = pd.to_numeric(values, errors="coerce")
+    if not higher_is_better:
+        values = -values
+    industry = panel["industry"].astype("object").fillna("UNKNOWN")
+    rank = values.groupby([panel["date"], industry], observed=True).rank(pct=True)
+    return rank.where(_size_rank(panel) > 0.30)
+
+
+def quality_roe(panel: pd.DataFrame) -> pd.Series:
+    return _industry_size_rank(panel, panel["roe"])
+
+
+def quality_gross_margin(panel: pd.DataFrame) -> pd.Series:
+    return _industry_size_rank(panel, panel["grossprofit_margin"])
+
+
+def quality_net_margin(panel: pd.DataFrame) -> pd.Series:
+    return _industry_size_rank(panel, panel["netprofit_margin"])
+
+
+def quality_asset_turnover(panel: pd.DataFrame) -> pd.Series:
+    return _industry_size_rank(panel, panel["assets_turn"])
+
+
+def quality_low_leverage(panel: pd.DataFrame) -> pd.Series:
+    return _industry_size_rank(panel, panel["debt_to_assets"], higher_is_better=False)
+
+
+def quality_growth(panel: pd.DataFrame) -> pd.Series:
+    ranks = [
+        _industry_size_rank(panel, panel[field])
+        for field in ("netprofit_yoy", "or_yoy", "tr_yoy")
+    ]
+    return pd.concat(ranks, axis=1).mean(axis=1)
+
+
+def quality_operating_cash(panel: pd.DataFrame) -> pd.Series:
+    return _industry_size_rank(panel, panel["q_ocf_to_sales"])
+
+
+def quality_composite(panel: pd.DataFrame) -> pd.Series:
+    ranks = [
+        quality_roe(panel),
+        quality_gross_margin(panel),
+        quality_net_margin(panel),
+        quality_asset_turnover(panel),
+        quality_low_leverage(panel),
+        quality_growth(panel),
+        quality_operating_cash(panel),
+    ]
+    # Row-wise mean of the available legs, like value_composite.
+    return pd.concat(ranks, axis=1).mean(axis=1)
+
+
+REGISTRY.update(
+    {
+        "ep_value": (ep_value, "EP rank, size-filtered (bottom 30% excluded)"),
+        "bp_value": (bp_value, "BP rank, size-filtered (bottom 30% excluded)"),
+        "sp_value": (sp_value, "SP rank, size-filtered (bottom 30% excluded)"),
+        "dv_value": (dv_value, "dividend-yield rank, size-filtered"),
+        "value_composite": (
+            value_composite,
+            "equal-weight EP/BP/SP/DV rank, size-filtered",
+        ),
+        "intraday_rank": (intraday_rank, "intraday close/open return rank"),
+        "overnight_rank": (overnight_rank, "overnight gap rank"),
+        "low_turnover": (low_turnover, "low-turnover rank"),
+        "quality_roe": (quality_roe, "ROE rank, date/industry neutral, size-filtered"),
+        "quality_gross_margin": (
+            quality_gross_margin,
+            "gross-margin rank, date/industry neutral, size-filtered",
+        ),
+        "quality_net_margin": (
+            quality_net_margin,
+            "net-margin rank, date/industry neutral, size-filtered",
+        ),
+        "quality_asset_turnover": (
+            quality_asset_turnover,
+            "asset-turnover rank, date/industry neutral, size-filtered",
+        ),
+        "quality_low_leverage": (
+            quality_low_leverage,
+            "low debt-to-assets rank, date/industry neutral, size-filtered",
+        ),
+        "quality_growth": (
+            quality_growth,
+            "profit/revenue growth rank, date/industry neutral, size-filtered",
+        ),
+        "quality_operating_cash": (
+            quality_operating_cash,
+            "operating-cash-to-sales rank, date/industry neutral, size-filtered",
+        ),
+        "quality_composite": (
+            quality_composite,
+            "equal-weight quality rank, date/industry neutral, size-filtered",
+        ),
+    }
+)
+
+
 def compute(panel: pd.DataFrame, name: str) -> pd.Series:
     """Factor values for ``name``, aligned to the panel's row order."""
     if name not in REGISTRY:

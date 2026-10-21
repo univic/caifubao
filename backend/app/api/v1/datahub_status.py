@@ -2,6 +2,7 @@
 # Datahub status API Blueprint - quick data asset / quote overview
 
 import datetime
+import logging
 import threading
 import time
 from flask import Blueprint, jsonify
@@ -16,11 +17,19 @@ from app.utilities.trading_day_helper import (
 )
 from app.lib.auth_decorators import block_service_tokens
 
+logger = logging.getLogger(__name__)
+
 datahub_status_bp = Blueprint("datahub_status", __name__, url_prefix="/api/datahub")
 datahub_status_bp.before_request(block_service_tokens)
 STATUS_CACHE_TTL_SECONDS = 60
 _status_cache_lock = threading.RLock()
 _status_cache = {"expires_at": 0, "payload": None}
+
+# Job names recorded by the daily k8s CronJobs. Their latest run is exposed so
+# an operator can see a DEGRADED refresh (partial coverage) even though the
+# asset-status counts look complete.
+QUOTE_JOB_NAME = "datahub_quote_stock_daily"
+INDEX_JOB_NAME = "datahub_quote_index_daily"
 
 
 def _format_datetime(value):
@@ -172,8 +181,68 @@ def _build_category_status(stock_model, object_type, reference_dates):
     }
 
 
+def _extract_validation(job_run):
+    """Return the persisted quote/index validation evidence of a run, if any."""
+    summary = job_run.get("summary") or {}
+    validation = summary.get("quote_validation") or summary.get("index_validation")
+    if validation:
+        return validation
+    for phase in (job_run.get("phase_stats") or {}).values():
+        if not isinstance(phase, dict):
+            continue
+        validation = phase.get("quote_validation") or phase.get("index_validation")
+        if validation:
+            return validation
+    return {}
+
+
+def _get_latest_job_run(job_name):
+    """Latest run document for a job name (None when unavailable).
+
+    Never raises: the status endpoint must keep serving asset counts when the
+    job-run collection is unreachable or empty.
+    """
+    try:
+        return get_db().datahub_job_runs.find_one(
+            {"job_name": job_name}, sort=[("started_at", -1)]
+        )
+    except Exception as exc:  # noqa: BLE001 - status must degrade gracefully
+        logger.debug("Could not read latest job run for %s: %s", job_name, exc)
+        return None
+
+
+def _build_job_run_status(job_run):
+    """Expose a run's status plus the bounded-degradation counters.
+
+    A DEGRADED run is reported as such (``degraded: true``) so a partial
+    refresh is never mistaken for a clean successful run.
+    """
+    if not job_run:
+        return None
+    validation = _extract_validation(job_run)
+    status = job_run.get("status")
+    return {
+        "job_name": job_run.get("job_name"),
+        "status": status,
+        "degraded": status == "DEGRADED",
+        "started_at": _format_datetime(job_run.get("started_at")),
+        "completed_at": _format_datetime(job_run.get("completed_at")),
+        "error_message": job_run.get("error_message"),
+        "attempted_symbols": validation.get("attempted_symbols"),
+        "validated_symbols": validation.get("validated_symbols"),
+        "failed_count": validation.get("failed_count"),
+        "failed_codes": list(validation.get("failed_codes") or []),
+        "coverage_rate": validation.get("coverage_rate"),
+        "skipped_indices": list(validation.get("skipped_indices") or []),
+    }
+
+
 def _check_pipeline_run_today(trading_day_start: datetime.datetime) -> dict[str, bool]:
-    """Check if signal and scoring pipelines ran successfully for the given trading day."""
+    """Check if signal and scoring pipelines ran successfully for the given trading day.
+
+    Only ``SUCCESS`` counts: a DEGRADED run (or any other status) is not a
+    clean pipeline success here, even though it may have kept the chain usable.
+    """
     trading_day_end = trading_day_start + datetime.timedelta(days=1)
     db = get_db()
     signal_count = db.datahub_job_runs.count_documents(
@@ -230,6 +299,8 @@ def _build_status_payload():
         "stock": _build_category_status(
             IndividualStock, "individual_stock", reference_dates
         ),
+        "quote_run": _build_job_run_status(_get_latest_job_run(QUOTE_JOB_NAME)),
+        "index_run": _build_job_run_status(_get_latest_job_run(INDEX_JOB_NAME)),
         **pipeline_status,
     }
 

@@ -29,6 +29,196 @@
 ```
 
 ## 进度记录
+### 2026-10-21 09:45 CST — 周频/月频审计：撤回旧结论，开始 P0 账本
+
+- 状态：进行中（P0 账本与数据已完成，目标待定）
+- 已完成：
+  - 外部审计复核：原 −98.90% 周频 / −93.66% 月频不是成本或“日频彻底证伪”；
+    主因是退市整理期股票进入候选、21 日无行情归零、D+1 成交却按 D 收盘记账、
+    换手分母/核销单位/实际持仓上限等账本问题。
+  - 修正交易池与时序后，四折对照月频五因子 **+15.15%/年、−42.81% DD、
+    59.18% 正收益月、最多 12 只**；周频 +1.18%；固定择时月频
+    +9.82%/−26.43%/42.86%。**仍不满足 15%/30%/55%/10 只**。
+  - 审计包校验 78/78、测试 6 passed。未过滤的单一连续 5 万账户月频五因子
+    **−14.56%**（周频 −24.76%，70%+ 现金、10 个 pending exits）；加上
+    “决策时已知退市整理期”过滤后，连续账户月频变为 **+15.42%、−43.72%
+    DD、55.10% 正收益月、最多 10 只、现金 15.1%、费用 ¥10,798**。
+  - 分年：2022 +58.66%、2023 +15.60%、2024 −21.42%、2025 +21.43%、
+    2026 YTD +3.04%；最大回撤在 2024-07-10，首年贡献过大。
+  - **P0 实际账本（送转/按股数修正后）**：补 26,060 条 Tushare dividend
+    （4,773 码；测试窗内 16,342 条）、174 条退市退出，接因果 T+1/严格 10 只/
+    单一 5 万账户后：**+17.59%/年、−43.85% DD、53.06% 正收益月、最多
+    10 只、平均现金 11.59%、费用 ¥11,477**；分年 2022 +60.57%、
+    2023 +14.40%、2024 −4.14%（年内 DD −43.85%）、2025 +7.57%、
+    2026 YTD +3.45%。回撤不达标。
+  - **字段/账本修正**：Tushare `stk_div`=送转合计，`stk_bo_rate`=送股，
+    `stk_co_rate`=转增；正确倍率是 `1+stk_div`。此前 2,748 条“配股”是
+    字段误读，实际是转增，且已包含在 `stk_div` 中；163 条送股不再重复计算。
+    账本改为按股数记账，100 股送转 30% = 130 股，不再整手 round。
+  - **60% gross exposure 候选**（目标 40% 现金、月度、固定 0.6）：in-sample
+    **+11.53%/年、−25.36% DD、55.10% 正收益月、最多 10 只**，实际平均
+    股票仓位约 47.70%；2026-03-17→09-18 holdout（新 5 万账户）为
+    **−15.23%/年、−14.08% DD、1/5 正收益月**。候选被 holdout 否决，
+    不上钱。
+  - 同目标 60%/10 只的固定种子 holdout 对照：**−2.47%/年、−6.26% DD、
+    2/5 正收益、实际最多 6 只**；实际暴露低于因子账户，不是干净的
+    同暴露基准，但说明因子选择没有跑赢静态篮子。
+  - 新增 research-only `factor_lab/ledger.py`：因果 T+1、严格实际持仓上限、
+    单一连续账户、公司行动/退市退出接口、按股数记账、`lots×100` 核销、
+    初始资本与平均 NAV 两套换手；12 个合成测试通过。
+- 验证：datahub 全量 **1,308 passed**；ruff E4,E7,E9,F + format 通过；
+  OpenSpec **32/32**。P0 变更 `research-ledger-correctness` 已建，PR #301
+  CI 全绿。
+- 下一步：P0 结果 +17.59%/DD −43.85%/正收益月 53.06% 仍未达 15%/30%/55%；
+  60% 版本 holdout 失败，候选否决。停止在同一五因子上调参；5 万回到 beta，
+  除非引入新数据源并重新做独立 holdout。
+- 阻塞：无（审计包与 dividend/delist 已补；退市退出价和元数据覆盖仍是
+  已知限制，已记录）。
+### 2026-10-21 00:25 CST — 财报质量因子：无质量溢价，正结果来自低毛利倾斜
+
+- 状态：已完成（负面结论）
+- 已完成：
+  - **财务数据**：research-only `stock_financial_indicator` + 按代码 Tushare
+    `fina_indicator` 回补；143,476 个 vintage、5,798 个代码；224 个退市面板
+    代码单独补齐（3 个 Tushare 无数据），重跑幂等。
+  - **PIT 合并**：`research_merge_financials.py` 按 `ann_date <= D` as-of merge、
+    同日取最大 `end_date`、无前向填充；7,745,658 行面板，**96.27%** 行有已公告
+    报告；输出 `lab_live_with_delisted_valuation_financials.parquet`。
+  - **质量因子**：ROE、毛利率、净利率、资产周转、低负债、增长、经营现金流及
+    复合；日期 × CSRC 一级行业内 rank，剔除市值后 30%，缺腿不删股票。
+  - **滚动 OOS**（同 RIQ 协议）：`quality_composite` **−30.81% 累计 / −8.60%
+    年化 / −56.63% DD**；`quality_roe` −4.21%、`quality_growth` −6.65%、
+    `quality_operating_cash` −6.53%、`quality_low_leverage` −0.59%。
+    `quality_gross_margin` 为 **+9.20%**，但 IC 为负、四折权重均为 −1，实际是
+    **做多低毛利**的低质量倾斜，且 DD −40.0%，不是质量溢价。
+  - **结论**：质量族未通过“正、稳、可解释”；不注册评分组件，不调整 5 万配置；
+    静态多资产核心仍是唯一可辩护基线。
+- 验证：datahub 全量 **1,318 passed**；ruff/format 通过；`openspec validate
+  --all --strict` **32/32**；合并行数与覆盖率由 Job 输出核对。
+- 下一步：若继续财报方向，先补历史行业归属与 Tushare 重述 vintage 语义，再做
+  严格行业中性；否则不重复参数搜索。
+- 阻塞：无。
+
+### 2026-10-20 15:00 CST — 新信号源首轮：估值/规模中性、盘内/隔夜、事件 A/E
+
+- 状态：已完成（首轮负面结论）
+- 已完成：
+  - **估值面板**：`research_merge_daily_basic.py` 将 `stock_daily_basic` 合并进
+    补集面板（7,745,658 行；pe_ttm 覆盖 76.1%，至 2026-07-31）。
+  - **新因子**：EP/BP/SP/DV 的日内 rank（剔除市值后 30%）、盘内收益 rank、
+    隔夜 gap rank、低换手 rank；加入 `factor_lab.factors.REGISTRY` 并附测试。
+  - **滚动 OOS**（同协议）：`value_composite` **−16.24%**/年化、DD −66.9%
+    （QA 发现原 +0.18% 是 NaN 传播造成的“只测盈利公司”偏差；修正后含亏损/无 PE
+    的价值陷阱）；`intraday+overnight` +1.13%/年化、DD −50.3%、换手 8.2×；
+    RIQ 对照 +1.78%。
+  - **事件 A/E**（20 日调仓）：A −1.91%/年化、DD −52.3%；E **+3.36%**/年化、
+    DD −36.5%、换手 15.5×、费用 ¥7,416.65；52 周新高突破 −8.98%。
+- 验证：datahub 全量测试、ruff、openspec 通过；结果已记入 experiments 文档。
+- 下一步：首轮没有找到优于静态核心的新信号；若继续，应做行业/市值中性化、
+  更长 regime 或引入财报/公告/ETF 折溢价等新数据源，而不是继续价量调参。
+- 阻塞：无。
+
+### 2026-10-20 12:45 CST — 退市股补集重跑：RIQ OOS 由 +11.1% 降至 +1.8%（无 edge）
+
+- 状态：已完成（决定性负面结论）
+- 已完成：
+  - **补集**：`research_universe_backfill.py` 拉取 2020–2026 退市股 340 只
+    （窗口内 229，非 BSE 224 只，185,019 行日线）；用同一交易日历重建 label，
+    与 `lab_live.parquet` 合并为 5,445 codes / 7,745,658 行。
+  - **OOS 对照**（同协议 train 500/test 250、purge、step 60、names 10、AUM 50k）：
+    原始面板 **+54.17% / +11.14% 年化 / −49.09% DD**；补集面板
+    **+7.50% / +1.78% / −48.25% DD**。
+  - **账户级卫星**：原始 20k → 45,759.99（+128.8%）；补集 20k → 22,771.49
+    （+13.86%，年化 +3.22%，DD −23.54%）；首个组合 10 只中 2 只后来退市，
+    全程选中 11 只退市股。
+  - **单位修正**：QA 发现退市股 tushare `amount` 为千元、面板为元，首版合并少了
+    ×1000，amihud 把退市股推成极端值，产生 −11.95%/−52% 的伪结果；已修正并重跑。
+  - **修正 replay**：`balanced_50k_20220124_20260316_50000_delisted_v2`
+    （累计 +41.70% / 年化 +8.78% / DD −10.00% / 2,866 blocked）已写入 research；
+    原 `..._50000_v1`（+90.86%）与错误 v1 均已退役。
+- 验证：退市 cohort `fwd_h20` 均值 −0.52% vs active +1.11%，无非法价格；
+  对照与补集使用同一脚本/参数；修正 replay 经 API list/detail 验证。
+- 下一步：`riq_v1` 仍不满足上钱条件；修正后的 +8.78% 主要来自核心 ETF/现金，
+  不是选股 alpha。转向不依赖微盘/低流动暴露的新信号，或回到静态多资产配置。
+  完整退市全集与 120 日前向记录仍未完成。
+- 阻塞：无。
+
+### 2026-10-20 07:40 CST — research release 完成；C1 local-only hotfix；10-19 链路恢复
+
+- 状态：已完成
+- 已完成：
+  - **代码发布**：PR #290（C1–C5 + replay UI）合入 develop（`ba111dd`）；
+    release PR #292 合入 main（`038920a`）并部署 research
+    backend/frontend/datahub；随后发现 local-only quote 失败仍会硬失败，
+    以 #293 修复、#294 发布 hotfix 到 main（`3756ab7`）。
+  - **research 镜像**：backend/frontend/datahub 均为 `sha-3756ab7`；
+    datahub Deployment 与 quote-stock/quote-index/signal/scoring 四个
+    CronJob 已切到该镜像（CronJob 不随 Deployment 自动更新，需发布后核对）。
+  - **C1 验证**：手工补跑 2026-10-19 quote-stock，`status=SUCCESS`，
+    `quote_validation.skipped_symbols=['sh601059','sh601198']`，
+    `failed_count=0`；FQ/MA 正常写入。quote-index 为 `DEGRADED`
+    （2 个非核心指数结构性缺失，符合预期）。
+  - **10-19 链路恢复**：signal `SUCCESS`（pulled 5,186 / written 2,667 /
+    failed 0）；scoring `SUCCESS`；最新 quote/signal/score 日期均为
+    **2026-10-19**。
+  - **Replay 验证**：research 后端 `/api/strategy/replays` 200，返回
+    `balanced_50k_20220124_20260316_50000_v1`（curve 1,000 / decisions 37 /
+    fills 282 / blocked 5）；前端 `/strategy-replays` 路由 200。
+  - **运维**：发布时 research `datahub-secret` 的 `TUSHARE_TOKEN` 被覆盖，
+    已从旧 stable secret 恢复；如后续 release 再次覆盖，需在部署前核对。
+- 验证：datahub **1280 passed + 4 subtests**；backend 17 passed；前端 lint/build
+  通过；OpenSpec 31/31；真实 10-19 数据链与 API/页面 smoke 均通过。
+- 下一步：把 `DATAHUB_INDEX_SKIP_ALLOWLIST` 固化到 research 部署配置（避免
+  index DEGRADED 每天告警）；执行 C4 完整退市/ST 补集与 OOS 重跑；启动
+  120 日前向记录。**当前 replay 仍是 REPLAY/0-120，不是上钱依据。**
+- 阻塞：无（CronJob 镜像需发布后手工核对，已记录为部署 checklist 项）。
+
+### 2026-10-19 22:30 CST — 平衡 50k 核心-卫星（C1–C5）+ 策略重放前端
+
+- 状态：进行中（代码/测试/评审/首个 replay 种子完成；待部署镜像与 120 日前向证据）
+- 已完成：
+  - **C1 数据降级语义**：新增 `DEGRADED` 状态与 `pipeline_degradation` 策略
+    （失败上限 `max(5, ceil(0.002*attempted))`、覆盖率 0.99、严格开关
+    `DATAHUB_QUOTE_STRICT_VALIDATION`）；非核心指数结构性缺失走
+    `index_validation.skipped_indices`，核心指数失败仍 FAILED；signal
+    依赖门接受满足覆盖率+MA 因子证据的 DEGRADED（scoring 保持原语义）；health watcher 与
+    `/api/datahub/status` 不再把 DEGRADED 当干净。
+  - **C2 回放产物**：新增 `StrategyReplay`（`strategy_replays`）、纯 builder
+    （REPLAY-only、0/120、不可变 input/content hash）、运营 runner；后端只读
+    list/detail API（JWT + service token 阻断，20/200 分页）。
+  - **C3 50k 执行计划**：`account_plan.build_plan` + CLI，sell-first、整手/科创板
+    200、BSE 拒绝、费用感知、现金下限、可对账 projected positions；纯函数、无
+    Mongo/券商。
+  - **C4 生存者/ST**：纯 `factor_lab.universe.audit_panel` + 只读 audit CLI +
+    research-only delisted/namechange backfill CLI（不写生产集合）；回放产物携带
+    `survivorship_gap` 与上界限制。
+  - **C5 核心-卫星**：50k 核心改为 lot-feasible 三 ETF 40/30/30
+    （10,000/7,500/7,500）；25/25/25/25 在 50k 因 treasury 一手>leg 被拒绝、延后到
+    ≥100k；卫星为冻结 `riq_v1` 的新 20k 构建；组合 50/40/10、±5pp 漂移带、
+    名义额转移计费、缺失价格 fail-closed。
+  - **前端**：`/strategy-replays` 列表与详情（NAV/回撤/基准图、决策时间线、
+    展开成交/受阻订单、REPLAY·0/120、研究免责声明与限制）。
+  - **OpenSpec**：`openspec/changes/balanced-core-satellite/`（proposal/design/
+    tasks + 6 个 capability delta），已过 `spec-guardian` 三轮评审
+    （PASS-WITH-FIXES，剩余项已修）。
+- 验证：datahub **1278 passed + 4 subtests**；backend replay API **13 passed** +
+  datahub status **3 passed**；ruff check/format 通过；前端 `npm run lint` /
+  `npm run build` 通过；`openspec validate --all --strict` **31/31**；
+  contract-reviewer / qa-reviewer 最终 **PASS**（P1/P2 已修）。
+- 首个真实 replay：`balanced_50k_20220124_20260316_50000_v1` 已写入 research
+  `strategy_replays`（1,000 sessions / 37 decisions / 282 fills / 5 blocked；
+  收益与回撤见 experiments 文档，REPLAY/窗口化/幸存者偏差限制随 artifact 携带）。
+- 真实 Mongo round-trip 已验证：后端 list/detail 200，返回 curve=1000、
+  decisions=37、fills=282、blocked=5；修复了 read model 缺 `created_at/updated_at`
+  导致 `FieldDoesNotExist` 的集成问题（backend 17 passed）。
+- 下一步：部署 datahub/backend/frontend 镜像使新代码生效；修复 2026-10-19 两只
+  quote 失败并补跑 signal/scoring；把 replay 的 120 日证据路径与真实部署衔接。
+  C4 审计已跑：5,221 codes / 1,689 首次出现 / 12 个 2026 年消失 / ST 0.00–0.61%，
+  无完整退市补集 → `survivorship_gap=true`；完整 OOS 重跑仍待执行。
+- 阻塞：部署通道只允许 `develop`→dev、`main`→research，当前 feature 分支不能
+  直接发布；2026-10-19 手工补跑仍因旧镜像的 2 只 quote 失败（sh601059/sh601198）
+  而 FAILED；需合并/发布后再验证 C1 降级与补链。
+
 ### 2026-09-20 21:55 CST — 最小实盘环路（Codex 第 5 项）：涨跌停闸门、对账、停机开关
 
 - 状态：进行中（实现与门禁完成，待评审与合并）

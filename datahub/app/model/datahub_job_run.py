@@ -14,6 +14,10 @@ STATUS_RUNNING = "RUNNING"
 STATUS_SUCCESS = "SUCCESS"
 STATUS_FAILED = "FAILED"
 STATUS_SKIPPED = "SKIPPED"
+# The run finished and its data is usable downstream, but a bounded part of
+# the universe failed validation. DEGRADED is deliberately NOT SUCCESS: it
+# must stay visible as not-clean to the health watcher and the status API.
+STATUS_DEGRADED = "DEGRADED"
 
 # Startup catch-up is the only path that can race across overlapping pod
 # rollouts (the deployment restarts while the previous pod's catch-up thread

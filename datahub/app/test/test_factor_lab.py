@@ -554,7 +554,33 @@ def _noisy_panel(sessions=80, names=4, seed=20260913):
                     change_rate=0.0,
                 )
             )
-    return panel_mod.build_panel(rows, horizons=(5,))
+    frame = panel_mod.build_panel(rows, horizons=(5,))
+    # Valuation/microstructure columns used by the new point-in-time signals.
+    # Deterministic, positive and cross-sectionally varied so the size filter
+    # and the within-date ranks are exercised.
+    position = pd.Series(range(len(frame)), index=frame.index)
+    frame["pe_ttm"] = 5.0 + (position % 20)
+    frame["pb"] = 0.5 + (position % 10) / 10.0
+    frame["ps_ttm"] = 1.0 + (position % 12) / 10.0
+    frame["dv_ttm"] = (position % 8) / 2.0
+    frame["total_mv"] = 1000.0 + (position % 7) * 100.0
+    frame["turnover_rate"] = 1.0 + (position % 9)
+    # Point-in-time financial columns for the quality family. Two industries so
+    # the within-date/industry rank is exercised, and positive values so the
+    # composite has at least one available leg for every kept name.
+    frame["industry"] = frame["stock_code"].map(
+        {"sh600000": "A", "sh600001": "A", "sh600002": "B", "sh600003": "B"}
+    )
+    frame["roe"] = 5.0 + (position % 11)
+    frame["grossprofit_margin"] = 10.0 + (position % 13)
+    frame["netprofit_margin"] = 3.0 + (position % 7)
+    frame["assets_turn"] = 0.2 + (position % 9) / 10.0
+    frame["debt_to_assets"] = 20.0 + (position % 17)
+    frame["netprofit_yoy"] = -5.0 + (position % 21)
+    frame["or_yoy"] = -3.0 + (position % 19)
+    frame["tr_yoy"] = -2.0 + (position % 15)
+    frame["q_ocf_to_sales"] = 1.0 + (position % 23)
+    return frame
 
 
 def test_registry_factors_are_look_ahead_free_and_finite():
@@ -583,6 +609,21 @@ def test_registry_factors_are_look_ahead_free_and_finite():
         "low_hfq",
         "trade_amount",
         "previous_close",
+        "pe_ttm",
+        "pb",
+        "ps_ttm",
+        "dv_ttm",
+        "total_mv",
+        "turnover_rate",
+        "roe",
+        "grossprofit_margin",
+        "netprofit_margin",
+        "assets_turn",
+        "debt_to_assets",
+        "netprofit_yoy",
+        "or_yoy",
+        "tr_yoy",
+        "q_ocf_to_sales",
     ):
         mutated.loc[targets, column] = mutated.loc[targets, column] * 10.0
     mutated.loc[targets, "volume"] = mutated.loc[targets, "volume"] * 10
@@ -725,3 +766,54 @@ def test_loader_drops_unrequested_horizons_for_both_legs(tmp_path):
     assert ("fwd_short_h", 1) in families
     assert ("fwd_h", 5) not in families
     assert ("blocked_short_h", 5) not in families
+
+
+def test_evaluate_all_skips_factors_without_their_columns(tmp_path):
+    """A price/volume panel must not make `evaluate --all` crash on quality."""
+    from app.jobs.factor_lab_runner import evaluate_panel
+
+    frame = _noisy_panel(sessions=30, names=3)
+    frame = frame.drop(
+        columns=[
+            "industry",
+            "roe",
+            "grossprofit_margin",
+            "netprofit_margin",
+            "assets_turn",
+            "debt_to_assets",
+            "netprofit_yoy",
+            "or_yoy",
+            "tr_yoy",
+            "q_ocf_to_sales",
+        ]
+    )
+    path = tmp_path / "price_panel.parquet"
+    frame.to_parquet(path, index=False)
+    report = evaluate_panel(
+        path=str(path), factor=None, horizons=(5,), all_factors=True
+    )
+    assert report["factors"]
+    assert "quality_composite" in report["skipped_factors"]
+
+
+def test_lab_loader_preserves_industry_and_size_columns(tmp_path):
+    from app.jobs.factor_lab_runner import _load_panel
+
+    frame = _noisy_panel(sessions=30, names=3)
+    path = tmp_path / "financial_panel.parquet"
+    frame.to_parquet(path, index=False)
+    loaded = _load_panel(str(path), horizons=(5,))
+    assert str(loaded["industry"].dtype) == "category"
+    assert set(loaded["industry"].dropna().unique()) == {"A", "B"}
+    assert "total_mv" in loaded.columns
+
+
+def test_quality_factor_is_evaluable_on_a_financial_panel(tmp_path):
+    from app.jobs.factor_lab_runner import evaluate_panel
+
+    frame = _noisy_panel(sessions=40, names=6)
+    path = tmp_path / "financial_panel.parquet"
+    frame.to_parquet(path, index=False)
+    report = evaluate_panel(path=str(path), factor="quality_composite", horizons=(5,))
+    assert "quality_composite" in report["factors"]
+    assert not report["skipped_factors"]
