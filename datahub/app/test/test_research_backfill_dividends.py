@@ -52,9 +52,9 @@ def test_share_multiplier_includes_split_and_transfer():
             "ann_date": "20260612",
             "end_date": "20251231",
             "div_proc": "实施",
-            "stk_div": 0.2,
-            "stk_bo_rate": 0.3,
-            "stk_co_rate": 0.0,
+            "stk_div": 0.5,
+            "stk_bo_rate": 0.2,
+            "stk_co_rate": 0.3,
             "cash_div": 1.0,
             "cash_div_tax": 0.8,
             "record_date": "20260625",
@@ -64,6 +64,26 @@ def test_share_multiplier_includes_split_and_transfer():
     )
     assert event["share_multiplier"] == 1.5
     assert event["cash_per_share"] == 0.8
+
+
+def test_multiplier_uses_total_stk_div_not_component_sum():
+    event = module.normalize_event(
+        {
+            "ts_code": "600519.SH",
+            "ann_date": "20260612",
+            "end_date": "20251231",
+            "div_proc": "实施",
+            "stk_div": 0.4,
+            "stk_bo_rate": 0.4,
+            "stk_co_rate": 0.0,
+            "cash_div": 0.0,
+            "cash_div_tax": 0.0,
+            "record_date": "20260625",
+            "ex_date": "20260626",
+            "pay_date": "20260626",
+        }
+    )
+    assert event["share_multiplier"] == 1.4
 
 
 def test_missing_transfer_rate_is_zero_not_nan():

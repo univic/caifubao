@@ -186,10 +186,13 @@ def replay_ledger(
         raise ValueError("ledger panel has duplicate (date, stock_code) keys")
     lookup = work.set_index(["date", "stock_code"], drop=False).sort_index()
 
+    # ``positions`` is held in SHARES internally. Measuring in lots would make
+    # a 1-for-1.3 split round 130 shares back to 100.
     positions: dict[str, int] = {
-        str(code): int(lots) for code, lots in (initial_positions or {}).items()
+        str(code): int(lots) * config.board_lot
+        for code, lots in (initial_positions or {}).items()
     }
-    if any(lots <= 0 for lots in positions.values()):
+    if any(shares <= 0 for shares in positions.values()):
         raise ValueError("initial positions must be positive lots")
     if len(positions) > config.max_positions:
         raise ValueError(
@@ -235,33 +238,33 @@ def replay_ledger(
             code = str(action["code"])
             if code not in positions:
                 continue
-            lots = positions[code]
+            shares = positions[code]
             multiplier = float(action.get("share_multiplier") or 1.0)
             cash_per_share = float(action.get("cash_per_share") or 0.0)
             if not np.isfinite(multiplier) or multiplier <= 0:
                 raise ValueError(f"invalid share multiplier for {code}: {multiplier}")
             if cash_per_share:
-                cash += lots * config.board_lot * cash_per_share
-            positions[code] = int(round(lots * multiplier))
+                cash += shares * cash_per_share
+            positions[code] = int(round(shares * multiplier))
 
         # 2. Explicit delisting exits win over a missing quote.
         for event in exits.get(day, []):
             code = str(event["code"])
             if code not in positions:
                 continue
-            lots = positions.pop(code)
+            shares = positions.pop(code)
             price = float(event.get("price") or 0.0)
             if not np.isfinite(price) or price < 0:
                 raise ValueError(f"invalid delisting exit price for {code}: {price}")
             if price > 0:
-                notional = lots * config.board_lot * price
+                notional = shares * price
                 cost = _side_cost(notional, config, "sell")
                 cash += notional - cost
                 fees += cost
                 traded += notional
                 side = "SELL"
             else:
-                write_off_cny += lots * config.board_lot * last_price.get(code, 0.0)
+                write_off_cny += shares * last_price.get(code, 0.0)
                 side = "WRITE_OFF"
             pending_sells.discard(code)
             pending_buys = [item for item in pending_buys if item != code]
@@ -272,7 +275,8 @@ def replay_ledger(
                     "date": str(day.date()),
                     "code": code,
                     "side": side,
-                    "lots": lots,
+                    "lots": round(shares / config.board_lot, 6),
+                    "shares": shares,
                     "price": round(price, 6),
                 }
             )
@@ -287,8 +291,8 @@ def replay_ledger(
             if price is None:
                 record_block(day, code, "SELL", "blocked_exit")
                 continue
-            lots = positions.pop(code)
-            notional = lots * config.board_lot * price
+            shares = positions.pop(code)
+            notional = shares * price
             cost = _side_cost(notional, config, "sell")
             cash += notional - cost
             fees += cost
@@ -301,7 +305,8 @@ def replay_ledger(
                     "date": str(day.date()),
                     "code": code,
                     "side": "SELL",
-                    "lots": lots,
+                    "lots": round(shares / config.board_lot, 6),
+                    "shares": shares,
                     "price": round(price, 6),
                 }
             )
@@ -315,7 +320,7 @@ def replay_ledger(
                 mark = (
                     open_price if open_price is not None else last_price.get(code, 0.0)
                 )
-                open_book += lots * config.board_lot * mark
+                open_book += lots * mark
             target_codes = list(pending_buys)
             pending_buys = []
             if target_codes:
@@ -334,24 +339,26 @@ def replay_ledger(
                         desired = int(
                             np.floor(slice_amount / (price * config.board_lot))
                         )
-                        if desired < positions[code]:
-                            delta = positions[code] - desired
-                            notional = delta * config.board_lot * price
+                        desired_shares = desired * config.board_lot
+                        if desired_shares < positions[code]:
+                            delta = positions[code] - desired_shares
+                            notional = delta * price
                             cost = _side_cost(notional, config, "sell")
                             cash += notional - cost
                             fees += cost
                             traded += notional
-                            positions[code] = desired
+                            positions[code] = desired_shares
                             fills.append(
                                 {
                                     "date": str(day.date()),
                                     "code": code,
                                     "side": "SELL",
-                                    "lots": delta,
+                                    "lots": round(delta / config.board_lot, 6),
+                                    "shares": delta,
                                     "price": round(price, 6),
                                 }
                             )
-                            if desired == 0:
+                            if desired_shares == 0:
                                 positions.pop(code, None)
                                 last_price.pop(code, None)
                 for code in target_codes:
@@ -364,7 +371,10 @@ def replay_ledger(
                         desired = int(
                             np.floor(slice_amount / (price * config.board_lot))
                         )
-                        delta = max(0, desired - positions[code])
+                        delta_shares = max(
+                            0, desired * config.board_lot - positions[code]
+                        )
+                        delta = delta_shares // config.board_lot
                     else:
                         if len(positions) >= config.max_positions:
                             record_block(day, code, "BUY", "max_positions")
@@ -383,13 +393,15 @@ def replay_ledger(
                         delta = desired
                     if delta <= 0:
                         continue
-                    notional = delta * config.board_lot * price
+                    delta_shares = delta * config.board_lot
+                    notional = delta_shares * price
                     cost = _side_cost(notional, config, "buy")
                     # Leave enough cash for the fee; an exact-size order would
                     # otherwise always fail the cash check.
                     while delta > 0 and notional + cost > cash:
                         delta -= 1
-                        notional = delta * config.board_lot * price
+                        delta_shares = delta * config.board_lot
+                        notional = delta_shares * price
                         cost = _side_cost(notional, config, "buy")
                     if delta <= 0:
                         record_block(day, code, "BUY", "insufficient_cash")
@@ -397,7 +409,7 @@ def replay_ledger(
                     cash -= notional + cost
                     fees += cost
                     traded += notional
-                    positions[code] = positions.get(code, 0) + delta
+                    positions[code] = positions.get(code, 0) + delta_shares
                     last_price[code] = price
                     stale_days[code] = 0
                     fills.append(
@@ -406,6 +418,7 @@ def replay_ledger(
                             "code": code,
                             "side": "BUY",
                             "lots": delta,
+                            "shares": delta_shares,
                             "price": round(price, 6),
                         }
                     )
@@ -413,14 +426,14 @@ def replay_ledger(
         # 5. Mark at today's close; a missing close carries the last price and
         #    increments staleness. It is never silently written down.
         book = 0.0
-        for code, lots in positions.items():
+        for code, shares in positions.items():
             row = _quote(lookup, day, code)
             close, stale = _close(row, last_price.get(code))
             if close is None:
                 raise ValueError(f"no mark for held code {code} on {day.date()}")
             last_price[code] = close
             stale_days[code] = stale_days.get(code, 0) + (1 if stale else 0)
-            book += lots * config.board_lot * close
+            book += shares * close
         nav = cash + book
         if nav < -1e-6:
             raise ValueError(f"negative NAV on {day.date()}: {nav}")
@@ -500,6 +513,10 @@ def replay_ledger(
         "nav": nav_rows,
         "fills": fills,
         "blocked_orders": blocked,
-        "ending_positions": dict(positions),
+        "ending_positions": {
+            code: round(shares / config.board_lot, 6)
+            for code, shares in positions.items()
+        },
+        "ending_shares": dict(positions),
         "ending_last_price": dict(last_price),
     }

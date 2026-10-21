@@ -83,7 +83,10 @@ def normalize_event(row: dict) -> dict | None:
         except (TypeError, ValueError):
             number = 0.0
         payload[field] = number if math.isfinite(number) else 0.0
-    payload["share_multiplier"] = 1.0 + payload["stk_div"] + payload["stk_bo_rate"]
+    # Tushare: stk_div is total shares per share (送转), while stk_bo_rate and
+    # stk_co_rate are the送股/转增 components that add up to it. Adding all
+    # three double-counts the split.
+    payload["share_multiplier"] = 1.0 + payload["stk_div"]
     payload["cash_per_share"] = payload["cash_div_tax"]
     return payload
 
@@ -121,7 +124,7 @@ def backfill(
         "to_date": to_date,
         "empty_codes": 0,
         "failed_codes": [],
-        "rights_events": 0,
+        "transfer_events": 0,
     }
     for index, code in enumerate(codes, 1):
         try:
@@ -159,7 +162,7 @@ def backfill(
         time.sleep(pause)
     result = dedupe_events(pd.DataFrame(rows))
     summary["events"] = int(len(result))
-    summary["rights_events"] = int((result["stk_co_rate"] > 0).sum())
+    summary["transfer_events"] = int((result["stk_co_rate"] > 0).sum())
     if not result.empty:
         summary["min_ex_date"] = str(result["ex_date"].min().date())
         summary["max_ex_date"] = str(result["ex_date"].max().date())

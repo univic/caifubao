@@ -14,6 +14,7 @@ Research-only: no Mongo, no broker, no scheduler, no production write.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -207,6 +208,7 @@ def run(
     output_path: str,
     exposure: float = 1.0,
     holdout_start: str | None = None,
+    selection: str = "factor",
 ) -> dict:
     frame = load_panel(panel_path, ("fwd_h20",))
     frame = attach_execution_columns(frame, panel_path)
@@ -231,6 +233,17 @@ def run(
         else None
     )
     exclusions = decision_time_exclusions(universe)
+    if selection == "control":
+        # Same fixed-seed control as the audit: a static-ish hash ranking, not
+        # a factor score. It is a benchmark, not a candidate strategy.
+        codes = sorted(
+            frame["stock_code"].unique(),
+            key=lambda code: hashlib.sha256(f"42:{code}".encode()).hexdigest(),
+        )
+        scores = {code: len(codes) - index for index, code in enumerate(codes)}
+        frame["__score"] = frame["stock_code"].map(scores)
+    if selection not in {"factor", "control"}:
+        raise ValueError("selection must be factor or control")
     if exclusions:
         cutoff = frame["stock_code"].map(exclusions)
         frame.loc[cutoff.notna() & (frame["date"] >= cutoff), "__score"] = np.nan
@@ -249,7 +262,7 @@ def run(
         if dividend_path and Path(dividend_path).exists()
         else None
     )
-    rights_events = (
+    transfer_events = (
         int((pd.to_numeric(actions.get("stk_co_rate"), errors="coerce") > 0).sum())
         if actions is not None and not actions.empty
         else 0
@@ -276,11 +289,12 @@ def run(
         "universe": universe_path,
         "excluded_codes": len(exclusions),
         "corporate_action_rows": int(len(actions)),
-        "rights_events_ignored": rights_events,
+        "transfer_events": transfer_events,
         "delist_exit_rows": int(len(exits)),
         "decision_dates": len(decision_dates),
         "exposure": exposure,
         "holdout_start": str(holdout_day.date()) if holdout_day is not None else None,
+        "selection": selection,
     }
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text(
@@ -305,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--universe", default=None)
     parser.add_argument("--exposure", type=float, default=1.0)
     parser.add_argument("--holdout-start", default=None)
+    parser.add_argument("--selection", choices=("factor", "control"), default="factor")
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
     result = run(
@@ -314,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         output_path=args.output,
         exposure=args.exposure,
         holdout_start=args.holdout_start,
+        selection=args.selection,
     )
     print(json.dumps(result["summary"], ensure_ascii=False))
     return 0

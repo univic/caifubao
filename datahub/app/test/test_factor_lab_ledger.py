@@ -235,3 +235,51 @@ def test_lower_exposure_trims_an_existing_position():
     )
     assert 24 <= result["ending_positions"]["sh600000"] <= 25
     assert result["nav"][-1]["cash"] > 24_000
+
+
+def test_fractional_split_keeps_the_economic_share_count():
+    day = pd.Timestamp("2026-01-05")
+    frame = _frame([_row(day, "sh600000", 10.0, 10.0)])
+    actions = pd.DataFrame(
+        [
+            {
+                "code": "sh600000",
+                "ex_date": day,
+                "share_multiplier": 1.3,
+                "cash_per_share": 0.0,
+            }
+        ]
+    )
+    result = replay_ledger(
+        frame,
+        [day],
+        {},
+        LedgerConfig(initial_cash=50_000, max_positions=1),
+        initial_positions={"sh600000": 1},
+        initial_prices={"sh600000": 10.0},
+        corporate_actions=actions,
+    )
+    assert result["ending_shares"]["sh600000"] == 130
+    assert result["ending_positions"]["sh600000"] == 1.3
+    assert result["nav"][0]["book"] == pytest.approx(1_300)
+    assert result["nav"][0]["nav"] == pytest.approx(51_300)
+
+
+def test_existing_position_is_topped_up_in_lots_not_share_delta():
+    dates = pd.to_datetime(["2026-01-05", "2026-01-06"])
+    frame = _frame(
+        [
+            _row(dates[0], "sh600000", 10.0, 10.0),
+            _row(dates[1], "sh600000", 10.0, 10.0),
+        ]
+    )
+    result = replay_ledger(
+        frame,
+        dates,
+        {dates[0]: ["sh600000"]},
+        LedgerConfig(initial_cash=50_000, max_positions=1),
+        initial_positions={"sh600000": 1},
+        initial_prices={"sh600000": 10.0},
+    )
+    assert result["ending_shares"]["sh600000"] > 100
+    assert result["ending_shares"]["sh600000"] % 100 == 0
