@@ -26,3 +26,9 @@
 - [x] 4.2 Build explicit delisting exits from the known delist dates and last available prices.
 - [x] 4.3 Run one continuous 50k, strict-10-name monthly account with the new ledger and the decision-time delisting filter.
 - [x] 4.4 Record the result and holdout/data limitations; do not promote a strategy.
+
+## 5. Risk candidate
+
+- [x] 5.1 Test one fixed 60% gross-exposure rule on the P0 ledger.
+- [x] 5.2 Run a 2026-03-17..09-18 holdout with frozen last-fold weights.
+- [x] 5.3 Record that the in-sample target passed but the holdout failed; do not promote.

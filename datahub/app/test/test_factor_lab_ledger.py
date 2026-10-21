@@ -194,3 +194,44 @@ def test_positive_months_excludes_the_partial_tail():
         initial_prices={"sh600000": 10.0},
     )
     assert result["summary"]["complete_months"] == 2
+
+
+def test_exposure_buys_only_half_the_book():
+    dates = pd.to_datetime(["2026-01-05", "2026-01-06"])
+    frame = _frame(
+        [
+            _row(dates[0], "sh600000", 10.0, 10.0),
+            _row(dates[1], "sh600000", 10.0, 10.0),
+        ]
+    )
+    result = replay_ledger(
+        frame,
+        dates,
+        {dates[0]: ["sh600000"]},
+        LedgerConfig(initial_cash=50_000, max_positions=1),
+        exposure={dates[0]: 0.5},
+        rebalance_to_target=True,
+    )
+    assert result["ending_positions"]["sh600000"] == 25
+    assert result["nav"][-1]["cash"] > 24_000
+
+
+def test_lower_exposure_trims_an_existing_position():
+    dates = pd.to_datetime(["2026-01-05", "2026-01-06", "2026-01-07"])
+    frame = _frame(
+        [
+            _row(dates[0], "sh600000", 10.0, 10.0),
+            _row(dates[1], "sh600000", 10.0, 10.0),
+            _row(dates[2], "sh600000", 10.0, 10.0),
+        ]
+    )
+    result = replay_ledger(
+        frame,
+        dates,
+        {dates[0]: ["sh600000"], dates[1]: ["sh600000"]},
+        LedgerConfig(initial_cash=50_000, max_positions=1),
+        exposure={dates[0]: 1.0, dates[1]: 0.5},
+        rebalance_to_target=True,
+    )
+    assert 24 <= result["ending_positions"]["sh600000"] <= 25
+    assert result["nav"][-1]["cash"] > 24_000

@@ -168,7 +168,9 @@ def build_targets(
     return targets
 
 
-def prepare_scores(frame: pd.DataFrame) -> pd.DataFrame:
+def prepare_scores(
+    frame: pd.DataFrame, holdout_start: pd.Timestamp | None = None
+) -> pd.DataFrame:
     frame = frame.copy()
     dates = list(pd.to_datetime(sorted(frame["date"].unique())))
     zscores = {}
@@ -188,6 +190,12 @@ def prepare_scores(frame: pd.DataFrame) -> pd.DataFrame:
         frame.loc[mask, "__score"] = sum(
             weight * zscores[name].loc[mask] for name, weight in weights.items()
         )
+    if holdout_start is not None:
+        last_weights = weights
+        mask = frame["date"] >= holdout_start
+        frame.loc[mask, "__score"] = sum(
+            weight * zscores[name].loc[mask] for name, weight in last_weights.items()
+        )
     return frame
 
 
@@ -197,19 +205,25 @@ def run(
     dividend_path: str | None,
     universe_path: str | None,
     output_path: str,
+    exposure: float = 1.0,
+    holdout_start: str | None = None,
 ) -> dict:
     frame = load_panel(panel_path, ("fwd_h20",))
     frame = attach_execution_columns(frame, panel_path)
-    frame = prepare_scores(frame)
+    holdout_day = pd.Timestamp(holdout_start).normalize() if holdout_start else None
+    frame = prepare_scores(frame, holdout_day)
     dates = list(pd.to_datetime(sorted(frame["date"].unique())))
     folds = plan_oos_folds(len(dates), TRAIN_SESSIONS, TEST_SESSIONS)
-    sessions = [
-        day
-        for start, end in ((start, end) for _, _, start, end in folds)
-        for day in dates[start : end + 1]
-    ]
-    # The four folds are contiguous; the dedupe is defensive only.
-    sessions = list(dict.fromkeys(sessions))
+    if holdout_day is not None:
+        sessions = [day for day in dates if day >= holdout_day]
+    else:
+        sessions = [
+            day
+            for start, end in ((start, end) for _, _, start, end in folds)
+            for day in dates[start : end + 1]
+        ]
+        # The four folds are contiguous; the dedupe is defensive only.
+        sessions = list(dict.fromkeys(sessions))
 
     universe = (
         pd.read_parquet(universe_path)
@@ -222,9 +236,12 @@ def run(
         frame.loc[cutoff.notna() & (frame["date"] >= cutoff), "__score"] = np.nan
 
     decision_dates = []
-    for _, _, test_start, test_end in folds:
-        window = dates[test_start : test_end + 1]
-        decision_dates.extend(window[i] for i in range(0, len(window) - 1, STEP))
+    if holdout_day is not None:
+        decision_dates.extend(sessions[i] for i in range(0, len(sessions) - 1, STEP))
+    else:
+        for _, _, test_start, test_end in folds:
+            window = dates[test_start : test_end + 1]
+            decision_dates.extend(window[i] for i in range(0, len(window) - 1, STEP))
     targets = build_targets(frame, decision_dates)
 
     actions = (
@@ -240,6 +257,9 @@ def run(
     actions = map_actions_to_sessions(actions, sessions)
     exits = build_delist_exits(frame, universe, sessions)
 
+    if not 0 < exposure <= 1.0:
+        raise ValueError("exposure must be in (0, 1]")
+    exposure_map = {day: exposure for day in targets}
     result = replay_ledger(
         frame,
         sessions,
@@ -247,6 +267,8 @@ def run(
         LedgerConfig(initial_cash=50_000, max_positions=10),
         corporate_actions=actions,
         delist_exits=exits,
+        exposure=exposure_map,
+        rebalance_to_target=exposure < 1.0,
     )
     result["inputs"] = {
         "panel": panel_path,
@@ -257,6 +279,8 @@ def run(
         "rights_events_ignored": rights_events,
         "delist_exit_rows": int(len(exits)),
         "decision_dates": len(decision_dates),
+        "exposure": exposure,
+        "holdout_start": str(holdout_day.date()) if holdout_day is not None else None,
     }
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text(
@@ -279,6 +303,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--panel", required=True)
     parser.add_argument("--dividend", default=None)
     parser.add_argument("--universe", default=None)
+    parser.add_argument("--exposure", type=float, default=1.0)
+    parser.add_argument("--holdout-start", default=None)
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
     result = run(
@@ -286,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
         dividend_path=args.dividend,
         universe_path=args.universe,
         output_path=args.output,
+        exposure=args.exposure,
+        holdout_start=args.holdout_start,
     )
     print(json.dumps(result["summary"], ensure_ascii=False))
     return 0

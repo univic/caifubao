@@ -153,6 +153,8 @@ def replay_ledger(
     initial_prices: Mapping[str, float] | None = None,
     corporate_actions: pd.DataFrame | None = None,
     delist_exits: pd.DataFrame | None = None,
+    exposure: Mapping | None = None,
+    rebalance_to_target: bool = False,
 ) -> dict:
     """Run one causal T+1 account. All prices in ``frame`` are raw prices."""
     required = {"date", "stock_code", "open", "close", "trade_status"}
@@ -166,6 +168,14 @@ def replay_ledger(
     if list(dates) != sorted(dates):
         raise ValueError("sessions must be ascending")
     targets_by_date = _targets_by_date(targets)
+    exposure_by_date = {
+        _date(key): float(value) for key, value in (exposure or {}).items()
+    }
+    if any(
+        not np.isfinite(value) or value < 0 or value > 1
+        for value in exposure_by_date.values()
+    ):
+        raise ValueError("exposure must be finite and in [0, 1]")
     actions = _actions_by_date(corporate_actions)
     exits = _exits_by_date(delist_exits)
 
@@ -204,6 +214,7 @@ def replay_ledger(
     pending_sells: set[str] = set()
     pending_buys: list[str] = []
     current_target: list[str] = []
+    active_exposure = 1.0
     stale_days: dict[str, int] = {code: 0 for code in positions}
     fills: list[dict] = []
     blocked: list[dict] = []
@@ -308,7 +319,41 @@ def replay_ledger(
             target_codes = list(pending_buys)
             pending_buys = []
             if target_codes:
-                slice_amount = (cash + open_book) / len(target_codes)
+                total_value = cash + open_book
+                slice_amount = total_value * active_exposure / len(target_codes)
+                # A target with an exposure below 100% must trim existing names
+                # to target weight, not merely stop adding.
+                if rebalance_to_target and active_exposure < 1.0:
+                    for code in list(positions):
+                        if code not in set(target_codes):
+                            continue
+                        row = _quote(lookup, day, code)
+                        price = _tradeable_open(row, "sell", config)
+                        if price is None:
+                            continue
+                        desired = int(
+                            np.floor(slice_amount / (price * config.board_lot))
+                        )
+                        if desired < positions[code]:
+                            delta = positions[code] - desired
+                            notional = delta * config.board_lot * price
+                            cost = _side_cost(notional, config, "sell")
+                            cash += notional - cost
+                            fees += cost
+                            traded += notional
+                            positions[code] = desired
+                            fills.append(
+                                {
+                                    "date": str(day.date()),
+                                    "code": code,
+                                    "side": "SELL",
+                                    "lots": delta,
+                                    "price": round(price, 6),
+                                }
+                            )
+                            if desired == 0:
+                                positions.pop(code, None)
+                                last_price.pop(code, None)
                 for code in target_codes:
                     if code in positions:
                         row = _quote(lookup, day, code)
@@ -396,6 +441,7 @@ def replay_ledger(
         # 6. Decide at this close; orders execute at the next session's open.
         if day in targets_by_date:
             current_target = targets_by_date[day]
+            active_exposure = exposure_by_date.get(day, 1.0)
             pending_sells = set(positions) - set(current_target)
             pending_buys = list(current_target)
 
