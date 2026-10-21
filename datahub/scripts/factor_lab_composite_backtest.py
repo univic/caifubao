@@ -107,6 +107,21 @@ _PANEL_FIELDS = (
     "dv_ttm",
     "total_mv",
     "turnover_rate",
+    "industry",
+    "financial_ann_date",
+    "financial_end_date",
+    "roe",
+    "roe_waa",
+    "roa",
+    "grossprofit_margin",
+    "netprofit_margin",
+    "assets_turn",
+    "debt_to_assets",
+    "netprofit_yoy",
+    "or_yoy",
+    "tr_yoy",
+    "ocf_yoy",
+    "q_ocf_to_sales",
 )
 
 
@@ -236,6 +251,8 @@ def load_panel(path: str, labels: tuple[str, ...]) -> pd.DataFrame:
         path, columns=columns + [c for c in labels if c not in columns]
     )
     frame["date"] = pd.to_datetime(frame["date"])
+    if "industry" in frame.columns:
+        frame["industry"] = frame["industry"].astype("category")
     frame = frame.sort_values(["date", "stock_code"]).reset_index(drop=True)
     raw_open = pd.to_numeric(frame["open"], errors="coerce")
     frame["__raw_entry"] = raw_open.groupby(frame["stock_code"], sort=False).shift(-1)
