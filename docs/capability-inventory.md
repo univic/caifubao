@@ -68,6 +68,9 @@
 | 真实相对强弱 | ✅ 已实现 | 对标沪深 300/中证 500 指数的 alpha；已注册并接入评分管道（权重 10/10/8），依赖 index_quotes/alpha_map 输入 |
 | 基本面估值因子（EP/BP/DV 等） | 📋 已规划 | `stock_daily_basic` 已入库、研究审计已完成（估值正 IC 且 size 中性后不消失）；结论为作独立/regime 分量，**未注册为评分分量**，也未混入 flip_wide（`docs/autoresearch/runs/h20-excess-alpha/fundamental-factor-audit-2019-2026.md`） |
 | 持有期 × buffer 扫描 | ✅ 已实现 | `datahub/app/lib/strategy_engine/holding_scan.py` + `factor_lab_runner holding-scan`（#236）；持有期扫描已合并并附实测报告。注意 `--buffers` 轴被 QA 判定**结构性无效**（每期硬到期先清空账本，滞回永不生效），实际等价于纯持有期扫描 |
+| 50k 执行计划 | ✅ 已实现 | `strategy_engine/account_plan.py` + `scripts/strategy_account_plan.py`（balanced-core-satellite）：sell-first、整手/科创板 200、BSE 拒绝、费用感知、现金下限、可对账 projected positions；只读、不下单 |
+| 生存者/ST 覆盖审计 | ✅ 已实现 | `factor_lab/universe.py:audit_panel` + `scripts/research_universe_audit.py` / `research_universe_backfill.py`（balanced-core-satellite）：逐年 codes/entrants/leavers/ST/BSE、`survivorship_gap`；backfill 只写研究 parquet |
+| 策略回放产物 | ✅ 已实现 | `model/strategy_replay.py` + `strategy_engine/replay.py` + `jobs/strategy_replay_runner.py`（balanced-core-satellite）：REPLAY-only curve/decisions/fills/metrics，`forward_sessions=0/120`、input/content hash 不可变 |
 | ETF lab / 小账户研究模块 | ✅ 已实现 | `datahub/app/lib/etf_lab`（pool/panel/measure + 多资产 rotation）与 `datahub/app/lib/small_book`（8 分量评分重建）已随 #236 合入；研究结论为负结果/配置型，不构成 alpha |
 | 不可变研究工件契约 | 📋 已规划 | `openspec/changes/artifact-contract/` 已定义 artifact_id/artifact_hash/`input_snapshot` 契约，但 0/13 任务实现；当前各报告/导出的哈希与溯源语义尚未统一 |
 
@@ -111,6 +114,7 @@
 | 前瞻证据认证 + 120 交易日计数器 | ✅ 已实现 | `StrategyForwardWindow`（append-only，按 model_version+horizon ACTIVE 唯一）+ `strategy forward certify/close/progress`：仅窗口内决策先于执行日开盘的 COMPLETED 记录标 FORWARD，计数 distinct 信号日/120，缺口如实报告；FORWARD 计划不可改写，NAV 仅为派生（#207、`strategy-forward-evidence-capture`） |
 | 研究级目标组合导出 | ✅ 已实现 | `lib/strategy_engine/export.py` + `strategy_runner export`：COMPLETED run 的 BUY/SELL/HOLD 目标权重与金额、CSV/JSON；固定 `grade=RESEARCH` + 非投资建议免责声明，歧义 config_hash fail closed；不写库不下单（#220、`strategy-target-export`） |
 | 可信股票择时评估器 | ✅ 已实现 | `backend/app/services/timing_evaluator.py`（依赖自由、纯函数）+ `backtest_runner timing-pool` CLI：对显式冻结 cohort 聚合 timing vs buy_hold 成对证据，未达门槛输出 UNVALIDATED/研究级（#237、`stock-timing-evaluator-p0`） |
+| 核心-卫星回放 | ✅ 已实现 | `strategy_engine/core_satellite.py` + `scripts/core_satellite_backtest.py`（balanced-core-satellite）：50k 三 ETF 40/30/30 + `riq_v1` 20k 卫星 + 10% 现金、季度 ±5pp 带、费用化转移；研究级 REPLAY |
 | Point-in-time 前视审计模拟 | ✅ 已实现 | `datahub/research/pit_sim/`（pit_sim/pit_value/pit_drift_check）：50k 纸面模拟只读 `date <= D` 的行，窗口内价格仅用于估值；2026-08-01→09-11 实测报告（#231） |
 | 组合层面整体回测 | ❌ 未实现 | 多股回测存在，但未接入 Portfolio 持仓做组合整体回测 |
 | 换手/再平衡预算 | ❌ 未实现 | roadmap 1.3 剩余：再平衡的换手/交易预算未落地（`strategy-forward-window.md` §6 明示） |
@@ -131,6 +135,7 @@
 | 股票评分详情 | ✅ 已实现 | 时间周期卡片(分数/推荐/分位数)、验证指标、评分历史图表 |
 | 评分解释查看 | ✅ 已实现 | 分量分解(原始值/归一化值/权重/贡献值/证据)、输入新鲜度 |
 | 回测创建/结果查看 | ✅ 已实现 | 参数表单、指标展示、交易列表、每日权益 |
+| 策略重放页 | ✅ 已实现 | `/strategy-replays` 列表 + 详情（balanced-core-satellite）：NAV/基准/回撤图、决策时间线、展开成交/受阻订单、REPLAY·0/120、研究免责声明与限制 |
 | 回测权益曲线图 | ✅ 已实现 | BacktestResultView 权益曲线图表（#182） |
 | 策略发现工作台 | ✅ 已实现 | DiscoveryView（1123 行）：策略扫描/可执行性/参数景观/CSV 导出（#103） |
 | 投资组合管理 | ✅ 已实现 | 手动记账(BUY/SELL/CASH_IN/CASH_OUT/DIVIDEND)、持仓、交易历史、快照 |

@@ -1,0 +1,25 @@
+{
+  "schema_version": "etf-benchmark-v1",
+  "price_basis": "raw",
+  "instrument": {
+    "code": "sh510300",
+    "type": "domestic_equity_etf",
+    "tick_size": "0.001"
+  },
+  "initial_cash": "100000.00",
+  "allocation": "1",
+  "fees": {
+    "commission_rate": "0.00025",
+    "minimum_commission": "5.00",
+    "slippage_rate": "0"
+  },
+  "decision_date": "2026-09-01",
+  "sessions": ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04"],
+  "corporate_actions": [],
+  "quotes": [
+    {"date": "2026-09-01", "open": "4.000", "close": "4.000", "trade_status": 1, "upper_limit": "4.400"},
+    {"date": "2026-09-02", "open": "4.000", "close": "4.100", "trade_status": 1, "upper_limit": "4.400"},
+    {"date": "2026-09-03", "open": "4.100", "close": "4.050", "trade_status": 1, "upper_limit": "4.510"},
+    {"date": "2026-09-04", "open": "4.050", "close": "4.200", "trade_status": 1, "upper_limit": "4.455"}
+  ]
+}

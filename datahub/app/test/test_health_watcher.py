@@ -97,6 +97,72 @@ def test_skipped_jobs_are_reported_but_not_issues():
     assert report["job_runs"]["skipped"][0]["job_name"] == "datahub_signal_daily"
 
 
+def test_report_marks_degraded_jobs_unhealthy():
+    report = _build_report(
+        failed_jobs=[],
+        skipped_jobs=[],
+        stale_assets=[],
+        no_data_assets=[],
+        latest_dates={},
+        degraded_jobs=[
+            {
+                "job_name": "datahub_quote_stock_daily",
+                "status": "DEGRADED",
+                "started_at": "2026-08-28 18:00:11",
+                "error_message": None,
+                "coverage_rate": 0.999617,
+                "failed_count": 2,
+                "failed_codes": ["sh600001", "sz000002"],
+            }
+        ],
+    )
+
+    # DEGRADED is usable but explicitly not clean: the operator must see it.
+    assert report["healthy"] is False
+    assert any("DEGRADED" in issue for issue in report["issues"])
+    assert any("coverage=0.999617" in issue for issue in report["issues"])
+    assert report["job_runs"]["degraded"][0]["job_name"] == "datahub_quote_stock_daily"
+    assert report["job_runs"]["failed"] == []
+
+
+def test_degraded_run_is_not_reported_as_clean():
+    report = _build_report(
+        failed_jobs=[],
+        skipped_jobs=[],
+        stale_assets=[],
+        no_data_assets=[],
+        latest_dates={},
+        degraded_jobs=[
+            {
+                "job_name": "datahub_quote_index_daily",
+                "status": "DEGRADED",
+                "started_at": "2026-08-28 18:00:00",
+                "error_message": None,
+                "coverage_rate": 0.8,
+                "failed_count": 0,
+                "skipped_indices": ["sh000015"],
+            }
+        ],
+    )
+
+    assert report["healthy"] is False
+    assert report["job_runs"]["degraded"][0]["skipped_indices"] == ["sh000015"]
+
+
+def test_cli_exits_non_zero_when_a_watched_job_is_degraded(monkeypatch, capsys):
+    from app.jobs import health_watcher
+
+    monkeypatch.setattr(
+        health_watcher, "run_checks", lambda hours=24: {"healthy": False, "issues": []}
+    )
+    monkeypatch.setattr(
+        "app.lib.db_watcher.mongoengine_tool.mongo_watcher.get_db_connection",
+        lambda: None,
+    )
+
+    assert health_watcher.main(["--fail-on-issues"]) == 1
+
+
 def test_cli_rejects_zero_hours():
     from app.jobs import health_watcher
 

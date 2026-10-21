@@ -89,6 +89,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--lookback", type=int, default=TRADING_DAYS)
     parser.add_argument("--min-ic-dates", type=int, default=120)
     parser.add_argument("--output", default=None)
+    parser.add_argument(
+        "--detail",
+        action="store_true",
+        help="Include the daily curve, decisions, fills and blocked orders.",
+    )
     return parser.parse_args(argv)
 
 
@@ -191,6 +196,7 @@ def replay_book(
     require_label: bool = False,
     daily_marks: bool = True,
     include_nav: bool = False,
+    include_detail: bool = False,
 ) -> dict:
     """Daily account replay of the book ranked by ``frame['__score']``.
 
@@ -223,6 +229,10 @@ def replay_book(
     traded = 0.0
     fees = 0.0
     nav_rows = []
+    decisions = []
+    fills = []
+    blocked_orders = []
+    pending_sell_decision: dict[str, str] = {}
     previous: list[str] = []
     rebalance_positions = [position for position in range(0, len(sessions) - 1, step)]
     for position, value in enumerate(sessions):
@@ -247,15 +257,49 @@ def replay_book(
                         ].iloc[0]
                     )
                 ]
+            prior_target = list(previous)
             previous = target
             if execution is not None:
+                decision_id = "d" + value.date().isoformat()
+                nav_before = cash + sum(
+                    lots * LOT * last_price.get(code, 0.0)
+                    for code, lots in positions.items()
+                )
+                decision = {
+                    "decision_id": decision_id,
+                    "date": str(value.date()),
+                    "execution_date": str(execution.date()),
+                    "nav_before": round(nav_before, 2),
+                    "cash_before": round(cash, 2),
+                    "target_holdings": [
+                        {"code": code, "weight": round(1.0 / max(len(target), 1), 6)}
+                        for code in target
+                    ],
+                    "added": [code for code in target if code not in set(prior_target)],
+                    "removed": [
+                        code for code in prior_target if code not in set(target)
+                    ],
+                    "estimated_cost": 0.0,
+                }
                 for code in list(positions):
                     if code not in set(target):
                         pending_sell.add(code)
+                        pending_sell_decision[code] = decision_id
                 for code in sorted(pending_sell):
                     price = tradeable_open(quote(execution, code), "sell")
                     if price is None:
                         failed_exits += 1
+                        blocked_orders.append(
+                            {
+                                "decision_id": pending_sell_decision.get(
+                                    code, decision_id
+                                ),
+                                "date": str(execution.date()),
+                                "code": code,
+                                "side": "SELL",
+                                "reason": "blocked_exit",
+                            }
+                        )
                         continue
                     lots = positions.pop(code)
                     notional = lots * LOT * price
@@ -263,6 +307,25 @@ def replay_book(
                     cash += notional - cost
                     fees += cost
                     traded += notional
+                    fills.append(
+                        {
+                            "decision_id": pending_sell_decision.pop(code, decision_id),
+                            "date": str(execution.date()),
+                            "code": code,
+                            "side": "SELL",
+                            "quantity": lots * LOT,
+                            "price": round(price, 6),
+                            "total_cost": round(cost, 2),
+                            "commission": round(
+                                max(MIN_COMMISSION, COMMISSION_RATE * notional), 2
+                            ),
+                            "stamp_duty": round(notional * 0.0005, 2),
+                            "transfer_fee": round(notional * 0.00001, 2),
+                        }
+                    )
+                    decision["estimated_cost"] = round(
+                        decision["estimated_cost"] + cost, 2
+                    )
                     pending_sell.discard(code)
                 book_now = sum(
                     lots * LOT * last_price.get(code, 0.0)
@@ -274,6 +337,15 @@ def replay_book(
                     price = tradeable_open(quote(execution, code), "buy")
                     if price is None:
                         failed_entries += 1
+                        blocked_orders.append(
+                            {
+                                "decision_id": decision_id,
+                                "date": str(execution.date()),
+                                "code": code,
+                                "side": "BUY",
+                                "reason": "blocked_entry",
+                            }
+                        )
                         continue
                     desired = int(np.floor(slice_amount / (price * LOT)))
                     delta = desired - positions.get(code, 0)
@@ -283,11 +355,39 @@ def replay_book(
                     cost = side_cost(notional)
                     if notional + cost > cash:
                         failed_entries += 1
+                        blocked_orders.append(
+                            {
+                                "decision_id": decision_id,
+                                "date": str(execution.date()),
+                                "code": code,
+                                "side": "BUY",
+                                "reason": "insufficient_cash",
+                            }
+                        )
                         continue
                     cash -= notional + cost
                     fees += cost
                     traded += notional
                     positions[code] = positions.get(code, 0) + delta
+                    fills.append(
+                        {
+                            "decision_id": decision_id,
+                            "date": str(execution.date()),
+                            "code": code,
+                            "side": "BUY",
+                            "quantity": delta * LOT,
+                            "price": round(price, 6),
+                            "total_cost": round(cost, 2),
+                            "commission": round(
+                                max(MIN_COMMISSION, COMMISSION_RATE * notional), 2
+                            ),
+                            "stamp_duty": 0.0,
+                            "transfer_fee": round(notional * 0.00001, 2),
+                        }
+                    )
+                    decision["estimated_cost"] = round(
+                        decision["estimated_cost"] + cost, 2
+                    )
                     entry_raw[code] = price
                     row = quote(execution, code)
                     hfq_entry = row.get("open_hfq") if row is not None else None
@@ -302,11 +402,22 @@ def replay_book(
                         if hfq_entry and np.isfinite(hfq_entry) and hfq_entry > 0
                         else None
                     )
+                decision["cash_after"] = round(cash, 2)
+                decisions.append(decision)
         else:
             for code in sorted(pending_sell):
                 price = tradeable_open(quote(value, code), "sell")
                 if price is None:
                     failed_exits += 1
+                    blocked_orders.append(
+                        {
+                            "decision_id": pending_sell_decision.get(code, "rollover"),
+                            "date": str(value.date()),
+                            "code": code,
+                            "side": "SELL",
+                            "reason": "blocked_exit",
+                        }
+                    )
                     continue
                 lots = positions.pop(code)
                 notional = lots * LOT * price
@@ -314,6 +425,22 @@ def replay_book(
                 cash += notional - cost
                 fees += cost
                 traded += notional
+                fills.append(
+                    {
+                        "decision_id": pending_sell_decision.pop(code, "rollover"),
+                        "date": str(value.date()),
+                        "code": code,
+                        "side": "SELL",
+                        "quantity": lots * LOT,
+                        "price": round(price, 6),
+                        "total_cost": round(cost, 2),
+                        "commission": round(
+                            max(MIN_COMMISSION, COMMISSION_RATE * notional), 2
+                        ),
+                        "stamp_duty": round(notional * 0.0005, 2),
+                        "transfer_fee": round(notional * 0.00001, 2),
+                    }
+                )
                 pending_sell.discard(code)
         if not daily_marks and position not in rebalance_positions:
             continue
@@ -410,6 +537,10 @@ def replay_book(
     if include_nav:
         result["nav"] = nav_rows
         result["traded_notional"] = round(traded, 2)
+    if include_detail:
+        result["decisions"] = decisions
+        result["fills"] = fills
+        result["blocked_orders"] = blocked_orders
     return result
 
 
@@ -475,6 +606,8 @@ def main(argv: list[str] | None = None) -> None:
             label=args.label,
             require_label=require_label,
             daily_marks=daily_marks,
+            include_nav=args.detail and not require_label and daily_marks,
+            include_detail=args.detail and not require_label and daily_marks,
         )
 
     report = {

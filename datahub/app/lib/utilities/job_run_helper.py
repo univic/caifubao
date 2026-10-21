@@ -11,6 +11,7 @@ from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from app.model.datahub_job_run import (
     JOB_NAME_STARTUP_CATCHUP,
+    STATUS_DEGRADED,
     STATUS_FAILED,
     STATUS_RUNNING,
     STATUS_SKIPPED,
@@ -233,11 +234,13 @@ def has_active_job_run(
     job_run = latest_job_run(
         job_family=job_family,
         scheduled_at=scheduled_at,
-        statuses=[STATUS_RUNNING, STATUS_SUCCESS],
+        statuses=[STATUS_RUNNING, STATUS_SUCCESS, STATUS_DEGRADED],
     )
     if not job_run:
         return False
-    if job_run.status == STATUS_SUCCESS:
+    if job_run.status in (STATUS_SUCCESS, STATUS_DEGRADED):
+        # A DEGRADED run finished and its data is usable downstream; re-running
+        # the startup catch-up would duplicate a completed refresh.
         return True
     started_at = job_run.started_at
     if not started_at:

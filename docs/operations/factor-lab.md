@@ -75,6 +75,12 @@ for h in 1 5 20; do
 done
 ```
 
+`--all` evaluates only factors whose columns exist in the panel; factors that
+need the valuation/financial merge (for example `quality_composite`) are listed
+under `skipped_factors` instead of aborting the sweep. Evaluate those on the
+financial-merged panel described in
+[`strategy-experiments-2026-08.md`](./strategy-experiments-2026-08.md).
+
 Copy a report out of the claim (or read it from a Job that mounts it). The
 selector differs by path: the example Jobs are labelled `factor-lab-evaluate`,
 the launcher's are `lab-runner`:
