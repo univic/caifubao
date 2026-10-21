@@ -179,3 +179,18 @@ def test_initial_positions_above_cap_are_rejected():
             initial_positions={"sh600000": 1},
             initial_prices={"sh600000": 10.0},
         )
+
+
+def test_positive_months_excludes_the_partial_tail():
+    first = pd.Timestamp("2026-01-05")
+    sessions = pd.date_range(first, periods=70, freq="B")
+    frame = _frame([_row(day, "sh600000", 10.0, 10.0) for day in sessions])
+    result = replay_ledger(
+        frame,
+        sessions,
+        {},
+        LedgerConfig(initial_cash=50_000, max_positions=1),
+        initial_positions={"sh600000": 1},
+        initial_prices={"sh600000": 10.0},
+    )
+    assert result["summary"]["complete_months"] == 2

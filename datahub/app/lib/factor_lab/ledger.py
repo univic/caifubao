@@ -406,7 +406,9 @@ def replay_ledger(
     peak = np.maximum.accumulate(nav)
     average_nav = float(nav[1:].mean()) if len(nav) > 1 else float(nav[0])
     monthly = pd.Series(nav, index=pd.to_datetime([row["date"] for row in nav_rows]))
-    monthly_returns = monthly.resample("ME").last().pct_change().dropna()
+    # Match the audit protocol: the first month has no prior mark and the last
+    # month is partial, so neither is a complete-month observation.
+    monthly_returns = monthly.resample("ME").last().pct_change().dropna().iloc[:-1]
     positive_months = int((monthly_returns > 0).sum())
     complete_months = int(len(monthly_returns))
 

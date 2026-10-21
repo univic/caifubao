@@ -19,3 +19,10 @@
 - [x] 3.1 Ruff/format and full datahub tests pass.
 - [x] 3.2 OpenSpec strict validation passes.
 - [x] 3.3 Record the P0 result and the remaining data gaps; do not promote a strategy.
+
+## 4. P0 data and integration
+
+- [x] 4.1 Backfill implemented Tushare `dividend` events (shares and cash) for the panel codes.
+- [x] 4.2 Build explicit delisting exits from the known delist dates and last available prices.
+- [x] 4.3 Run one continuous 50k, strict-10-name monthly account with the new ledger and the decision-time delisting filter.
+- [x] 4.4 Record the result and holdout/data limitations; do not promote a strategy.
