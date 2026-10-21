@@ -87,7 +87,12 @@ def normalize_event(row: dict) -> dict | None:
     # stk_co_rate are the送股/转增 components that add up to it. Adding all
     # three double-counts the split.
     payload["share_multiplier"] = 1.0 + payload["stk_div"]
-    payload["cash_per_share"] = payload["cash_div_tax"]
+    # Official Tushare semantics: cash_div is after tax, cash_div_tax is the
+    # pre-tax figure. Use the after-tax one (they are equal in the current
+    # snapshot, but the distinction matters when they diverge).
+    payload["cash_per_share"] = (
+        payload["cash_div"] if payload["cash_div"] > 0 else payload["cash_div_tax"]
+    )
     return payload
 
 
