@@ -678,7 +678,7 @@ the entire logical run. Do not resume a Job created from an older image.
 | stable `caifubao-datahub-quote-stock` | `0 18 * * 1-5` | Pull latest quotes + factors only (`DATAHUB_STOCK_HISTORY_SOURCE=tushare`, `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare`); UPD path writes settlement snapshots. Signals/scoring are NOT produced here — they run as the standalone jobs below, gated on this job's persisted data |
 | stable `caifubao-datahub-signal` | `30 18 * * 1-5` | Compute MA-cross signals from fresh factors (incremental, stale-only by default) |
 | stable `caifubao-datahub-scoring` | `35 18 * * 1-5` | Score latest trading day for all horizons (skips already-complete cohorts) |
-| stable `caifubao-datahub-snapshot-export` | `50 18 * * 1-5` | Export the authoritative collections to the object-store snapshot prefix (`.../snapshots/latest`) after signal/scoring |
+| stable `caifubao-datahub-snapshot-export` | `50 18 * * 1-5` | Export the authoritative collections to the object-store snapshot base prefix (`.../snapshots`; the importer resolves the newest snapshot under it) after signal/scoring |
 | dev `caifubao-datahub-snapshot-import` | `15 19 * * 1-5` | Download and verify that snapshot (manifest + sha256, fail-closed) and import it into dev — no online MongoDB connection |
 
 The quote, signal, and scoring jobs run in dependency order (quote → signal →

@@ -1350,6 +1350,67 @@ def upload_snapshot(
     return result
 
 
+def list_snapshot_uris(
+    s3_uri: str,
+    *,
+    endpoint_url: str | None = None,
+    region_name: str | None = None,
+) -> list[str]:
+    """List snapshot URIs under an object-store base prefix, newest first.
+
+    Exports land under ``<base>/<snapshot_id>/`` (see :func:`upload_snapshot`),
+    so an importer that only knows the shared base URI can discover the newest
+    complete-looking snapshot. Recency is the newest ``LastModified`` among the
+    snapshot's objects; a partially uploaded snapshot therefore still sorts by
+    its newest part and the importer's checksum verification fails it closed.
+
+    A URI that already points at one snapshot directory (``<base>/manifest.json``
+    exists) is returned as a one-element list, so callers may pass either the
+    base or an exact snapshot URI.
+    """
+    bucket, prefix = parse_s3_uri(s3_uri)
+    base = prefix.strip("/")
+    base_uri = f"s3://{bucket}/{base}" if base else f"s3://{bucket}"
+    endpoint_url, region_name = _s3_env_defaults(endpoint_url, region_name)
+    client = _build_s3_client(endpoint_url, region_name)
+    paginator = client.get_paginator("list_objects_v2")
+
+    newest: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"Bucket": bucket}
+    if base:
+        kwargs["Prefix"] = f"{base}/"
+    try:
+        for page in paginator.paginate(**kwargs):
+            for entry in page.get("Contents") or []:
+                key = str(entry.get("Key") or "")
+                if not key:
+                    continue
+                modified = entry.get("LastModified")
+                if base and key == f"{base}/{MANIFEST_NAME}":
+                    newest[base_uri] = modified
+                    continue
+                relative = key[len(base) + 1 :] if base else key
+                snapshot_id = relative.split("/", 1)[0]
+                if not snapshot_id or "/" not in relative:
+                    continue
+                uri = f"{base_uri}/{snapshot_id}"
+                current = newest.get(uri)
+                if current is None or (modified is not None and modified > current):
+                    newest[uri] = modified
+    except SnapshotTransferError:
+        raise
+    except Exception as exc:
+        raise SnapshotTransferError(
+            f"snapshot listing failed for {base_uri}: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    return sorted(
+        newest,
+        key=lambda uri: newest[uri] or datetime.datetime.min,
+        reverse=True,
+    )
+
+
 def download_snapshot(
     s3_uri: str,
     dest_dir: Path,
