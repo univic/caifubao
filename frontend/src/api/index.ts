@@ -11,17 +11,32 @@ const api: AxiosInstance = axios.create({
 
 // Token 刷新状态
 let isRefreshing = false
-let refreshSubscribers: Array<(token: string) => void> = []
+type RefreshSubscriber = {
+  resolve: (token: string) => void
+  reject: (error: unknown) => void
+}
+let refreshSubscribers: RefreshSubscriber[] = []
 
-// 订阅 token 刷新
-function subscribeTokenRefresh(callback: (token: string) => void) {
-  refreshSubscribers.push(callback)
+// 订阅 token 刷新（成功与失败都必须结束等待，否则并发请求会永久挂起）
+function subscribeTokenRefresh(
+  resolve: (token: string) => void,
+  reject: (error: unknown) => void
+) {
+  refreshSubscribers.push({ resolve, reject })
 }
 
 // 通知所有订阅者
 function notifyTokenRefresh(token: string) {
-  refreshSubscribers.forEach(callback => callback(token))
+  const subscribers = refreshSubscribers
   refreshSubscribers = []
+  subscribers.forEach(subscriber => subscriber.resolve(token))
+}
+
+// 刷新失败：让所有排队请求立即失败，而不是一直 pending
+function rejectTokenRefresh(error: unknown) {
+  const subscribers = refreshSubscribers
+  refreshSubscribers = []
+  subscribers.forEach(subscriber => subscriber.reject(error))
 }
 
 // 请求拦截器 - 添加 Token
@@ -79,13 +94,16 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !isAuthEndpoint) {
       // 如果正在刷新 token，将请求加入队列
       if (isRefreshing) {
-        return new Promise((resolve) => {
-          subscribeTokenRefresh((token: string) => {
-            if (originalRequest.headers) {
-              originalRequest.headers.Authorization = `Bearer ${token}`
-            }
-            resolve(api(originalRequest))
-          })
+        return new Promise((resolve, reject) => {
+          subscribeTokenRefresh(
+            (token: string) => {
+              if (originalRequest.headers) {
+                originalRequest.headers.Authorization = `Bearer ${token}`
+              }
+              resolve(api(originalRequest))
+            },
+            reject
+          )
         })
       }
       
@@ -102,9 +120,10 @@ api.interceptors.response.use(
           originalRequest.headers.Authorization = `Bearer ${newToken}`
         }
         return api(originalRequest)
-      } catch {
+      } catch (refreshError) {
         isRefreshing = false
-        // 刷新失败，由下方的统一错误处理逻辑处理
+        // 刷新失败：先释放所有排队请求，再走下方统一 401 处理
+        rejectTokenRefresh(refreshError)
         error.response = { status: 401 } as AxiosResponse
       }
     }

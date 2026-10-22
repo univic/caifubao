@@ -50,3 +50,6 @@ datahub/research/autoresearch/h20_excess_alpha/snapshot.parquet
 docs/autoresearch/runs/h20-excess-alpha/latest-report.json
 .venv-build/
 tmp-timing-test/
+
+# Research snapshot archives (large, reproducible; keep them out of git)
+datahub/research/**/*.tar.gz

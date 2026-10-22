@@ -76,7 +76,7 @@ jobs:
           # unverified, which is how a dropped --config-json got as far as
           # review on the forward-evidence path.
           set_output datahub '^(datahub/|backend/app/model/|backend/app/utilities/|scripts/caifubao$|\.github/workflows/ci\.yml$)'
-          set_output docker '^(backend/Dockerfile|datahub/Dockerfile|frontend/Dockerfile|tools/mongodb-tools/Dockerfile|\.github/workflows/ci\.yml$)'
+          set_output docker '^(backend/Dockerfile|datahub/Dockerfile|frontend/Dockerfile|compute-worker/Dockerfile|compute-worker/worker_app/|tools/mongodb-tools/Dockerfile|\.dockerignore$|\.github/workflows/ci\.yml$)'
           set_output k8s '^(k8s/|\.github/workflows/ci\.yml$)'
           set_output openspec '^(openspec/|\.github/workflows/ci\.yml$)'
           set_output ci '^\.github/workflows/.*\.yml$'
@@ -214,6 +214,28 @@ jobs:
           ruff check datahub/
           ruff format --check datahub/
 
+  compute-worker-check:
+    name: Compute Worker Lint (Ruff)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Ruff
+        run: pip install "ruff==${RUFF_VERSION}"
+
+      - name: Run Ruff
+        run: |
+          ruff check compute-worker/
+          ruff format --check compute-worker/
+
   datahub-test:
     name: Datahub Tests (Python 3.12)
     runs-on: ubuntu-latest
@@ -235,11 +257,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Assemble shared backend modules for Datahub
-        run: |
-          cp -r backend/app/utilities/. datahub/app/utilities/
-          cp -r backend/app/model/. datahub/app/model/
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -254,6 +271,10 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-mock
 
+      # Datahub tests run against the datahub models — the same code the image
+      # ships. Cross-service model drift is caught by
+      # app/test/test_model_contract_parity.py instead of overwriting the models
+      # with the backend copies (which made CI test a hybrid that never runs).
       - name: Run datahub tests
         run: |
           cd datahub
@@ -301,6 +322,34 @@ jobs:
           docker buildx build --check -f ./tools/mongodb-tools/Dockerfile ./tools/mongodb-tools
           echo "MongoDB tools Dockerfile is valid"
 
+      # The compute-worker image is built from the repository root because it
+      # bakes backend + datahub code. BuildKit does not verify that COPY sources
+      # exist, so assert them explicitly (a missing path broke this image once
+      # and nothing in CI noticed).
+      - name: Check Compute Worker Dockerfile sources
+        run: |
+          echo "Checking compute-worker/Dockerfile..."
+          docker buildx build --check -f ./compute-worker/Dockerfile .
+          for path in \
+            backend/app \
+            backend/app/model \
+            backend/app/services \
+            backend/app/utilities \
+            backend/app/lib/db_watcher \
+            datahub/app/model \
+            datahub/app/lib \
+            compute-worker/worker_app \
+            compute-worker/requirements.txt \
+            backend/requirements.txt \
+            datahub/requirements.txt; do
+            if [ ! -e "$path" ]; then
+              echo "Missing build input: $path"
+              exit 1
+            fi
+          done
+          python -m py_compile compute-worker/worker_app/*.py
+          echo "Compute Worker Dockerfile inputs are valid"
+
       - name: Summary
         run: echo "All Dockerfiles are valid!"
 
@@ -324,6 +373,9 @@ jobs:
 
       - name: Render example production overlay
         run: kubectl kustomize k8s/overlays/example-production > /tmp/caifubao-example-prod.yaml
+
+      - name: Render example research overlay
+        run: kubectl kustomize k8s/overlays/example-research > /tmp/caifubao-example-research.yaml
 
   private-deploy-dry-run:
     name: Private Deploy Dry Run
@@ -430,7 +482,7 @@ jobs:
   required-checks:
     name: Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, backend-test, backend-lint, frontend-check, datahub-test, datahub-lint, dockerfile-check, kustomize-check, private-deploy-dry-run, openspec-check]
+    needs: [changes, backend-test, backend-lint, frontend-check, datahub-test, datahub-lint, compute-worker-check, dockerfile-check, kustomize-check, private-deploy-dry-run, openspec-check]
     if: always()
 
     steps:
@@ -452,6 +504,7 @@ jobs:
           check_result "Frontend checks" "${{ needs.frontend-check.result }}"
           check_result "Datahub tests" "${{ needs.datahub-test.result }}"
           check_result "Datahub lint" "${{ needs.datahub-lint.result }}"
+          check_result "Compute worker lint" "${{ needs.compute-worker-check.result }}"
           check_result "Dockerfile check" "${{ needs.dockerfile-check.result }}"
           check_result "Kustomize check" "${{ needs.kustomize-check.result }}"
           check_result "Private deploy dry-run" "${{ needs.private-deploy-dry-run.result }}"

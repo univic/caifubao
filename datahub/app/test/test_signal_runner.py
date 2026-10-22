@@ -255,6 +255,30 @@ def _fake_dependency_queries(monkeypatch, latest=None, legacy=None):
     return signal_runner
 
 
+def test_signal_dependency_queries_the_startup_catchup_slot(monkeypatch):
+    """The gate must look for the catch-up job name and the target="all" shape."""
+    import app.jobs.signal_runner as signal_runner
+    from app.model.datahub_job_run import JOB_NAME_STARTUP_CATCHUP
+
+    captured = []
+
+    def fake_latest_job_run(**kwargs):
+        captured.append(kwargs)
+        if "SUCCESS" in kwargs.get("statuses", []):
+            return _FakeRunRecord(status="SUCCESS")
+        raise AssertionError("success path must not fall through")
+
+    monkeypatch.setattr(
+        "app.jobs.signal_runner.job_run_helper.latest_job_run", fake_latest_job_run
+    )
+
+    assert signal_runner._check_dependency() is True
+    assert captured
+    assert JOB_NAME_STARTUP_CATCHUP in captured[0]["job_names"]
+    assert "stock" in captured[0]["targets"]
+    assert "all" in captured[0]["targets"]
+
+
 def test_signal_dependency_accepts_success_record(monkeypatch):
     import app.jobs.signal_runner as signal_runner
 

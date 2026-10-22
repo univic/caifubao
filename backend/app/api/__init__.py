@@ -3,6 +3,7 @@
 
 from flask import Flask
 
+from app.api.errors import register_error_handlers
 from app.api.health import health_bp
 from app.api.v1.admin import admin_bp
 from app.api.v1.auth import auth_bp
@@ -31,7 +32,8 @@ from app.api.v1.strategy_replays import strategy_replays_bp
 
 
 def register_blueprint(app: Flask):
-    """Register all API blueprints"""
+    """Register all API blueprints and the JSON error handlers."""
+    register_error_handlers(app)
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(indices_bp)

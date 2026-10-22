@@ -28,22 +28,47 @@ spec:
                 - compute
       containers:
       - name: compute-worker
-        image: registry.example.com/caifubao/compute-worker:latest
+        image: caifubao/compute-worker:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: MONGO_URI
+        # Same connection contract as the backend/datahub: no separate Secret.
+        - name: MONGODB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_HOST
+        - name: MONGODB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_PORT
+        - name: MONGODB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_NAME
+        - name: MONGODB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: MONGODB_USER
+        - name: MONGODB_PASS
           valueFrom:
             secretKeyRef:
-              name: caifubao-mongo
-              key: uri
-        - name: MONGO_DB
-          value: caifubao
+              name: datahub-secret
+              key: MONGODB_PASSWORD
         - name: POLL_INTERVAL
           value: "5"
         - name: MAX_CONCURRENT_TASKS
-          value: "2"
+          value: "1"
         - name: TASK_MAX_RETRIES
           value: "3"
+        - name: TASK_STALE_MINUTES
+          value: "360"
+        - name: HEARTBEAT_FILE
+          value: "/tmp/compute-worker.heartbeat"
+        - name: HEARTBEAT_STALE_SECONDS
+          value: "300"
         resources:
           requests:
             cpu: "2"
@@ -51,12 +76,37 @@ spec:
           limits:
             cpu: "6"
             memory: "28Gi"
+        # The worker touches HEARTBEAT_FILE on every poll cycle; a wedged
+        # process (or a busy loop that stopped claiming) is restarted. The old
+        # probe was `python -c "sys.exit(0)"` and could never fail.
         livenessProbe:
           exec:
             command:
             - python
             - -c
-            - "import sys; sys.exit(0)"
-          initialDelaySeconds: 30
+            - |
+              import os, sys, time
+              path = os.environ.get("HEARTBEAT_FILE", "/tmp/compute-worker.heartbeat")
+              limit = int(os.environ.get("HEARTBEAT_STALE_SECONDS", "300"))
+              if not os.path.exists(path):
+                  sys.exit(1)
+              sys.exit(0 if time.time() - os.path.getmtime(path) < limit else 1)
+          initialDelaySeconds: 60
           periodSeconds: 60
+          timeoutSeconds: 10
+          failureThreshold: 3
+        # Readiness checks that the merged app package and the Mongo connection
+        # layer import cleanly before the worker is considered usable.
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import worker_app.worker, app.model.compute_task"
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 15
+          failureThreshold: 3
+      imagePullSecrets:
+      - name: ccr-secret
       restartPolicy: Always

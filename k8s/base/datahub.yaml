@@ -119,13 +119,14 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
+        # Liveness above is process-only; readiness also requires MongoDB.
         readinessProbe:
           httpGet:
-            path: /health
+            path: /health/ready
             port: 8000
-          initialDelaySeconds: 5
-          periodSeconds: 5
-          timeoutSeconds: 5
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 8
           failureThreshold: 3
       imagePullSecrets:
       - name: ccr-secret

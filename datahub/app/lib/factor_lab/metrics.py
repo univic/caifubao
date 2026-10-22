@@ -23,18 +23,16 @@ import math
 
 import pandas as pd
 
-#: The paper/backtest execution model, mirrored so a factor's net edge is
-#: comparable with what the strategy layer would realise. These rate constants
-#: are the single source of truth: `strategy_engine.config` imports them, so the
-#: paper/live-loop cost model and research cannot drift apart.
-SLIPPAGE_PER_SIDE = 0.001
-COMMISSION_RATE = 0.00025
-#: A-share stamp duty is sell-side only and was halved to 0.05 % on 2023-08-28
-#: (from 0.1 %).
-SELL_STAMP_DUTY_RATE = 0.0005
-#: A-share transfer fee (过户费), charged on BOTH sides of a trade. The rate has
-#: been 0.001 % per side since 2023-08-28 (halved from 0.002 %).
-TRANSFER_FEE_RATE = 0.00001
+#: The paper/backtest execution model lives in `app.lib.execution.costs` (the
+#: single source of truth shared by the factor lab, the strategy engine, the
+#: ETF lab and the timing replay). Re-exported here because existing callers
+#: import these names from `factor_lab.metrics`.
+from app.lib.execution.costs import (  # noqa: E402
+    COMMISSION_RATE,
+    SELL_STAMP_DUTY_RATE,
+    SLIPPAGE_PER_SIDE,
+    TRANSFER_FEE_RATE,
+)
 
 #: Default gate thresholds, aligned with `autoresearch/profile.yaml`'s hard gates
 #: where an analogue exists.

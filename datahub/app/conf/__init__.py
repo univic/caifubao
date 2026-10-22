@@ -65,6 +65,25 @@ class BaseConfig(object):
         return value
 
     # Source MongoDB (used by data sync engine — dev pulls from prod)
+    @property
+    def MONGODB_CONNECT_TIMEOUT_MS(self):
+        value = os.getenv("MONGODB_CONNECT_TIMEOUT_MS", "5000")
+        try:
+            return int(value)
+        except ValueError:
+            raise ValueError("MONGODB_CONNECT_TIMEOUT_MS must be a valid integer")
+
+    @property
+    def MONGODB_SERVER_SELECTION_TIMEOUT_MS(self):
+        value = os.getenv("MONGODB_SERVER_SELECTION_TIMEOUT_MS", "5000")
+        try:
+            return int(value)
+        except ValueError:
+            raise ValueError(
+                "MONGODB_SERVER_SELECTION_TIMEOUT_MS must be a valid integer"
+            )
+
+    # Source MongoDB (used by data sync engine — dev pulls from prod)
     MONGODB_SRC_HOST = os.getenv("MONGODB_SRC_HOST", "")
 
     @property

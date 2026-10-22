@@ -10,7 +10,7 @@
 | [`RULES.md`](../RULES.md) | **规则权威**：安全、模块边界、外科纪律、验证、spec-gate |
 | [`AGENTS.md`](../AGENTS.md) | Agent 操作指南与开发工作流（角色、评审门禁） |
 | [`.project-rules.md`](../.project-rules.md) | Git 工作流与 OpenSpec 操作参考 |
-| [`DESIGN.md`](../DESIGN.md) | 架构设计 |
+| [`DESIGN.md`](../DESIGN.md) | 前端视觉设计系统（Linear 风格；不是系统架构文档） |
 | [`SECURITY.md`](../SECURITY.md) | 安全政策 |
 | [`README.md`](../README.md) | 项目总览、环境、运行方式 |
 

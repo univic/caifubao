@@ -162,6 +162,18 @@ def run_quote_job(
                 ),
                 "as_of_date": completed_results[0]["as_of_date"],
             }
+            # The combined run must keep the per-target phase evidence on the
+            # top-level summary as well: the downstream dependency gate reads
+            # `check_stock_data_integrity` / `update_ma_factor` from
+            # `phase_stats`, and a target="all" catch-up would otherwise look
+            # like it wrote nothing.
+            merged_phase_stats: dict = {}
+            for item in completed_results:
+                for phase_name, phase_summary in (
+                    item.get("phase_stats") or {}
+                ).items():
+                    merged_phase_stats.setdefault(phase_name, phase_summary)
+            result["phase_stats"] = merged_phase_stats
             for key in ("quote_validation", "index_validation"):
                 # Index and stock targets carry one validation record each.
                 for item in completed_results:

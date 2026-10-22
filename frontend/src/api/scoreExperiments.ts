@@ -72,7 +72,11 @@ export interface CreateScoreExperimentPayload {
   run_now?: boolean
 }
 
-const useMockApi = import.meta.env.VITE_USE_MOCK_API === 'true'
+// Mock data is a development-only convenience. Guarding on `import.meta.env.DEV`
+// means a production build can never serve fabricated returns/IC numbers even if
+// VITE_USE_MOCK_API is accidentally set in the deployment environment.
+const useMockApi =
+  import.meta.env.DEV && import.meta.env.VITE_USE_MOCK_API === 'true'
 
 const mockExperiment: ScoreExperiment = {
   id: 'mock-score-experiment',

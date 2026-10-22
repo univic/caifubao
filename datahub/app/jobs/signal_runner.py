@@ -11,6 +11,7 @@ from typing import Any
 from app.lib.utilities import job_run_helper
 from app.lib.utilities import pipeline_degradation
 from app.lib.signal_factory import SignalUpdateError
+from app.model.datahub_job_run import JOB_NAME_STARTUP_CATCHUP
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,12 @@ SIGNAL_JOB_MINUTE = 30
 # The quote_daily job family is required to have a SUCCESS record before signal runs
 DEPENDENCY_JOB_FAMILY = "quote_daily"
 DEPENDENCY_JOB_NAME = "datahub_quote_stock_daily"
+# The startup catch-up repairs the same daily slot with its own job_name, so
+# the gate must accept it too; otherwise a recovered day still looks missing.
+DEPENDENCY_JOB_NAMES = (DEPENDENCY_JOB_NAME, JOB_NAME_STARTUP_CATCHUP)
+# The canonical CronJob records target="stock"; a catch-up records target="all"
+# (index + stock). Both carry the stock quote/MA-factor evidence the gate needs.
+DEPENDENCY_TARGETS = ("stock", "all")
 DEPENDENCY_JOB_HOUR = 18
 DEPENDENCY_JOB_MINUTE = 0
 # A DEGRADED upstream run is only usable when its validated coverage clears
@@ -289,8 +296,8 @@ def _evaluate_dependency() -> dict[str, Any]:
 
     latest = job_run_helper.latest_job_run(
         job_family=DEPENDENCY_JOB_FAMILY,
-        job_name=DEPENDENCY_JOB_NAME,
-        target="stock",
+        job_names=list(DEPENDENCY_JOB_NAMES),
+        targets=list(DEPENDENCY_TARGETS),
         include_factors=True,
         scheduled_at=upstream_scheduled_at,
         statuses=[job_run_helper.STATUS_SUCCESS, job_run_helper.STATUS_DEGRADED],
@@ -312,8 +319,8 @@ def _evaluate_dependency() -> dict[str, Any]:
 
     record = job_run_helper.latest_job_run(
         job_family=DEPENDENCY_JOB_FAMILY,
-        job_name=DEPENDENCY_JOB_NAME,
-        target="stock",
+        job_names=list(DEPENDENCY_JOB_NAMES),
+        targets=list(DEPENDENCY_TARGETS),
         include_factors=True,
         scheduled_at=upstream_scheduled_at,
         statuses=[job_run_helper.STATUS_RUNNING, job_run_helper.STATUS_FAILED],

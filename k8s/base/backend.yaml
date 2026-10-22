@@ -72,6 +72,10 @@ spec:
             configMapKeyRef:
               name: backend-config
               key: FLASK_DEBUG
+        - name: GUNICORN_WORKERS
+          value: "2"
+        - name: GUNICORN_TIMEOUT
+          value: "300"
         resources:
           requests:
             memory: "256Mi"
@@ -94,13 +98,15 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
+        # Readiness must reflect MongoDB reachability, not just process liveness:
+        # a backend that cannot reach Mongo should leave the Service endpoints.
         readinessProbe:
           httpGet:
-            path: /health
+            path: /health/ready
             port: 8000
           initialDelaySeconds: 10
-          periodSeconds: 5
-          timeoutSeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 8
           failureThreshold: 3
       affinity:
         nodeAffinity:

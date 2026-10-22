@@ -18,6 +18,7 @@ Public deployment examples should use placeholder values such as:
 
 - `registry.example.com/your-org/caifubao-backend`
 - `registry.example.com/your-org/caifubao-mongodb-tools`
+- `registry.example.com/your-org/caifubao-compute-worker`
 - `caifubao-example`
 - `app.example.com`
 - `api.example.com`

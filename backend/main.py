@@ -8,9 +8,11 @@ from app.conf import app_config
 
 logger = create_logger()
 
+# Module-level app so a WSGI server (gunicorn) can import `main:app`.
+app = create_app()
+
 
 if __name__ == "__main__":
-    app = create_app()
     host = app_config.FLASK_HOST
     port = app_config.FLASK_PORT
     debug = app_config.FLASK_DEBUG

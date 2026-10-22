@@ -57,4 +57,3 @@ try:
     logger.info(f"Datahub service starting in {app_config.__class__.__name__} mode")
 except ImportError:
     logger.info("Datahub service starting (app_config not available)")
-# Force rebuild Sat Mar 28 07:17:00 UTC 2026

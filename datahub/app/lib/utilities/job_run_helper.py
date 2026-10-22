@@ -207,14 +207,20 @@ def latest_job_run(
     scheduled_at: datetime.datetime | None = None,
     statuses: list[str] | None = None,
     job_name: str | None = None,
+    job_names: list[str] | None = None,
     target: str | None = None,
+    targets: list[str] | None = None,
     include_factors: bool | None = None,
 ) -> DatahubJobRun | None:
     filters: dict = {"job_family": job_family}
     if job_name is not None:
         filters["job_name"] = job_name
+    if job_names:
+        filters["job_name__in"] = list(job_names)
     if target is not None:
         filters["target"] = target
+    if targets:
+        filters["target__in"] = list(targets)
     if include_factors is not None:
         filters["include_factors"] = include_factors
     query = DatahubJobRun.objects(**filters)

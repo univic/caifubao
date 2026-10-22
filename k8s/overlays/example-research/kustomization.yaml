@@ -23,9 +23,6 @@ configMapGenerator:
   - MONGODB_SRC_PORT=27017
   - MONGODB_SRC_NAME=
   - MONGODB_SRC_USER=
-- name: frontend-config
-  literals:
-  - VITE_API_BASE_URL=/api
 - name: data-lake-export-config
   behavior: replace
   literals:
@@ -69,6 +66,9 @@ images:
   newTag: prod
 - name: caifubao-mongodb-tools
   newName: registry.example.com/your-org/caifubao-mongodb-tools
+  newTag: prod
+- name: caifubao/compute-worker
+  newName: registry.example.com/your-org/caifubao-compute-worker
   newTag: prod
 
 patches:

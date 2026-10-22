@@ -5,6 +5,10 @@ namespace: caifubao-example-dev
 
 resources:
 - ../../base
+# Dev quote CronJobs are intentionally `suspend: true` (the startup catch-up
+# covers them); data-sync and the health watcher are referenced here so the
+# example overlay is self-consistent.
+- datahub-cronjobs.yaml
 
 patches:
 - path: datahub-patch.yaml
@@ -24,9 +28,6 @@ configMapGenerator:
   - MONGODB_SRC_PORT=27017
   - MONGODB_SRC_USER=readonly_user
   - MONGODB_SRC_NAME=caifubao
-- name: frontend-config
-  literals:
-  - VITE_API_BASE_URL=/api
 - name: data-lake-export-config
   behavior: replace
   literals:
@@ -70,4 +71,7 @@ images:
   newTag: develop
 - name: caifubao-mongodb-tools
   newName: registry.example.com/your-org/caifubao-mongodb-tools
+  newTag: develop
+- name: caifubao/compute-worker
+  newName: registry.example.com/your-org/caifubao-compute-worker
   newTag: develop

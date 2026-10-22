@@ -44,10 +44,13 @@ SCORE_DRIVEN_STRATEGIES = frozenset(
 UNUSABLE_SCORE_STATUSES = ("BLOCKED", "FAILED")
 SCORE_EXECUTION_TIMING = "next_trading_day_open"
 
-# Friction model
+# Friction model. The canonical A-share assumptions live in
+# datahub/app/lib/execution/costs.py (research/paper/ETF/timing replay all use
+# them); this module is a separate image, so the values are mirrored here and
+# backend/app/test/test_friction_contract_parity.py fails if they drift.
 COMMISSION_RATE = 0.00025  # 0.025%
 MIN_COMMISSION = 5.0  # minimum 5 CNY
-STAMP_DUTY_RATE = 0.001  # 0.1% sell side only
+STAMP_DUTY_RATE = 0.0005  # 0.05% sell side only (halved 2023-08-28)
 SLIPPAGE = 0.001  # 0.1% default
 
 # Composite scoring weights
