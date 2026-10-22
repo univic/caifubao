@@ -96,10 +96,30 @@ def run_import(args) -> dict:
         # Note: the download happens even with --dry-run — dry-run skips the
         # DB writes, not the transfer; the import itself re-verifies every
         # byte as defense in depth.
+        #
+        # A concrete --snapshot-id is appended to the given URI; the default
+        # ("latest") discovers the newest snapshot under the base prefix, so a
+        # producer only has to publish to a stable base URI (e.g. .../snapshots).
+        snapshot_uri = args.snapshot_uri.rstrip("/")
+        if args.snapshot_id not in (None, "latest"):
+            snapshot_uri = f"{snapshot_uri}/{args.snapshot_id}"
+        else:
+            # A URI that already names a snapshot (export ids start with
+            # "snapshot-") is used as-is; a base prefix resolves to the newest
+            # snapshot underneath it.
+            last_segment = snapshot_uri.rsplit("/", 1)[-1]
+            if not last_segment.startswith("snapshot-"):
+                candidates = snapshot_transfer.list_snapshot_uris(snapshot_uri)
+                if not candidates:
+                    raise snapshot_transfer.SnapshotTransferError(
+                        f"no snapshot found under {snapshot_uri}"
+                    )
+                snapshot_uri = candidates[0]
+                logger.info("Resolved latest snapshot: %s", snapshot_uri)
         download_dir = snapshot_transfer.download_dir_for_uri(
-            snapshot_transfer.default_snapshot_dir(), args.snapshot_uri
+            snapshot_transfer.default_snapshot_dir(), snapshot_uri
         )
-        snapshot_transfer.download_snapshot(args.snapshot_uri, download_dir)
+        snapshot_transfer.download_snapshot(snapshot_uri, download_dir)
         snapshot_dir = download_dir
     else:
         snapshot_dir = snapshot_transfer.resolve_snapshot_dir(

@@ -245,7 +245,7 @@ spec:
             args:
             - >
               python -m app.jobs.snapshot_import_runner run
-              --snapshot-uri "s3://${DATA_LAKE_BUCKET}/${DATA_LAKE_PREFIX}/snapshots/latest"
+              --snapshot-uri "s3://${DATA_LAKE_BUCKET}/${DATA_LAKE_PREFIX}/snapshots"
             envFrom:
             - configMapRef:
                 name: data-lake-export-config

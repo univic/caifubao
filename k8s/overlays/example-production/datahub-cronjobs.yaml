@@ -540,7 +540,7 @@ spec:
             - >
               python -m app.jobs.snapshot_export_runner run
               --out-dir /work/snapshot
-              --upload-uri "s3://${DATA_LAKE_BUCKET}/${DATA_LAKE_PREFIX}/snapshots/latest"
+              --upload-uri "s3://${DATA_LAKE_BUCKET}/${DATA_LAKE_PREFIX}/snapshots"
             envFrom:
             - configMapRef:
                 name: data-lake-export-config
