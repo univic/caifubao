@@ -1,3 +1,0 @@
-data/*.parquet
-data/universe/*.parquet
-__pycache__/
