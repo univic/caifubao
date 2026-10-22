@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "caifubao-contracts"
+version = "0.1.0"
+description = "Shared MongoDB models, execution-cost and time contracts for caifubao services"
+requires-python = ">=3.12"
+dependencies = ["mongoengine>=0.29"]
+
+[tool.setuptools.packages.find]
+include = ["caifubao_contracts*"]

@@ -152,10 +152,64 @@ export interface WatchlistCreatePayload {
   stock_codes: string[]
 }
 
+// -------- Alerts / quality types --------
+
+export interface ScoreAlert {
+  stock_code: string
+  stock_name: string | null
+  date: string | null
+  horizon: number
+  score: number | null
+  previous_score: number | null
+  score_delta: number | null
+  recommendation: string | null
+  alert_type: string | null
+  alert_detail: string | null
+  rank: number | null
+  status: string | null
+}
+
+export interface ScoreAlertsResponse {
+  horizon: number
+  date: string
+  alerts: ScoreAlert[]
+  total: number
+}
+
+export interface ScoreQualityPoint {
+  date: string
+  rolling_hit_rate: number | null
+  sample_size?: number
+}
+
+export interface ScoreQualityResponse {
+  horizon: number
+  window_days: number
+  rolling_hit_rates: ScoreQualityPoint[]
+  latest_hit_rate: number | null
+  decay_detected: boolean
+  decay_detail: string
+  drift_detected: boolean
+  drift_detail: string
+}
+
 export const decisionsApi = {
   getDashboard(params: { horizon?: number; limit?: number }) {
     return api.get<any>('/decisions/dashboard', { params }) as unknown as Promise<{
       data: DecisionDashboardResponse
+    }>
+  },
+
+  // Alerts / quality (score monitoring)
+  getAlerts(params: { horizon?: number; limit?: number }) {
+    return api.get<any>('/decisions/alerts', { params }) as unknown as Promise<{
+      data: ScoreAlertsResponse
+    }>
+  },
+
+  getQuality(params?: { horizon?: number; window_days?: number }) {
+    return api.get<any>('/decisions/quality', { params }) as unknown as Promise<{
+      data: ScoreQualityResponse
     }>
   },
 

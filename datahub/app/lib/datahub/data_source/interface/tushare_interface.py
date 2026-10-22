@@ -1,4 +1,4 @@
-import datetime
+from caifubao_contracts.time import beijing_now_naive
 import os
 import time
 
@@ -69,7 +69,7 @@ def tushare_daily(ts_code, start_date=None, end_date=None):
     """
     pro = _get_pro()
     start_date = start_date or "19900101"
-    end_date = end_date or datetime.date.today().strftime("%Y%m%d")
+    end_date = end_date or beijing_now_naive().date().strftime("%Y%m%d")
     start_year = int(start_date[:4])
     end_year = int(end_date[:4])
 
@@ -108,7 +108,7 @@ def adj_factor(ts_code, start_date=None, end_date=None):
     """
     pro = _get_pro()
     start_date = start_date or "19900101"
-    end_date = end_date or datetime.date.today().strftime("%Y%m%d")
+    end_date = end_date or beijing_now_naive().date().strftime("%Y%m%d")
     start_year = int(start_date[:4])
     end_year = int(end_date[:4])
 

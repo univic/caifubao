@@ -1,5 +1,10 @@
 import os
 import sys
+from pathlib import Path
+
+# The shared contracts package lives at <repo>/shared and is installed into the
+# image; add it for source-tree test runs.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "shared"))
 
 # Fix for Python 3.12+: Ensure pkg_resources is available before any imports
 # This must be done before importing pytest or any other modules

@@ -3,6 +3,8 @@ import time
 import threading
 import logging
 import datetime
+
+from caifubao_contracts.time import utc_now_naive
 import traceback
 import multiprocessing
 from multiprocessing import Pool, Manager
@@ -86,14 +88,14 @@ class Queue(object):
         instance = obj()
         kwarg_dict = convert_kwarg_to_dict(task.kwargs)
         func = getattr(instance, task.callback_handler)
-        task.processed_at = datetime.datetime.now()
+        task.processed_at = utc_now_naive()
         result = func(*task.args, **kwarg_dict)
         if result and result["code"]:
             if result["code"] == "GOOD":
-                task.completed_at = datetime.datetime.now()
+                task.completed_at = utc_now_naive()
                 task.status = "COMP"
             elif result["code"] == "WARN":
-                task.completed_at = datetime.datetime.now()
+                task.completed_at = utc_now_naive()
                 task.status = "COMP"
                 task.message = result["message"]
             elif result["code"] == "ERR":
@@ -279,9 +281,7 @@ class TaskController(object):
     def check_historical_tasks():
         logger.info("TaskController - Checking historical tasks")
         # Check obsolete tasks
-        task_list = Task.objects(
-            status="CRTD", valid_before__lte=datetime.datetime.now()
-        )
+        task_list = Task.objects(status="CRTD", valid_before__lte=utc_now_naive())
         task_list_len = task_list.count()
         logger.info(
             f"TaskController - Found {task_list_len} obsolete tasks, all of those tasks will be deactivated"
@@ -289,7 +289,7 @@ class TaskController(object):
         for task in task_list:
             task.status = "ABORT"
             task.exec_msg = "Cancelled by TaskController due to task validation expired"
-            task.processed_at = datetime.datetime.now()
+            task.processed_at = utc_now_naive()
             task.save()
 
     def dispatch(self):

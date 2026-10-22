@@ -1,6 +1,8 @@
 import time
 import logging
 import datetime
+
+from caifubao_contracts.time import beijing_now_naive, utc_now_naive
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -331,7 +333,7 @@ class ChinaAStock(object):
     def check_trade_calendar_integrity(self):
         if self.market.trade_calendar:
             local_data_tail = self.market.trade_calendar[-1]
-            today = datetime.datetime.today()
+            today = beijing_now_naive()
             if local_data_tail < today:
                 logger.info(
                     f"Stock Market {self.market.name} - Updating trade calendar"
@@ -1143,7 +1145,7 @@ class ChinaAStock(object):
             match={"code": {"$in": codes}},
             code_field="code",
         )
-        calculated_at = datetime.datetime.now()
+        calculated_at = utc_now_naive()
         records = []
         for code in codes:
             stock_obj = (

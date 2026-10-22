@@ -1,9 +1,11 @@
 #!/bin/bash
-# update-kustomization.sh - 更新 kustomization.yaml 中的镜像标签
+# update-kustomization.sh - set an overlay's image tag in kustomization.yaml
+#
+# Idempotent: the existing `newTag` inside the matching image block is replaced
+# (not appended), so running the script twice cannot produce duplicate keys.
 
-set -e
+set -euo pipefail
 
-# 参数检查
 if [ $# -lt 3 ]; then
     echo "Usage: $0 <overlay-dir> <image-name> <image-tag>"
     echo "Example: $0 k8s/overlays/example-development caifubao-backend develop"
@@ -24,31 +26,33 @@ if [ ! -f "$KUSTOMIZATION_FILE" ]; then
     exit 1
 fi
 
-# 创建临时文件
-TMP_FILE=$(mktemp)
+python3 - "$KUSTOMIZATION_FILE" "$IMAGE_NAME" "$IMAGE_TAG" <<'PY'
+import re
+import sys
 
-# 使用 awk 处理多行替换
-awk -v img="$IMAGE_NAME" -v tag="$IMAGE_TAG" '
-BEGIN { found = 0 }
-/^- name: / {
-    if (found) {
-        print "  newTag: " tag
-        found = 0
-    }
-    if ($0 ~ "^- name: " img "$") {
-        found = 1
-    }
-}
-{ print }
-END {
-    if (found) {
-        print "  newTag: " tag
-    }
-}
-' "$KUSTOMIZATION_FILE" > "$TMP_FILE"
+path, image_name, image_tag = sys.argv[1:4]
+with open(path, encoding="utf-8") as handle:
+    text = handle.read()
 
-# 替换原文件
-mv "$TMP_FILE" "$KUSTOMIZATION_FILE"
+pattern = re.compile(
+    rf"(?ms)^- name: {re.escape(image_name)}\n(?P<body>(?:  [^\n]*\n?)+)"
+)
+match = pattern.search(text)
+if match is None:
+    sys.exit(f"image {image_name!r} not found in {path}")
 
-echo "Updated kustomization.yaml:"
+body = re.sub(r"(?m)^  newTag:.*\n?", "", match.group("body"))
+if re.search(r"(?m)^  newName:", body):
+    body = re.sub(
+        r"(?m)^(  newName:.*\n)", r"\1" + f"  newTag: {image_tag}\n", body, count=1
+    )
+else:
+    body = body.rstrip("\n") + f"\n  newTag: {image_tag}\n"
+
+text = text[: match.start()] + f"- name: {image_name}\n" + body + text[match.end():]
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(text)
+PY
+
+echo "Updated ${KUSTOMIZATION_FILE}:"
 cat "$KUSTOMIZATION_FILE"

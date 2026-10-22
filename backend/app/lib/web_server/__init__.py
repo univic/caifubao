@@ -9,6 +9,7 @@ from flask_jwt_extended import JWTManager
 from app.conf import app_config
 from app.api import register_blueprint
 from app.api.v1.auth import init_auth
+from app.utilities.metrics import init_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -29,5 +30,8 @@ def create_web_app():
 
     # Initialize auth
     init_auth(app)
+
+    # Request IDs, latency metrics and /metrics
+    init_metrics(app)
 
     return app

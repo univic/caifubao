@@ -1,3 +1,13 @@
+import sys
+from pathlib import Path
+
+try:  # pragma: no cover - import side effect only
+    import caifubao_contracts  # noqa: F401
+except ModuleNotFoundError:  # pragma: no cover
+    _shared = Path(__file__).resolve().parents[2] / "shared"
+    if _shared.is_dir():
+        sys.path.insert(0, str(_shared))
+
 # -*- coding: utf-8 -*-
 
 import os
@@ -57,4 +67,3 @@ try:
     logger.info(f"Datahub service starting in {app_config.__class__.__name__} mode")
 except ImportError:
     logger.info("Datahub service starting (app_config not available)")
-# Force rebuild Sat Mar 28 07:17:00 UTC 2026

@@ -31,17 +31,25 @@ from typing import Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from app.lib.execution.costs import (
+    COMMISSION_RATE,
+    MIN_COMMISSION_CNY,
+    SELL_STAMP_DUTY_RATE,
+    SLIPPAGE_PER_SIDE,
+    TRANSFER_FEE_RATE,
+)
+
 
 @dataclass(frozen=True)
 class LedgerConfig:
     initial_cash: float
     max_positions: int = 10
     board_lot: int = 100
-    commission_rate: float = 0.00025
-    minimum_commission: float = 5.0
-    stamp_duty_rate: float = 0.0005
-    transfer_fee_rate: float = 0.00001
-    slippage_per_side: float = 0.001
+    commission_rate: float = COMMISSION_RATE
+    minimum_commission: float = MIN_COMMISSION_CNY
+    stamp_duty_rate: float = SELL_STAMP_DUTY_RATE
+    transfer_fee_rate: float = TRANSFER_FEE_RATE
+    slippage_per_side: float = SLIPPAGE_PER_SIDE
 
 
 def _side_cost(notional: float, config: LedgerConfig, side: str) -> float:

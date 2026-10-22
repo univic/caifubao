@@ -84,7 +84,7 @@
 | 回测指标 | ✅ 已实现 | 总收益、年化收益(CAGR)、夏普比率、最大回撤、最大回撤持续天数、胜率、信息比率、超额收益 |
 | 回测交易明细 | ✅ 已实现 | 逐笔交易(buy/sell 价格/数量/金额/PnL)、每日权益曲线 |
 | 回测结果持久化 | ✅ 已实现 | `BacktestResult` 集合，支持列表/详情/删除 |
-| 摩擦成本建模 | ✅ 已实现 | 佣金 0.025%(最低 5 元)、印花税 0.1%(卖方)、滑点 0.1% |
+| 摩擦成本建模 | ✅ 已实现 | 佣金 0.025%(最低 5 元)、印花税 0.05%(卖方，2023-08-28 起)、滑点 0.1%；费率单一来源 `datahub/app/lib/execution/costs.py`，后端镜像内由 `test_friction_contract_parity.py` 保证一致 |
 | 涨跌停板约束 | ✅ 已实现 | `trade_status` 拦截：一字涨停买入失败、一字跌停卖出失败、连续涨停重试 |
 | 多股票回测 | ✅ 已实现 | 多只股票统一日期对齐、等权/分数加权/仓位上限、整手 100 股取整 |
 | 指数基准对比 | ✅ 已实现 | CSI 300 基准，超额收益和信息比率 |
@@ -208,7 +208,7 @@
 | 数据同步（stable→dev） | ✅ 已实现 | 增量、按业务键幂等 upsert；MongoDB 声明漂移已收敛（#151/#164/#176）。来源为旧 stable（retired production）；在线直连为迁移期遗留，目标为受控快照导入（TASK-404） |
 | 数据源健康与快速失败 | ✅ 已实现 | 批量新鲜度刷新；死掉的历史数据源 fail fast（#140） |
 | 因子评估向量化 | ✅ 已实现 | `evaluate`/`_build_dataset` 接受预载 `quote_frame`，前向收益 `groupby.shift(-h)`，decay 复用同一数据集；dev 实测 434.4s → 49.9s（8.7×），DB 往返归零（#232） |
-| data-sync 失败自动补跑 | ❌ 未实现 | roadmap P2：dev data-sync 失败后无自动补跑，次日调度才重试 |
+| 快照导入失败自动补跑 | ❌ 未实现 | dev `snapshot-import` 失败后次日 19:15 才重试；`data sync` 已降级为手动回退（TASK-404 已关闭） |
 
 ---
 
@@ -221,7 +221,7 @@
 | 问题 | 状态 | 处置 |
 |--------|------|------|
 | 校准报告的 hit_target 使用 max_return | ✅ 已修复 (12a.1) | 拆分为 `hit_target_close`（保守口径）和 `hit_target_intra`（激进口径） |
-| 回测无摩擦成本 | ✅ 已修复 (12a.2) | 佣金 0.025%（最低 5 元）+ 印花税 0.1%（卖方）+ 滑点 0.1% |
+| 回测无摩擦成本 | ✅ 已修复 (12a.2) | 佣金 0.025%（最低 5 元）+ 印花税 0.05%（卖方）+ 滑点 0.1% |
 | 回测无涨跌停板约束 | ✅ 已修复 (12a.4) | `trade_status` 拦截一字涨跌停，连续涨停重试 |
 | 回测无指数基准对比 | ✅ 已修复 (12a.6) | CSI 300 基准，超额收益和信息比率 |
 | 市场状态分类器未实现 | ✅ 已修复 (#103) | `lib/market_regime.py` + 因子评估 regime IC + 滚动验证分状态报告 + 回测 `/regime` 端点 |
@@ -274,7 +274,7 @@
 | FAILED 验证状态实际判定 | 低 | `verification_service` 无 FAILED 终态判定逻辑 |
 | 稳定性检验（权重扰动） | 低 | 17.4：小权重扰动是否导致大结果变化，未实现 |
 | signal decay 专项测试缺失 | 低 | 12d.6 部分修复：hybrid 阈值测试已补齐，signal decay 逻辑仍无专门测试 |
-| data-sync 失败自动补跑 | 低 | 失败后次日 19:15 才重试；方案见 `docs/operations/roadmap-2026-08.md` |
+| snapshot-import 失败自动补跑 | 低 | 失败后次日 19:15 才重试；方案见 `docs/operations/roadmap-2026-08.md` |
 | strategy_daily CronJob 未接线 | 中 | `strategy_daily` 未在任何 overlay 定义，当前为 operator cadence；非交易日会异常结束（fail loud），需先决策「优雅跳过 vs 接受告警」 |
 | MongoDB 运维遗留（旧 stable 迁移、副本集 HA、定时备份启用） | 中 | dev 已迁独立数据节点；旧 stable（retired production，非实盘 `prod`）暂留原节点，副本集 HA 与 backup CronJob 解挂待决策（节点名与细节见 `docs/operations/mongodb-node-migration.md`） |
 

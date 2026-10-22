@@ -8,6 +8,7 @@ import statistics
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
+from caifubao_contracts.time import iso_utc
 
 from flask import Blueprint, Response, jsonify, request
 from mongoengine import ValidationError
@@ -143,7 +144,7 @@ def _format_dt(value: datetime | None) -> str | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.isoformat()
+        return iso_utc(value)
     return str(value)
 
 

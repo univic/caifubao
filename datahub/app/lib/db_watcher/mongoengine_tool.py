@@ -65,6 +65,10 @@ class MongoWatcher:
                     username=app_config.MONGODB_USERNAME,
                     password=app_config.MONGODB_PASSWORD,
                     authentication_source="admin",
+                    connectTimeoutMS=app_config.MONGODB_CONNECT_TIMEOUT_MS,
+                    serverSelectionTimeoutMS=(
+                        app_config.MONGODB_SERVER_SELECTION_TIMEOUT_MS
+                    ),
                     alias=alias,
                 )
                 # try to establish connection

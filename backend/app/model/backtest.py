@@ -11,25 +11,6 @@ from mongoengine import (
 )
 
 
-class BackTest(Document):
-    """Legacy backtest record used by the old BasicBackTester engine.
-
-    Preserved for backward compatibility. The MVP uses BacktestResult instead.
-    """
-
-    name = StringField(unique=True)
-    strategy = StringField()
-    start_date = DateTimeField()
-    end_date = DateTimeField()
-    created_at = DateTimeField(default=datetime.datetime.utcnow)
-    started_at = DateTimeField()
-    completed_at = DateTimeField()
-    status = StringField(default="CRTD")
-    exec_result = StringField()
-    exec_msg = StringField()
-    earning_rate = FloatField()
-
-
 class BacktestResult(Document):
     """MVP backtest result record.
 

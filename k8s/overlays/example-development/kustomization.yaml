@@ -5,9 +5,10 @@ namespace: caifubao-example-dev
 
 resources:
 - ../../base
-
-patches:
-- path: datahub-patch.yaml
+# Dev quote CronJobs are intentionally `suspend: true` (the startup catch-up
+# covers them); data-sync and the health watcher are referenced here so the
+# example overlay is self-consistent.
+- datahub-cronjobs.yaml
 
 configMapGenerator:
 - name: backend-config
@@ -20,13 +21,6 @@ configMapGenerator:
   - FLASK_HOST=0.0.0.0
   - FLASK_PORT=8000
   - FLASK_DEBUG=false
-  - MONGODB_SRC_HOST=prod-mongo.internal
-  - MONGODB_SRC_PORT=27017
-  - MONGODB_SRC_USER=readonly_user
-  - MONGODB_SRC_NAME=caifubao
-- name: frontend-config
-  literals:
-  - VITE_API_BASE_URL=/api
 - name: data-lake-export-config
   behavior: replace
   literals:
@@ -40,14 +34,9 @@ secretGenerator:
 - name: backend-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
-# datahub-secret: private deployment overlays should inject MONGODB_SRC_PASS
-# from GitHub secret MONGODB_SRC_PASSWORD before kustomize build. The
-# caifubao-private deploy workflow generates a local .env.datahub-secret file.
 - name: datahub-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
-  - MONGODB_SRC_USER=readonly_user
-  - MONGODB_SRC_PASS=PLACEHOLDER_SRC_PASSWORD
   - TUSHARE_TOKEN=PLACEHOLDER_TUSHARE_TOKEN
 - name: mongodb-secret
   literals:
@@ -70,4 +59,7 @@ images:
   newTag: develop
 - name: caifubao-mongodb-tools
   newName: registry.example.com/your-org/caifubao-mongodb-tools
+  newTag: develop
+- name: caifubao/compute-worker
+  newName: registry.example.com/your-org/caifubao-compute-worker
   newTag: develop

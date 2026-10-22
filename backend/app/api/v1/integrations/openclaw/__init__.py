@@ -2,7 +2,7 @@
 # Author : Gemini CLI
 # Date: 2026-04-16
 
-import datetime
+from caifubao_contracts.time import iso_utc
 
 from flask import Blueprint, g, jsonify
 
@@ -23,7 +23,7 @@ def index():
             "message": "Caifubao OpenClaw Integration API",
             "version": "v1-mvp",
             "service_identity": g.service_token.name,
-            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "timestamp": iso_utc(),
         }
     )
 

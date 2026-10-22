@@ -54,9 +54,10 @@ def _mark_completed(task: Any, result: Dict[str, Any]) -> None:
 
 
 def _mark_failed(task: Any, error: str) -> None:
+    # Retry accounting belongs to the worker loop (`_schedule_retry`): it owns
+    # retry_count, the PENDING/FAILED decision and the retry budget.
     task.status = "FAILED"
     task.error = error
-    task.retry_count = getattr(task, "retry_count", 0) + 1
     task.completed_at = datetime.now(timezone.utc)
     task.save()
 
@@ -76,7 +77,7 @@ def _update_progress(task: Any, progress: float, message: str = "") -> None:
 def _handle_backtest_single(task: Any) -> None:
     _mark_started(task)
     try:
-        from backend.app.services.backtest_service import run_backtest
+        from app.services.backtest_service import run_backtest
 
         params = task.params or {}
         _update_progress(task, 0.1, "Loading data...")
@@ -124,7 +125,7 @@ def _handle_backtest_single(task: Any) -> None:
 def _handle_backtest_multi(task: Any) -> None:
     _mark_started(task)
     try:
-        from backend.app.services.backtest_service import run_multi_stock_backtest
+        from app.services.backtest_service import run_multi_stock_backtest
 
         params = task.params or {}
         _update_progress(task, 0.1, "Loading portfolio data...")
@@ -174,8 +175,8 @@ def _handle_backtest_scan(task: Any) -> None:
     _mark_started(task)
     try:
         from datetime import datetime as _dt
-        from backend.app.model.stock import IndividualStock
-        from backend.app.services.backtest_service import (
+        from app.model.stock import IndividualStock
+        from app.services.backtest_service import (
             run_backtest,
             composite_score,
             anti_overfitting_flags,
@@ -316,7 +317,7 @@ def _handle_backtest_scan(task: Any) -> None:
 def _handle_score_replay(task: Any) -> None:
     _mark_started(task)
     try:
-        from datahub.app.lib.scoring_engine.replay_service import ScoreReplayService
+        from app.lib.scoring_engine.replay_service import ScoreReplayService
 
         params = task.params or {}
         _update_progress(task, 0.1, "Starting scoring replay...")
@@ -347,7 +348,7 @@ def _handle_score_replay(task: Any) -> None:
 def _handle_score_verify(task: Any) -> None:
     _mark_started(task)
     try:
-        from datahub.app.lib.scoring_engine.verification_service import (
+        from app.lib.scoring_engine.verification_service import (
             ScoreVerificationService,
         )
 
@@ -378,7 +379,7 @@ def _handle_score_verify(task: Any) -> None:
 def _handle_calibration_report(task: Any) -> None:
     _mark_started(task)
     try:
-        from datahub.app.lib.scoring_engine.calibration_report import (
+        from app.lib.scoring_engine.calibration_report import (
             ScoreCalibrationReport,
         )
 
@@ -482,13 +483,13 @@ def _handle_grid_search(task: Any) -> None:
             )
 
             try:
-                from datahub.app.lib.scoring_engine.replay_service import (
+                from app.lib.scoring_engine.replay_service import (
                     ScoreReplayService,
                 )
-                from datahub.app.lib.scoring_engine.verification_service import (
+                from app.lib.scoring_engine.verification_service import (
                     ScoreVerificationService,
                 )
-                from datahub.app.lib.scoring_engine.calibration_report import (
+                from app.lib.scoring_engine.calibration_report import (
                     ScoreCalibrationReport,
                 )
 
@@ -580,15 +581,6 @@ def _handle_factor_eval(task: Any) -> None:
     _mark_started(task)
     try:
         import datetime as _dt
-        import sys as _sys
-        import os as _os
-
-        # Ensure datahub is on path for FactorEvaluationService imports
-        _datahub_path = _os.path.join(
-            _os.path.dirname(__file__), "..", "..", "datahub", "app"
-        )
-        if _datahub_path not in _sys.path:
-            _sys.path.insert(0, _datahub_path)
 
         from app.lib.scoring_engine.factor_eval import FactorEvaluationService
 
@@ -705,11 +697,11 @@ def _handle_rolling_validation(task: Any) -> None:
     """
     _mark_started(task)
     try:
-        from datahub.app.lib.scoring_engine.replay_service import ScoreReplayService
-        from datahub.app.lib.scoring_engine.verification_service import (
+        from app.lib.scoring_engine.replay_service import ScoreReplayService
+        from app.lib.scoring_engine.verification_service import (
             ScoreVerificationService,
         )
-        from datahub.app.lib.scoring_engine.calibration_report import (
+        from app.lib.scoring_engine.calibration_report import (
             ScoreCalibrationReport,
         )
 

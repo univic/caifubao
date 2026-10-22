@@ -106,6 +106,45 @@ def test_run_all_combines_index_and_stock_quote_jobs():
     assert len(result["results"]) == 2
 
 
+def test_run_all_merges_phase_evidence_for_the_dependency_gate():
+    """A target="all" run must expose stock phase evidence on the summary.
+
+    The signal gate reads ``check_stock_data_integrity`` / ``update_ma_factor``
+    from ``phase_stats``; without the merge a successful catch-up looks empty.
+    """
+
+    class PhaseDatahub(FakeDatahub):
+        def start_index_job(self):
+            self.calls.append("index")
+            return {
+                **_summary("index_market_sync", 10),
+                "phase_stats": {"sync_index_quotes": {"written_count": 10}},
+            }
+
+        def start_stock_job(self):
+            self.calls.append("stock_with_factors")
+            return {
+                **_summary("stock_market_sync", 30),
+                "phase_stats": {
+                    "check_stock_data_integrity": {"validated_count": 5209},
+                    "update_ma_factor": {"written_count": 9836},
+                },
+            }
+
+    result = run_quote_job(
+        TARGET_ALL,
+        include_factors=True,
+        datahub_factory=PhaseDatahub,
+    )
+
+    assert result["target"] == TARGET_ALL
+    assert result["phase_stats"]["update_ma_factor"]["written_count"] == 9836
+    assert (
+        result["phase_stats"]["check_stock_data_integrity"]["validated_count"] == 5209
+    )
+    assert result["phase_stats"]["sync_index_quotes"]["written_count"] == 10
+
+
 def test_run_all_failure_records_completed_index_and_partial_stock(monkeypatch):
     captured = {}
 

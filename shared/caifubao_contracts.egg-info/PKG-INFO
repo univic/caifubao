@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: caifubao-contracts
+Version: 0.1.0
+Summary: Shared MongoDB models, execution-cost and time contracts for caifubao services
+Requires-Python: >=3.12
+Requires-Dist: mongoengine>=0.29

@@ -1,0 +1,26 @@
+# Build context for compute-worker/Dockerfile is the repository root.
+# Keep the context small and deterministic.
+.git
+.github
+.gitignore
+.gitleaks.toml
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/*.egg-info
+.venv
+**/.venv
+**/.tools
+.venv-build
+.worktrees
+backend/venv312
+frontend/node_modules
+frontend/dist
+datahub/research
+docs
+openspec
+k8s
+skills
+tools
+autoresearch

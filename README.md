@@ -6,44 +6,41 @@
 
 ```
 caifubao/
-├── backend/                 # 后端 API 服务
-│   ├── app/                 # 应用主目录
-│   │   ├── api/           # API 接口
-│   │   ├── conf/          # 配置文件
-│   │   ├── lib/           # 核心库
-│   │   │   ├── db_watcher/    # 数据库监控
-│   │   │   ├── task_controller/ # 任务控制器
-│   │   │   ├── messenger/     # 消息通知
-│   │   │   └── ...
-│   │   ├── model/         # 数据模型
-│   │   ├── utilities/     # 工具函数
-│   │   └── ...
-│   ├── Dockerfile          # Docker 镜像构建
-│   ├── docker-entrypoint.sh # Docker 容器启动脚本
-│   ├── dev-entrypoint.sh   # 本地开发启动脚本
-│   ├── main.py           # 应用入口
-│   └── requirements.txt   # Python 依赖
-├── datahub/                # 数据获取服务（独立微服务）
-│   ├── app/                 # 应用主目录
-│   │   ├── conf/          # 配置文件
-│   │   ├── lib/           # 核心库
-│   │   │   ├── datahub/      # 数据获取模块
-│   │   │   ├── data_source/  # 数据源接口
-│   │   │   ├── processors/   # 数据处理器
-│   │   │   ├── task_controller/ # 任务控制器
-│   │   │   ├── periodic_task_dispatcher/ # 定时任务调度
-│   │   │   └── utilities/     # 工具函数
-│   │   └── model/         # 数据模型
-│   ├── Dockerfile          # Docker 镜像构建
-│   ├── main.py           # 应用入口
-│   └── requirements.txt   # Python 依赖
-├── frontend/               # 前端应用
-├── k8s/                    # Kubernetes 部署配置（公开示例）
-│   ├── base/              # 基础配置
-│   └── overlays/          # 脱敏示例 overlay（example-development、
-│                          #   example-research、example-production；
-│                          #   均为示例名称，不代表业务环境语义）
-└── README.md            # 项目说明
+├── backend/                 # 后端 API 服务（Flask + gunicorn）
+│   ├── app/
+│   │   ├── api/            # API 接口与错误契约
+│   │   ├── conf/           # 配置文件
+│   │   ├── lib/            # 连接层与鉴权（db_watcher / auth_decorators）
+│   │   ├── model/          # 读模型
+│   │   ├── services/       # 回测与择时评估
+│   │   └── utilities/      # 日志、交易日历等工具
+│   ├── Dockerfile
+│   ├── docker-entrypoint.sh # gunicorn 启动
+│   ├── dev-entrypoint.sh
+│   ├── main.py             # 应用入口（导出 app）
+│   └── requirements.txt
+├── datahub/                 # 数据 / 因子 / 信号 / 评分 / 研究（独立服务）
+│   ├── app/
+│   │   ├── jobs/           # CronJob 入口（quote/signal/scoring/...）
+│   │   ├── lib/
+│   │   │   ├── datahub/       # 行情采集与完整性
+│   │   │   ├── execution/     # 执行成本单一来源
+│   │   │   ├── scoring_engine/# 评分、验证、校准
+│   │   │   ├── factor_lab/    # 因子面板与评估
+│   │   │   ├── strategy_engine/# paper/replay 账本
+│   │   │   └── utilities/
+│   │   └── model/
+│   ├── Dockerfile
+│   ├── main.py
+│   └── requirements.txt
+├── compute-worker/          # 异步计算（MongoDB 任务队列）
+│   ├── worker_app/         # worker / handlers / bootstrap
+│   └── Dockerfile          # 构建上下文为仓库根目录
+├── shared/                  # caifubao-contracts（两服务共用的模型/费率/时间契约）
+│   └── caifubao_contracts/
+├── frontend/               # Vue 3 + TypeScript
+├── k8s/                    # Kubernetes 部署示例
+└── README.md
 ```
 
 ## 环境要求
@@ -183,7 +180,7 @@ make test-backend
 make test-frontend
 ```
 
-当前 `make check` 会跑评分实验相关后端测试，以及前端 lint/build。
+当前 `make check` 会跑完整后端测试套件（需要本地 MongoDB）与前端 lint/build；compute-worker 的合并包与部署校验由 CI 的 `dockerfile-check` 覆盖。
 
 ### 本地开发
 
@@ -200,6 +197,8 @@ python3 -m venv venv312
 cd backend
 source venv312/bin/activate
 pip install -r requirements.txt
+# Shared models/friction/time contract (the images install this package):
+pip install -e ../shared
 ```
 
 #### 3. 配置环境变量
@@ -286,13 +285,11 @@ curl http://localhost:8000/api/datahub/status
 #### 1. 构建镜像
 
 ```bash
-# Backend
-cd backend
-docker build -t caifubao-backend .
-
-# Datahub
-cd datahub
-docker build -t caifubao-datahub .
+# Backend, datahub and compute-worker build from the repository root because
+# the images install the shared `shared/caifubao_contracts` package.
+docker build -f backend/Dockerfile -t caifubao-backend .
+docker build -f datahub/Dockerfile -t caifubao-datahub .
+docker build -f compute-worker/Dockerfile -t caifubao/compute-worker .
 ```
 
 #### 2. 运行容器
@@ -466,10 +463,9 @@ tailscale operator bootstrap workflow 在用（自动 dispatch 与部署准入�
    - 用户认证和授权
    - 数据查询接口
 
-3. **task_controller** - 任务控制器
-   - 异步任务执行
-   - 任务队列管理
-   - 任务状态跟踪
+3. **compute-worker** - 异步计算服务
+   - 消费 `compute_tasks` 集合（回测/网格搜索/因子评估）
+   - 失败重试、僵尸任务回收、优雅停机
 
 4. **db_watcher** - 数据库监控
    - MongoDB 连接管理

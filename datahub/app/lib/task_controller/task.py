@@ -1,6 +1,8 @@
 import os
 import time
 import datetime
+
+from caifubao_contracts.time import utc_now_naive
 import logging
 from app.lib.db_watcher.mongoengine_tool import mongo_watcher
 from app.conf import app_config
@@ -254,7 +256,7 @@ class ScheduledDatahubTask(DatahubTask):
                     item.scheduled_process_time
                 )
                 time_diff = scheduled_run_timestamp - datetime.datetime.timestamp(
-                    datetime.datetime.now()
+                    utc_now_naive()
                 )
                 # determine whether to execute
                 if time_diff <= 0:

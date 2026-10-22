@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime
+
+from caifubao_contracts.time import utc_now_naive
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -264,7 +266,7 @@ class MovingAverageSignalService:
     ) -> list[UpdateOne]:
         operations: list[UpdateOne] = []
         source_freshness = source_freshness or {}
-        generated_at = generated_at or datetime.datetime.now()
+        generated_at = generated_at or utc_now_naive()
         for signal_date, row in signal_df.iterrows():
             snapshot = {f: float(row[f]) for f in config.required_factors if f in row}
             if "close" in row:
@@ -340,7 +342,7 @@ class MovingAverageSignalService:
     ) -> None:
         if not code_targets:
             return
-        calculated_at = calculated_at or datetime.datetime.now()
+        calculated_at = calculated_at or utc_now_naive()
         codes = list(code_targets)
         if object_type_by_code is None:
             stocks = self.stock_model.objects(code__in=codes).only(
@@ -464,7 +466,7 @@ class MovingAverageSignalService:
             )
 
         source_freshness = self._load_source_freshness(code)
-        generated_at = datetime.datetime.now()
+        generated_at = utc_now_naive()
         target_date = factor_df.index.max()
         operations: list[UpdateOne] = []
         authoritative_keys: list[dict[str, Any]] = []

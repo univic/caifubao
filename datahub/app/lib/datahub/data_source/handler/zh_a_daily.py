@@ -1,4 +1,6 @@
 import datetime
+
+from caifubao_contracts.time import beijing_now_naive
 import logging
 import os
 from typing import Any
@@ -305,7 +307,7 @@ def _build_tushare_universe(as_of_date: str | None = None):
     trade_date = (
         as_of_date.replace("-", "")
         if as_of_date
-        else datetime.date.today().strftime("%Y%m%d")
+        else beijing_now_naive().date().strftime("%Y%m%d")
     )
     basic = _call_with_retry(
         lambda: interface.tushare_interface.stock_basic_active(),
@@ -428,7 +430,7 @@ def get_zh_a_stock_hist_daily_quote(code, start_date=None, end_date=None):
     normalized_end_date = (
         end_date.replace("-", "")
         if end_date
-        else datetime.date.today().strftime("%Y%m%d")
+        else beijing_now_naive().date().strftime("%Y%m%d")
     )
     if get_stock_history_source() == "akshare":
         symbol = code[2:] if code.startswith(("sh", "sz", "bj")) else code

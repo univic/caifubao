@@ -1,5 +1,6 @@
 import logging
-import datetime
+
+from caifubao_contracts.time import utc_now_naive
 from mongoengine import NotUniqueError
 from app.model.data_freshness import DataFreshnessMeta
 
@@ -37,9 +38,7 @@ def upsert_freshness_meta(
         backtest_name=backtest_name,
     )
     try:
-        query.upsert_one(
-            set__freshness_datetime=dt, set__calculated_at=datetime.datetime.now()
-        )
+        query.upsert_one(set__freshness_datetime=dt, set__calculated_at=utc_now_naive())
     except NotUniqueError:
         logger.warning(
             f"{object_type}-{code}-{meta_type}-{meta_name}-{dt} encountered NotUniqueError when trying to upsert freshness meta"

@@ -10,6 +10,7 @@ from flask import Blueprint, jsonify, request
 from mongoengine import Q
 
 from app.model.data_asset_status import DataAssetStatus
+from caifubao_contracts.time import iso_utc
 from app.model.stock import IndividualStock, StockIndex, StockDailyQuote
 
 try:
@@ -42,7 +43,7 @@ _overview_cache = {"expires_at": 0, "payload": None}
 def _format_datetime(value):
     if value is None:
         return None
-    return value.isoformat()
+    return iso_utc(value)
 
 
 def _to_number(value, default=0.0):
@@ -321,7 +322,7 @@ def _build_payload():
         gainers, losers = [], []
 
     return {
-        "generated_at": datetime.datetime.now().isoformat(),
+        "generated_at": iso_utc(),
         "indices": _build_major_indices(),
         "breadth": _build_market_breadth(),
         "sectors": [],

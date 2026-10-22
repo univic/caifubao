@@ -9,6 +9,12 @@ from typing import Any
 from mongoengine.errors import NotUniqueError
 from pymongo.errors import DuplicateKeyError, OperationFailure
 
+from caifubao_contracts.time import (
+    beijing_now as shared_beijing_now,
+    to_utc_naive,
+    utc_now_naive as shared_utc_now_naive,
+)
+
 from app.model.datahub_job_run import (
     JOB_NAME_STARTUP_CATCHUP,
     STATUS_DEGRADED,
@@ -25,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 BEIJING_TZ_NAME = "Asia/Shanghai"
 BEIJING_TZ = ZoneInfo(BEIJING_TZ_NAME)
-UTC = datetime.timezone.utc
 
 DEFAULT_QUOTE_JOB_FAMILY = "quote_daily"
 DEFAULT_QUOTE_JOB_NAME = "datahub_quote_daily"
@@ -58,19 +63,18 @@ class JobRunClaimExistsError(RuntimeError):
 
 
 def utc_now_naive() -> datetime.datetime:
-    return datetime.datetime.now(UTC).replace(tzinfo=None)
+    """Naive UTC instant (delegates to the shared time contract)."""
+    return shared_utc_now_naive()
 
 
 def beijing_now() -> datetime.datetime:
-    return datetime.datetime.now(BEIJING_TZ)
+    """Aware Asia/Shanghai instant (delegates to the shared time contract)."""
+    return shared_beijing_now()
 
 
 def normalize_datetime(value: datetime.datetime | None) -> datetime.datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value
-    return value.astimezone(UTC).replace(tzinfo=None)
+    """Normalize any datetime to naive UTC; pass ``None`` through."""
+    return to_utc_naive(value)
 
 
 def compute_daily_schedule_at(
@@ -207,14 +211,20 @@ def latest_job_run(
     scheduled_at: datetime.datetime | None = None,
     statuses: list[str] | None = None,
     job_name: str | None = None,
+    job_names: list[str] | None = None,
     target: str | None = None,
+    targets: list[str] | None = None,
     include_factors: bool | None = None,
 ) -> DatahubJobRun | None:
     filters: dict = {"job_family": job_family}
     if job_name is not None:
         filters["job_name"] = job_name
+    if job_names:
+        filters["job_name__in"] = list(job_names)
     if target is not None:
         filters["target"] = target
+    if targets:
+        filters["target__in"] = list(targets)
     if include_factors is not None:
         filters["include_factors"] = include_factors
     query = DatahubJobRun.objects(**filters)

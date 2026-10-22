@@ -1,6 +1,8 @@
 import re
 import logging
 import datetime
+
+from caifubao_contracts.time import beijing_now_naive
 from zoneinfo import ZoneInfo
 from app.model.stock import FinanceMarket, StockDailyQuote
 
@@ -11,7 +13,7 @@ BEIJING_TIMEZONE = "Asia/Shanghai"
 
 def determine_closest_trading_date(trade_calendar, given_time=None):
     if given_time is None:
-        given_time = datetime.datetime.now()
+        given_time = beijing_now_naive()
     divide_hour = 3
     if given_time.hour < divide_hour:
         given_time = given_time - datetime.timedelta(days=1)
@@ -91,7 +93,7 @@ def determine_most_recent_next_trading_dt(trade_calendar, given_time):
 
 def determine_the_next_trading_day_end(trade_calendar, given_time=None, end_hour=15):
     if given_time is None:
-        given_time = datetime.datetime.now()
+        given_time = beijing_now_naive()
     dt = None
     if trade_calendar:
         if given_time.hour > end_hour:
@@ -146,7 +148,7 @@ def determine_pervious_trading_day(trade_calendar_list, given_date):
 
 def next_trading_day(trade_calendar, given_time=None):
     if given_time is None:
-        given_time = datetime.datetime.now()
+        given_time = beijing_now_naive()
     t_day = min(trade_calendar, key=lambda x: (x <= given_time, abs(x - given_time)))
     return t_day
 
@@ -169,7 +171,7 @@ def next_trading_day(trade_calendar, given_time=None):
 
 def is_trading_day(trade_calendar, given_time=None):
     if given_time is None:
-        given_time = datetime.datetime.now()
+        given_time = beijing_now_naive()
     given_time = given_time.replace(hour=0, minute=0, second=0, microsecond=0)
     if given_time in trade_calendar:
         response = True
@@ -211,7 +213,7 @@ def update_title_date_str(title_str, date):
 
 
 def get_current_date_str():
-    current_date = datetime.date.today()
+    current_date = beijing_now_naive().date()
     date_str = current_date.strftime("%Y%m%d")
     return date_str
 

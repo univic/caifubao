@@ -25,8 +25,15 @@ from app.lib.utilities.trading_day_helper import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CATCHUP_HOUR = 18
-DEFAULT_CATCHUP_MINUTE = 10
+# The catch-up repairs the *daily stock quote slot*: its recorded
+# ``scheduled_at`` must match the canonical quote-stock CronJob's slot so the
+# downstream signal gate (signal_runner: DEPENDENCY_JOB_HOUR/MINUTE = 18:00)
+# can find the repaired run. The trigger window is separate: catch-up only
+# starts after the CronJob's own start time (18:10) has passed.
+DEFAULT_CATCHUP_TRIGGER_HOUR = 18
+DEFAULT_CATCHUP_TRIGGER_MINUTE = 10
+DEFAULT_CATCHUP_SCHEDULED_HOUR = 18
+DEFAULT_CATCHUP_SCHEDULED_MINUTE = 0
 
 
 def _is_enabled() -> bool:
@@ -66,11 +73,13 @@ def should_run_startup_quote_catchup(
         return False, {"reason": "non_trading_day"}
 
     scheduled_at = job_run_helper.compute_daily_schedule_at(
-        DEFAULT_CATCHUP_HOUR,
-        DEFAULT_CATCHUP_MINUTE,
+        DEFAULT_CATCHUP_SCHEDULED_HOUR,
+        DEFAULT_CATCHUP_SCHEDULED_MINUTE,
         reference_time=now,
     )
-    if now.time() < datetime.time(DEFAULT_CATCHUP_HOUR, DEFAULT_CATCHUP_MINUTE):
+    if now.time() < datetime.time(
+        DEFAULT_CATCHUP_TRIGGER_HOUR, DEFAULT_CATCHUP_TRIGGER_MINUTE
+    ):
         return False, {
             "reason": "before_window",
             "scheduled_at": scheduled_at,
@@ -127,7 +136,11 @@ def run_startup_quote_catchup() -> dict[str, object]:
         context["latest_trading_day"],
     )
     try:
-        result = run_quote_job(TARGET_ALL, job_metadata=metadata)
+        # Run the same shape as the canonical CronJob (stock quotes *with*
+        # factors, plus index repair) so the repaired run carries the evidence
+        # the downstream signal gate requires. A quote-only catch-up leaves
+        # `update_ma_factor` missing and the gate rejects the day.
+        result = run_quote_job(TARGET_ALL, include_factors=True, job_metadata=metadata)
     except job_run_helper.JobRunClaimExistsError:
         # Lost the atomic claim against an overlapping process (e.g. a pod
         # rollout): the winner is already running the catch-up.

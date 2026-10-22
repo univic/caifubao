@@ -19,13 +19,6 @@ configMapGenerator:
   - FLASK_HOST=0.0.0.0
   - FLASK_PORT=8000
   - FLASK_DEBUG=false
-  - MONGODB_SRC_HOST=
-  - MONGODB_SRC_PORT=27017
-  - MONGODB_SRC_NAME=
-  - MONGODB_SRC_USER=
-- name: frontend-config
-  literals:
-  - VITE_API_BASE_URL=/api
 - name: data-lake-export-config
   behavior: replace
   literals:
@@ -45,8 +38,6 @@ secretGenerator:
 - name: datahub-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
-  - MONGODB_SRC_USER=
-  - MONGODB_SRC_PASS=
   - TUSHARE_TOKEN=PLACEHOLDER_TUSHARE_TOKEN
 - name: mongodb-secret
   literals:
@@ -70,6 +61,9 @@ images:
 - name: caifubao-mongodb-tools
   newName: registry.example.com/your-org/caifubao-mongodb-tools
   newTag: prod
+- name: caifubao/compute-worker
+  newName: registry.example.com/your-org/caifubao-compute-worker
+  newTag: prod
 
 patches:
 - path: backend-secret-env-patch.yaml
@@ -91,144 +85,245 @@ patches:
                 operator: In
                 values:
                 - tencent
+
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: compute-worker
+  patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: compute-worker
+    spec:
+      template:
+        spec:
+          imagePullSecrets:
+          - name: ccr-secret
+          nodeSelector:
+            class: compute
+            provider: tencent
+          containers:
+          - name: compute-worker
+            env:
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: prod-mongodb-pass-secret
+                  key: PROD_MONGODB_PASS
+
 - target:
     group: apps
     version: v1
     kind: Deployment
     name: caifubao-datahub
   patch: |-
-    - op: replace
-      path: /spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
-      value: prod-mongodb-pass-secret
-    - op: replace
-      path: /spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
-      value: PROD_MONGODB_PASS
-    - op: replace
-      path: /spec/template/spec/imagePullSecrets
-      value:
-      - name: ccr-secret
-    - op: add
-      path: /spec/template/spec/nodeSelector
-      value:
-        class: compute
-        provider: tencent
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: caifubao-datahub
+    spec:
+      template:
+        spec:
+          imagePullSecrets:
+          - name: ccr-secret
+          nodeSelector:
+            class: compute
+            provider: tencent
+          containers:
+          - name: datahub
+            env:
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: prod-mongodb-pass-secret
+                  key: PROD_MONGODB_PASS
+
 - target:
     group: batch
     version: v1
     kind: CronJob
     name: caifubao-datahub-quote-index
   patch: |-
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
-      value: prod-mongodb-pass-secret
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
-      value: PROD_MONGODB_PASS
-- target:
-    group: batch
-    version: v1
+    apiVersion: batch/v1
     kind: CronJob
-    name: caifubao-datahub-daily-basic
-  patch: |-
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
-      value: prod-mongodb-pass-secret
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
-      value: PROD_MONGODB_PASS
-- target:
-    group: batch
-    version: v1
-    kind: CronJob
-    name: caifubao-datahub-health-watcher
-  patch: |-
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
-      value: prod-mongodb-pass-secret
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
-      value: PROD_MONGODB_PASS
-- target:
-    group: batch
-    version: v1
-    kind: CronJob
-    name: caifubao-datahub-asset-status
-  patch: |-
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
-      value: prod-mongodb-pass-secret
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
-      value: PROD_MONGODB_PASS
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/imagePullSecrets
-      value:
-      - name: ccr-secret
-    - op: add
-      path: /spec/jobTemplate/spec/template/spec/nodeSelector
-      value:
-        class: compute
-        provider: tencent
+    metadata:
+      name: caifubao-datahub-quote-index
+    spec:
+      jobTemplate:
+        spec:
+          template:
+            spec:
+              containers:
+              - name: quote-index-runner
+                env:
+                - name: MONGODB_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: prod-mongodb-pass-secret
+                      key: PROD_MONGODB_PASS
+
 - target:
     group: batch
     version: v1
     kind: CronJob
     name: caifubao-datahub-quote-stock
   patch: |-
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
-      value: prod-mongodb-pass-secret
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
-      value: PROD_MONGODB_PASS
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/imagePullSecrets
-      value:
-      - name: ccr-secret
-    - op: add
-      path: /spec/jobTemplate/spec/template/spec/nodeSelector
-      value:
-        class: compute
-        provider: tencent
+    apiVersion: batch/v1
+    kind: CronJob
+    metadata:
+      name: caifubao-datahub-quote-stock
+    spec:
+      jobTemplate:
+        spec:
+          template:
+            spec:
+              imagePullSecrets:
+              - name: ccr-secret
+              nodeSelector:
+                class: compute
+                provider: tencent
+              containers:
+              - name: quote-stock-runner
+                env:
+                - name: MONGODB_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: prod-mongodb-pass-secret
+                      key: PROD_MONGODB_PASS
+
 - target:
     group: batch
     version: v1
     kind: CronJob
     name: caifubao-datahub-signal
   patch: |-
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
-      value: prod-mongodb-pass-secret
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
-      value: PROD_MONGODB_PASS
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/imagePullSecrets
-      value:
-      - name: ccr-secret
-    - op: add
-      path: /spec/jobTemplate/spec/template/spec/nodeSelector
-      value:
-        class: compute
-        provider: tencent
+    apiVersion: batch/v1
+    kind: CronJob
+    metadata:
+      name: caifubao-datahub-signal
+    spec:
+      jobTemplate:
+        spec:
+          template:
+            spec:
+              imagePullSecrets:
+              - name: ccr-secret
+              nodeSelector:
+                class: compute
+                provider: tencent
+              containers:
+              - name: signal-runner
+                env:
+                - name: MONGODB_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: prod-mongodb-pass-secret
+                      key: PROD_MONGODB_PASS
+
 - target:
     group: batch
     version: v1
     kind: CronJob
     name: caifubao-datahub-scoring
   patch: |-
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/name
-      value: prod-mongodb-pass-secret
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/containers/0/env/4/valueFrom/secretKeyRef/key
-      value: PROD_MONGODB_PASS
-    - op: replace
-      path: /spec/jobTemplate/spec/template/spec/imagePullSecrets
-      value:
-      - name: ccr-secret
-    - op: add
-      path: /spec/jobTemplate/spec/template/spec/nodeSelector
-      value:
-        class: compute
-        provider: tencent
+    apiVersion: batch/v1
+    kind: CronJob
+    metadata:
+      name: caifubao-datahub-scoring
+    spec:
+      jobTemplate:
+        spec:
+          template:
+            spec:
+              imagePullSecrets:
+              - name: ccr-secret
+              nodeSelector:
+                class: compute
+                provider: tencent
+              containers:
+              - name: scoring-runner
+                env:
+                - name: MONGODB_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: prod-mongodb-pass-secret
+                      key: PROD_MONGODB_PASS
+
+- target:
+    group: batch
+    version: v1
+    kind: CronJob
+    name: caifubao-datahub-daily-basic
+  patch: |-
+    apiVersion: batch/v1
+    kind: CronJob
+    metadata:
+      name: caifubao-datahub-daily-basic
+    spec:
+      jobTemplate:
+        spec:
+          template:
+            spec:
+              containers:
+              - name: daily-basic-runner
+                env:
+                - name: MONGODB_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: prod-mongodb-pass-secret
+                      key: PROD_MONGODB_PASS
+
+- target:
+    group: batch
+    version: v1
+    kind: CronJob
+    name: caifubao-datahub-health-watcher
+  patch: |-
+    apiVersion: batch/v1
+    kind: CronJob
+    metadata:
+      name: caifubao-datahub-health-watcher
+    spec:
+      jobTemplate:
+        spec:
+          template:
+            spec:
+              containers:
+              - name: health-watcher
+                env:
+                - name: MONGODB_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: prod-mongodb-pass-secret
+                      key: PROD_MONGODB_PASS
+
+- target:
+    group: batch
+    version: v1
+    kind: CronJob
+    name: caifubao-datahub-asset-status
+  patch: |-
+    apiVersion: batch/v1
+    kind: CronJob
+    metadata:
+      name: caifubao-datahub-asset-status
+    spec:
+      jobTemplate:
+        spec:
+          template:
+            spec:
+              imagePullSecrets:
+              - name: ccr-secret
+              nodeSelector:
+                class: compute
+                provider: tencent
+              containers:
+              - name: asset-status-runner
+                env:
+                - name: MONGODB_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: prod-mongodb-pass-secret
+                      key: PROD_MONGODB_PASS

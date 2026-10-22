@@ -69,7 +69,7 @@
         <div class="quality-metrics">
           <div class="q-metric">
             <span class="q-label">滚动 {{ quality.window_days }} 日命中率</span>
-            <span class="q-value" :class="quality.latest_hit_rate > 0.5 ? 'good' : 'bad'">
+            <span class="q-value" :class="(quality.latest_hit_rate ?? 0) > 0.5 ? 'good' : 'bad'">
               {{ formatPct(quality.latest_hit_rate) }}
             </span>
           </div>
@@ -90,7 +90,7 @@
             v-for="(point, idx) in quality.rolling_hit_rates.slice(-20)"
             :key="idx"
             class="trend-bar"
-            :style="{ height: (point.rolling_hit_rate * 100) + '%' }"
+            :style="{ height: ((point.rolling_hit_rate ?? 0) * 100) + '%' }"
             :title="point.date + ': ' + formatPct(point.rolling_hit_rate)"
           />
         </div>
@@ -689,7 +689,6 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
-import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import {
   decisionsApi,
@@ -697,14 +696,29 @@ import {
   type JournalEntry,
   type JournalSummary,
   type JournalAttribution,
-  type RebalancePreviewItem
+  type RebalancePreviewItem,
+  type ScoreAlert,
+  type ScoreQualityResponse
 } from '@/api/decisions'
+
+function emptyQuality(): ScoreQualityResponse {
+  return {
+    horizon: 20,
+    window_days: 30,
+    rolling_hit_rates: [],
+    latest_hit_rate: null,
+    decay_detected: false,
+    decay_detail: '',
+    drift_detected: false,
+    drift_detail: ''
+  }
+}
 
 const horizon = ref(20)
 const loading = ref(false)
 const qualityLoading = ref(false)
-const alerts = ref<any[]>([])
-const quality = ref<any>(null)
+const alerts = ref<ScoreAlert[]>([])
+const quality = ref<ScoreQualityResponse>(emptyQuality())
 
 // Dashboard state
 const dashHorizon = ref(20)
@@ -715,12 +729,14 @@ const dashboardItems = ref<DecisionDashboardItem[]>([])
 async function fetchAlerts() {
   loading.value = true
   try {
-    const res = await axios.get('/api/decisions/alerts', {
-      params: { horizon: horizon.value, limit: 20 }
-    })
-    alerts.value = res.data.data?.alerts || []
+    // Use the shared axios instance so the bearer token, 401 refresh and
+    // global error handling all apply (a bare axios call silently returned
+    // an empty panel for logged-in users).
+    const res = await decisionsApi.getAlerts({ horizon: horizon.value, limit: 20 })
+    alerts.value = res.data?.alerts || []
   } catch (e) {
     console.error('Failed to fetch alerts', e)
+    alerts.value = []
   } finally {
     loading.value = false
   }
@@ -729,12 +745,11 @@ async function fetchAlerts() {
 async function fetchQuality() {
   qualityLoading.value = true
   try {
-    const res = await axios.get('/api/decisions/quality', {
-      params: { horizon: horizon.value }
-    })
-    quality.value = res.data.data
+    const res = await decisionsApi.getQuality({ horizon: horizon.value })
+    quality.value = res.data ?? emptyQuality()
   } catch (e) {
     console.error('Failed to fetch quality', e)
+    quality.value = emptyQuality()
   } finally {
     qualityLoading.value = false
   }

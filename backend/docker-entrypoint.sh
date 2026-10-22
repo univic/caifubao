@@ -1,38 +1,28 @@
 #!/bin/bash
 set -e
 
-echo "Starting application (Docker Mode)..."
+# Datahub runs as its own service; the backend container serves the API only.
+# Gunicorn (instead of the Werkzeug development server) gives us multiple
+# worker processes, graceful shutdown and real request concurrency.
+PORT="${FLASK_PORT:-8000}"
+WORKERS="${GUNICORN_WORKERS:-2}"
+TIMEOUT="${GUNICORN_TIMEOUT:-300}"
+GRACEFUL_TIMEOUT="${GUNICORN_GRACEFUL_TIMEOUT:-30}"
 
-# Datahub 已拆分为独立微服务，不再在 backend 中启动
-# echo "Starting datahub scheduled task..."
-# python -m app.lib.datahub --scheduled &
-# DATAHUB_PID=$!
+# Gunicorn runs several workers; the Prometheus client needs a shared mmap
+# directory so /metrics aggregates all workers. Clear it once, before the
+# master forks.
+if [ -n "${PROMETHEUS_MULTIPROC_DIR:-}" ]; then
+    rm -rf "${PROMETHEUS_MULTIPROC_DIR}"
+    mkdir -p "${PROMETHEUS_MULTIPROC_DIR}"
+fi
 
-# Start Flask application
-echo "Starting Flask application..."
-python main.py &
-FLASK_PID=$!
+echo "Starting API (gunicorn) on 0.0.0.0:${PORT} with ${WORKERS} workers..."
 
-# Function to handle shutdown
-shutdown() {
-    echo "Shutting down..."
-    # if [ -n "$DATAHUB_PID" ]; then
-    #     kill $DATAHUB_PID 2>/dev/null || true
-    # fi
-    if [ -n "$FLASK_PID" ]; then
-        kill $FLASK_PID 2>/dev/null || true
-    fi
-    wait
-    echo "Shutdown complete"
-    exit 0
-}
-
-# Trap signals
-trap shutdown SIGTERM SIGINT
-
-# Wait for any process to exit
-# wait $DATAHUB_PID $FLASK_PID
-wait $FLASK_PID
-
-# If any process exits, shutdown all
-shutdown
+exec gunicorn main:app \
+    --bind "0.0.0.0:${PORT}" \
+    --workers "${WORKERS}" \
+    --timeout "${TIMEOUT}" \
+    --graceful-timeout "${GRACEFUL_TIMEOUT}" \
+    --access-logfile - \
+    --error-logfile -
