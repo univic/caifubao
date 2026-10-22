@@ -72,3 +72,40 @@
       provides one).
 - [x] 8.4 `npm run lint`, `npm run test:run`, `npm run build`.
 - [x] 8.5 `kubectl kustomize` for all three overlays.
+
+## 9. Shared contracts package
+
+- [x] 9.1 `shared/caifubao_contracts` with `models/` (8 shared documents),
+      `friction.py`, `time.py`, `json_util.py`; installable `pyproject.toml`.
+- [x] 9.2 Backend/datahub `app/model/<name>.py` are re-export shims; parity test
+      now asserts shims only (no local classes, complete re-exports).
+- [x] 9.3 Backend/datahub/compute-worker images install the package; build
+      contexts move to the repository root (Dockerfiles + publish workflows +
+      CI checks).
+- [x] 9.4 Source checkouts get the package via `app/__init__` fallback,
+      conftest paths, worker bootstrap and `dev-entrypoint.sh`.
+
+## 10. Metrics and request correlation
+
+- [x] 10.1 Backend `/metrics` (request count/latency, compute task gauges),
+      gunicorn multiprocess support, `/metrics` kept off the DB path.
+- [x] 10.2 Datahub `/metrics` (readiness, job last-success, asset status, quote
+      freshness) served by the existing health server.
+- [x] 10.3 `X-Request-ID` propagation into responses, JSON logs and error bodies.
+- [x] 10.4 k8s scrape annotations + `docs/operations/observability.md`.
+
+## 11. Strategic-merge overlay patches
+
+- [x] 11.1 Replace positional `env/4/...` patches for datahub, compute-worker
+      and all research/prod CronJobs with strategic-merge patches.
+- [x] 11.2 Patch the prod industry-sync job (previously left on the placeholder
+      secret) and add the snapshot-export job to the prod overlay.
+
+## 12. Time contract and TASK-404
+
+- [x] 12.1 Shared UTC/Beijing helpers; DB timestamps use naive UTC.
+- [x] 12.2 API timestamps carry `+00:00`; request-id in error/log.
+- [x] 12.3 Trading-calendar defaults evaluate at call time in Asia/Shanghai.
+- [x] 12.4 Stable snapshot export + dev snapshot import CronJobs; `MONGODB_SRC_*`
+      removed from public examples; environment model, agent CLI and capability
+      docs updated.

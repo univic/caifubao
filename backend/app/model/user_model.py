@@ -2,7 +2,7 @@
 # Author : univic
 # Date: 2021-01-31
 
-import datetime
+from caifubao_contracts.time import utc_now_naive
 from mongoengine import StringField, ListField, EmailField, DateTimeField, IntField
 from app.lib.db_watcher.mongoengine_tool import db
 import app.utilities.db_util as db_util
@@ -25,7 +25,7 @@ class User(db.Document):
     email = EmailField(required=True)
     password_hash = StringField(required=True)
     user_status = ListField(StringField(), default=["00"])
-    time_registered = DateTimeField(default=datetime.datetime.now())
+    time_registered = DateTimeField(default=utc_now_naive())
     confirmed_at = DateTimeField()
     employee_id = StringField()
     user_role = ListField(StringField(), default=["USER"])

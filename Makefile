@@ -106,9 +106,10 @@ lint-frontend:
 
 # ---- Docker (requires registry env) ----
 docker-build:
-	docker build -t caifubao-datahub:local ./datahub
-	docker build -t caifubao-backend:local ./backend
-	docker build -t caifubao-frontend:local ./frontend
+	docker build -f backend/Dockerfile -t caifubao-backend:local .
+	docker build -f datahub/Dockerfile -t caifubao-datahub:local .
+	docker build -f compute-worker/Dockerfile -t caifubao/compute-worker:local .
+	docker build -f frontend/Dockerfile -t caifubao-frontend:local ./frontend
 
 docker-push:
 	@echo "Use private repo deploy workflow for production pushes"

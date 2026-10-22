@@ -105,7 +105,7 @@ def test_list_scores_defaults_to_latest_horizon_date(client, monkeypatch):
 
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload["date"] == "2026-04-13T00:00:00"
+    assert payload["date"] == "2026-04-13T00:00:00+00:00"
     assert payload["horizon"] == 5
     assert payload["total"] == 2
     assert [item["stock_code"] for item in payload["items"]] == [

@@ -18,6 +18,10 @@ spec:
     metadata:
       labels:
         app: caifubao-backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
     spec:
       containers:
       - name: backend
@@ -76,6 +80,8 @@ spec:
           value: "2"
         - name: GUNICORN_TIMEOUT
           value: "300"
+        - name: PROMETHEUS_MULTIPROC_DIR
+          value: /tmp/prometheus
         resources:
           requests:
             memory: "256Mi"

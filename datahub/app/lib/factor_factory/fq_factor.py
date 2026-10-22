@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import datetime
+
+from caifubao_contracts.time import utc_now_naive
 import logging
 import math
 from collections import defaultdict
@@ -413,7 +414,7 @@ class FQFactorService:
             },
             code_field="code",
         )
-        calculated_at = datetime.datetime.now()
+        calculated_at = utc_now_naive()
         records = [
             data_asset_status_helper.build_fq_status_record(
                 code=code,

@@ -1,4 +1,4 @@
-import datetime
+from caifubao_contracts.time import utc_now_naive
 from mongoengine import Document, StringField, DateTimeField
 
 
@@ -24,6 +24,6 @@ class DataFreshnessMeta(Document):
     meta_type = StringField()
     meta_name = StringField()
     freshness_datetime = DateTimeField()
-    calculated_at = DateTimeField(default=datetime.datetime.now())
+    calculated_at = DateTimeField(default=utc_now_naive())
     backtest_name = StringField()
     status = StringField()  # OPEN/NO_UPD

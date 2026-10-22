@@ -5,12 +5,12 @@
 ### Requirement: Execution costs have one source of truth
 
 The system SHALL define A-share execution cost assumptions (commission,
-minimum commission, sell stamp duty, transfer fee, slippage, board lot) in
-`datahub/app/lib/execution/costs.py`. Every engine that reports P&L — the factor
-lab, the paper NAV engine, the ETF lab, the timing replay and the backend
-backtest service — SHALL use those values. The backend image cannot import the
-datahub package, so it MAY mirror the constants, but a test SHALL fail when the
-mirrored values diverge.
+minimum commission, sell stamp duty, transfer fee, slippage, board lot) once, in
+the shared `caifubao_contracts.friction` module (source:
+`shared/caifubao_contracts/friction.py`). Every engine that reports P&L — the
+factor lab, the paper NAV engine, the ETF lab, the timing replay and the backend
+backtest service — SHALL import those values; no service SHALL keep a numeric
+copy of its own.
 
 #### Scenario: A rate is changed on one side only
 
@@ -40,21 +40,67 @@ documented in `docs/architecture/environment-model.md`.
 - THEN no such code path exists; those jobs live only under `datahub/` and run
   as datahub CronJobs
 
-### Requirement: Shared model definitions must stay in parity
+### Requirement: Shared models come from one installed package
 
-Both services SHALL keep the same definition for every mongoengine document
-class that exists in both model packages. The definition SHALL agree on the
-MongoDB collection name, the field names, each field's base type and each
-field's `unique` flag. CI SHALL run datahub tests against the datahub models,
-not against a copy of the backend models.
+Every mongoengine document class used by both services SHALL be defined once in
+`shared/caifubao_contracts/models` and installed into both images as the
+`caifubao-contracts` package. Each service's `app/model/<name>.py` SHALL be a
+thin re-export shim and SHALL NOT define document classes locally. CI SHALL run
+each service's tests against those shims, not against copied files.
 
-#### Scenario: A shared field is renamed on one side
+#### Scenario: A service reintroduces a local model
 
-- GIVEN a shared document class
-- WHEN one service renames, removes or retypes a field, or changes its
-  collection
-- THEN `datahub/app/test/test_model_contract_parity.py` fails with the class,
-  field and both definitions named
+- GIVEN a shared document class in `caifubao_contracts.models`
+- WHEN one service defines its own class, drops a re-export, or re-exports an
+  unknown name
+- THEN `datahub/app/test/test_model_contract_parity.py` fails and names the
+  service module
+
+### Requirement: Time is stored and serialized in UTC
+
+Persisted timestamps SHALL be naive UTC (the MongoDB wire convention, produced
+by `caifubao_contracts.time.utc_now_naive`), comparisons SHALL use the same
+convention, API timestamps SHALL be serialized with an explicit UTC offset
+(`iso_utc`), and trading-calendar decisions SHALL use Asia/Shanghai
+(`beijing_now_naive`), never the container's local clock (`datetime.now()`).
+
+#### Scenario: A service writes a timestamp from the local clock
+
+- GIVEN a code path that persists or compares a timestamp
+- WHEN it calls the container-local `datetime.now()`
+- THEN the value differs from UTC on a non-UTC container; the changed modules
+  use the shared helpers instead, and serializer output carries `+00:00`
+
+### Requirement: Services expose health and Prometheus metrics
+
+The backend and datahub SHALL expose liveness at `/health`, readiness at
+`/health/ready` (MongoDB reachable; datahub also requires the scheduler when
+enabled) and Prometheus metrics at `/metrics`. The backend SHALL propagate
+`X-Request-ID` into responses and JSON logs. The metric set SHALL include API
+request count/latency, compute task counts and datahub job/asset freshness
+gauges, and SHALL NOT perform blocking database work on the scrape path.
+
+#### Scenario: MongoDB is unreachable
+
+- GIVEN a running service
+- WHEN MongoDB stops accepting connections
+- THEN readiness fails and the pod leaves the Service endpoints
+- AND liveness keeps passing, so the pod is not restarted in a crash loop
+
+### Requirement: dev imports a published snapshot instead of reading stable online
+
+The dev running target SHALL obtain data through the checksummed snapshot flow:
+the stable environment publishes with `snapshot_export`, dev verifies and
+imports with `snapshot_import`. No dev CronJob SHALL connect to the
+research/stable MongoDB, and the public example overlays SHALL NOT configure
+`MONGODB_SRC_*` credentials.
+
+#### Scenario: A dev pod is restarted
+
+- GIVEN the dev environment
+- WHEN its data CronJob runs
+- THEN it downloads the object-store snapshot, verifies every file hash and
+  imports it fail-closed without any cross-environment MongoDB connection
 
 ### Requirement: Asynchronous compute tasks are retried and reclaimed
 

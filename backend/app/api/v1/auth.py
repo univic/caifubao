@@ -16,6 +16,7 @@ from flask_security import (
 )
 from pymongo.errors import PyMongoError
 from app.lib.db_watcher.mongoengine_tool import db
+from caifubao_contracts.time import utc_now_naive
 from app.model.user_model import User
 from app.model.user_role import UserRole
 import datetime
@@ -53,8 +54,8 @@ def login():
         user = User.objects(username=username).first()
 
         # Check if account is locked
-        if user and user.locked_until and datetime.datetime.now() < user.locked_until:
-            remaining_time = (user.locked_until - datetime.datetime.now()).seconds // 60
+        if user and user.locked_until and utc_now_naive() < user.locked_until:
+            remaining_time = (user.locked_until - utc_now_naive()).seconds // 60
             return jsonify(
                 {
                     "message": (
@@ -71,7 +72,7 @@ def login():
 
                 # Lock account if max attempts reached
                 if user.failed_login_count >= MAX_FAILED_LOGIN_ATTEMPTS:
-                    user.locked_until = datetime.datetime.now() + datetime.timedelta(
+                    user.locked_until = utc_now_naive() + datetime.timedelta(
                         minutes=LOCKOUT_DURATION_MINUTES
                     )
                     if "99" not in user.user_status:
@@ -83,7 +84,7 @@ def login():
 
         # Check user status
         if "99" in user.user_status and (
-            not user.locked_until or datetime.datetime.now() >= user.locked_until
+            not user.locked_until or utc_now_naive() >= user.locked_until
         ):
             # Remove lock if lockout period has expired
             user.user_status.remove("99")
@@ -95,7 +96,7 @@ def login():
         user.locked_until = None
         user.last_login_at = user.current_login_at
         user.last_login_ip = user.current_login_ip
-        user.current_login_at = datetime.datetime.now()
+        user.current_login_at = utc_now_naive()
         user.current_login_ip = request.remote_addr
         user.login_count = (user.login_count or 0) + 1
         user.save()

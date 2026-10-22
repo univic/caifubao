@@ -9,6 +9,14 @@ WORKERS="${GUNICORN_WORKERS:-2}"
 TIMEOUT="${GUNICORN_TIMEOUT:-300}"
 GRACEFUL_TIMEOUT="${GUNICORN_GRACEFUL_TIMEOUT:-30}"
 
+# Gunicorn runs several workers; the Prometheus client needs a shared mmap
+# directory so /metrics aggregates all workers. Clear it once, before the
+# master forks.
+if [ -n "${PROMETHEUS_MULTIPROC_DIR:-}" ]; then
+    rm -rf "${PROMETHEUS_MULTIPROC_DIR}"
+    mkdir -p "${PROMETHEUS_MULTIPROC_DIR}"
+fi
+
 echo "Starting API (gunicorn) on 0.0.0.0:${PORT} with ${WORKERS} workers..."
 
 exec gunicorn main:app \

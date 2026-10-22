@@ -1,3 +1,13 @@
+import sys
+from pathlib import Path
+
+try:  # pragma: no cover - import side effect only
+    import caifubao_contracts  # noqa: F401
+except ModuleNotFoundError:  # pragma: no cover
+    _shared = Path(__file__).resolve().parents[2] / "shared"
+    if _shared.is_dir():
+        sys.path.insert(0, str(_shared))
+
 # -*- coding: utf-8 -*-
 
 import os

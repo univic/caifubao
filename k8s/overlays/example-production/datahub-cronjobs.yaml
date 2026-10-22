@@ -500,3 +500,107 @@ spec:
                 cpu: "200m"
           imagePullSecrets:
           - name: ccr-secret
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: caifubao-datahub-snapshot-export
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: snapshot-export
+spec:
+  # Publishes the authoritative snapshot that dev imports (TASK-404). Runs after
+  # the signal (18:30) and scoring (18:35) jobs so the exported collections are
+  # complete. The stable "latest" prefix is overwritten atomically enough for a
+  # once-a-day consumer: dev imports at 19:15 and fails closed on any mismatch.
+  schedule: "50 18 * * 1-5"
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 10800
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: caifubao-datahub
+            job.caifubao.io/type: snapshot-export
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: snapshot-export-runner
+            image: caifubao-datahub:latest
+            imagePullPolicy: Always
+            command: ["/bin/sh", "-ec"]
+            args:
+            - >
+              python -m app.jobs.snapshot_export_runner run
+              --out-dir /work/snapshot
+              --upload-uri "s3://${DATA_LAKE_BUCKET}/${DATA_LAKE_PREFIX}/snapshots/latest"
+            envFrom:
+            - configMapRef:
+                name: data-lake-export-config
+            - secretRef:
+                name: data-lake-export-secret
+            env:
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_HOST
+            - name: MONGODB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_PORT
+            - name: MONGODB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_NAME
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_USER
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: MONGODB_PASSWORD
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: ENVIRONMENT
+            - name: LOG_LEVEL
+              value: INFO
+            - name: PYMONGO_LOG_LEVEL
+              value: INFO
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            volumeMounts:
+            - name: snapshot-work
+              mountPath: /work/snapshot
+            resources:
+              requests:
+                memory: "1Gi"
+                cpu: "500m"
+              limits:
+                memory: "4Gi"
+                cpu: "2000m"
+          volumes:
+          - name: snapshot-work
+            emptyDir: {}
+          imagePullSecrets:
+          - name: ccr-secret

@@ -38,7 +38,7 @@ jobs:
 
           printf '%s\n' "$CHANGED_FILES"
 
-          if printf '%s\n' "$CHANGED_FILES" | grep -E -q '^(compute-worker/|backend/|datahub/app/(model|lib)/|\.github/workflows/compute-worker-publish\.yml$)'; then
+          if printf '%s\n' "$CHANGED_FILES" | grep -E -q '^(compute-worker/|backend/|datahub/app/(model|lib)/|shared/|\.github/workflows/compute-worker-publish\.yml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"

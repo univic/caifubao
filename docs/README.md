@@ -35,6 +35,7 @@
 | [`stock-timing-pit-evidence.md`](./operations/stock-timing-pit-evidence.md) | 单股 PIT 前向证据链（P2a/P2b/P1）与工件持久化 runbook |
 | [`tailscale-k8s-deploy.md`](./operations/tailscale-k8s-deploy.md) | Tailscale Kubernetes API server 部署路径 |
 | [`perf-analysis-2026-08.md`](./operations/perf-analysis-2026-08.md) | 性能 / CPU 热点分析与修复路线（被 `openspec/changes/datahub-perf-optimization/` 引用） |
+| [`observability.md`](./operations/observability.md) | 健康检查、Prometheus 指标、请求 ID 与告警接线 |
 | [`roadmap-2026-08.md`](./operations/roadmap-2026-08.md) | 稳定性与实盘指导方向（部分待办仍开放） |
 | [`strategy-experiments-2026-08.md`](./operations/strategy-experiments-2026-08.md) | 策略实验记录（2026-08） |
 

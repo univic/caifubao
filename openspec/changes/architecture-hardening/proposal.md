@@ -58,6 +58,20 @@ A read-only architecture review found four classes of structural problems:
 - Fix the frontend decision view to use the shared axios client, reject queued
   requests when a token refresh fails, and restrict the mock-data switch to dev
   builds.
+- Extract the shared contracts package (`shared/caifubao_contracts`): MongoDB
+  models, friction constants and UTC/Beijing time helpers installed into the
+  backend, datahub and compute-worker images. Service `app/model/*.py` files
+  become re-export shims; build contexts move to the repository root.
+- Add Prometheus metrics (`/metrics`) and request-id correlation to the backend
+  and datahub, with readiness/liveness already split.
+- Convert the production/research overlay JSON patches from positional paths
+  (`env/4/...`) to strategic-merge patches, and fix the prod industry-sync and
+  compute-worker secret wiring.
+- Standardize timestamps on naive-UTC storage, offset-bearing API output and
+  Beijing trading-calendar days; replace `datetime.now()` call sites.
+- Close TASK-404 in the public examples: the stable environment exports a
+  checksummed snapshot and dev imports it; no dev CronJob reads the stable
+  MongoDB, and `MONGODB_SRC_*` is removed from the examples.
 - Hygiene: nginx security headers survive location-level `add_header`; the
   unused runtime `VITE_API_BASE_URL` is removed; `dev-entrypoint.sh` no longer
   hardcodes a developer path; `scripts/update-kustomization.sh` is idempotent;

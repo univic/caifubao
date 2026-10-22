@@ -90,12 +90,12 @@ def test_list_signals_defaults_to_latest_date(client, monkeypatch):
 
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload["date"] == "2026-04-13T00:00:00"
+    assert payload["date"] == "2026-04-13T00:00:00+00:00"
     assert payload["total"] == 1
     assert payload["items"][0]["stock_code"] == "sh600000"
     assert (
         payload["items"][0]["source_freshness"]["MA_10"]["latest_data_date"]
-        == "2026-04-13T00:00:00"
+        == "2026-04-13T00:00:00+00:00"
     )
 
 

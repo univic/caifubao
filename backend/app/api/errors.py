@@ -11,10 +11,15 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 logger = logging.getLogger(__name__)
+
+
+def _request_id() -> str:
+    existing = getattr(g, "request_id", None) if g else None
+    return existing or str(uuid.uuid4())
 
 
 def _payload(message: str, status_code: int, error_code: str) -> dict:
@@ -22,7 +27,7 @@ def _payload(message: str, status_code: int, error_code: str) -> dict:
         "success": False,
         "message": message,
         "error_code": error_code,
-        "request_id": str(uuid.uuid4()),
+        "request_id": _request_id(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "data": None,
     }

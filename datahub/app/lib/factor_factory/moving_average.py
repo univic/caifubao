@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import datetime
+
+from caifubao_contracts.time import utc_now_naive
 import logging
 from collections.abc import Iterable
 
@@ -196,7 +197,7 @@ class MovingAverageFactorService:
             for stock in stock_list
         }
         quote_status_map = data_asset_status_helper.read_quote_status_map(codes)
-        calculated_at = datetime.datetime.now()
+        calculated_at = utc_now_naive()
         records = []
         for window in self.windows:
             stats_by_code = data_asset_status_helper.aggregate_stats_by_code(

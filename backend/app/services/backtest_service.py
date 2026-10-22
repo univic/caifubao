@@ -44,14 +44,15 @@ SCORE_DRIVEN_STRATEGIES = frozenset(
 UNUSABLE_SCORE_STATUSES = ("BLOCKED", "FAILED")
 SCORE_EXECUTION_TIMING = "next_trading_day_open"
 
-# Friction model. The canonical A-share assumptions live in
-# datahub/app/lib/execution/costs.py (research/paper/ETF/timing replay all use
-# them); this module is a separate image, so the values are mirrored here and
-# backend/app/test/test_friction_contract_parity.py fails if they drift.
-COMMISSION_RATE = 0.00025  # 0.025%
-MIN_COMMISSION = 5.0  # minimum 5 CNY
-STAMP_DUTY_RATE = 0.0005  # 0.05% sell side only (halved 2023-08-28)
-SLIPPAGE = 0.001  # 0.1% default
+# Friction model — canonical definitions live in the shared contracts package
+# (caifubao_contracts.friction), which every image installs. The aliases keep
+# the historical module-level names used across the backtest engine and tests.
+from caifubao_contracts.friction import (  # noqa: E402
+    COMMISSION_RATE,
+    MIN_COMMISSION_CNY as MIN_COMMISSION,
+    SELL_STAMP_DUTY_RATE as STAMP_DUTY_RATE,
+    SLIPPAGE_PER_SIDE as SLIPPAGE,
+)
 
 # Composite scoring weights
 COMPOSITE_EXCESS_WEIGHT = 1.0

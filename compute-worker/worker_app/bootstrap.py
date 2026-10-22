@@ -43,6 +43,9 @@ def prepare_app_tree() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     backend_app = repo_root / "backend" / "app"
     datahub_app = repo_root / "datahub" / "app"
+    shared = repo_root / "shared"
+    if shared.is_dir() and str(shared) not in sys.path:
+        sys.path.insert(0, str(shared))
     if not backend_app.is_dir() or not datahub_app.is_dir():
         raise RuntimeError(
             "compute-worker needs a merged app package: expected /app/app in "

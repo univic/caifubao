@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import datetime
+
+from caifubao_contracts.time import utc_now_naive
 import json
 import logging
 from dataclasses import dataclass
@@ -108,7 +110,7 @@ def build_asset_status_records(
     ma_stats_by_asset: dict[str, dict[str, DataStats]],
     calculated_at: datetime.datetime | None = None,
 ) -> list[dict[str, Any]]:
-    calculated_at = calculated_at or datetime.datetime.now()
+    calculated_at = calculated_at or utc_now_naive()
     records: list[dict[str, Any]] = []
 
     for stock in stocks:

@@ -9,6 +9,7 @@ from flask import Blueprint, jsonify
 from mongoengine import get_db
 
 from app.model.data_asset_status import DataAssetStatus
+from caifubao_contracts.time import iso_utc, utc_now_naive
 from app.model.stock import FinanceMarket, IndividualStock, StockIndex
 from app.utilities import data_capability_helper
 from app.utilities.trading_day_helper import (
@@ -35,7 +36,7 @@ INDEX_JOB_NAME = "datahub_quote_index_daily"
 def _format_datetime(value):
     if value is None:
         return None
-    return value.isoformat()
+    return iso_utc(value)
 
 
 def _get_codes(stock_model):
@@ -60,7 +61,7 @@ def _date_from_dt(value):
 
 
 def _resolve_reference_dates(current_dt=None):
-    current_dt = current_dt or datetime.datetime.now()
+    current_dt = current_dt or utc_now_naive()
     market = FinanceMarket.objects(name="ChinaAStock").first()
     trade_calendar = market.trade_calendar if market else []
     latest_complete_trading_day = (
@@ -288,7 +289,7 @@ def _build_status_payload():
     )
 
     return {
-        "generated_at": datetime.datetime.now().isoformat(),
+        "generated_at": iso_utc(),
         "reference_dates": {
             "latest_complete_trading_day": _format_datetime(latest_trading_day),
             "previous_complete_trading_day": _format_datetime(

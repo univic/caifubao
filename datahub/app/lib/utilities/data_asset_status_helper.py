@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime
+
+from caifubao_contracts.time import utc_now_naive
 import logging
 from typing import Any
 
@@ -75,7 +77,7 @@ def upsert_asset_status(
     error_message: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> None:
-    calculated_at = datetime.datetime.now()
+    calculated_at = utc_now_naive()
     record = {
         "code": code,
         "object_type": object_type,
@@ -225,7 +227,7 @@ def build_quote_status_record(
     Pure function: same classification inputs and output fields as
     refresh_quote_status, usable for both single-code and batched refresh.
     """
-    calculated_at = calculated_at or datetime.datetime.now()
+    calculated_at = calculated_at or utc_now_naive()
     data_count = int(stats_row.get("data_count", 0)) if stats_row else 0
     latest_data_date = stats_row.get("latest_data_date") if stats_row else None
     first_data_date = stats_row.get("first_data_date") if stats_row else None
@@ -279,7 +281,7 @@ def build_fq_status_record(
 
     Pure counterpart of refresh_fq_factor_status.
     """
-    calculated_at = calculated_at or datetime.datetime.now()
+    calculated_at = calculated_at or utc_now_naive()
     data_count = int(stats_row.get("data_count", 0)) if stats_row else 0
     latest_data_date = stats_row.get("latest_data_date") if stats_row else None
     expected_count = quote_status.data_count if quote_status else None
@@ -332,7 +334,7 @@ def build_ma_status_record(
 
     Pure counterpart of refresh_ma_factor_status.
     """
-    calculated_at = calculated_at or datetime.datetime.now()
+    calculated_at = calculated_at or utc_now_naive()
     quote_count = int(getattr(quote_status, "data_count", 0) or 0)
     expected_count = max(quote_count - window + 1, 0)
 

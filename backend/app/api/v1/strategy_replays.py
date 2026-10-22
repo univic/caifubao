@@ -9,6 +9,8 @@ datahub replay runner.
 """
 
 import datetime
+
+from caifubao_contracts.time import iso_utc
 import logging
 import uuid
 from typing import Any, Dict
@@ -49,7 +51,7 @@ _DATE_KEYS = {
 
 
 def _now_utc_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return iso_utc()
 
 
 def _request_id() -> str:

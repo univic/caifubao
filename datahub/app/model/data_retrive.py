@@ -2,7 +2,8 @@
 # Author : univic
 # Date: 2022-03-11
 
-import datetime
+
+from caifubao_contracts.time import utc_now_naive
 from mongoengine import (
     Document,
     StringField,
@@ -34,7 +35,7 @@ class DatahubTaskDoc(Document):
     callback_interface = StringField()
     args = ListField(StringField())
     kwargs = EmbeddedDocumentListField("KwArg")
-    created_at = DateTimeField(default=datetime.datetime.now())
+    created_at = DateTimeField(default=utc_now_naive())
     processed_at = DateTimeField()
     completed_at = DateTimeField()
     priority = IntField(default=5)

@@ -1,4 +1,4 @@
-import datetime
+from caifubao_contracts.time import utc_now_naive
 from mongoengine import Document, StringField, DateTimeField
 
 
@@ -15,4 +15,4 @@ class EventLog(Document):
     meta_name = StringField()
     log_level = StringField()
     message = StringField()
-    created_at = DateTimeField(default=datetime.datetime.now())
+    created_at = DateTimeField(default=utc_now_naive())

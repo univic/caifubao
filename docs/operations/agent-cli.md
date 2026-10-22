@@ -60,14 +60,12 @@ export CFB_API_BASE="https://<your-api-host>"
 
 ### Data Pipeline
 
-#### `data sync [FROM_DATE] [COLLECTIONS]` — migration-period legacy
-Sync data from the legacy stable MongoDB to dev. This is the **first step**
-after any change that updates the stable environment's data (quote update,
-factor recompute, etc.). The sync source is the retired legacy stable
-environment ("prod" in older text/CLI strings — a technical name, not live
-trading). This online direct connection is a **migration-period legacy**;
-the target flow is controlled snapshot/export followed by import/restore into
-dev (TASK-404). See
+#### `data sync [FROM_DATE] [COLLECTIONS]` — manual fallback only
+Sync data from the legacy stable MongoDB to dev. **TASK-404 is closed**: the
+scheduled dev path is now `snapshot-export` → `snapshot-import` (below), and no
+CronJob uses this runner. The command remains as a manual fallback while the
+legacy stable environment is still reachable with `MONGODB_SRC_*` credentials;
+the public example overlays no longer configure those credentials. See
 [`docs/architecture/environment-model.md`](../architecture/environment-model.md).
 
 ```
@@ -538,7 +536,7 @@ Manage dev CronJobs.
 
 ```
 ./scripts/caifubao system cron status          # list all
-./scripts/caifubao system cron trigger caifubao-datahub-data-sync
+./scripts/caifubao system cron trigger caifubao-datahub-snapshot-import
 ./scripts/caifubao system cron suspend caifubao-datahub-quote-stock
 ```
 
@@ -664,9 +662,9 @@ the entire logical run. Do not resume a Job created from an older image.
 - `backend/` — exposes Flask APIs, auth, light aggregation
 - `frontend/` — consumes backend APIs, renders UX
 - Dev quote/factor/signal/scoring CronJobs — suspended by default; dev gets its
-  market data from the legacy stable environment via the daily `data-sync`
-  CronJob instead of pulling sources itself (migration-period legacy pending
-  TASK-404). Use the CLI for manual operations.
+  market data by importing the checksummed snapshot that the stable environment
+  publishes (`caifubao-datahub-snapshot-import`), and never connects to the
+  stable MongoDB (TASK-404). Use the CLI for manual operations.
 - Legacy stable ("prod" in job names — a technical name) quote/signal/scoring
   CronJobs — still enabled on the retired stable environment and running the
   daily routine (see below).
@@ -680,14 +678,14 @@ the entire logical run. Do not resume a Job created from an older image.
 | stable `caifubao-datahub-quote-stock` | `0 18 * * 1-5` | Pull latest quotes + factors only (`DATAHUB_STOCK_HISTORY_SOURCE=tushare`, `DATAHUB_STOCK_UNIVERSE_SOURCE=tushare`); UPD path writes settlement snapshots. Signals/scoring are NOT produced here — they run as the standalone jobs below, gated on this job's persisted data |
 | stable `caifubao-datahub-signal` | `30 18 * * 1-5` | Compute MA-cross signals from fresh factors (incremental, stale-only by default) |
 | stable `caifubao-datahub-scoring` | `35 18 * * 1-5` | Score latest trading day for all horizons (skips already-complete cohorts) |
-| dev `caifubao-datahub-data-sync` | `15 19 * * 1-5` | Sync legacy stable MongoDB → dev (quotes, factors, signals, market, industry; runs after stable signal/scoring so dev gets the same day's signals) |
+| stable `caifubao-datahub-snapshot-export` | `50 18 * * 1-5` | Export the authoritative collections to the object-store snapshot prefix (`.../snapshots/latest`) after signal/scoring |
+| dev `caifubao-datahub-snapshot-import` | `15 19 * * 1-5` | Download and verify that snapshot (manifest + sha256, fail-closed) and import it into dev — no online MongoDB connection |
 
 The quote, signal, and scoring jobs run in dependency order (quote → signal →
-scoring). Dev's data-sync runs **after the stable environment's signal and
-scoring jobs** (19:15)
-so it picks up the same day's rows, including signals. Note stable→dev sync does
-**not** copy `stock_score_predictions`; dev scoring must be produced by running
-`scoring_runner` manually.
+scoring). The snapshot export runs after them (18:50) and the dev import at
+19:15 verifies and applies the same day's rows, including signals. The snapshot
+does **not** include `stock_score_predictions`; dev scoring must be produced by
+running `scoring_runner` manually.
 
 Dependency gates are data-aware, not just status-aware: a signal run proceeds
 when today's quote job has a SUCCESS record **or** its record (RUNNING or

@@ -10,9 +10,6 @@ resources:
 # example overlay is self-consistent.
 - datahub-cronjobs.yaml
 
-patches:
-- path: datahub-patch.yaml
-
 configMapGenerator:
 - name: backend-config
   literals:
@@ -24,10 +21,6 @@ configMapGenerator:
   - FLASK_HOST=0.0.0.0
   - FLASK_PORT=8000
   - FLASK_DEBUG=false
-  - MONGODB_SRC_HOST=prod-mongo.internal
-  - MONGODB_SRC_PORT=27017
-  - MONGODB_SRC_USER=readonly_user
-  - MONGODB_SRC_NAME=caifubao
 - name: data-lake-export-config
   behavior: replace
   literals:
@@ -41,14 +34,9 @@ secretGenerator:
 - name: backend-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
-# datahub-secret: private deployment overlays should inject MONGODB_SRC_PASS
-# from GitHub secret MONGODB_SRC_PASSWORD before kustomize build. The
-# caifubao-private deploy workflow generates a local .env.datahub-secret file.
 - name: datahub-secret
   literals:
   - MONGODB_PASSWORD=change-me-example
-  - MONGODB_SRC_USER=readonly_user
-  - MONGODB_SRC_PASS=PLACEHOLDER_SRC_PASSWORD
   - TUSHARE_TOKEN=PLACEHOLDER_TUSHARE_TOKEN
 - name: mongodb-secret
   literals:

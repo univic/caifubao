@@ -5,6 +5,8 @@
 import logging
 import os
 from datetime import datetime
+
+from caifubao_contracts.time import beijing_now_naive
 from zoneinfo import ZoneInfo
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -37,11 +39,11 @@ def _run_scheduled_job(job_name, runner_name):
         # Initialize MongoDB connection before executing the job
         mongo_watcher.get_db_connection()
         trade_calendar = get_a_stock_market_trade_calendar()
-        if trade_calendar and is_trading_day(trade_calendar, datetime.now()):
+        if trade_calendar and is_trading_day(trade_calendar, beijing_now_naive()):
             logger.info(
                 "Executing scheduled task on trading day: job=%s datetime=%s",
                 job_name,
-                datetime.now(),
+                beijing_now_naive(),
             )
             datahub_instance = Datahub()
             job_runner = getattr(datahub_instance, runner_name)
@@ -59,7 +61,7 @@ def _run_scheduled_job(job_name, runner_name):
             logger.info(
                 "Skipping scheduled task on non-trading day: job=%s datetime=%s",
                 job_name,
-                datetime.now(),
+                beijing_now_naive(),
             )
             return {
                 "job_name": job_name,

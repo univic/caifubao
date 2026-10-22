@@ -69,7 +69,7 @@
 
 | 运行目标 | 两轴定位 | 当前状态（2026-09-16） | 目标状态 |
 |:---|:---|:---|:---|
-| **`dev`** | development / dev | ✅ 已运行（CLI 默认 namespace `caifubao-dev`）。数据目前经 `data sync` 从旧 stable 在线库只读同步 | 受控快照导入/重建，不再直连 research/stable 在线库（TASK-404，未完成） |
+| **`dev`** | development / dev | ✅ 已运行（CLI 默认 namespace `caifubao-dev`）。数据经 `snapshot_export` → `snapshot_import` 受控快照导入（公开示例已移除在线 `data sync`，TASK-404 已关闭；`data_sync_runner` 仅保留为运维回退） | 同左：受控快照导入/重建，不直连 research/stable 在线库 |
 | **`research`** | research / stable | ✅ 已运行（TASK-303 切流已落地：research overlay + 受保护的 `research` GitHub Environment）。承载因子/评分/回测/研究工作负载 | 同左，且完成 Data/Research 数据所有权拆分（P0-5/TASK-401..404） |
 | **`trading-paper`** | trading / paper | ❌ 未启用。当前只有 default-deny NetworkPolicy 的清单骨架，无工作负载 | paper 交易运行时（模拟撮合、账本、对账） |
 | **`prod`** | trading / production | ❌ **不存在、未启用** | 未来实盘运行目标；须满足 §11 门槛 |
@@ -84,7 +84,7 @@ quote→signal→scoring 例行任务，并作为 `dev` 的 `data sync` 只读�
 
 | 维度 | 当前（迁移期） | 目标 |
 |:---|:---|:---|
-| dev 数据来源 | 在线直连旧 stable Mongo（`MONGODB_SRC_*` 只读） | Data 发布 → 受控快照导入 dev（可抽样） |
+| dev 数据来源 | 受控快照导入（`snapshot-export` 发布到对象存储 → `snapshot-import` 校验后导入；公开示例不再配置 `MONGODB_SRC_*`） | 同左 |
 | 数据权威环境 | 旧 stable（retired production）仍在采集发布 | data domain（由 datahub 服务承载）发布版本化数据资产 |
 | `stock_factor_daily` / FQ/HFQ | 实现位于 datahub 模块 | research 拥有派生因子数据（实现位置随后续迁移调整） |
 | research 与 trading 关系 | trading 未启用 | research → 不可变策略工件 + 验证证据 → trading promotion |
@@ -174,12 +174,14 @@ trading: 风控 → 订单（幂等） → 成交/持仓/资金 → 对账 → �
   数据为准。
 - dev 数据**可以丢弃、抽样，或通过受控快照导入**；目标态 dev **不得**直接依赖
   research/trading 在线数据库。
-- 当前 `data sync`（旧 stable 在线库 → dev 在线直连）是 **TASK-404 完成前的迁移
-  期遗留**；目标流程为「data/stable 环境生成受控快照 → dev 导入/恢复」。该流程
-  的显式工具已落地并受契约约束（`openspec/changes/dev-snapshot-import`）：
+- 目标流程是「data/stable 环境生成受控快照 → dev 导入/恢复」。该流程已落地并受
+  契约约束（`openspec/changes/dev-snapshot-import`）：
   `./scripts/caifubao data snapshot-export` 生成带 manifest/sha256 的版本化
   快照，`data snapshot-import` 两遍式 fail-closed 导入 dev（先核验后写入，
-  幂等可重放）；在线直连仅在观察窗完成前的迁移期继续按日运行。
+  幂等可重放）。公开示例的 CronJob 已切换为该流程
+  （`caifubao-datahub-snapshot-export` → `caifubao-datahub-snapshot-import`），
+  不再配置 `MONGODB_SRC_*`；`data_sync_runner` 仅作为迁移期运维回退保留，不在
+  任何 CronJob 中调度（TASK-404 关闭）。
 - 需要真实规模测试数据时：从稳定环境的**备份/导出**（MongoDB 归档或 Parquet
   数据湖导出）做受控导入，而不是让 dev 直连在线库。
 
@@ -212,9 +214,9 @@ trading: 风控 → 订单（幂等） → 成交/持仓/资金 → 对账 → �
 - **当前 prod 是否已经存在？** 不存在。当前没有任何真实资金执行能力。
 - **FQ/HFQ 在哪里可以独立重算？** research——在自己的数据与凭证边界内，用 data
   发布的行情与外部 `adj_factor` 自行派生（见 §9）。
-- **dev 如何获得真实规模测试数据？** 目标态通过受控快照导入（备份归档/Parquet
-  导出 → dev 恢复）；当前在线直连旧 stable 的 `data sync` 是 TASK-404 前的迁移
-  期遗留（见 §12）。
+- **dev 如何获得真实规模测试数据？** 通过受控快照导入：research/stable 运行
+  `snapshot_export` 发布带 manifest 的版本化快照到对象存储，dev 运行
+  `snapshot_import` 校验后导入（见 §12）；不再使用在线直连。
 
 ## 15. 相关文档
 

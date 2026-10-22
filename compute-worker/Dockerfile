@@ -19,9 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY backend/requirements.txt /tmp/backend-requirements.txt
 COPY datahub/requirements.txt /tmp/datahub-requirements.txt
+COPY shared /tmp/shared
 RUN pip install --no-cache-dir \
     -r /tmp/backend-requirements.txt \
-    -r /tmp/datahub-requirements.txt
+    -r /tmp/datahub-requirements.txt \
+    && pip install --no-cache-dir /tmp/shared
 
 # Worker code (imported as `worker_app`).
 COPY compute-worker/worker_app /app/worker_app

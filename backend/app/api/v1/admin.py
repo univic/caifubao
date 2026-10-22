@@ -4,6 +4,8 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt
 from flask_security import hash_password
+from caifubao_contracts.time import iso_utc
+
 from app.model.user_model import User
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
@@ -49,7 +51,7 @@ def get_user_list():
                     "email": u.email,
                     "role": u.user_role,
                     "user_status": u.user_status,
-                    "time_registered": u.time_registered.isoformat()
+                    "time_registered": iso_utc(u.time_registered)
                     if u.time_registered
                     else None,
                 }
@@ -77,10 +79,10 @@ def get_user(user_id):
             "email": user.email,
             "role": user.user_role,
             "user_status": user.user_status,
-            "time_registered": user.time_registered.isoformat()
+            "time_registered": iso_utc(user.time_registered)
             if user.time_registered
             else None,
-            "last_login_at": user.last_login_at.isoformat()
+            "last_login_at": iso_utc(user.last_login_at)
             if user.last_login_at
             else None,
         }

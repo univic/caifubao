@@ -5,6 +5,7 @@
 import datetime
 import math
 from collections import defaultdict
+from caifubao_contracts.time import iso_utc
 
 from flask import Blueprint, jsonify, request
 
@@ -42,7 +43,7 @@ def _format_datetime(value):
     if value is None:
         return None
     if isinstance(value, datetime.datetime):
-        return value.isoformat()
+        return iso_utc(value)
     return str(value)
 
 

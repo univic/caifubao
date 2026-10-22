@@ -208,7 +208,7 @@
 | 数据同步（stable→dev） | ✅ 已实现 | 增量、按业务键幂等 upsert；MongoDB 声明漂移已收敛（#151/#164/#176）。来源为旧 stable（retired production）；在线直连为迁移期遗留，目标为受控快照导入（TASK-404） |
 | 数据源健康与快速失败 | ✅ 已实现 | 批量新鲜度刷新；死掉的历史数据源 fail fast（#140） |
 | 因子评估向量化 | ✅ 已实现 | `evaluate`/`_build_dataset` 接受预载 `quote_frame`，前向收益 `groupby.shift(-h)`，decay 复用同一数据集；dev 实测 434.4s → 49.9s（8.7×），DB 往返归零（#232） |
-| data-sync 失败自动补跑 | ❌ 未实现 | roadmap P2：dev data-sync 失败后无自动补跑，次日调度才重试 |
+| 快照导入失败自动补跑 | ❌ 未实现 | dev `snapshot-import` 失败后次日 19:15 才重试；`data sync` 已降级为手动回退（TASK-404 已关闭） |
 
 ---
 
@@ -274,7 +274,7 @@
 | FAILED 验证状态实际判定 | 低 | `verification_service` 无 FAILED 终态判定逻辑 |
 | 稳定性检验（权重扰动） | 低 | 17.4：小权重扰动是否导致大结果变化，未实现 |
 | signal decay 专项测试缺失 | 低 | 12d.6 部分修复：hybrid 阈值测试已补齐，signal decay 逻辑仍无专门测试 |
-| data-sync 失败自动补跑 | 低 | 失败后次日 19:15 才重试；方案见 `docs/operations/roadmap-2026-08.md` |
+| snapshot-import 失败自动补跑 | 低 | 失败后次日 19:15 才重试；方案见 `docs/operations/roadmap-2026-08.md` |
 | strategy_daily CronJob 未接线 | 中 | `strategy_daily` 未在任何 overlay 定义，当前为 operator cadence；非交易日会异常结束（fail loud），需先决策「优雅跳过 vs 接受告警」 |
 | MongoDB 运维遗留（旧 stable 迁移、副本集 HA、定时备份启用） | 中 | dev 已迁独立数据节点；旧 stable（retired production，非实盘 `prod`）暂留原节点，副本集 HA 与 backup CronJob 解挂待决策（节点名与细节见 `docs/operations/mongodb-node-migration.md`） |
 

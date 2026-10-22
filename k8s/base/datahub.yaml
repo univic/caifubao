@@ -13,6 +13,10 @@ spec:
     metadata:
       labels:
         app: caifubao-datahub
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
     spec:
       containers:
       - name: datahub
@@ -44,31 +48,6 @@ spec:
             secretKeyRef:
               name: datahub-secret
               key: MONGODB_PASSWORD
-        - name: MONGODB_SRC_HOST
-          valueFrom:
-            configMapKeyRef:
-              name: backend-config
-              key: MONGODB_SRC_HOST
-        - name: MONGODB_SRC_PORT
-          valueFrom:
-            configMapKeyRef:
-              name: backend-config
-              key: MONGODB_SRC_PORT
-        - name: MONGODB_SRC_NAME
-          valueFrom:
-            configMapKeyRef:
-              name: backend-config
-              key: MONGODB_SRC_NAME
-        - name: MONGODB_SRC_USER
-          valueFrom:
-            secretKeyRef:
-              name: datahub-secret
-              key: MONGODB_SRC_USER
-        - name: MONGODB_SRC_PASS
-          valueFrom:
-            secretKeyRef:
-              name: datahub-secret
-              key: MONGODB_SRC_PASS
         - name: APP_ENV
           valueFrom:
             configMapKeyRef:

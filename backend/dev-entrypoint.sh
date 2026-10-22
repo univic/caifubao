@@ -19,5 +19,8 @@ echo "Activating virtual environment: $VENV_PATH"
 # shellcheck disable=SC1091
 source "$VENV_PATH/bin/activate"
 
+# Shared contracts package (installed in the image; path-based locally).
+export PYTHONPATH="$SCRIPT_DIR/../shared:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+
 echo "Starting Flask application..."
 exec python main.py

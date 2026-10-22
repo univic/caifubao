@@ -1,6 +1,7 @@
 import re
 import logging
-import datetime
+
+from caifubao_contracts.time import beijing_now_naive
 import baostock as bs
 import pandas as pd
 
@@ -58,7 +59,7 @@ class BaostockInterfaceManager(object):
         if start_date is None:
             start_date = "1990-01-01"
         if end_date is None:
-            end_date = datetime.date.today().strftime("%Y-%m-%d")
+            end_date = beijing_now_naive().date().strftime("%Y-%m-%d")
 
         # convert stock code
         regex_pattern = r"(^[a-zA-Z]{2})"

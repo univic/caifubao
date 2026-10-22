@@ -36,6 +36,8 @@ caifubao/
 ├── compute-worker/          # 异步计算（MongoDB 任务队列）
 │   ├── worker_app/         # worker / handlers / bootstrap
 │   └── Dockerfile          # 构建上下文为仓库根目录
+├── shared/                  # caifubao-contracts（两服务共用的模型/费率/时间契约）
+│   └── caifubao_contracts/
 ├── frontend/               # Vue 3 + TypeScript
 ├── k8s/                    # Kubernetes 部署示例
 └── README.md
@@ -195,6 +197,8 @@ python3 -m venv venv312
 cd backend
 source venv312/bin/activate
 pip install -r requirements.txt
+# Shared models/friction/time contract (the images install this package):
+pip install -e ../shared
 ```
 
 #### 3. 配置环境变量
@@ -281,13 +285,11 @@ curl http://localhost:8000/api/datahub/status
 #### 1. 构建镜像
 
 ```bash
-# Backend
-cd backend
-docker build -t caifubao-backend .
-
-# Datahub
-cd datahub
-docker build -t caifubao-datahub .
+# Backend, datahub and compute-worker build from the repository root because
+# the images install the shared `shared/caifubao_contracts` package.
+docker build -f backend/Dockerfile -t caifubao-backend .
+docker build -f datahub/Dockerfile -t caifubao-datahub .
+docker build -f compute-worker/Dockerfile -t caifubao/compute-worker .
 ```
 
 #### 2. 运行容器
