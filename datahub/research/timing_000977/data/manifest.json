@@ -1,0 +1,73 @@
+{
+  "000977_hfq": {
+    "secid": "0.000977",
+    "fqt": 2,
+    "rows": 5179,
+    "start": "2005-01-04",
+    "end": "2026-10-21",
+    "fetched_at": "2026-10-21T11:51:44+00:00",
+    "path": "data/000977_hfq.parquet"
+  },
+  "000977_raw": {
+    "secid": "0.000977",
+    "fqt": 0,
+    "rows": 5179,
+    "start": "2005-01-04",
+    "end": "2026-10-21",
+    "fetched_at": "2026-10-21T11:51:44+00:00",
+    "path": "data/000977_raw.parquet"
+  },
+  "csi300": {
+    "secid": "1.000300",
+    "fqt": 2,
+    "rows": 5292,
+    "start": "2005-01-04",
+    "end": "2026-10-21",
+    "fetched_at": "2026-10-21T11:51:45+00:00",
+    "path": "data/csi300.parquet"
+  },
+  "sse": {
+    "secid": "1.000001",
+    "fqt": 2,
+    "rows": 5292,
+    "start": "2005-01-04",
+    "end": "2026-10-21",
+    "fetched_at": "2026-10-21T11:51:46+00:00",
+    "path": "data/sse.parquet"
+  },
+  "chinext": {
+    "secid": "0.399006",
+    "fqt": 2,
+    "rows": 3978,
+    "start": "2010-06-01",
+    "end": "2026-10-21",
+    "fetched_at": "2026-10-21T11:51:47+00:00",
+    "path": "data/chinext.parquet"
+  },
+  "csi500": {
+    "secid": "1.000905",
+    "fqt": 2,
+    "rows": 5292,
+    "start": "2005-01-04",
+    "end": "2026-10-21",
+    "fetched_at": "2026-10-21T11:51:47+00:00",
+    "path": "data/csi500.parquet"
+  },
+  "000977_qfq": {
+    "secid": "0.000977",
+    "fqt": 1,
+    "role": "primary",
+    "rows": 5179,
+    "start": "2005-01-04",
+    "end": "2026-10-21",
+    "fetched_at": "2026-10-21T14:12:00+00:00",
+    "path": "data/000977_qfq.parquet"
+  },
+  "000977_panel": {
+    "code": "000977",
+    "source": "raw x corporate-action ledger",
+    "role": "primary",
+    "path": "data/000977_panel.parquet",
+    "manifest": "data/000977_panel.manifest.json"
+  }
+}

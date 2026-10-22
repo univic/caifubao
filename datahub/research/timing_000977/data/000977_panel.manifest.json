@@ -1,0 +1,195 @@
+{
+  "code": "000977",
+  "rows": 5179,
+  "start": "2005-01-04",
+  "end": "2026-10-21",
+  "events": [
+    {
+      "ex_date": "2006-03-07",
+      "action_type": "share_reform",
+      "share_ratio": 0.33,
+      "cash_per_share": 0.0,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "cninfo"
+    },
+    {
+      "ex_date": "2009-06-30",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.02,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2012-06-21",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.1,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2013-06-07",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.1,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2014-05-13",
+      "action_type": "transfer",
+      "share_ratio": 1.0,
+      "cash_per_share": 0.08,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2015-04-27",
+      "action_type": "bonus",
+      "share_ratio": 1.0,
+      "cash_per_share": 0.08,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2016-05-19",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.05,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2017-05-31",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.03,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2017-07-27",
+      "action_type": "rights",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.0,
+      "rights_ratio": 0.3,
+      "rights_price": 10.34,
+      "source": "cninfo"
+    },
+    {
+      "ex_date": "2018-05-18",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.04,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2019-04-30",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.06,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2020-03-19",
+      "action_type": "rights",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.0,
+      "rights_ratio": 0.1177945,
+      "rights_price": 12.92,
+      "source": "cninfo"
+    },
+    {
+      "ex_date": "2020-05-20",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.07,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2021-05-26",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.11,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2022-05-20",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.14,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2023-06-28",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.1491414,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2024-06-21",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.13,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2025-01-17",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.045,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2025-05-23",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.115,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    },
+    {
+      "ex_date": "2026-05-20",
+      "action_type": "cash",
+      "share_ratio": 0.0,
+      "cash_per_share": 0.04,
+      "rights_ratio": 0.0,
+      "rights_price": 0.0,
+      "source": "eastmoney RPT_SHAREBONUS_DET"
+    }
+  ],
+  "violations": [],
+  "inputs": {
+    "raw_sha256": "82e7c58a5972c74bab03db1b57ccea5f7019ddd97f8850207b13909b79b06d2b",
+    "actions_sha256": "2eeee915d156e369fae94fa3be8eb251f37c759a38822e68e25de8f85fea4b5a"
+  },
+  "output_sha256": "44ea3acfbd504f800867e49dab28cc1346abadf7cda92f9c870ef22b32633fa0",
+  "tolerance": 0.005
+}

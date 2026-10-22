@@ -1,0 +1,140 @@
+{
+  "config": "calm60_500_q70|rev120_25_5w50|csiDD15x50",
+  "accounting": {
+    "max_abs_diff_cny": 0.0,
+    "mean_abs_diff_cny": 0.0,
+    "final_equity_rebuilt": 26085755.14812995,
+    "final_equity_engine": 26085755.14812995,
+    "cash_negative_days": 0,
+    "shares_negative_days": 0
+  },
+  "execution": {
+    "trades": 565,
+    "max_price_minus_open": 0.0,
+    "max_cost_gap": 0.0,
+    "total_cost": 1189103.0508600737,
+    "total_notional": 671583743.1628544,
+    "cost_bps_of_notional": 17.705953471415764
+  },
+  "position": {
+    "mean_abs_tracking_gap": 0.008348711276629402,
+    "p95_tracking_gap": 0.0334643929778471,
+    "max_tracking_gap": 0.049710582666579295,
+    "days_flat_while_target_positive": 0
+  },
+  "causality": {
+    "dates_tested": 25,
+    "mismatches": 0,
+    "examples": []
+  },
+  "price_consistency": {
+    "overlap_days": 5178,
+    "series": {
+      "adj": {
+        "total_return": 38.926963501802874,
+        "cagr": 0.18974962364788106,
+        "abs_ret_over_10_5pct": 0,
+        "worst_day": -0.10244161358811055,
+        "best_day": 0.10107526881720408
+      },
+      "raw": {
+        "total_return": 5.51785714285718,
+        "cagr": 0.09235199768178481,
+        "abs_ret_over_10_5pct": 4,
+        "worst_day": -0.5139375262641825,
+        "best_day": 0.1010752688172043
+      },
+      "qfq": {
+        "total_return": 13.491315136476384,
+        "cagr": 0.13426422349961298,
+        "abs_ret_over_10_5pct": 0,
+        "worst_day": -0.10238473767885525,
+        "best_day": 0.10309278350515472
+      },
+      "hfq": {
+        "total_return": 34.19546436285119,
+        "cagr": 0.18269899674145185,
+        "abs_ret_over_10_5pct": 51,
+        "worst_day": -0.2683923705722071,
+        "best_day": 0.12076145151695417
+      }
+    },
+    "corr_with_raw": {
+      "adj": 0.9560574306184573,
+      "qfq": 0.8961730527890617,
+      "hfq": 0.9592972844004644
+    },
+    "verdict": "adj (raw x share multipliers) is the only series that respects the +/-10% limit and keeps the true limit-day moves; vendor hfq violates the limit on 51 days; vendor qfq is limit-clean but compresses early-period returns (cumulative return far below the raw x multiplier reconstruction)",
+    "hfq_violation_examples": [
+      {
+        "date": "2006-03-07",
+        "hfq": -0.2684,
+        "raw": -0.2798,
+        "adj": -0.0098
+      },
+      {
+        "date": "2017-07-27",
+        "hfq": 0.1208,
+        "raw": 0.0079,
+        "adj": 0.0953
+      },
+      {
+        "date": "2017-09-12",
+        "hfq": 0.1055,
+        "raw": 0.0929,
+        "adj": 0.0929
+      },
+      {
+        "date": "2018-03-01",
+        "hfq": 0.113,
+        "raw": 0.0999,
+        "adj": 0.0999
+      },
+      {
+        "date": "2018-03-26",
+        "hfq": 0.1121,
+        "raw": 0.1001,
+        "adj": 0.1001
+      },
+      {
+        "date": "2018-04-16",
+        "hfq": 0.1104,
+        "raw": 0.1002,
+        "adj": 0.1002
+      }
+    ]
+  },
+  "sensitivity": {
+    "honest (signal t, trade t+1)": {
+      "cagr": 0.1661,
+      "max_drawdown": -0.4025,
+      "sharpe": 0.837
+    },
+    "one extra day delay": {
+      "cagr": 0.1636,
+      "max_drawdown": -0.3936,
+      "sharpe": 0.821
+    },
+    "signal lagged 5 days": {
+      "cagr": 0.1446,
+      "max_drawdown": -0.396,
+      "sharpe": 0.744
+    },
+    "same-day close execution (mild look-ahead)": {
+      "cagr": 0.1563,
+      "max_drawdown": -0.4012,
+      "sharpe": 0.824
+    },
+    "future signal (look-ahead)": {
+      "cagr": 0.1282,
+      "max_drawdown": -0.3932,
+      "sharpe": 0.726
+    }
+  },
+  "placebo": {
+    "placebo_cagr_mean": 0.0877384731324311,
+    "placebo_cagr_p95": 0.1466098504709489,
+    "placebo_cagr_max": 0.14872817526039328,
+    "strategy_cagr": 0.16608846394128363
+  }
+}

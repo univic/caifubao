@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime
+
+from caifubao_contracts.time import beijing_now_naive
 import os
 from unittest import TestCase
 from unittest.mock import patch
@@ -268,7 +270,7 @@ class TestStockHistorySource(TestCase):
         fetch.assert_called_once_with(
             "600519",
             start_date="20260820",
-            end_date=datetime.date.today().strftime("%Y%m%d"),
+            end_date=beijing_now_naive().date().strftime("%Y%m%d"),
         )
         self.assertEqual(result.iloc[0]["code"], "sh600519")
         self.assertEqual(result.iloc[0]["previous_close"], 1291.5)
