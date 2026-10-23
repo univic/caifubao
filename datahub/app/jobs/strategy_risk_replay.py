@@ -18,6 +18,20 @@ from pathlib import Path
 from caifubao_contracts.strategy_risk import evaluate_spec_risk
 
 
+def read_frozen_halt_snapshot(snapshot: dict) -> bool:
+    """Research reads an explicit snapshot, never the operational halt store."""
+    if not isinstance(snapshot, dict) or type(snapshot.get("halted")) is not bool:
+        raise ValueError("frozen halt snapshot requires boolean halted")
+    if snapshot["halted"] and (
+        not isinstance(snapshot.get("changed_by"), str)
+        or not snapshot["changed_by"].strip()
+        or not isinstance(snapshot.get("reason"), str)
+        or not snapshot["reason"].strip()
+    ):
+        raise ValueError("engaged halt snapshot requires changed_by and reason")
+    return snapshot["halted"]
+
+
 def replay_from_snapshots(
     *,
     spec: dict,
@@ -49,18 +63,29 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--intents", required=True, type=Path)
     parser.add_argument("--market", type=Path)
     parser.add_argument("--halted-snapshot", action="store_true")
+    parser.add_argument(
+        "--halt-snapshot", type=Path,
+        help="Frozen research-only JSON halt snapshot; never the live halt store",
+    )
     args = parser.parse_args(argv)
 
     def load(path: Path):
         with path.open(encoding="utf-8") as source:
             return json.load(source)
 
+    if args.halt_snapshot and args.halted_snapshot:
+        parser.error("--halt-snapshot and --halted-snapshot are exclusive")
+    halted = (
+        read_frozen_halt_snapshot(load(args.halt_snapshot))
+        if args.halt_snapshot
+        else args.halted_snapshot
+    )
     result = replay_from_snapshots(
         spec=load(args.spec),
         account=load(args.account),
         intents=load(args.intents),
         market=load(args.market) if args.market else None,
-        halted=args.halted_snapshot,
+        halted=halted,
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))
 
