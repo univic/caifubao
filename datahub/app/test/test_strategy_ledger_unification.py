@@ -691,3 +691,13 @@ def test_research_simulator_never_runs_as_trading_paper_or_live():
             simulate_paper_nav(prices={}, schedule=[], initial_nav=10000, mode=mode)
     with pytest.raises(ValueError, match="unsupported"):
         strategy_domain("paper")
+
+
+def test_factor_lab_shared_lots_refuse_unrepresentable_star_precision():
+    from scripts.factor_lab_account_replay import research_lot_size
+
+    assert research_lot_size("sh600001", "shared_v1") == 100
+    assert research_lot_size("sz300750", "shared_v1") == 100
+    assert research_lot_size("sh688001", "legacy") == 100
+    with pytest.raises(ValueError, match="STAR shared_v1"):
+        research_lot_size("sh688001", "shared_v1")
