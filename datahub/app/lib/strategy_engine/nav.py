@@ -21,6 +21,7 @@ from __future__ import annotations
 import math
 
 from caifubao_contracts.friction import CostProfile
+from caifubao_contracts.strategy_modes import require_research_mode
 from caifubao_contracts.strategy_execution import (
     adjusted_price,
     board_lot_rule as shared_board_lot_rule,
@@ -177,6 +178,7 @@ def simulate_paper_nav(
     initial_nav: float | None = None,
     board_lot: int | None = None,
     spec_hash: str | None = None,
+    mode: str = "RESEARCH_SIMULATION",
 ) -> dict:
     """Simulate a paper portfolio over a rebalance schedule.
 
@@ -186,6 +188,7 @@ def simulate_paper_nav(
     {"date", "nav", "daily_return", "turnover", "drawdown",
     "benchmark_return"?, "positions_count"}.
     """
+    require_research_mode(mode)
     if not schedule:
         raise ValueError("schedule must contain at least one rebalance decision")
 
