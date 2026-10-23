@@ -668,7 +668,9 @@ def run_nav(
     attached = attach_nav_points(runs, result["curve"])
 
     artifact_hash = None
-    if persist_research_artifact:
+    # New Spec-backed research runs always persist the derived event evidence;
+    # legacy runs preserve their explicitly opt-in persistence behaviour.
+    if persist_research_artifact or strategy_spec_hash is not None:
         artifact_hash = _persist_research_simulation(
             runs=runs,
             config_hash=config_hash,
