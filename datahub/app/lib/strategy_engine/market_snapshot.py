@@ -25,7 +25,9 @@ def frozen_regime_snapshot(
         try:
             late = snapshot_as_of > decision_date
         except TypeError as exc:
-            raise ValueError("market snapshot timezone does not match decision") from exc
+            raise ValueError(
+                "market snapshot timezone does not match decision"
+            ) from exc
         if late:
             raise ValueError("market snapshot is after decision_date")
     if service is None:
