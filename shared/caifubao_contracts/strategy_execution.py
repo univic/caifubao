@@ -123,6 +123,40 @@ def tradable_open(
     return float(price), ""
 
 
+
+def session_limit_flags(
+    open_price: float | None,
+    previous_close: float | None,
+    board_limit_pct: float,
+    *,
+    tolerance_pct: float = 0.1,
+) -> tuple[bool | None, bool | None]:
+    """Pure board-limit comparison, with explicit point-in-time board policy.
+
+    A domain-local data adapter classifies the board/ST status. This function
+    owns only the deterministic price comparison and unknown-value semantics.
+    Limits and tolerance are percentage points, not decimal fractions.
+    """
+    if (
+        not _positive(open_price)
+        or not _positive(previous_close)
+        or not _positive(board_limit_pct)
+    ):
+        return None, None
+    if (
+        isinstance(tolerance_pct, bool)
+        or not isinstance(tolerance_pct, (int, float))
+        or not math.isfinite(tolerance_pct)
+        or tolerance_pct < 0
+        or tolerance_pct >= board_limit_pct
+    ):
+        raise ValueError("tolerance_pct must be finite and below board_limit_pct")
+    band = (board_limit_pct - tolerance_pct) / 100.0
+    return (
+        float(open_price) >= float(previous_close) * (1 + band),
+        float(open_price) <= float(previous_close) * (1 - band),
+    )
+
 def deterministic_fill_id(
     *,
     order_id: str,
