@@ -15,6 +15,14 @@ import re
 from statistics import fmean, pstdev
 from typing import Any, Mapping, Sequence
 
+from caifubao_contracts.friction import CostProfile
+from caifubao_contracts.strategy_execution import (
+    adjusted_price,
+    board_lot_rule,
+    execution_fees,
+    fit_buy_quantity,
+)
+
 from app.lib.scoring_engine.prediction_integrity import (
     verify_prediction_commitment,
 )
@@ -416,13 +424,23 @@ def _tradable(row: Any, side: str) -> bool:
     return True
 
 
+def _profile(friction: Mapping[str, float]) -> CostProfile:
+    """Preserve old manifest costs, but use the shared fee authority."""
+    return CostProfile(
+        commission_rate=friction["commission_rate"],
+        minimum_commission_cny=friction["minimum_commission"],
+        sell_stamp_duty_rate=friction["stamp_duty_rate"],
+        transfer_fee_rate=friction.get("transfer_fee_rate", 0.0),
+        slippage_per_side=friction["slippage_rate"],
+    )
+
+
 def _execution(open_price: float, side: str, friction: Mapping[str, float]) -> float:
-    slippage = friction["slippage_rate"]
-    return open_price * (1 + slippage if side == "BUY" else 1 - slippage)
+    return adjusted_price(open_price, side, friction["slippage_rate"])
 
 
 def _commission(value: float, friction: Mapping[str, float]) -> float:
-    return max(value * friction["commission_rate"], friction["minimum_commission"])
+    return execution_fees(value, 1, "BUY", _profile(friction))["commission"]
 
 
 def _max_buy_quantity(
@@ -430,15 +448,12 @@ def _max_buy_quantity(
     open_price: float,
     board_lot: int,
     friction: Mapping[str, float],
+    *,
+    stock_code: str = "",
 ) -> int:
     price = _execution(open_price, "BUY", friction)
-    quantity = int(cash / price) // board_lot * board_lot
-    while quantity > 0:
-        value = quantity * price
-        if value + _commission(value, friction) <= cash:
-            return quantity
-        quantity -= board_lot
-    return 0
+    minimum, increment = board_lot_rule(stock_code, board_lot)
+    return fit_buy_quantity(cash, price, minimum, increment, _profile(friction))
 
 
 def _filled_trade(
@@ -450,24 +465,32 @@ def _filled_trade(
 ) -> tuple[dict[str, Any], float]:
     price = _execution(open_price, side, friction)
     value = price * quantity
-    commission = _commission(value, friction)
-    stamp = value * friction["stamp_duty_rate"] if side == "SELL" else 0.0
-    cash_delta = -(value + commission) if side == "BUY" else value - commission - stamp
-    return (
-        {
-            "date": day,
-            "side": side,
-            "status": "FILLED",
-            "quantity": quantity,
-            "price": round(open_price, 4),
-            "exec_price": round(price, 4),
-            "amount": round(value, 4),
-            "commission": round(commission, 4),
-            "stamp_duty": round(stamp, 4),
-            "slippage": round(abs(price - open_price) * quantity, 4),
-        },
-        cash_delta,
+    fees = execution_fees(price, quantity, side, _profile(friction))
+    commission = fees["commission"]
+    stamp = fees["stamp_duty"]
+    transfer = fees["transfer_fee"]
+    cash_delta = (
+        -(value + commission + transfer)
+        if side == "BUY"
+        else value - commission - stamp - transfer
     )
+    record = {
+        "date": day,
+        "side": side,
+        "status": "FILLED",
+        "quantity": quantity,
+        "price": round(open_price, 4),
+        "exec_price": round(price, 4),
+        "amount": round(value, 4),
+        "commission": round(commission, 4),
+        "stamp_duty": round(stamp, 4),
+        "slippage": round(abs(price - open_price) * quantity, 4),
+    }
+    # Legacy timing replay did not model transfers. Preserve existing output
+    # until a versioned manifest explicitly elects to account for this fee.
+    if "transfer_fee_rate" in friction:
+        record["transfer_fee"] = round(transfer, 4)
+    return record, cash_delta
 
 
 def _prediction_reason(
@@ -632,7 +655,8 @@ def replay_pair(
                 if _tradable(quote, pending):
                     if pending == "BUY":
                         quantity = _max_buy_quantity(
-                            state["cash"], float(open_price), board_lot, friction
+                            state["cash"], float(open_price), board_lot, friction,
+                            stock_code=stock_code,
                         )
                     else:
                         quantity = state["shares"]
