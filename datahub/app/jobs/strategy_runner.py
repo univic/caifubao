@@ -151,6 +151,8 @@ def _query_flags(date, horizon, model_version=None) -> dict[str, dict]:
             "trade_status": quote.trade_status,
             # Signal-date traded amount, for the liquidity floor (roadmap 1.3).
             "trade_amount": quote.trade_amount,
+            # This is a decision-time reference, not a future execution price.
+            "reference_close": quote.close,
         }
     return flags
 
@@ -329,6 +331,27 @@ def run_strategy(
         industry_by_code=industry_by_code,
         horizon=horizon,
     )
+    if strategy_spec_hash is not None and not plan["skipped"]:
+        # Definition-time execution feasibility uses ONLY signal-date closes,
+        # never future execution opens. An infeasible Spec is not certified.
+        from caifubao_contracts.strategy_spec import preflight_execution_feasibility
+        from app.lib.strategy_engine.spec import legacy_to_spec
+
+        reconstructed = legacy_to_spec(resolved)
+        if reconstructed["spec_hash"] != strategy_spec_hash:
+            raise ValueError("StrategySpec identity changed during legacy adaptation")
+        targets = plan["target_holdings"]
+        prices = {
+            item["stock_code"]: flags.get(item["stock_code"], {}).get("reference_close")
+            for item in targets
+        }
+        preflight_execution_feasibility(
+            reconstructed["spec"],
+            reference_prices=prices,
+            target_weights={
+                item["stock_code"]: item["weight"] for item in targets
+            },
+        )
     if dry_run:
         return {
             "dry_run": True,
