@@ -84,7 +84,7 @@
 | 回测指标 | ✅ 已实现 | 总收益、年化收益(CAGR)、夏普比率、最大回撤、最大回撤持续天数、胜率、信息比率、超额收益 |
 | 回测交易明细 | ✅ 已实现 | 逐笔交易(buy/sell 价格/数量/金额/PnL)、每日权益曲线 |
 | 回测结果持久化 | ✅ 已实现 | `BacktestResult` 集合，支持列表/详情/删除 |
-| 摩擦成本建模 | ✅ 已实现 | 佣金 0.025%(最低 5 元)、印花税 0.05%(卖方，2023-08-28 起)、滑点 0.1%；费率单一来源 `datahub/app/lib/execution/costs.py`，后端镜像内由 `test_friction_contract_parity.py` 保证一致 |
+| 摩擦成本建模 | ✅ 已实现 | 佣金 0.025%(最低 5 元)、印花税 0.05%(卖方，2023-08-28 起)、滑点 0.1%；费率算术权威来源为 `shared/caifubao_contracts/friction.py`；`datahub/app/lib/execution/costs.py` 只是兼容 re-export，后端镜像内由 `test_friction_contract_parity.py` 保证一致 |
 | 涨跌停板约束 | ✅ 已实现 | `trade_status` 拦截：一字涨停买入失败、一字跌停卖出失败、连续涨停重试 |
 | 多股票回测 | ✅ 已实现 | 多只股票统一日期对齐、等权/分数加权/仓位上限、整手 100 股取整 |
 | 指数基准对比 | ✅ 已实现 | CSI 300 基准，超额收益和信息比率 |
@@ -107,6 +107,10 @@
 | H20 超额 alpha 自动研究 | ✅ 已实现 | `jobs/autoresearch_h20_runner`（prepare/run/metric）+ `lib/autoresearch/h20_excess_alpha.py`：不可变快照校验、train/validation/test 切分、IR/净超额/回撤/换手/集中度/decay、research_profitability_score 与 keep/discard（#169） |
 | H20 研究快照导出 | ✅ 已实现 | `jobs/autoresearch_h20_snapshot_runner`：只读、资源受限的全市场 H20 快照导出（8 分量 + 可执行 entry/exit 标签 + 阻断计数），parquet + manifest 落盘（#169、`h20-autoresearch-replay-semantics`） |
 | H20 replay / 前视语义 | ✅ 已实现 | 选型只看 validation 与 quarterly walk-forward，最终 test 冻结后只读一次；信号收盘后产生、次交易日开盘首次尝试成交，持有期从**实际 entry** 起算，停牌/涨跌停顺延，快照记录 requested/actual 标签（`h20-autoresearch-replay-semantics`） |
+| StrategySpec 统一定义（S0，PR #307） | 🟡 实现中 | `shared/caifubao_contracts/strategy_spec.py` 版本/哈希/严格校验 + `strategy_engine/spec.py` 旧配置适配 + CLI `--spec`；golden 目标组合/调仓对拍已补，定义期 AUM×手数/成本可行性与全量验收仍待完成 |
+| 研究模拟事件账本（S1，PR #307） | 🟡 实现中 | `strategy_engine/simulation_ledger.py` 的 fills/rejections/marks、幂等重建、原子性校验 + `nav.py` 账本投影双跑校验；可选存储不可变 `StrategySimulationArtifact`，默认持久化策略、历史 NAV 双跑与完整证据对拍仍待收口。**不属于 TradingPortfolioLedger** |
+| 可重复风控评估（S2，PR #307） | 🟡 实现中 | `strategy_engine/risk_gate.py` 提供研究侧纯评估，避免卖单获批即释放现金/仓位；换手/现金/持仓/回撤初步支持，regime / trading 权威 gate 未实现 |
+| 共享纯执行规则（S3，PR #307） | 🟡 实现中 | `shared/caifubao_contracts/strategy_execution.py` 费用、整手、可交易性、成交 ID 等基础规则；Factor Lab / timing replay 全量迁移与跨域 conformance 尚未完成，TRADING_PAPER/LIVE 均未启用 |
 | 策略 Paper Runner | ✅ 已实现 | `lib/strategy_engine` + `jobs/strategy_runner`：按已注册 model_version 读可用评分 → selection 约束 → 目标组合与调仓清单 + 真实成本 paper NAV（commission/滑点/印花税/手数/T+1/停牌 roll-forward）（#190–#192） |
 | 组合风控限制 | ✅ 已实现 | `max_single_stock_pct` 真实生效、新增行业上限 `max_industry_pct`（CSRC 一级，UNKNOWN 桶同样受限）、`min_trade_amount_cny` 流动性下限；分类须 `assigned_at <= signal date`；配置缺失时 fail closed（#221、`strategy-portfolio-risk-limits`） |
 | 费用感知开盘买入预算 | ✅ 已实现 | `nav.py _fit_buy_quantity`：整手二分，使「含滑点成交额 + commission ≤ min(现金, 目标预算)」，仅当一手都放不下才跳过（#204、`strategy-fee-aware-opening-budget`） |
