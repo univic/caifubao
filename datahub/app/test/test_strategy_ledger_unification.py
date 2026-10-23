@@ -8,6 +8,7 @@ from caifubao_contracts.strategy_execution import (
     deterministic_fill_id,
     execution_fees,
     fit_buy_quantity,
+    require_t_plus_one,
     session_limit_flags,
     tradable_open,
 )
@@ -480,3 +481,11 @@ def test_simulated_fills_carry_decision_date_and_spec_identity():
         result["ledger_events"], initial_cash=10000
     )
     assert rebuilt.snapshot() == result["ledger_snapshot"]
+
+
+def test_shared_t_plus_one_rejects_same_day_and_accepts_next_session():
+    assert require_t_plus_one("2026-10-23", "2026-10-26") is None
+    with pytest.raises(ValueError, match="T\\+1"):
+        require_t_plus_one("2026-10-23", "2026-10-23")
+    with pytest.raises(ValueError, match="T\\+1"):
+        require_t_plus_one("2026-10-24", "2026-10-23")
