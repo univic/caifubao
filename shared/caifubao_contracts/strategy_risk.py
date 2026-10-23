@@ -198,3 +198,29 @@ def evaluate_risk(
             exposed[code] = exposed.get(code, 0.0) + notional
             exposure_total += notional
     return {"status": "OK", "approved": approved, "rejected": rejected}
+
+
+def evaluate_spec_risk(
+    *,
+    spec: dict,
+    intents: list[dict],
+    account: dict,
+    market: dict | None = None,
+    halted: bool = False,
+) -> dict:
+    """Pure replayable policy gate bound to the immutable Spec identity.
+
+    The caller must supply a frozen research ledger/market snapshot. Trading
+    still owns its own operational halt and order persistence.
+    """
+    from caifubao_contracts.strategy_spec import spec_hash, validate_strategy_spec
+
+    resolved = validate_strategy_spec(spec)
+    outcome = evaluate_risk(
+        intents=intents,
+        account=account,
+        policy=resolved["risk"],
+        market=market,
+        halted=halted,
+    )
+    return {"spec_hash": spec_hash(resolved), **outcome}
