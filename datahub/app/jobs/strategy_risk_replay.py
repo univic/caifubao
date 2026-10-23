@@ -56,6 +56,40 @@ def replay_from_snapshots(
     }
 
 
+def replay_with_market_regime(
+    *,
+    spec: dict,
+    account: dict,
+    intents: list[dict],
+    decision_date,
+    regime_service=None,
+    halt_snapshot: dict | None = None,
+) -> dict:
+    """Research entry: bind CSI300 PIT regime to a pinned Spec before replay."""
+    from app.lib.strategy_engine.market_snapshot import frozen_regime_snapshot
+    from caifubao_contracts.strategy_spec import validate_strategy_spec
+
+    resolved = validate_strategy_spec(spec)
+    policy = resolved["risk"]["regime_policy"]
+    market = (
+        frozen_regime_snapshot(decision_date, service=regime_service)
+        if policy != "none"
+        else None
+    )
+    halted = (
+        read_frozen_halt_snapshot(halt_snapshot)
+        if halt_snapshot is not None
+        else False
+    )
+    return replay_from_snapshots(
+        spec=resolved,
+        account=account,
+        intents=intents,
+        market=market,
+        halted=halted,
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--spec", required=True, type=Path)
