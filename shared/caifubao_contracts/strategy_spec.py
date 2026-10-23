@@ -20,6 +20,8 @@ DEFAULT_RISK = {
     "max_positions": None,
     "cash_floor_pct": 0.0,
     "max_drawdown_pct": None,
+    "max_single_stock_pct": None,
+    "max_gross_exposure_pct": None,
     "regime_policy": "none",
 }
 DEFAULT_EXECUTION = {
@@ -178,15 +180,21 @@ def validate_strategy_spec(spec: dict) -> dict:
         raise ValueError("rebalance.cadence_days must be positive integer")
 
     risk = {**DEFAULT_RISK, **normalized["risk"]}
-    for key in ("max_turnover_pct", "cash_floor_pct", "max_drawdown_pct"):
+    for key in (
+        "max_turnover_pct",
+        "cash_floor_pct",
+        "max_drawdown_pct",
+        "max_single_stock_pct",
+        "max_gross_exposure_pct",
+    ):
         if risk[key] is not None:
             risk[key] = _finite_number(risk[key], f"risk.{key}", high=1)
     if risk["max_positions"] is not None and (
         type(risk["max_positions"]) is not int or risk["max_positions"] <= 0
     ):
         raise ValueError("risk.max_positions must be positive integer or null")
-    if risk["regime_policy"] != "none":
-        raise ValueError("risk.regime_policy currently supports none only")
+    if risk["regime_policy"] not in ("none", "bull_only", "bear_reduce_only"):
+        raise ValueError("risk.regime_policy must be none, bull_only or bear_reduce_only")
     normalized["risk"] = risk
 
     execution = {**DEFAULT_EXECUTION, **normalized["execution"]}
