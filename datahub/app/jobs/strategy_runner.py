@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import logging
 import sys
@@ -593,6 +594,7 @@ def run_nav(
     model_version: str | None = None,
     horizon: int | None = None,
     strategy_spec_hash: str | None = None,
+    persist_research_artifact: bool = False,
 ) -> dict:
     """Recompute the paper NAV curve over a range of COMPLETED runs.
 
@@ -665,6 +667,19 @@ def run_nav(
     )
     attached = attach_nav_points(runs, result["curve"])
 
+    artifact_hash = None
+    if persist_research_artifact:
+        artifact_hash = _persist_research_simulation(
+            runs=runs,
+            config_hash=config_hash,
+            hash_kind="spec" if strategy_spec_hash is not None else "legacy",
+            schedule=schedule,
+            result=result,
+            benchmark=benchmark,
+            execution_from=execution_from,
+            execution_to=execution_to,
+        )
+
     updated = 0
     for run in runs:
         key = run.date.date().isoformat()
@@ -684,6 +699,7 @@ def run_nav(
         "benchmark_dates": len(benchmark),
         "config_hash": config_hash,
         "hash_kind": "spec" if strategy_spec_hash is not None else "legacy",
+        "research_artifact_hash": artifact_hash,
         "evidence_kinds": sorted(
             {getattr(r, "evidence_kind", "REPLAY") or "REPLAY" for r in runs}
         ),
@@ -695,6 +711,48 @@ def run_nav(
         "blocked_orders": result.get("blocked_count", 0),
         "blocked": result.get("blocked", []),
     }
+
+
+def _persist_research_simulation(
+    *, runs, config_hash, hash_kind, schedule, result, benchmark,
+    execution_from, execution_to,
+) -> str:
+    """Store an immutable research derivation separately from FORWARD plans."""
+    from app.model.strategy import StrategySimulationArtifact
+
+    payload = {
+        "schema_version": "research-simulation-v1",
+        "config_hash": config_hash,
+        "hash_kind": hash_kind,
+        "run_dates": [run.date.date().isoformat() for run in runs],
+        "schedule": schedule,
+        "events": result["ledger_events"],
+        "ledger_snapshot": result["ledger_snapshot"],
+        "curve": result["curve"],
+        "benchmark_returns": benchmark,
+    }
+    content = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        default=str, allow_nan=False,
+    )
+    identity = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    existing = StrategySimulationArtifact.objects(
+        artifact_hash=identity
+    ).first()
+    if existing is not None:
+        if existing.payload != payload:
+            raise ValueError("immutable research artifact hash collision")
+        return identity
+    StrategySimulationArtifact(
+        strategy_name=DEFAULT_STRATEGY_NAME,
+        config_hash=config_hash,
+        hash_kind=hash_kind,
+        artifact_hash=identity,
+        execution_from=execution_from,
+        execution_to=execution_to,
+        payload=payload,
+    ).save()
+    return identity
 
 
 def _resolve_start_date(now=None):
@@ -939,6 +997,10 @@ def build_parser() -> argparse.ArgumentParser:
     nav_cfg = p_nav.add_mutually_exclusive_group()
     nav_cfg.add_argument("--config-json", default=None)
     nav_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")
+    p_nav.add_argument(
+        "--persist-research-artifact", action="store_true",
+        help="Write an immutable research-only ledger/NAV artifact",
+    )
     p_nav.add_argument("--model-version", default=None)
     p_nav.add_argument("--horizon", type=int, choices=[5, 20, 60], default=None)
 
@@ -1086,6 +1148,7 @@ def main(argv: list[str] | None = None) -> None:
             model_version=args.model_version,
             horizon=args.horizon,
             **({"strategy_spec_hash": identity} if identity is not None else {}),
+            persist_research_artifact=args.persist_research_artifact,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     elif args.command == "forward":

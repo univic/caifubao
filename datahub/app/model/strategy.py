@@ -118,3 +118,23 @@ class StrategyForwardWindow(Document):
             ("model_version", "-start_date"),
         ],
     }
+
+
+class StrategySimulationArtifact(Document):
+    """Immutable research NAV/ledger derivation, not a trading account."""
+
+    strategy_name = StringField(required=True)
+    config_hash = StringField(required=True)
+    hash_kind = StringField(choices=["legacy", "spec"], required=True)
+    artifact_hash = StringField(required=True, unique=True)
+    execution_from = DateTimeField(required=True)
+    execution_to = DateTimeField(required=True)
+    payload = DictField(required=True)
+    created_at = DateTimeField(
+        default=lambda: datetime.datetime.now(datetime.UTC)
+    )
+
+    meta = {
+        "collection": "strategy_simulation_artifacts",
+        "indexes": [("strategy_name", "-execution_to")],
+    }
