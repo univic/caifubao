@@ -733,6 +733,7 @@ def run_nav(
         "config_hash": config_hash,
         "hash_kind": "spec" if strategy_spec_hash is not None else "legacy",
         "research_artifact_hash": artifact_hash,
+        "nav_parity_max_abs_delta_cny": result["nav_parity"]["max_abs_delta_cny"],
         "evidence_kinds": sorted(
             {getattr(r, "evidence_kind", "REPLAY") or "REPLAY" for r in runs}
         ),
@@ -768,6 +769,7 @@ def _persist_research_simulation(
         "schedule": schedule,
         "events": result["ledger_events"],
         "ledger_snapshot": result["ledger_snapshot"],
+        "nav_parity": result.get("nav_parity"),
         "curve": result["curve"],
         "benchmark_returns": benchmark,
     }
