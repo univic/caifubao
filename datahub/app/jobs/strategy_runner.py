@@ -764,6 +764,60 @@ def _persist_research_simulation(
     return identity
 
 
+
+def research_simulation_report(run) -> dict | None:
+    """Read-only summary of persisted research fills/rejections for one run.
+
+    Research simulation events are not trading account orders. A missing
+    artifact simply means a NAV run has not persisted research evidence yet.
+    The output is bounded so the CLI does not accidentally dump a full window.
+    """
+    from app.model.strategy import StrategySimulationArtifact
+
+    execution = getattr(run, "execution_date", None)
+    if execution is None:
+        return None
+    identity = getattr(run, "config_hash", None)
+    hash_kind = getattr(run, "hash_kind", None) or "legacy"
+    artifact = (
+        StrategySimulationArtifact.objects(
+            strategy_name=run.strategy_name,
+            config_hash=identity,
+            hash_kind=hash_kind,
+            execution_from__lte=execution,
+            execution_to__gte=execution,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if artifact is None:
+        return None
+    events = artifact.payload.get("events", [])
+    day = execution.date().isoformat()
+    blocked = [
+        {
+            "stock_code": event.get("stock_code"),
+            "side": event.get("side"),
+            "reason_code": event.get("reason_code"),
+            "order_id": event.get("order_id"),
+        }
+        for event in events
+        if event.get("type") == "REJECTED" and event.get("execution_date") == day
+    ]
+    fills = [
+        event
+        for event in events
+        if event.get("type") == "FILL" and event.get("execution_date") == day
+    ]
+    return {
+        "artifact_hash": artifact.artifact_hash,
+        "research_only": True,
+        "blocked_count": len(blocked),
+        "blocked": blocked[:50],
+        "blocked_truncated": len(blocked) > 50,
+        "fills_count": len(fills),
+    }
+
 def _resolve_start_date(now=None):
     """Certification session = the EARLIEST trading session at/after the
     certification instant (Beijing date) — never a past session (spec:
@@ -1245,6 +1299,7 @@ def main(argv: list[str] | None = None) -> None:
                         "evidence_kind": doc.evidence_kind or "REPLAY",
                         "skip_reason": doc.skip_reason,
                         "target_holdings_count": len(doc.target_holdings or []),
+                        "research_simulation": research_simulation_report(doc),
                     },
                     ensure_ascii=False,
                     indent=2,
