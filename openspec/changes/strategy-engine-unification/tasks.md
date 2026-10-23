@@ -34,9 +34,9 @@
 - [x] 2.4 `nav.py` 改为消费研究模拟账本持仓；目标权重仅作为 intent，不把研究模拟账本当作 trading 账户账本
 - [x] 2.4a 随 2.4 提交 `strategy-engine` 的 MODIFIED delta（NAV 由账本推导，费用/手数/T+1 语义不变）
 - [x] 2.5 把研究模拟 `blocked_orders` 从 CLI 临时返回值改为可追溯的研究事件/工件，并在 `report` 中可见；trading 拒绝事件由 trading runtime 持久化
-- [ ] 2.6 明确对账迁移边界：当前只读 CLI 保留既有输出契约；目标 trading 账户对账的计划侧来自 trading ledger projection，不得读取 research ledger
-- [ ] 2.6a 随 2.6 提交 `strategy-live-loop-minimal` 的 MODIFIED delta（对账计划侧来源变更）
-- [ ] 2.7 双跑对照：旧 NAV 曲线 vs 账本 NAV 曲线，逐日差异必须可解释
+- [x] 2.6 明确对账迁移边界：当前只读 CLI 保留既有输出契约；目标 trading 账户对账的计划侧来自 trading ledger projection，不得读取 research ledger
+- [x] 2.6a 随 2.6 提交 `strategy-live-loop-minimal` 的 MODIFIED delta（对账计划侧来源变更）
+- [x] 2.7 双跑对照：旧 NAV 曲线 vs 账本 NAV 曲线，逐日差异必须可解释
 - [x] 2.8 文档：研究模拟账本事件 schema、重建 runbook，以及未来 trading ledger/对账的域边界契约
 
 ## 3. S2 — 风控门（`strategy-risk-gate`）
@@ -47,7 +47,7 @@
   approved / rejected(reason)
 - [x] 3.3 实现换手/再平衡预算的确定性削减规则（按优先级）
 - [x] 3.4 实现组合回撤熔断：只拦开仓，不拦减仓
-- [ ] 3.5 接入 `market_regime`（60 日趋势）作为可选 regime 门控
+- [x] 3.5 接入 `market_regime`（60 日趋势）作为可选 regime 门控
 - [ ] 3.6 保留 halt 契约的优先级语义；运维 halt 状态与操作历史归 trading domain，research replay 只消费显式冻结的 halt snapshot，不读写运行中的 halt store
 - [x] 3.7 replay 对拍：同一输入重放得到相同 approved/rejected 与原因码
 - [x] 3.8 文档：风控参数默认值、熔断语义与原因码表
@@ -71,5 +71,5 @@
 - [ ] 5.2 `datahub/.venv/bin/ruff check --select E4,E7,E9,F datahub/` 与 format check，并检查 shared package 的 lint/类型兼容
 - [x] 5.3 `openspec validate --all --strict`
 - [x] 5.4 更新 `docs/capability-inventory.md` 对应行（策略引擎/账本/风控/执行）
-- [ ] 5.5 记录阶段结论到 `docs/autoresearch/runs/.../manual-experiments-ledger.md`（涉及
+- [x] 5.5 记录阶段结论到 `docs/autoresearch/runs/.../manual-experiments-ledger.md`（涉及
   指标变化时）
