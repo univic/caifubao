@@ -11,9 +11,7 @@ import copy
 import math
 
 EVENT_SCHEMA_VERSION = 1
-EVENT_TYPES = frozenset(
-    {"FILL", "REJECTED", "MARK", "DIVIDEND", "SPLIT", "WRITE_OFF"}
-)
+EVENT_TYPES = frozenset({"FILL", "REJECTED", "MARK", "DIVIDEND", "SPLIT", "WRITE_OFF"})
 
 
 def validate_ledger_event(event: dict) -> dict:
