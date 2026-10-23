@@ -334,6 +334,12 @@ def validate_replay_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
             "slippage_rate",
         )
     }
+    if "transfer_fee_rate" in friction:
+        # New manifests may explicitly elect to model the two-way transfer
+        # fee; old frozen manifests preserve their historical zero-fee scope.
+        normalized_friction["transfer_fee_rate"] = _finite(
+            friction["transfer_fee_rate"], "friction.transfer_fee_rate", minimum=0.0
+        )
     if normalized_friction["slippage_rate"] >= 1:
         raise ValueError("friction.slippage_rate must be < 1")
     prediction_cohorts_hash = _canonical_sha256(prediction_cohorts)
