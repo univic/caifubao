@@ -33,9 +33,7 @@ def test_research_artifact_is_content_addressed_and_never_mutates_plan(monkeypat
         def save(self):
             artifacts[self.artifact_hash] = self
 
-    monkeypatch.setattr(
-        strategy_model, "StrategySimulationArtifact", FakeArtifact
-    )
+    monkeypatch.setattr(strategy_model, "StrategySimulationArtifact", FakeArtifact)
     plan = SimpleNamespace(
         date=datetime.datetime(2026, 10, 23),
         evidence_kind="FORWARD",
