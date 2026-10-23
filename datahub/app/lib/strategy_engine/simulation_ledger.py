@@ -8,8 +8,9 @@ or trading account access; its event stream is stored in research artifacts.
 from __future__ import annotations
 
 import copy
-import datetime
 import math
+
+from caifubao_contracts.strategy_execution import require_t_plus_one
 
 
 def _number(value, field: str, *, positive: bool = False) -> float:
@@ -25,14 +26,6 @@ def _number(value, field: str, *, positive: bool = False) -> float:
             f"{field} must be {'positive' if positive else 'non-negative'}"
         )
     return result
-
-
-def _date(value) -> datetime.date:
-    if isinstance(value, datetime.datetime):
-        return value.date()
-    if isinstance(value, datetime.date):
-        return value
-    return datetime.date.fromisoformat(str(value)[:10])
 
 
 class ResearchSimulationLedger:
@@ -137,10 +130,10 @@ class ResearchSimulationLedger:
             or e["event_id"] != e["fill_id"]
         ):
             raise ValueError("fill must have stable order_id and fill_id=event_id")
-        if "decision_date" in e and _date(e["execution_date"]) <= _date(
-            e["decision_date"]
-        ):
-            raise ValueError("T+1: fill date must follow decision date")
+        if not e.get("execution_date"):
+            raise ValueError("execution_date is required")
+        if "decision_date" in e:
+            require_t_plus_one(e["decision_date"], e["execution_date"])
         qty = e.get("quantity")
         if type(qty) is not int or qty <= 0:
             raise ValueError("fill quantity must be a positive integer")
