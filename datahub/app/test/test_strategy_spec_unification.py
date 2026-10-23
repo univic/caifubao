@@ -226,3 +226,25 @@ def test_spec_risk_policy_exposure_regime_is_hashed_and_validated():
     assert validate_strategy_spec(spec)["risk"]["regime_policy"] == "bear_reduce_only"
     with pytest.raises(ValueError, match="non-default risk"):
         spec_to_legacy_config(spec)
+
+
+def test_versioned_strategy_spec_has_frozen_hash_golden_vector():
+    # Pinned independently of the implementation and of legacy config hashes.
+    from caifubao_contracts.strategy_spec import DEFAULT_EXECUTION, DEFAULT_RISK
+
+    example = {
+        "spec_version": "1",
+        "universe": {"market": "CN_A", "as_of": "PIT"},
+        "signal": {"score_model_version": "golden-v1", "horizon": 20},
+        "selection": {"mode": "top_n", "portfolio_size": 2},
+        "sizing": {"weighting": "equal", "cash_reserve_pct": 0.0},
+        "constraints": {},
+        "rebalance": {"cadence_days": 5},
+        "risk": dict(DEFAULT_RISK),
+        "execution": dict(DEFAULT_EXECUTION),
+        "evidence": {"timing_version": "paper_causal_v1", "policy": "research"},
+        "initial_nav": 10000.0,
+    }
+    assert spec_hash(example) == (
+        "7fb19ffc0ca190cdf3fcd2eaf94df3b0e40c99eb6a578a7a9d1a39d9320ec8ba"
+    )
