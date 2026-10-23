@@ -115,6 +115,48 @@ def test_adjustments_are_explicit_not_fake_fills():
     assert ledger.cash == pytest.approx(10000 - 1005.01 + 40)
 
 
+def test_invalid_ledger_events_are_atomic():
+    ledger = ResearchSimulationLedger(initial_cash=3000)
+    ledger.apply(_fill("f1", "BUY", 100))
+    ledger.apply(
+        {
+            **_fill("f2", "BUY", 100),
+            "stock_code": "sh600001",
+            "order_id": "order-2",
+        }
+    )
+    original = ledger.snapshot()
+    original_events = len(ledger.events)
+    with pytest.raises(ValueError, match="mark sh600001"):
+        ledger.apply(
+            {
+                "type": "MARK",
+                "event_id": "invalid-mark",
+                "marks": {"sh600000": 12, "sh600001": -10},
+            }
+        )
+    with pytest.raises(ValueError, match="reference_price"):
+        ledger.apply(
+            {
+                **_fill("f3", "BUY", 10),
+                "order_id": "order-3",
+                "reference_price": 0,
+            }
+        )
+    with pytest.raises(ValueError, match="exit_price"):
+        ledger.apply(
+            {
+                "type": "WRITE_OFF",
+                "event_id": "bad-write-off",
+                "stock_code": "sh600000",
+                "exit_price": -1,
+                "reason_code": "DELISTED",
+            }
+        )
+    assert ledger.snapshot() == original
+    assert len(ledger.events) == original_events
+
+
 def test_execution_rules_board_and_unknown_fail_closed():
     assert board_lot_rule("sh688001") == (200, 1)
     assert board_lot_rule("sz300001") == (100, 100)
