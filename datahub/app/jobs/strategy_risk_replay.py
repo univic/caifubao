@@ -77,9 +77,7 @@ def replay_with_market_regime(
         else None
     )
     halted = (
-        read_frozen_halt_snapshot(halt_snapshot)
-        if halt_snapshot is not None
-        else False
+        read_frozen_halt_snapshot(halt_snapshot) if halt_snapshot is not None else False
     )
     return replay_from_snapshots(
         spec=resolved,
