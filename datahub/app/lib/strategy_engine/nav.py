@@ -279,6 +279,17 @@ def simulate_paper_nav(
         )
 
     for decision in schedule:
+        # Ledger is authoritative across sessions. The legacy-shaped scratch
+        # book exists only for this session's sizing and NAV golden parity;
+        # it is rebuilt from the event projection before every decision.
+        cash = ledger.cash
+        positions = {
+            code: {
+                "qty": position["quantity"],
+                "last_price": position["last_price"],
+            }
+            for code, position in ledger.positions.items()
+        }
         date = decision["date"]
         targets = decision.get("holdings") or {}
         target_codes = set(targets)
