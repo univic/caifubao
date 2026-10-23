@@ -40,7 +40,7 @@
     残留是 1 只退市整理期股票的最新行无 FQ。报告：
     `docs/operations/fq-chain-audit.md`。
   - tushare ETF 正式能力（`datahub-tushare-etf` / `datahub-etf-market-data`）：
-    `ExchangeTradedFund` 模型、`fund_basic/fund_daily/fund_adj` 接口、`.OF` 过滤、
+    独立集合 `exchange_traded_fund`/`etf_daily_quote` 模型、`fund_basic/fund_daily/fund_adj` 接口、`.OF` 过滤、
     `fund_adj` 10 年分页 + 截断拒绝（实测单调用上限 2,600 行，18 年窗口会丢掉
     510300 的 2016 前历史）、`EtfFQFactorService`、`EtfMarketService`、
     `etf_sync_runner`、`scripts/caifubao etf …`、research 挂起 CronJob。
@@ -51,7 +51,7 @@
     `docs/operations/paper-live-readiness.md`，含与 PR #307 的先后关系。
   - 文档同步：能力清单、CLI 参考、文档索引、OpenSpec 索引、环境模型（ETF 数据
     所有权/复权职责）、前瞻窗口 runbook。
-- 验证：新增 31 个单测通过；ruff（CI 规则）通过；`openspec validate --all
+- 验证：新增 40 个单测通过；ruff（CI 规则）通过；`openspec validate --all
   --strict` 39/39；`kubectl kustomize k8s/overlays/example-research` 通过；
   research pod 内只读跑通审计与 readiness（未写库，pod 内临时文件已清理）。
 - 下一步：spec-guardian / contract-reviewer / qa-reviewer；与

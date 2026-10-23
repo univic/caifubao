@@ -222,8 +222,9 @@ python -m app.jobs.tech_factor_runner evaluate bb_position 2024-01-01 2024-12-31
 `python -m app.jobs.etf_sync_runner <command> [options]`
 
 Tushare on-exchange fund (ETF/LOF) universe, quotes and `fund_adj` after-adjustment
-factors. Quotes are stored in `stock_daily_quote` (`object_type=etf` on the fund
-document), and FQ uses the same arithmetic as stocks. See
+factors. The master lives in `exchange_traded_fund` and quotes in
+`etf_daily_quote` (never in the stock collections), and FQ uses the same
+arithmetic as stocks. See
 [`operations/etf-market-data.md`](operations/etf-market-data.md).
 
 ```bash

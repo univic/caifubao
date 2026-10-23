@@ -33,7 +33,7 @@
 | 估值/市值基本面 | ✅ 已实现 | `stock_daily_basic`（`datahub/app/model/daily_basic.py`）：pe_ttm/pb/ps_ttm/dv_ttm/total_mv/circ_mv/turnover_rate，按 trade_date 的 point-in-time 快照；`daily_basic_backfill` 支持断点续传，已接入 stable→dev 数据同步（#175/#176；在线同步为迁移期遗留） |
 | Tushare 数据源 | ✅ 已实现 | 历史行情、`adj_factor`、`daily_basic`、股票池四个接口；全部调用按 300/min 限速节流、带重试与空结果显式失败（`datahub/app/lib/datahub/data_source/interface/tushare_interface.py`） |
 | 全市场股票池 | ✅ 已实现 | `stock_basic_active`（tushare `pro.stock_basic`，`list_status='L'`），用于股票池刷新（#130） |
-| 场内基金（ETF/LOF）行情与复权 | ✅ 已实现（待部署） | `ExchangeTradedFund`（`object_type=etf`）+ tushare `fund_basic/fund_daily/fund_adj`；行情复用 `stock_daily_quote`、FQ 同股票口径；`etf universe/daily/backfill/status` CLI 与 research CronJob 模板（`datahub-tushare-etf`） |
+| 场内基金（ETF/LOF）行情与复权 | ✅ 已实现（待部署） | `ExchangeTradedFund`（`object_type=etf`）+ tushare `fund_basic/fund_daily/fund_adj`；独立集合 `exchange_traded_fund` / `etf_daily_quote`、FQ 同股票口径；`etf universe/daily/backfill/status` CLI 与 research CronJob 模板（`datahub-tushare-etf`） |
 | 财务报表（ROE、营收增速等三表） | ❌ 未实现 | 仅采集 daily_basic 估值/市值，利润表/资产负债表/现金流量表未采集 |
 | 融资融券数据 | ❌ 未实现 | 需要新采集器 |
 | 北向资金流向 | ❌ 未实现 | 需要新采集器 |
@@ -177,7 +177,7 @@
 | 决策日志（DecisionJournal） | ✅ 已实现 | `DecisionJournal` 模型含推荐内容/信心/目标价/止损 + `executed`/成交价量/`realized_pnl` 全链字段，`/api/decisions/journal*` 四端点（#104/#108） |
 | Compute-Worker K3s 部署 | ✅ 已实现 | node-type=compute 亲和性、资源限制、存活探针 |
 | OpenClaw 评分/推荐端点 | ✅ 已实现 | `/scores` (含解释/验证) + `/recommendations/daily` + `/recommendations/performance` |
-| FQ/HFQ 链路审计 | ✅ 已实现 | `datahub/scripts/fq_chain_audit.py` + handler：只读覆盖/算术/tushare 源头抽样比对 + 全市场因子跳变扫描，PASS/WARN/FAIL 退出码；2026-10-23 research 实测见 `docs/operations/fq-chain-audit.md`（`fq-adj-factor-fix` §7） |
+| FQ/HFQ 链路审计 | ✅ 已实现 | `datahub/scripts/fq_chain_audit.py` + handler：只读覆盖/算术/tushare 源头抽样比对 + 全市场因子跳变扫描，PASS/WARN/FAIL 退出码；2026-10-23 research 实测见 `docs/operations/fq-chain-audit.md`（`datahub-fq-chain-audit`） |
 | Health Watcher | ✅ 已实现 | `jobs/health_watcher.py`：近 26h FAILED/SKIPPED 任务 + STALE/NO_DATA 资产，JSON 报告、`--fail-on-issues`、可选 webhook；dev overlay 有 CronJob（#148） |
 | MongoDB 备份/恢复 + 恢复演练 | ✅ 已实现 | `k8s/base/mongodb-backup.yaml`、`mongodb-restore-job.example.yaml`，runbook 见 `docs/operations/mongodb-resilience.md`；13/13 集合非破坏性恢复演练通过（2026-09-13） |
 | MongoDB 启动连接重试 | ✅ 已实现 | backend（#149）与 datahub（#153）`connect_to_db` 10×5s 重试，耗尽后 exit(1) |

@@ -11,15 +11,17 @@
 | 项目 | 说明 |
 |:---|:---|
 | 数据来源 | tushare `pro.fund_basic(market='E')`、`pro.fund_daily`、`pro.fund_adj` |
-| 主数据 | `basic_stock` 集合中的 `ExchangeTradedFund` 文档，`object_type=etf` |
-| 行情 | **复用** `stock_daily_quote`，主键 `(code, date)`；ETF 代码如 `sh510300` |
+| 主数据 | 独立集合 `exchange_traded_fund`（`object_type=etf`） |
+| 行情 | 独立集合 `etf_daily_quote`，主键 `(code, date)`；ETF 代码如 `sh510300` |
 | 除复权 | `fq_factor` / `*_hfq` 来自 `fund_adj`，与股票 FQ 同一套算术和写入路径 |
 | 新鲜度 | `data_asset_status`，`object_type=etf` |
 | 不包含 | 基金净值、折溢价、份额、实时行情、券商/下单；北交所无场内基金 |
 
-ETF 代码与股票代码不冲突（`sh51x/56x/58x`、`sz15x/16x`），股票域查询按
-`object_type=individual_stock` 过滤，因此 ETF 入库**不会**进入股票池、评分、信号或
-策略选股。
+ETF 使用**独立集合**（`exchange_traded_fund` / `etf_daily_quote`），不是
+`basic_stock` / `stock_daily_quote` 的子类。`BasicStock.objects()` 会返回全部子类，
+按日期扫描行情也不会过滤 `object_type`，共享集合会让 ETF 静默混进股票池、研究面板、
+评分/信号和公开股票 API；独立集合从结构上排除这种泄漏。两个集合已登记进
+online-sync / snapshot（别名 `etf`、`etf_quote`）。
 
 ## 2. 运行时口径（实测 2026-10-23 research 账号）
 
@@ -54,7 +56,8 @@ export CFB_NAMESPACE=caifubao-research
 ```
 
 底层模块：`python -m app.jobs.etf_sync_runner {universe,daily,backfill,status}`；
-`daily` / `backfill` 写 `datahub_job_runs`，失败以非零退出并记录 `FAILED`。
+`daily` / `backfill` 写 `datahub_job_runs`，任一阶段失败（含 `backfill --all`
+出现失败 fund）都以非零退出并记录 `FAILED`，不会把部分成功报成 SUCCESS。
 
 调度：`k8s/overlays/example-research/datahub-cronjobs.yaml` 中的
 `caifubao-datahub-etf-daily`（18:40，`suspend: true`）。按 TASK-404 的
@@ -68,6 +71,9 @@ one-writer-at-a-time 规则，由私有 overlay 显式启用。
 - `fq_factor = fund_adj`；`close_hfq = close × fq_factor`，open/high/low 同比例。
 - `daily` 的 FQ 阶段是 all-or-nothing：`fund_adj` 缺任一当日有行情代码的因子 →
   整批不写、状态不前进、运行失败；不回退 `factor=1`。
+- `backfill` 走共享 FQ 算术的缺口语义：同一代码区间内缺失的因子行**向前沿用**最近
+  已知因子（历史对齐规则），因此“缺一天”不会让回补失败；只有整个区间无有效因子
+  才失败。需要逐日严格覆盖时用 `daily` 快照路径。
 - `fund_adj` 与 `fund_daily` 共用 200 次/分钟预算，调用间隔 0.35s。
 
 ## 5. 失败模式与处理

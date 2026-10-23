@@ -17,8 +17,11 @@ truncated factor series.
 
 ## What Changes
 
-- Add an `exchange_traded_fund` master document (`object_type=etf`) to the
-  shared model, with `fund_type`, `benchmark`, `management_fee` and `list_date`.
+- Add standalone `exchange_traded_fund` (master, `object_type=etf`) and
+  `etf_daily_quote` (daily bar + derived FQ) documents to the shared model.
+  They are **not** `BasicStock`/`StockDailyQuote` subclasses: every stock
+  collection scan would otherwise mix funds into stock universes, research
+  panels and public stock APIs.
 - Extend `tushare_interface` with `fund_basic_all`, `fund_daily_by_trade_date`,
   `tushare_fund_daily`, `fund_adj` and `fund_adj_by_trade_date`, paced at the
   fund endpoints' 200 calls/minute budget.
@@ -30,20 +33,24 @@ truncated factor series.
 - Add `EtfMarketService` + `EtfFQFactorService`: universe upsert, per-session
   quote snapshot, per-fund history backfill, and `fq_factor`/`*_hfq` derived
   from `fund_adj` through the existing, tested FQ pipeline.
-- Write ETF quotes into `stock_daily_quote` (shared schema) and ETF
-  freshness/quality into `data_asset_status` with `object_type=etf`.
+- Write ETF quotes into `etf_daily_quote` and ETF freshness/quality into
+  `data_asset_status` with `object_type=etf`. Add both ETF collections to the
+  online-sync / snapshot registry so they are part of the published surface.
 - Add `python -m app.jobs.etf_sync_runner {universe,daily,backfill,status}` and
   the `scripts/caifubao etf {universe,daily,backfill,status}` CLI.
 - Add a suspended-by-default research CronJob for the daily ETF sync.
 
 ## Impact
 
-- `shared/caifubao_contracts/models/stock.py`, `datahub/app/model/stock.py`
+- `shared/caifubao_contracts/models/stock.py`, `datahub/app/model/stock.py`,
+  `backend/app/model/stock.py`
 - `datahub/app/lib/datahub/data_source/interface/tushare_interface.py`
 - `datahub/app/lib/datahub/data_source/handler/zh_etf_daily.py` (new)
 - `datahub/app/lib/datahub/etf_market.py` (new)
 - `datahub/app/jobs/etf_sync_runner.py` (new)
-- `scripts/caifubao`, `k8s/overlays/example-research/datahub-cronjobs.yaml`
+- `datahub/app/lib/datahub/sync_engine.py`,
+  `datahub/app/lib/datahub/snapshot_transfer.py`, `scripts/caifubao`,
+  `k8s/overlays/example-research/datahub-cronjobs.yaml`
 - Tests and operator documentation.
 
 No stock universe, scoring, signal, strategy or forward-evidence semantics

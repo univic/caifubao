@@ -41,6 +41,8 @@ python scripts/fq_chain_audit.py --skip-source --jump-scan
 
 实现：`datahub/scripts/fq_chain_audit.py` +
 `datahub/app/lib/datahub/data_integrity_keeper/handler/fq_chain_audit.py`。
+契约：[`openspec/changes/datahub-fq-chain-audit/`](../../openspec/changes/datahub-fq-chain-audit/proposal.md)
+（能力名 `datahub-fq-audit`）。
 
 ## 3. 实测明细（2026-10-23，镜像 sha-f3f29c8）
 

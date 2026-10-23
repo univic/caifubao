@@ -108,7 +108,18 @@ def _cmd_backfill(args) -> dict:
     if not args.all and not args.code:
         raise SystemExit("backfill requires --code CODE (repeatable) or --all")
     if args.all:
-        return _run_with_job("backfill", lambda: _service().backfill_all())
+
+        def _all_action():
+            summary = _service().backfill_all()
+            if summary.get("failed_count"):
+                raise RuntimeError(
+                    "ETF history backfill failed for "
+                    f"{summary['failed_count']} fund(s): "
+                    f"{summary.get('failed_codes', [])[:10]}"
+                )
+            return summary
+
+        return _run_with_job("backfill", _all_action)
     codes = list(dict.fromkeys(args.code))
 
     def _action():

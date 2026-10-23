@@ -24,6 +24,8 @@ def test_resolve_sync_collections_keeps_signal_in_dev():
         "stock_signal_daily",
         "finance_market",
         "stock_industry",
+        "exchange_traded_fund",
+        "etf_daily_quote",
     ]
 
 
@@ -34,6 +36,8 @@ def test_resolve_sync_collections_skips_signal_outside_dev():
         "stock_factor_daily",
         "finance_market",
         "stock_industry",
+        "exchange_traded_fund",
+        "etf_daily_quote",
     ]
 
 

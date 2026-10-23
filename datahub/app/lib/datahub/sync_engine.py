@@ -38,6 +38,10 @@ SYNCABLE_COLLECTIONS = {
     "stock_signal_daily": {"date_field": "date", "dev_only": True},
     "finance_market": {"date_field": None},  # small, always full sync
     "stock_industry": {"date_field": None},  # small snapshot, always full sync
+    # On-exchange funds use their own collections so stock queries never pick
+    # them up; both are part of the publishable data surface.
+    "exchange_traded_fund": {"date_field": None},  # small master snapshot
+    "etf_daily_quote": {"date_field": "date"},
 }
 
 # User-friendly aliases for --collections argument
@@ -48,6 +52,8 @@ COLLECTION_ALIASES = {
     "signal": "stock_signal_daily",
     "market": "finance_market",
     "industry": "stock_industry",
+    "etf": "exchange_traded_fund",
+    "etf_quote": "etf_daily_quote",
 }
 
 # Number of documents per bulk-write batch
@@ -64,6 +70,7 @@ DEV_ENV_VALUES = {"dev", "development", "local", "test"}
 SYNC_UPSERT_KEYS = {
     "stock_daily_quote": ["code", "date"],
     "stock_daily_basic": ["code", "date"],
+    "etf_daily_quote": ["code", "date"],
     "stock_factor_daily": ["stock_code", "date"],
     "stock_signal_daily": ["stock_code", "date", "signal_name"],
     # stock_industry has a unique stock_code (model/industry.py) — a dev-side

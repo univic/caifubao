@@ -26,7 +26,7 @@ maps to an SH or SZ venue, and MUST reject codes without an exchange venue
 
 For a requested trade date the datahub SHALL fetch the full-market
 `fund_daily(trade_date=...)` snapshot, normalize it to the canonical quote
-schema, and upsert one `stock_daily_quote` row per returned SH/SZ fund keyed by
+schema, and upsert one `etf_daily_quote` row per returned SH/SZ fund keyed by
 `(code, date)`. It MUST NOT synthesize a quote for a fund tushare omits
 (absence means not traded) and MUST fail the run when the snapshot contains a
 code that is not in the ETF universe.
@@ -129,15 +129,18 @@ asset is visible without reading logs.
 
 ### Requirement: ETF data is not stock data
 
-The ETF master document and its quotes MUST remain distinguishable from stocks:
-ETF documents use `object_type=etf`, and stock-only workflows (stock universe,
-scoring, signals, strategy selection) MUST NOT include ETF codes.
+ETF master documents and quotes MUST live in the dedicated
+`exchange_traded_fund` and `etf_daily_quote` collections, never in
+`basic_stock` or `stock_daily_quote`, so stock collection scans, research
+panels, scoring, signals, strategy selection and the public stock APIs cannot
+include ETF codes even when they do not filter by `object_type`.
 
-#### Scenario: Stock universe is unchanged
+#### Scenario: Stock collection scans are unchanged
 
-- GIVEN the ETF universe has been synced
-- WHEN a stock universe query filters on `object_type=individual_stock`
-- THEN no ETF code is returned
+- GIVEN the ETF universe and quotes have been synced
+- WHEN a stock workflow scans `basic_stock` or `stock_daily_quote` by date or
+  without an `object_type` filter
+- THEN no ETF code or ETF quote row is returned
 - AND stock scoring and strategy inputs are unchanged
 
 ### Requirement: ETF operations are explicit operator commands

@@ -113,6 +113,7 @@ def test_run_audit_verdict_passes_clean_sample(monkeypatch):
             "code": code,
             "status": "PASS",
             "rows": 2,
+            "source": {"compared": 2, "mismatch_count": 0},
         },
     )
 
@@ -150,6 +151,8 @@ def test_run_audit_reports_source_errors_without_hiding_them(monkeypatch):
 
     assert report["sample"][0]["status"] == "ERROR"
     assert "token missing" in report["sample"][0]["message"]
+    # No sample could be compared, so the audit cannot claim a pass.
+    assert report["verdict"] == "FAIL"
 
 
 def test_compare_factor_series_treats_exact_tolerance_as_match():
@@ -164,3 +167,80 @@ def test_compare_factor_series_treats_exact_tolerance_as_match():
     # it must not fail because of a 1e-16 float representation error.
     assert result["mismatch_count"] == 0
     assert result["max_abs_diff"] == pytest.approx(0.0005)
+
+
+def test_run_audit_warns_when_one_sample_errors_but_another_compares(monkeypatch):
+    from app.lib.datahub.data_integrity_keeper.handler import fq_chain_audit
+
+    monkeypatch.setattr(
+        fq_chain_audit,
+        "load_coverage",
+        lambda db: fq_chain_audit.coverage_summary(
+            active_stock_count=10,
+            quoted_active_count=10,
+            missing_fq_count=0,
+            latest_quote_date=datetime.date(2024, 1, 4),
+        ),
+    )
+    monkeypatch.setattr(fq_chain_audit, "load_status_summary", lambda db: {"OK": 10})
+    monkeypatch.setattr(
+        fq_chain_audit,
+        "audit_code",
+        lambda db, code, source, tolerance=5e-4: (
+            {"code": code, "status": "PASS", "source": {"compared": 3}}
+            if code == "sh600000"
+            else {"code": code, "status": "ERROR", "message": "boom"}
+        ),
+    )
+
+    report = fq_chain_audit.run_audit(
+        object(), sample_codes=["sh600000", "sz000001"], fetch_source=lambda code: {}
+    )
+
+    assert report["verdict"] == "WARN"
+
+
+def test_run_audit_fails_when_coverage_is_below_the_floor(monkeypatch):
+    from app.lib.datahub.data_integrity_keeper.handler import fq_chain_audit
+
+    monkeypatch.setattr(
+        fq_chain_audit,
+        "load_coverage",
+        lambda db: fq_chain_audit.coverage_summary(
+            active_stock_count=100,
+            quoted_active_count=10,
+            missing_fq_count=0,
+            latest_quote_date=datetime.date(2024, 1, 4),
+        ),
+    )
+    monkeypatch.setattr(fq_chain_audit, "load_status_summary", lambda db: {"OK": 10})
+
+    report = fq_chain_audit.run_audit(object(), sample_codes=[], fetch_source=None)
+
+    assert report["verdict"] == "FAIL"
+
+
+def test_run_audit_fails_on_a_market_wide_jump(monkeypatch):
+    from app.lib.datahub.data_integrity_keeper.handler import fq_chain_audit
+
+    monkeypatch.setattr(
+        fq_chain_audit,
+        "load_coverage",
+        lambda db: fq_chain_audit.coverage_summary(
+            active_stock_count=10,
+            quoted_active_count=10,
+            missing_fq_count=0,
+            latest_quote_date=datetime.date(2024, 1, 4),
+        ),
+    )
+    monkeypatch.setattr(fq_chain_audit, "load_status_summary", lambda db: {"OK": 10})
+
+    report = fq_chain_audit.run_audit(
+        object(),
+        sample_codes=[],
+        fetch_source=None,
+        jump_scan={"target_date": {"date": "2024-01-04", "fraction_of_universe": 0.89}},
+    )
+
+    assert report["verdict"] == "FAIL"
+    assert report["market_wide_jump"] is True

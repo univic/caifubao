@@ -35,6 +35,14 @@ market-data freshness and FQ coverage.
 - WHEN the assessment runs
 - THEN the quote check is FAIL and the overall status is NOT_READY
 
+#### Scenario: Coverage excludes unsupported universe
+
+- GIVEN active BSE stocks have `data_capabilities.daily_quote=false`
+- WHEN quote coverage is computed
+- THEN those stocks are excluded from the denominator
+- AND the check measures the supported universe rather than reporting a
+  permanent coverage hole
+
 #### Scenario: Missing FQ is not ready
 
 - GIVEN an active stock has a quote on the latest session without `fq_factor`
@@ -76,16 +84,21 @@ The CLI MUST exit non-zero only for `NOT_READY`.
 - WHEN the CLI runs
 - THEN it prints `DEGRADED` and exits 0
 
-- GIVEN a FAIL check
+#### Scenario: Not ready is fatal
+
+- GIVEN at least one check is FAIL
 - WHEN the CLI runs
 - THEN it prints `NOT_READY` and exits 1
 
 ### Requirement: Known limitations are surfaced with the verdict
 
-Every assessment result SHALL include the current limitations: paper NAV marks
-raw prices and does not credit cash distributions, paper targets are not a real
-account, forward-window gaps are permanent, and ETF distributions share the
-paper-NAV gap.
+Every assessment result SHALL include the current limitations: the current
+(pre-#307) paper NAV marks raw prices and does not credit cash distributions,
+paper targets are not a real account, forward-window gaps are permanent, and
+ETF distributions share that pre-#307 NAV gap. The distribution limitation is
+explicitly scoped to the NAV implementation this check observes; it is retired
+when the coordinated execution-model change (PR #307) makes the ledger credit
+cash distributions and share multipliers.
 
 #### Scenario: Limitations accompany a READY verdict
 
@@ -93,6 +106,22 @@ paper-NAV gap.
 - WHEN the assessment returns `READY`
 - THEN the limitations list is still present and non-empty
 - AND the READY verdict does not claim that paper results are tradable evidence
+
+### Requirement: Readiness inputs are the persisted paper-window state
+
+The assessment MUST read the persisted `strategy_forward_windows` and
+`strategy_paper_runs` collections by their stable fields (`model_version`,
+`horizon`, `config_hash`, `start_date`, `evidence_kind`, `date`) and SHALL NOT
+import or depend on the strategy engine's in-process objects.
+
+#### Scenario: Engine refactor does not change the inputs
+
+- GIVEN the strategy engine is refactored while the persisted window/run field
+  names are preserved
+- WHEN the assessment runs
+- THEN its window and progress checks work unchanged
+- AND a renamed persisted field is a visible schema mismatch rather than a
+  silent pass
 
 ### Requirement: Readiness never substitutes for authorization or certification
 

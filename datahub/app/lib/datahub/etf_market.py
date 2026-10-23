@@ -31,7 +31,7 @@ from app.lib.datahub.data_source.handler import zh_etf_daily
 from app.lib.datahub.data_source.interface import tushare_interface
 from app.lib.factor_factory.fq_factor import FQFactorService
 from app.lib.utilities import data_asset_status_helper
-from app.model.stock import ExchangeTradedFund, StockDailyQuote
+from app.model.stock import EtfDailyQuote, ExchangeTradedFund
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class EtfFQFactorService(FQFactorService):
 
     def __init__(
         self,
-        quote_model=StockDailyQuote,
+        quote_model=EtfDailyQuote,
         fund_model=ExchangeTradedFund,
     ):
         super().__init__(quote_model=quote_model, stock_model=fund_model)
@@ -72,7 +72,7 @@ class EtfMarketService:
     def __init__(
         self,
         fund_model=ExchangeTradedFund,
-        quote_model=StockDailyQuote,
+        quote_model=EtfDailyQuote,
     ):
         self.fund_model = fund_model
         self.quote_model = quote_model
@@ -88,28 +88,17 @@ class EtfMarketService:
         quote/FQ plan never touches a delisted fund.
         """
         rows = zh_etf_daily.normalize_fund_universe(tushare_interface.fund_basic_all())
-        written = 0
-        for row in rows:
-            code = row["code"]
-            status = (row.get("status") or "L").upper()
-            active_status = 0 if status == "L" else 2
-            values = {
-                "name": row["name"],
-                "fund_type": row.get("fund_type"),
-                "benchmark": row.get("benchmark"),
-                "management_fee": row.get("management_fee"),
-                "list_date": row.get("list_date"),
-                "active_status": active_status,
-                "object_type": ETF_OBJECT_TYPE,
-                "data_capabilities": {"daily_quote": True, "fq_factor": True},
-            }
-            updated = self.fund_model.objects(code=code).update_one(**values)
-            if not updated:
-                self.fund_model(
-                    code=code,
-                    **values,
-                ).save()
-            written += 1
+        operations = [
+            UpdateOne(
+                {"code": row["code"]},
+                {"$set": self._universe_values(row)},
+                upsert=True,
+            )
+            for row in rows
+        ]
+        if operations:
+            self.fund_model._get_collection().bulk_write(operations, ordered=False)
+        written = len(operations)
         logger.info("ETF universe synced: fetched=%s written=%s", len(rows), written)
         return {
             "pulled_count": len(rows),
@@ -117,6 +106,21 @@ class EtfMarketService:
             "active_count": sum(
                 1 for row in rows if (row.get("status") or "L").upper() == "L"
             ),
+        }
+
+    @staticmethod
+    def _universe_values(row: dict) -> dict:
+        """Master-document fields for one normalized fund_basic row."""
+        status = (row.get("status") or "L").upper()
+        return {
+            "name": row["name"],
+            "fund_type": row.get("fund_type"),
+            "benchmark": row.get("benchmark"),
+            "management_fee": row.get("management_fee"),
+            "list_date": row.get("list_date"),
+            "active_status": 0 if status == "L" else 2,
+            "object_type": ETF_OBJECT_TYPE,
+            "data_capabilities": {"daily_quote": True, "fq_factor": True},
         }
 
     def _active_funds(self) -> dict[str, object]:
@@ -130,9 +134,8 @@ class EtfMarketService:
     # -- quotes --------------------------------------------------------------
     @staticmethod
     def _quote_operation(fund, row: dict) -> UpdateOne:
-        daily_quote = StockDailyQuote()
+        daily_quote = EtfDailyQuote()
         daily_quote.code = fund.code
-        daily_quote.stock = fund
         for column, value in row.items():
             setattr(daily_quote, column, value)
         raw_doc = daily_quote.to_mongo().to_dict()
@@ -220,7 +223,7 @@ class EtfMarketService:
     def backfill_code(self, code: str) -> dict:
         fund = self.fund_model.objects(code=code).first()
         if fund is None:
-            return {"code": code, "status": "FAIL", "message": "fund not found"}
+            raise RuntimeError(f"ETF fund not found: code={code}")
         start = fund.list_date or datetime.datetime(1990, 1, 1)
         start_date = pandas.Timestamp(start).strftime("%Y%m%d")
         end_date = beijing_now_naive().date().strftime("%Y%m%d")
@@ -264,9 +267,6 @@ class EtfMarketService:
 
     # -- status --------------------------------------------------------------
     def status(self, code: str | None = None) -> dict:
-        query = {"object_type": ETF_OBJECT_TYPE}
-        if code:
-            query["code"] = code
         funds = list(
             self.fund_model.objects(**{"code": code} if code else {}).only(
                 "code", "name", "active_status"

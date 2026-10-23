@@ -367,3 +367,146 @@ def test_fund_adj_cap_truncation_fails_loudly(monkeypatch):
 
     with pytest.raises(RuntimeError, match="window truncated"):
         ti.fund_adj("510300.SH", "20040101", "20051231")
+
+
+def test_universe_values_map_listed_and_terminated_status():
+    from app.lib.datahub.etf_market import EtfMarketService
+
+    listed = EtfMarketService._universe_values(
+        {"code": "sh510300", "name": "x", "status": "L"}
+    )
+    terminated = EtfMarketService._universe_values(
+        {"code": "sh510301", "name": "y", "status": "D"}
+    )
+
+    assert listed["active_status"] == 0
+    assert listed["object_type"] == "etf"
+    assert terminated["active_status"] == 2
+
+
+def test_write_quotes_bulk_writes_selected_funds():
+    from app.lib.datahub import etf_market
+    from app.model.stock import ExchangeTradedFund
+
+    class FakeCollection:
+        def __init__(self):
+            self.calls = []
+
+        def bulk_write(self, operations, ordered):
+            self.calls.append((list(operations), ordered))
+
+    class FakeQuoteModel:
+        def __init__(self):
+            self.collection = FakeCollection()
+
+        def _get_collection(self):
+            return self.collection
+
+    fund = ExchangeTradedFund(code="sh510300", name="x")
+    service = etf_market.EtfMarketService(quote_model=FakeQuoteModel())
+    row = {
+        "date": datetime.datetime(2024, 1, 2),
+        "code": "sh510300",
+        "open": 3.0,
+        "high": 3.1,
+        "low": 2.9,
+        "close": 3.05,
+        "previous_close": 3.0,
+        "volume": 100,
+        "trade_amount": 305000.0,
+        "change_rate": 1.67,
+        "change_amount": 0.05,
+        "trade_status": 1,
+    }
+
+    written = service._write_quotes(
+        {"sh510300": fund}, [row, dict(row, code="sz159915")]
+    )
+
+    # The second row has no fund in the map and must be dropped.
+    assert written == 1
+    operations, ordered = service.quote_model.collection.calls[0]
+    assert len(operations) == 1
+    assert ordered is False
+    assert operations[0]._doc["$set"]["code"] == "sh510300"
+    assert "isST" not in operations[0]._doc["$set"]
+    assert "peTTM" not in operations[0]._doc["$set"]
+
+
+def test_sync_daily_rejects_unknown_snapshot_codes(monkeypatch):
+    from app.lib.datahub import etf_market
+
+    service = etf_market.EtfMarketService()
+    monkeypatch.setattr(service, "sync_universe", lambda: {"written_count": 0})
+    monkeypatch.setattr(service, "_active_funds", lambda: {})
+    monkeypatch.setattr(
+        etf_market.zh_etf_daily,
+        "normalize_tushare_fund_snapshot",
+        lambda raw, trade_date: [
+            {"date": datetime.datetime(2024, 1, 2), "code": "sh510300"}
+        ],
+    )
+    monkeypatch.setattr(
+        etf_market.tushare_interface,
+        "fund_daily_by_trade_date",
+        lambda trade_date: object(),
+    )
+
+    with pytest.raises(RuntimeError, match="missing from the ETF universe"):
+        service.sync_daily(datetime.datetime(2024, 1, 2))
+
+
+def test_backfill_code_rejects_unknown_fund():
+    from app.lib.datahub import etf_market
+
+    class FakeFundModel:
+        def objects(self, **kwargs):
+            class Query:
+                def first(self):
+                    return None
+
+            return Query()
+
+    service = etf_market.EtfMarketService(fund_model=FakeFundModel())
+
+    with pytest.raises(RuntimeError, match="fund not found"):
+        service.backfill_code("sh999999")
+
+
+def test_backfill_all_collects_failures(monkeypatch):
+    from app.lib.datahub import etf_market
+
+    service = etf_market.EtfMarketService()
+    monkeypatch.setattr(
+        service, "_active_funds", lambda: {"sh510300": object(), "sz159915": object()}
+    )
+
+    def fake_backfill(code):
+        if code == "sz159915":
+            raise RuntimeError("boom")
+        return {"code": code, "status": "GOOD", "quotes_written": 2}
+
+    monkeypatch.setattr(service, "backfill_code", fake_backfill)
+
+    summary = service.backfill_all()
+
+    assert summary["failed_count"] == 1
+    assert summary["failed_codes"] == ["sz159915"]
+    assert summary["written_count"] == 2
+
+
+def test_truncation_guard_accepts_a_complete_at_cap_window():
+    from app.lib.datahub.data_source.interface import tushare_interface as ti
+
+    frame = pandas.DataFrame(
+        [{"trade_date": "20040101", "adj_factor": 1.0}] * ti.FUND_ADJ_MAX_ROWS
+    )
+
+    # A full window that starts at the requested date is complete, not truncated.
+    ti._assert_window_not_truncated(
+        frame,
+        window_start_date="20040101",
+        window_end_date="20131231",
+        row_cap=ti.FUND_ADJ_MAX_ROWS,
+        label="fund_adj",
+    )

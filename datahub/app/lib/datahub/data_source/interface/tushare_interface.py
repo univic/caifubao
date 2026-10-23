@@ -239,6 +239,13 @@ def tushare_fund_daily(ts_code, start_date=None, end_date=None):
             label=f"tushare.fund_daily:{ts_code}:{window_start_date}-{window_end_date}",
         )
         if df is not None and not df.empty:
+            _assert_window_not_truncated(
+                df,
+                window_start_date=window_start_date,
+                window_end_date=window_end_date,
+                row_cap=FUND_DAILY_MAX_ROWS,
+                label="fund_daily",
+            )
             frames.append(df)
         time.sleep(FUND_CALL_PAUSE)
 

@@ -29,6 +29,14 @@ STOCK_COLLECTION = "basic_stock"
 STATUS_COLLECTION = "data_asset_status"
 
 DEFAULT_TOLERANCE = 5e-4
+#: A market-wide factor jump is an acceptance failure when it moves at least
+#: this share of the scanned universe on one date (real ex-dividend days move
+#: well under 1%; the 2026-08-31 discontinuity moved ~89%).
+MARKET_WIDE_JUMP_FRACTION = 0.05
+#: Below this share of the active supported universe having a latest-session
+#: quote, the audit cannot claim the chain is covered (suspensions explain a
+#: few missing names, not a tenth of the market).
+MIN_ACTIVE_COVERAGE = 0.90
 #: Floating-point slack so a difference exactly at the tolerance (0.0005 from
 #: tushare re-publishing 4-decimal and 3-decimal factors) is not counted as a
 #: divergence by a 1e-16 representation error.
@@ -234,8 +242,12 @@ def audit_code(db, code: str, source_factors, *, tolerance=DEFAULT_TOLERANCE) ->
     }
 
 
-def latest_session(db):
-    latest = db[QUOTE_COLLECTION].find_one({}, {"date": 1}, sort=[("date", -1)])
+def latest_session(db, codes=None):
+    """Most recent quote date, optionally restricted to a code universe."""
+    query = {}
+    if codes:
+        query["code"] = {"$in": sorted(codes)}
+    latest = db[QUOTE_COLLECTION].find_one(query, {"date": 1}, sort=[("date", -1)])
     return _as_date((latest or {}).get("date"))
 
 
@@ -259,7 +271,7 @@ def load_coverage(db) -> dict:
             {"object_type": "individual_stock", "active_status": {"$ne": 0}},
         )
     )
-    day = latest_session(db)
+    day = latest_session(db, active_codes)
     if day is None:
         return coverage_summary(
             active_stock_count=len(active_codes),
@@ -339,17 +351,42 @@ def run_audit(
             codes.append(code)
 
     checks_status = [result.get("status") for result in source_results]
-    if coverage["missing_fq_count"] > 0:
+    compared = [
+        result
+        for result in source_results
+        if (result.get("source") or {}).get("compared")
+    ]
+    target = (jump_scan or {}).get("target_date") or {}
+    market_wide_jump = float(target.get("fraction_of_universe") or 0.0) >= (
+        MARKET_WIDE_JUMP_FRACTION
+    )
+    coverage_ratio = coverage.get("quoted_active_coverage") or 0.0
+    if coverage["quoted_active_count"] <= 0 or coverage_ratio < MIN_ACTIVE_COVERAGE:
+        verdict = "FAIL"
+    elif coverage["missing_fq_count"] > 0:
         verdict = "FAIL"
     elif "FAIL" in checks_status:
         verdict = "FAIL"
-    elif "WARN" in checks_status or coverage["inactive_missing_fq_count"]:
+    elif market_wide_jump:
+        verdict = "FAIL"
+    elif fetch_source is not None and not compared:
+        # Every sample errored or had no data: the audit cannot claim the
+        # stored chain matches its source, so it must not pass.
+        verdict = "FAIL"
+    elif (
+        "WARN" in checks_status
+        or "ERROR" in checks_status
+        or "NO_DATA" in checks_status
+        or coverage["inactive_missing_fq_count"]
+    ):
         verdict = "WARN"
     else:
         verdict = "PASS"
 
     report = {
         "verdict": verdict,
+        "market_wide_jump": market_wide_jump,
+        "min_active_coverage": MIN_ACTIVE_COVERAGE,
         "tolerance": tolerance,
         "coverage": coverage,
         "fq_asset_status": load_status_summary(db),

@@ -16,8 +16,10 @@ change the strategy engine: PR #307
 `replay.py`, `runner.py`, `tradability.py`, the strategy models and the shared
 execution contracts. The readiness check reads only the persisted
 `strategy_forward_windows` / `strategy_paper_runs` / quote / scoring / signal /
-`data_asset_status` state, so it layers on top of either engine shape and adds
-no file that PR #307 owns.
+`data_asset_status` state by its field names, so it layers on top of either
+engine shape and adds no file that PR #307 owns. That coupling is explicit: a
+refactor that renames a persisted window/run field must update the check with
+it, and a renamed field is a schema mismatch rather than a silent pass.
 
 ## What Changes
 

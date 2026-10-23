@@ -38,11 +38,6 @@ QUOTE_COLUMNS = [
     "change_rate",
     "change_amount",
     "trade_status",
-    "peTTM",
-    "pbMRQ",
-    "psTTM",
-    "pcfNcfTTM",
-    "isST",
 ]
 
 
@@ -163,11 +158,6 @@ def normalize_tushare_fund_history(raw_df, code: str):
     normalized["volume"] = normalized["volume"].astype("int64")
     normalized["code"] = code
     normalized["trade_status"] = 1
-    normalized["peTTM"] = 0.0
-    normalized["pbMRQ"] = 0.0
-    normalized["psTTM"] = 0.0
-    normalized["pcfNcfTTM"] = 0.0
-    normalized["isST"] = 0
 
     return (
         normalized[QUOTE_COLUMNS]
@@ -217,11 +207,6 @@ def normalize_tushare_fund_snapshot(raw_df, trade_date: str) -> list[dict]:
                 "change_rate": _num("pct_chg"),
                 "change_amount": _num("change"),
                 "trade_status": 1,
-                "peTTM": 0.0,
-                "pbMRQ": 0.0,
-                "psTTM": 0.0,
-                "pcfNcfTTM": 0.0,
-                "isST": 0,
             }
         )
     return rows

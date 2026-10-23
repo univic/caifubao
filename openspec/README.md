@@ -69,7 +69,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 
 能力按「契约边界」命名，不按文件命名。当前活跃能力（括号内为定义它的 change）：
 
-- **数据/管道**：`datahub-runners`（多个）、`datahub-factors`（fq-adj-factor-fix）、`datahub-etf-market-data`（datahub-tushare-etf）、
+- **数据/管道**：`datahub-runners`（多个）、`datahub-factors`（fq-adj-factor-fix）、`datahub-fq-audit`（datahub-fq-chain-audit）、`datahub-etf-market-data`（datahub-tushare-etf）、
   `datahub-industry-classification`（industry-classification-code-normalization）、
   `datahub-pipeline-degradation`（balanced-core-satellite）、`dev-snapshot-import`、
   `signals-mvp`（datahub-perf-optimization）
@@ -97,7 +97,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 
 ## 5. 活跃 change 索引
 
-共 39 个（37 个既有 + 2 个新增），未完成任务合计 156。按领域分组，组内按 change 名排序。
+共 40 个（37 个既有 + 3 个新增），未完成任务合计 158。按领域分组，组内按 change 名排序。
 
 ### 5.1 数据与管道
 
@@ -110,6 +110,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 | `datahub-tushare-universe` | tushare 全市场股票池 | `datahub-runners` | 0 |
 | `fq-adj-factor-fix` | 复权因子改用真实 `adj_factor` | `datahub-factors` | 3 |
 | `datahub-tushare-etf` | tushare 场内基金（ETF/LOF）行情 + `fund_adj` 除复权 | `datahub-etf-market-data` | 3 |
+| `datahub-fq-chain-audit` | 除复权链路只读审计（覆盖/算术/源头/跳变） | `datahub-fq-audit` | 2 |
 | `industry-classification-code-normalization` | 行业分类代码规范化 | `datahub-industry-classification`、`stock-scoring` | 18 |
 
 ### 5.2 评分

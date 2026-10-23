@@ -49,11 +49,11 @@ BSON-safe JSON line encoding (strict, fail-closed):
 Collection classes and idempotency semantics:
 
 * ``date_partitioned`` (``stock_daily_quote``, ``stock_daily_basic``,
-  ``stock_factor_daily``, ``stock_signal_daily``): upsert by the same
+  ``stock_factor_daily``, ``stock_signal_daily``, ``etf_daily_quote``): upsert by the same
   business keys the online sync used (``SYNC_UPSERT_KEYS``) with bulk
   ``ReplaceOne(..., upsert=True)`` batches, so re-importing the same
   snapshot neither duplicates documents nor changes business-key identity.
-* ``snapshot`` (``finance_market``, ``stock_industry``): state-equivalent
+* ``snapshot`` (``finance_market``, ``stock_industry``, ``exchange_traded_fund``): state-equivalent
   replacement. Documents are restored into ``<name>__snapshot_staging``,
   the staged count is verified against the manifest, and only then is the
   target atomically replaced via ``renameCollection(..., dropTarget=True)``.
@@ -127,7 +127,11 @@ SNAPSHOT_IMPORT_STATE_COLLECTION = "snapshot_import_state"
 
 # Snapshot-class collections use explicit replace/drop semantics instead of
 # business-key upserts (see module docstring).
-SNAPSHOT_SNAPSHOT_CLASS_COLLECTIONS = {"finance_market", "stock_industry"}
+SNAPSHOT_SNAPSHOT_CLASS_COLLECTIONS = {
+    "finance_market",
+    "stock_industry",
+    "exchange_traded_fund",
+}
 
 # Import allow-list: exactly the online sync surface plus the dev-side
 # import-state metadata collection that replaces data_sync_state. Anything

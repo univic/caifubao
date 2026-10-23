@@ -9,8 +9,9 @@
 
 ## 2. Model and interface
 
-- [x] 2.1 Add `ExchangeTradedFund` (`object_type=etf`) to the shared model and
-  re-export it from `app.model.stock`.
+- [x] 2.1 Add standalone `ExchangeTradedFund` (`object_type=etf`) and
+  `EtfDailyQuote` to the shared model and re-export both from the datahub and
+  backend `app.model.stock` shims.
 - [x] 2.2 Add `fund_basic_all`, `fund_daily_by_trade_date`, `tushare_fund_daily`,
   `fund_adj` and `fund_adj_by_trade_date` with the 200/min pacing budget.
 - [x] 2.3 Paginate `fund_adj` in 10-year windows and reject capped/truncated
@@ -33,7 +34,9 @@
   (`universe|daily|backfill|status`) with job-run tracking.
 - [x] 4.2 Add `scripts/caifubao etf ...` commands and help text.
 - [x] 4.3 Add a suspended-by-default research CronJob for the daily ETF sync.
-- [x] 4.4 Document the operator flow and the provider caps.
+- [x] 4.4 Add `exchange_traded_fund` and `etf_daily_quote` to the online-sync and
+  snapshot registry (aliases `etf`, `etf_quote`).
+- [x] 4.5 Document the operator flow and the provider caps.
 
 ## 5. Validation
 

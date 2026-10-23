@@ -700,12 +700,15 @@ cmd_system_pod() {
 # never trade.
 
 cmd_etf_universe() {
+  [[ $# -gt 0 ]] && die "Usage: caifubao etf universe"
   info "Syncing the ETF universe from tushare fund_basic..."
   _pod_exec "$PYTHON_BIN" -m app.jobs.etf_sync_runner universe
 }
 
 cmd_etf_daily() {
   local date="${1:-}"
+  [[ $# -gt 1 ]] && die "Usage: caifubao etf daily [DATE]"
+  [[ "$date" == -* ]] && die "Unknown option for etf daily: $date"
   local args=(daily)
   if [[ -n "$date" ]]; then args+=(--date "$date"); fi
   info "Syncing ETF quotes + fund_adj FQ for ${date:-today}..."
@@ -716,11 +719,15 @@ cmd_etf_backfill() {
   local codes=() all=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --all) all=1; shift ;;
+      --all)  all=1; shift ;;
       --code) codes+=("$(_opt_value "$1" "${2:-}")"); shift 2 ;;
+      -*)     die "Unknown option for etf backfill: $1" ;;
       *)      codes+=("$1"); shift ;;
     esac
   done
+  if [[ "$all" -eq 1 && ${#codes[@]} -gt 0 ]]; then
+    die "Use either explicit codes or --all, not both"
+  fi
   local args=(backfill)
   if [[ "$all" -eq 1 ]]; then
     args+=(--all)
@@ -736,6 +743,8 @@ cmd_etf_backfill() {
 
 cmd_etf_status() {
   local code="${1:-}"
+  [[ $# -gt 1 ]] && die "Usage: caifubao etf status [CODE]"
+  [[ "$code" == -* ]] && die "Unknown option for etf status: $code"
   local args=(status)
   if [[ -n "$code" ]]; then args+=(--code "$code"); fi
   _pod_exec "$PYTHON_BIN" -m app.jobs.etf_sync_runner "${args[@]}"

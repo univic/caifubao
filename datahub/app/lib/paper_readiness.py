@@ -28,16 +28,19 @@ STOCK_COLLECTION = "basic_stock"
 WINDOW_COLLECTION = "strategy_forward_windows"
 RUN_COLLECTION = "strategy_paper_runs"
 MARKET_COLLECTION = "finance_market"
+ETF_COLLECTION = "exchange_traded_fund"
+ETF_QUOTE_COLLECTION = "etf_daily_quote"
 
 HALT_PATH_ENV = "CAIFUBAO_STRATEGY_HALT_FILE"
 MARKET_NAME = "ChinaAStock"
 SESSION_CLOSE_MINUTE = 15 * 60
 
 LIMITATIONS = [
-    "paper NAV marks positions at raw open/close: cash distributions are not "
-    "credited, so total return is understated across ex-dividend dates "
-    "(documented gap; the execution model must credit distributions before "
-    "paper results are read as tradable evidence)",
+    "the current (pre-#307) paper NAV marks positions at raw open/close: cash "
+    "distributions are not credited, so total return is understated across "
+    "ex-dividend dates. This limitation is scoped to the NAV implementation "
+    "the check observes; the coordinated execution-model change retires it "
+    "when the ledger credits distributions and share multipliers",
     "paper target weights are not an account: no broker, no order, no fill "
     "against a real account",
     "forward-window gaps are permanent (a missed session is never backfilled)",
@@ -431,14 +434,10 @@ def load_inputs(
         except (OSError, ValueError):
             inputs.halt_state = {"halted": True, "reason": "unreadable halt file"}
 
-    etf_codes = set(
-        db[STOCK_COLLECTION].distinct(
-            "code", {"object_type": "etf", "active_status": 0}
-        )
-    )
+    etf_codes = set(db[ETF_COLLECTION].distinct("code", {"active_status": 0}))
     inputs.etf_count = len(etf_codes)
     if etf_codes:
-        etf_latest = db[QUOTE_COLLECTION].find_one(
+        etf_latest = db[ETF_QUOTE_COLLECTION].find_one(
             {"code": {"$in": sorted(etf_codes)}}, {"date": 1}, sort=[("date", -1)]
         )
         inputs.etf_latest_quote_date = _as_date((etf_latest or {}).get("date"))
@@ -447,12 +446,12 @@ def load_inputs(
                 inputs.etf_latest_quote_date, datetime.time.min
             )
             quoted_etfs = set(
-                db[QUOTE_COLLECTION].distinct(
+                db[ETF_QUOTE_COLLECTION].distinct(
                     "code", {"code": {"$in": sorted(etf_codes)}, "date": etf_day}
                 )
             )
             if quoted_etfs:
-                inputs.etf_missing_fq_count = db[QUOTE_COLLECTION].count_documents(
+                inputs.etf_missing_fq_count = db[ETF_QUOTE_COLLECTION].count_documents(
                     {
                         "code": {"$in": sorted(quoted_etfs)},
                         "date": etf_day,
