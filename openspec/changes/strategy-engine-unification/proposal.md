@@ -52,7 +52,8 @@
   有状态撮合引擎。research 的 BACKTEST/REPLAY/模拟执行与 trading 的 TRADING_PAPER/LIVE
   分域运行；未知可交易性策略显式配置，默认 fail closed。
 - **Legacy 冻结**：`backend/app/services/backtest_service.py` 的 6 种策略冻结为
-  legacy（只读、不再新增策略），策略语义只在 datahub 策略引擎演进。
+  legacy（只读、不再新增策略）。新策略语义由 research domain 的策略引擎演进；当前
+  `datahub/app/lib/strategy_engine/` 是迁移期物理位置，不代表 data domain 的目标所有权。
 - **证据收敛**：research 的 backtest/replay/前瞻模拟产物统一引用 `artifact-contract` 的
   `artifact_id` / `artifact_hash` / `input_snapshot` 契约（replay 现有 `input_hash` 只做映射）。
   现有 `StrategyPaperRun` 是 research 的目标组合/前瞻计划证据，不等同于 trading/paper
