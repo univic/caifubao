@@ -149,7 +149,66 @@ risk policies instead of silently skipping the risk gate. Trading paper/live
 enforcement and operator halt persistence remain separate, unimplemented
 domain-local responsibilities.
 
-## 7. Current CI dependency
+## 7. Research event ledger and recovery
+
+`shared/caifubao_contracts/strategy_ledger_events.py` is the versioned,
+side-effect-free event validator. Domain-scoped events state `source_domain`,
+`account_id`, `currency=CNY`, `event_id`, `order_id`, `stock_code`,
+`side`, and an explicit `execution_date`; filled events also carry
+`fill_id`, `quantity`, `price` and fee components. Research events may
+carry the pinned `spec_hash` and `decision_date`. They are never an
+operational trading account.
+
+Research event kinds are `FILL`, `REJECTED`, `MARK`, `DIVIDEND`,
+`SPLIT` and `WRITE_OFF`. Each non-fill corporate adjustment must have an
+attributable source/reason; missing market quotes do not fabricate a
+`WRITE_OFF`. The event stream is replayable:
+
+```python
+from app.lib.strategy_engine.simulation_ledger import ResearchSimulationLedger
+
+restored = ResearchSimulationLedger.rebuild(
+    artifact.payload["events"],
+    initial_cash=artifact.payload["ledger_snapshot"]["initial_cash"],
+)
+assert restored.snapshot() == artifact.payload["ledger_snapshot"]
+```
+
+Replaying the same immutable event id with the same content is a no-op;
+replaying a changed event under the same id fails. The ledger validates
+invalid marks, fill reference prices, exit values and account limits before
+mutation. No trading database or broker is involved.
+
+When Spec-backed `strategy nav` runs, the derived simulation artifact is
+persisted by default. Historical config-backed runs preserve the explicit
+`--persist-research-artifact` opt-in. The `strategy report` command
+includes a bounded `research_simulation` summary when an artifact is
+available, with per-name blocked reasons, filled counts and artifact hash.
+A missing artifact is represented as `null` rather than invented evidence.
+
+### Risk default policy and refusal codes
+
+The default risk policy has no turnover or position cap, zero cash floor,
+no drawdown threshold, no concentration/gross exposure cap, and
+`regime_policy=none`; any new threshold changes the canonical Spec hash.
+The supported non-default regime modes are `bull_only` and
+`bear_reduce_only`. Valid frozen regime values are `bull`, `bear`,
+and `sideways` (60-session CSI 300 classifier); missing classification
+**fails closed** when a regime policy is enabled.
+
+| Rejection code | Trigger |
+|:---|:---|
+| `INSUFFICIENT_HOLDINGS` | Requested sell quantity exceeds shares not already reserved for a sell |
+| `MAX_POSITIONS` | New BUY would exceed current occupied slots |
+| `CASH_FLOOR` | BUY would use cash reserved by the declared floor |
+| `TURNOVER_BUDGET` | Requested turnover exceeds the session budget |
+| `DRAWDOWN_BREAKER` | Portfolio drawdown threshold reached; risk-increasing BUY refused |
+| `REGIME_BLOCKED` | Frozen market regime fails the specified entry policy |
+| `CONCENTRATION` | Name exposure after BUY breaches max single-name share |
+| `GROSS_EXPOSURE` | Gross exposure after BUY exceeds cap |
+| `HALTED` | Explicitly captured halt takes precedence; no intents approved |
+
+## 8. Current CI dependency
 
 The public PR dispatches a dry-run workflow in the private overlay repository.
 Its failure must be investigated in the **private** Actions run and cannot be
