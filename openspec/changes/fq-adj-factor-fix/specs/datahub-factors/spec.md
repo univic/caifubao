@@ -223,3 +223,44 @@ report and the job-run record.
   permits research coverage to exceed the legacy environment, so a coverage
   regression still FAILS
 - AND a total count MUST NOT be used to mask a single-class regression
+
+### Requirement: The FQ/HFQ chain is auditable on demand
+
+The datahub SHALL provide a read-only audit that reports active-universe
+coverage, stored HFQ arithmetic, and a sampled comparison against the tushare
+`adj_factor` source of truth, so the chain's reliability can be measured again
+after any provider or pipeline change.
+
+#### Scenario: Coverage and arithmetic are reported
+
+- GIVEN the latest session's active stock quotes
+- WHEN the audit runs
+- THEN it reports how many active stocks were quoted and how many of those
+  quote rows lack `fq_factor`
+- AND it verifies `*_hfq == raw × fq_factor` on the stored rows with a small
+  rounding tolerance
+
+#### Scenario: Sample is compared to the source
+
+- GIVEN a bounded sample of active stocks
+- WHEN the audit fetches tushare `adj_factor` for each sample
+- THEN it compares every stored factor date against the provider value
+- AND reports the maximum absolute difference, mismatches beyond the declared
+  tolerance, source gaps, and rows that precede the first provider factor
+- AND a provider error is reported per code and never treated as a pass
+
+#### Scenario: Verdict is explicit
+
+- GIVEN the coverage, arithmetic and sample results
+- WHEN the audit finishes
+- THEN it returns PASS, WARN, or FAIL with a non-zero process exit for WARN and
+  FAIL
+- AND a FAIL is returned for any missing active-row factor or any sampled
+  divergence beyond tolerance
+
+#### Scenario: Market-wide jump scan is available
+
+- GIVEN the operator requests the jump scan over a bounded window
+- WHEN the audit runs
+- THEN the existing per-date factor-jump scan is included in the report
+- AND the scan remains read-only

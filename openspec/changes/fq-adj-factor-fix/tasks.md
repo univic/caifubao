@@ -53,3 +53,14 @@
 - [x] 6.6 时效语义：`--trade-date` 显式钉住；省略时以 `finance_market.trade_calendar` + 15:00 Asia/Shanghai 推导应完成会话，避免双方共同陈旧通过
 - [x] 6.7 抽样池不再 1000 上限截断；池完整性（pool_size vs 当日行数）入报告并 FAIL 校验
 - [x] 6.8 修复合同/QA 复核发现：默认开启源校验、index 塌缩、抽样偏置、声明作用域断言、unsupported 类、数值类型严格、CLI/job-run 与评分抽样测试
+
+## 7. Reliability audit (2026-10-23)
+
+- [x] 7.1 Add a read-only chain audit (`datahub/scripts/fq_chain_audit.py` +
+  handler) covering active-universe coverage, stored HFQ arithmetic and a
+  sampled tushare `adj_factor` comparison with the writer-switch tolerance.
+- [x] 7.2 Include the existing market-wide jump scan and explicit
+  PASS/WARN/FAIL exit codes.
+- [x] 7.3 Record the audit's real-data findings and residual risks in the
+  operator documentation (provider re-publication drift, inactive/delisted
+  latest rows, leading-factor alignment, raw-price paper NAV).
