@@ -103,6 +103,39 @@ def _as_of_text(value) -> str | None:
     return str(value)
 
 
+def reconcile_trading_projection(
+    trading_projection: dict,
+    account_snapshot: dict,
+    *,
+    tolerances: dict | None = None,
+) -> dict:
+    """Strict, read-only adapter for future trading-owned reconciliation.
+
+    The caller MUST inject a frozen authoritative TradingPortfolioLedger
+    projection. Research target weights and simulation ledgers are never
+    accepted as a substitute for actual filled positions.
+    """
+    if not isinstance(trading_projection, dict):
+        raise ValueError("trading ledger projection is required")
+    if trading_projection.get("source_domain") != "trading":
+        raise ValueError("trading ledger projection source_domain must be trading")
+    if not trading_projection.get("account_id"):
+        raise ValueError("trading ledger projection account_id is required")
+    if "cash" not in trading_projection:
+        raise ValueError("trading ledger projection cash is required")
+    if "positions" not in trading_projection:
+        raise ValueError("trading ledger projection positions is required")
+    if not isinstance(account_snapshot, dict):
+        raise ValueError("account snapshot must be an object")
+    planned_cash = _as_float(trading_projection["cash"], "trading ledger cash")
+    targets = _position_rows(trading_projection)
+    if any(row["quantity"] is None for row in targets):
+        raise ValueError("trading ledger projected quantities are required")
+    # Never let an account-supplied 'planned_cash' override the ledger.
+    observed = {**account_snapshot, "planned_cash": planned_cash}
+    return reconcile_plan_vs_account(targets, observed, tolerances=tolerances)
+
+
 def reconcile_plan_vs_account(
     target_holdings,
     account_snapshot,
