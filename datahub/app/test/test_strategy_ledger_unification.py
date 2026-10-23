@@ -609,3 +609,44 @@ def test_research_nav_returns_independent_daily_legacy_ledger_parity():
         result["ledger_events"], initial_cash=10000
     )
     assert restored.snapshot() == result["ledger_snapshot"]
+
+
+def test_research_market_regime_gate_uses_snapshot_and_halt_first():
+    import datetime as dt
+
+    from app.jobs.strategy_risk_replay import replay_with_market_regime
+    from app.lib.strategy_engine.config import DEFAULT_STRATEGY_CONFIG
+    from app.lib.strategy_engine.spec import legacy_to_spec
+
+    class Bear:
+        lookback_days = 60
+
+        def classify_date(self, at):
+            assert at == dt.datetime(2026, 10, 23)
+            return "bear"
+
+    spec = legacy_to_spec(DEFAULT_STRATEGY_CONFIG)["spec"]
+    spec["risk"]["regime_policy"] = "bull_only"
+    intents = [{
+        "intent_id": "buy",
+        "stock_code": "sh600001",
+        "side": "BUY",
+        "quantity": 100,
+        "price": 2,
+    }]
+    account = {"cash": 1000, "nav": 1000, "positions": {}}
+    result = replay_with_market_regime(
+        spec=spec, account=account, intents=intents,
+        decision_date=dt.datetime(2026, 10, 23), regime_service=Bear(),
+    )
+    assert result["rejected"][0]["reason_code"] == "REGIME_BLOCKED"
+    assert result["evidence_kind"] == "REPLAY"
+    halted = replay_with_market_regime(
+        spec=spec, account=account, intents=intents,
+        decision_date=dt.datetime(2026, 10, 23), regime_service=Bear(),
+        halt_snapshot={
+            "halted": True, "changed_by": "operator", "reason": "incident"
+        },
+    )
+    assert halted["status"] == "HALTED"
+    assert halted["rejected"][0]["reason_code"] == "HALTED"
