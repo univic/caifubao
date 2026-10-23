@@ -667,3 +667,23 @@ def test_research_market_regime_gate_uses_snapshot_and_halt_first():
     )
     assert halted["status"] == "HALTED"
     assert halted["rejected"][0]["reason_code"] == "HALTED"
+
+
+def test_research_simulator_never_runs_as_trading_paper_or_live():
+    from caifubao_contracts.strategy_modes import (
+        require_research_mode,
+        strategy_domain,
+    )
+    from app.lib.strategy_engine.nav import simulate_paper_nav
+
+    for mode in ("BACKTEST", "REPLAY", "RESEARCH_SIMULATION"):
+        assert strategy_domain(mode) == "research"
+        assert require_research_mode(mode) is None
+    for mode in ("TRADING_PAPER", "LIVE"):
+        assert strategy_domain(mode) == "trading"
+        with pytest.raises(ValueError, match="independent trading runtime"):
+            simulate_paper_nav(
+                prices={}, schedule=[], initial_nav=10000, mode=mode
+            )
+    with pytest.raises(ValueError, match="unsupported"):
+        strategy_domain("paper")
