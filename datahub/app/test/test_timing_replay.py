@@ -485,12 +485,8 @@ def test_timing_replay_shared_lot_and_cost_conformance():
     assert _max_buy_quantity(
         1500, 10, 100, friction, stock_code="sh600001"
     ) == fit_buy_quantity(1500, price, 100, 100, profile)
-    trade, cash_change = _filled_trade(
-        "2026-01-05", "SELL", 100, 10, friction
-    )
-    expected = execution_fees(
-        adjusted_price(10, "SELL", 0.001), 100, "SELL", profile
-    )
+    trade, cash_change = _filled_trade("2026-01-05", "SELL", 100, 10, friction)
+    expected = execution_fees(adjusted_price(10, "SELL", 0.001), 100, "SELL", profile)
     assert trade["commission"] == pytest.approx(round(expected["commission"], 4))
     assert trade["stamp_duty"] == pytest.approx(round(expected["stamp_duty"], 4))
     assert cash_change == pytest.approx(
