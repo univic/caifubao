@@ -633,6 +633,15 @@ def run_nav(
         return {"found_runs": 0, "reason": "no COMPLETED runs in range"}
 
     schedule = schedule_from_runs(runs)
+    # Provenance is attached only to this research simulation's transient
+    # schedule; immutable persisted forward plans are never rewritten.
+    decision_by_execution = {
+        run.execution_date.date().isoformat(): run.date.date().isoformat()
+        for run in runs
+        if getattr(run, "execution_date", None) is not None
+    }
+    for item in schedule:
+        item["decision_date"] = decision_by_execution[item["date"]]
     if not schedule:
         return {"found_runs": len(runs), "reason": "no runs carry holdings"}
     execution_from = datetime.datetime.fromisoformat(schedule[0]["date"])
