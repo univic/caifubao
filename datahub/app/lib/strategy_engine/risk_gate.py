@@ -43,6 +43,7 @@ def evaluate_risk(
     max_drawdown = policy.get("max_drawdown_pct")
     drawdown = float(account.get("drawdown") or 0)
     approved, rejected = [], []
+    reserved_sells: dict[str, int] = {}
     turnover = 0.0
     ordered = sorted(
         enumerate(intents), key=lambda pair: (pair[1].get("side") != "SELL", pair[0])
@@ -69,11 +70,10 @@ def evaluate_risk(
         notional = quantity * float(price)
         reason = None
         if side == "SELL":
-            if positions.get(code, 0) < quantity:
+            if positions.get(code, 0) - reserved_sells.get(code, 0) < quantity:
                 reason = "INSUFFICIENT_HOLDINGS"
-            # A submitted sell is not a fill: do NOT release cash or position
-            # capacity for new buys. A limit-down or suspended exit might fail.
-            # The caller must re-evaluate buys after actual fill events.
+            # Reserve sell *quantity*, never proceeds or freed positions:
+            # submission is not a fill, and a blocked exit may remain held.
         elif max_drawdown is not None and drawdown <= -float(max_drawdown):
             reason = "DRAWDOWN_BREAKER"
         elif (
@@ -89,13 +89,16 @@ def evaluate_risk(
             and turnover + notional > float(max_turnover) * nav + 1e-8
         ):
             reason = "TURNOVER_BUDGET"
-        else:
-            positions[code] = positions.get(code, 0) + quantity
-            cash -= notional
-
         if reason:
             rejected.append({"intent": intent, "reason_code": reason})
         else:
+            if side == "BUY":
+                # Reserve cash/position capacity for approved buys in this
+                # batch. Exits release neither until a fill is observed.
+                positions[code] = positions.get(code, 0) + quantity
+                cash -= notional
+            else:
+                reserved_sells[code] = reserved_sells.get(code, 0) + quantity
             approved.append(intent)
             turnover += notional
     return {"status": "OK", "approved": approved, "rejected": rejected}
