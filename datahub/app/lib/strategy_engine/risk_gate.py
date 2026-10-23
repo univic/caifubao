@@ -1,104 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Deterministic research risk-gate evaluator over explicit account snapshots.
+"""Research compatibility facade for the shared, pure portfolio risk gate.
 
-Operational trading halt, order persistence and brokerage remain trading-owned.
+Domain-local research passes its own ledger snapshot and an explicit market
+snapshot; trading runs its own authoritative gate using the shared contract.
+No database, broker, or operational halt store is imported here.
 """
 
-from __future__ import annotations
+from caifubao_contracts.strategy_risk import evaluate_risk
 
-import copy
-import math
-
-
-def evaluate_risk(
-    *,
-    intents: list[dict],
-    account: dict,
-    policy: dict,
-    halted: bool = False,
-) -> dict:
-    """Return approved and rejected intents, without mutating input or state.
-
-    Each intent contains intent_id, side, stock_code, quantity and price.
-    A sell approval is not assumed filled: no cash or position capacity is
-    released until the actual ledger changes. Blocked exits therefore cannot
-    accidentally permit an over-cap buy.
-    """
-    if halted:
-        return {
-            "status": "HALTED",
-            "approved": [],
-            "rejected": [
-                {"intent": copy.deepcopy(x), "reason_code": "HALTED"} for x in intents
-            ],
-        }
-    cash = float(account["cash"])
-    nav = float(account["nav"])
-    if not math.isfinite(cash) or not math.isfinite(nav) or nav <= 0 or cash < 0:
-        raise ValueError("account cash/nav must be finite and non-negative")
-    positions = {k: int(v["quantity"]) for k, v in account.get("positions", {}).items()}
-    max_positions = policy.get("max_positions")
-    max_turnover = policy.get("max_turnover_pct")
-    cash_floor = float(policy.get("cash_floor_pct") or 0)
-    max_drawdown = policy.get("max_drawdown_pct")
-    drawdown = float(account.get("drawdown") or 0)
-    approved, rejected = [], []
-    reserved_sells: dict[str, int] = {}
-    turnover = 0.0
-    ordered = sorted(
-        enumerate(intents), key=lambda pair: (pair[1].get("side") != "SELL", pair[0])
-    )
-    for _, raw in ordered:
-        intent = copy.deepcopy(raw)
-        side = intent.get("side")
-        quantity = intent.get("quantity")
-        price = intent.get("price")
-        code = intent.get("stock_code")
-        if (
-            not intent.get("intent_id")
-            or side not in ("BUY", "SELL")
-            or type(quantity) is not int
-            or quantity <= 0
-            or not isinstance(code, str)
-            or not code
-            or isinstance(price, bool)
-            or not isinstance(price, (int, float))
-            or not math.isfinite(price)
-            or price <= 0
-        ):
-            raise ValueError("malformed order intent")
-        notional = quantity * float(price)
-        reason = None
-        if side == "SELL":
-            if positions.get(code, 0) - reserved_sells.get(code, 0) < quantity:
-                reason = "INSUFFICIENT_HOLDINGS"
-            # Reserve sell *quantity*, never proceeds or freed positions:
-            # submission is not a fill, and a blocked exit may remain held.
-        elif max_drawdown is not None and drawdown <= -float(max_drawdown):
-            reason = "DRAWDOWN_BREAKER"
-        elif (
-            max_positions is not None
-            and code not in positions
-            and len(positions) >= int(max_positions)
-        ):
-            reason = "MAX_POSITIONS"
-        elif notional > cash - cash_floor * nav + 1e-8:
-            reason = "CASH_FLOOR"
-        elif (
-            max_turnover is not None
-            and turnover + notional > float(max_turnover) * nav + 1e-8
-        ):
-            reason = "TURNOVER_BUDGET"
-        if reason:
-            rejected.append({"intent": intent, "reason_code": reason})
-        else:
-            if side == "BUY":
-                # Reserve cash/position capacity for approved buys in this
-                # batch. Exits release neither until a fill is observed.
-                positions[code] = positions.get(code, 0) + quantity
-                cash -= notional
-            else:
-                reserved_sells[code] = reserved_sells.get(code, 0) + quantity
-            approved.append(intent)
-            turnover += notional
-    return {"status": "OK", "approved": approved, "rejected": rejected}
+__all__ = ["evaluate_risk"]
