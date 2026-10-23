@@ -392,7 +392,9 @@ def preflight_execution_feasibility(
     if len(reference_prices) > width:
         raise ValueError("reference_prices exceeds selection.portfolio_size")
     if target_weights is not None and set(target_weights) != set(reference_prices):
-        raise ValueError("target_weights and reference_prices must name the same stocks")
+        raise ValueError(
+            "target_weights and reference_prices must name the same stocks"
+        )
     initial_nav = normalized["initial_nav"]
     investable = initial_nav * (1 - normalized["sizing"]["cash_reserve_pct"])
     budget = investable / width
