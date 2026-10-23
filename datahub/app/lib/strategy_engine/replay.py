@@ -298,3 +298,33 @@ def build_replay_artifact(
         ).encode("utf-8")
     ).hexdigest()
     return artifact
+
+
+def replay_strategy_spec_decision(
+    *,
+    spec: dict,
+    date: datetime.datetime,
+    predictions,
+    previous_holdings: list[dict] | None,
+    flags: dict[str, dict] | None = None,
+    industry_by_code: dict[str, str] | None = None,
+) -> dict:
+    """Replay one frozen decision with paper's exact pure decision builder.
+
+    Research-only, no database/clock access or forward evidence. An unsupported
+    non-default risk policy fails loudly rather than pretending that this
+    legacy decision builder has applied the new gate.
+    """
+    from app.lib.strategy_engine.runner import assemble_daily_plan
+    from app.lib.strategy_engine.spec import spec_to_legacy_config
+
+    config = spec_to_legacy_config(spec)
+    return assemble_daily_plan(
+        config=config,
+        date=date,
+        predictions=predictions,
+        previous_holdings=previous_holdings,
+        flags=flags,
+        industry_by_code=industry_by_code,
+        horizon=config["horizon"],
+    )
