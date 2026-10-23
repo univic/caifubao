@@ -94,9 +94,10 @@ records.
 
 ### Requirement: Risk state and enforcement MUST respect domain ownership
 
-The risk policy and deterministic evaluation semantics MAY be shared as pure
-functions, but operational risk state, the authoritative pre-trade gate, halt
-switch, and order rejection persistence MUST be owned by the trading runtime.
+Operational risk enforcement MUST respect domain ownership. The risk policy and
+deterministic evaluation semantics MAY be shared as pure functions, but
+operational risk state, the authoritative pre-trade gate, halt switch, and order
+rejection persistence MUST be owned by the trading runtime.
 Research MUST use only its own simulation ledger and explicit market/risk
 snapshots; it MUST NOT read or mutate trading account state or operational halt
 state. Trading MUST consume an immutable promoted StrategySpec and MUST remain
