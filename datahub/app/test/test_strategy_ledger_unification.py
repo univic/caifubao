@@ -538,6 +538,12 @@ def test_frozen_market_regime_snapshot_is_causal_and_fails_closed():
             service=Service(),
             snapshot_as_of=dt.datetime(2026, 10, 24),
         )
+    with pytest.raises(ValueError, match="after decision"):
+        frozen_regime_snapshot(
+            decision,
+            service=Service(),
+            snapshot_as_of=dt.datetime(2026, 10, 23, 1),
+        )
 
     class Missing:
         lookback_days = 60
