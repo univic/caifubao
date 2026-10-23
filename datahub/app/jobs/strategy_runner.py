@@ -348,9 +348,7 @@ def run_strategy(
         preflight_execution_feasibility(
             reconstructed["spec"],
             reference_prices=prices,
-            target_weights={
-                item["stock_code"]: item["weight"] for item in targets
-            },
+            target_weights={item["stock_code"]: item["weight"] for item in targets},
         )
     if dry_run:
         return {
