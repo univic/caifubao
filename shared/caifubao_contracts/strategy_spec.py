@@ -224,6 +224,22 @@ def validate_strategy_spec(spec: dict) -> dict:
     normalized["initial_nav"] = _finite_number(
         _required(normalized, "initial_nav", "spec"), "initial_nav", low=0.000001
     )
+    # Even without decision-time prices we can reject capital budgets that
+    # cannot afford the *minimum commission itself*. Price/lot affordability
+    # requires the separate snapshot-aware preflight before execution.
+    budget = (
+        normalized["initial_nav"]
+        * (1 - sizing["cash_reserve_pct"])
+        / selection["portfolio_size"]
+    )
+    cap = normalized["constraints"].get("max_single_stock_pct")
+    if cap is not None:
+        budget = min(budget, normalized["initial_nav"] * cap)
+    if execution["minimum_commission_cny"] >= budget:
+        raise ValueError(
+            "initial_nav/selection.portfolio_size leaves too little "
+            "per-name budget for execution.minimum_commission_cny"
+        )
     return normalized
 
 
