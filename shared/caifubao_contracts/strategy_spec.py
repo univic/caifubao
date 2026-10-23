@@ -359,6 +359,7 @@ def preflight_execution_feasibility(
     spec: dict,
     *,
     reference_prices: dict[str, float],
+    target_weights: dict[str, float] | None = None,
     max_minimum_commission_pct: float = 0.01,
 ) -> dict:
     """Fail closed on an explicit target-price snapshot before generating orders.
@@ -390,6 +391,8 @@ def preflight_execution_feasibility(
     width = normalized["selection"]["portfolio_size"]
     if len(reference_prices) > width:
         raise ValueError("reference_prices exceeds selection.portfolio_size")
+    if target_weights is not None and set(target_weights) != set(reference_prices):
+        raise ValueError("target_weights and reference_prices must name the same stocks")
     initial_nav = normalized["initial_nav"]
     investable = initial_nav * (1 - normalized["sizing"]["cash_reserve_pct"])
     budget = investable / width
@@ -413,14 +416,20 @@ def preflight_execution_feasibility(
             reference_prices[code], f"reference_prices.{code}", low=0.000001
         )
         minimum, _ = board_lot_rule(code, execution["board_lot"])
+        name_budget = budget
+        if target_weights is not None:
+            weight = _finite_number(
+                target_weights[code], f"target_weights.{code}", low=0.00000001, high=1
+            )
+            name_budget = min(budget, initial_nav * weight)
         price = adjusted_price(raw, "BUY", execution["slippage_per_side"])
         fees = execution_fees(price, minimum, "BUY", profile)
         minimum_spend = price * minimum + fees["commission"] + fees["transfer_fee"]
         minimum_share = fees["commission"] / (price * minimum)
-        if minimum_spend > budget:
+        if minimum_spend > name_budget:
             raise ValueError(
                 f"initial_nav/portfolio_size cannot buy board minimum for {code}: "
-                f"budget={budget:.2f}, needed={minimum_spend:.2f}"
+                f"budget={name_budget:.2f}, needed={minimum_spend:.2f}"
             )
         if minimum_share > max_minimum_commission_pct:
             raise ValueError(
@@ -431,6 +440,7 @@ def preflight_execution_feasibility(
             {
                 "stock_code": code,
                 "board_minimum": minimum,
+                "target_budget_cny": round(name_budget, 2),
                 "minimum_spend_cny": round(minimum_spend, 2),
                 "minimum_commission_pct": round(minimum_share, 8),
             }
