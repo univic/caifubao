@@ -186,25 +186,26 @@ backend 回测请求 JSON、timing replay manifest、factor lab `profile.yaml`�
 | `strategy-paper-runner` | 本 change 的 S0/S1 是其 config/runner 契约的演进，不推翻 |
 | `strategy-portfolio-risk-limits` | S2 在其静态约束之上增加预算/回撤/regime |
 | `strategy-live-loop-minimal` | 保留既有 halt / tradability / reconcile 契约；S1 只定义账本投影对账目标，未来 trading runtime 接管订单/账户状态时须保持输出与 fail-loud 语义，不得由 research 访问 trading 状态 |
-| `strategy-forward-evidence-capture` | 本 change 不改 FORWARD 认证口径；研究模拟工件只统一 artifact 引用，trading/paper 成交证据若成为门槛需另提契约变更 |
+| `strategy-forward-evidence-capture` | 本 change 不改 FORWARD 认证口径；S0 实现 PR 必须以 MODIFIED delta 显式区分窗口 pin 的 `legacy_config_hash` / `spec_hash`，禁止跨哈希类型比较；trading/paper 成交证据若成为门槛需另提契约变更 |
 | `artifact-contract` | 落地 `artifact_id` / `artifact_hash` / `input_snapshot` 契约（replay 现有 `input_hash` 只做映射，不改语义） |
 | `environment-model` | 本 change 遵守 data / research / trading 的目标所有权；物理路径暂留不等于 domain ownership，trading/paper 当前仍未启用 |
 | `production-capability-roadmap` | 本 change 细化策略契约与执行规则；trading/paper 与 prod 仍须独立满足其 promotion、隔离和实盘门槛 |
 
-### 5.1 计划中的 supersession（S1 实现时必须补 MODIFIED delta）
+### 5.1 计划中的 supersession（对应 S0/S1 实现 PR 必须补 MODIFIED delta）
 
-本 change 的 specs 描述目标态，但 S1 落地会改变两条**已经生效**的 Requirement。按
-OpenSpec 的 delta 规则，实现 PR 必须为它们提交 `## MODIFIED Requirements`（完整复制并
-更新原文，而不是在本 change 里静默覆盖）：
+本 change 的 specs 描述目标态，但后续实现会改变三条**已经生效**的 Requirement。按
+OpenSpec 的 delta 规则，必须在对应实现 PR 提交 `## MODIFIED Requirements`（完整复制并更新原文，
+不得在本 change 中静默覆盖）：
 
-| 目标能力 | 现行 Requirement（来源） | S1 后的变化 |
+| 目标能力 | 现行 Requirement（来源） | 实现阶段的契约变化 |
 |:---|:---|:---|
-| `strategy-engine` | `strategy-live-loop-minimal/specs/strategy-engine/spec.md`「Paper NAV simulation uses realistic T+1 cost semantics」 | NAV 由「按 `StrategyPaperRun` 目标权重推演」改为「由账本投影推导」；费用/手数/T+1 语义不变 |
-| `strategy-live-loop-minimal` | `strategy-live-loop-minimal/specs/strategy-live-loop-minimal/spec.md`「Plan-versus-account reconciliation MUST be structured and fail loud」 | 对账的计划侧由「计划目标组合」改为「账本投影」；漂移/缺失/breaks/非零退出语义不变 |
+| `strategy-engine` | `strategy-live-loop-minimal/specs/strategy-engine/spec.md`「Paper NAV simulation uses realistic T+1 cost semantics」 | 研究模拟 NAV 由「按 `StrategyPaperRun` 目标权重推演」改为「由 ResearchSimulationLedger 投影推导」；费用/手数/T+1 语义不变 |
+| `strategy-live-loop-minimal` | `strategy-live-loop-minimal/specs/strategy-live-loop-minimal/spec.md`「Plan-versus-account reconciliation MUST be structured and fail loud」 | trading 账户对账的计划侧由「计划目标组合」改为「TradingPortfolioLedger 投影」；漂移/缺失/breaks/非零退出语义不变 |
+| `strategy-forward-evidence` | `strategy-forward-evidence-capture/specs/strategy-forward-evidence/spec.md`「Certified window MUST be append-only and unique per model/horizon」及相关 config-hash requirements | 窗口显式 pin 的 hash kind（`legacy_config_hash` 或 `spec_hash`）；禁止跨哈希类型比较，既有 FORWARD 认证与计数规则不变 |
 
 在对应实现 PR 的 MODIFIED delta 合并前，上述 Requirement 仍是现行契约；本 change 不得被
-当作已生效的替代。另：当前 FORWARD 认证仍针对 research-side `StrategyPaperRun` 计划证据，
-不是 trading/paper 的成交账本证据；本 change 不改变该认证口径。若未来要把 promotion 的
+当作已生效的替代。当前 FORWARD 认证仍针对 research-side `StrategyPaperRun` 计划证据，不是
+trading/paper 的成交账本证据；本 change 不改变该认证口径。若未来要把 promotion 的
 120-session 门槛改为 trading/paper 成交证据，必须另提明确的 MODIFIED delta。
 
 ## 6. 关键取舍
