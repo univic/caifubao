@@ -17,9 +17,10 @@ def require_trading_projection(projection: dict) -> dict:
         raise ValueError("trading ledger projection is required")
     if projection.get("source_domain") != "trading":
         raise ValueError("trading ledger projection source_domain must be trading")
-    if not isinstance(projection.get("account_id"), str) or not projection[
-        "account_id"
-    ]:
+    if (
+        not isinstance(projection.get("account_id"), str)
+        or not projection["account_id"]
+    ):
         raise ValueError("trading ledger projection account_id is required")
     cash = projection.get("cash")
     if (
