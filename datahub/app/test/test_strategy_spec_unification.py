@@ -47,6 +47,46 @@ def test_spec_hash_order_insensitive_and_no_mutation():
     assert original == legacy_to_spec(DEFAULT_STRATEGY_CONFIG)["spec"]
 
 
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"mode": "top_n", "portfolio_size": 2},
+        {
+            "mode": "top_percentile",
+            "lower": 0.2,
+            "upper": 1.0,
+            "portfolio_size": 3,
+        },
+    ],
+)
+def test_migrated_spec_preserves_target_and_rebalance_golden(selection):
+    from types import SimpleNamespace
+
+    from app.lib.strategy_engine.selection import (
+        compute_rebalance,
+        select_target_holdings,
+    )
+
+    legacy = validate_strategy_config(
+        {"score_model_version": "test-v1", "selection": selection}
+    )
+    migrated = legacy_to_spec(legacy)
+    restored = spec_to_legacy_config(migrated["spec"])
+    predictions = [
+        SimpleNamespace(stock_code="sh600001", score=3, percentile=0.9),
+        SimpleNamespace(stock_code="sh600002", score=2, percentile=0.6),
+        SimpleNamespace(stock_code="sh600003", score=1, percentile=0.1),
+    ]
+    previous = [{"stock_code": "sh600003", "weight": 1.0}]
+    target_old = select_target_holdings(predictions, legacy)
+    target_new = select_target_holdings(predictions, restored)
+    assert target_old == target_new
+    assert compute_rebalance(previous, target_old) == compute_rebalance(
+        previous, target_new
+    )
+    assert migrated["legacy_config_hash"] == strategy_config_hash(legacy)
+
+
 def test_fee_change_changes_hash():
     original = legacy_to_spec(DEFAULT_STRATEGY_CONFIG)["spec"]
     updated = copy.deepcopy(original)
