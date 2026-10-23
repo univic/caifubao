@@ -213,6 +213,8 @@ jobs:
       - name: Run Ruff
         run: |
           ruff check datahub/
+          # Show an actionable diff when format verification fails.
+          ruff format --diff datahub/ || true
           ruff format --check datahub/
 
   compute-worker-check:
