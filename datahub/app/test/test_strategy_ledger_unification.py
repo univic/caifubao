@@ -8,6 +8,7 @@ from caifubao_contracts.strategy_execution import (
     deterministic_fill_id,
     execution_fees,
     fit_buy_quantity,
+    session_limit_flags,
     tradable_open,
 )
 from app.lib.strategy_engine.risk_gate import evaluate_risk
@@ -271,6 +272,29 @@ def test_risk_halt_and_drawdown_are_explainable():
         ]
         == "HALTED"
     )
+
+
+def test_shared_board_limit_flags_match_research_tradability_adapter():
+    from app.lib.strategy_engine.tradability import limit_verdict
+
+    quotes = [
+        ("sh600000", 10, 10.99, False),
+        ("sz300750", 10, 11.99, False),
+        ("sh688001", 10, 8.01, False),
+        ("sh600001", 10, 10.49, True),
+    ]
+    limits = [10, 20, 20, 5]
+    for (code, previous, opened, is_st), limit in zip(quotes, limits):
+        shared = session_limit_flags(opened, previous, limit)
+        research = limit_verdict(
+            stock_code=code,
+            open_price=opened,
+            previous_close=previous,
+            is_st=is_st,
+        )
+        assert shared == research
+    assert session_limit_flags(0, 10, 10) == (None, None)
+    assert session_limit_flags(10, None, 10) == (None, None)
 
 
 def test_shared_risk_priority_budget_regime_and_exposure():
