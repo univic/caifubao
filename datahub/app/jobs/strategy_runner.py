@@ -673,6 +673,7 @@ def run_nav(
         benchmark_returns=benchmark,
         execution=resolve_execution(resolved),
         initial_nav=float(resolved.get("initial_nav", 1_000_000.0)),
+        spec_hash=strategy_spec_hash,
     )
     attached = attach_nav_points(runs, result["curve"])
 
