@@ -343,3 +343,38 @@ def test_cli_exits_zero_when_fully_reconciled(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["breaks"] == []
+
+
+def test_trading_ledger_reconciliation_rejects_research_and_overrides_account_plan():
+    from app.lib.strategy_engine.reconcile import reconcile_trading_projection
+
+    projection = {
+        "source_domain": "trading",
+        "account_id": "paper-1",
+        "cash": 50,
+        "positions": {"sh600000": {"quantity": 100}},
+    }
+    observed = {
+        "cash": 60,
+        "planned_cash": 60,
+        "positions": {"sh600000": 90},
+    }
+    first = reconcile_trading_projection(projection, observed)
+    assert first["ok"] is False
+    assert first["cash_drift"]["planned"] == 50
+    assert first["cash_drift"]["actual"] == 60
+    assert first["quantity_drift"][0]["drift"] == -10
+    assert observed["planned_cash"] == 60  # read-only, no mutation
+    matching = reconcile_trading_projection(
+        projection, {"cash": 50, "positions": {"sh600000": 100}}
+    )
+    assert matching["ok"] is True
+    with pytest.raises(ValueError, match="source_domain"):
+        reconcile_trading_projection(
+            {**projection, "source_domain": "research"}, observed
+        )
+    with pytest.raises(ValueError, match="cash is required"):
+        reconcile_trading_projection(
+            {key: value for key, value in projection.items() if key != "cash"},
+            observed,
+        )
