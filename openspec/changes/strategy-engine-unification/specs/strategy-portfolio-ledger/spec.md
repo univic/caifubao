@@ -4,10 +4,11 @@
 
 ### Requirement: A position MUST exist only as the result of a fill
 
-The engine MUST keep a persisted ledger of actual account state: positions,
-quantities, board lots, cost basis, cash, realized and unrealized P&L. A target
-portfolio MUST be treated as intent only; it MUST NOT stand in for position
-state, and NAV MUST be derived from the ledger rather than from target weights.
+A ledger projection MUST derive position quantity and cost basis from ordered fill
+events, not from target weights. It MUST track cash, board-legal quantities,
+cost basis, realized and unrealized P&L. A target portfolio is intent only and
+MUST NOT stand in for position state; NAV for a simulation or account MUST be
+derived from that domain's ledger projection.
 
 #### Scenario: A blocked buy creates no position
 
@@ -24,72 +25,143 @@ state, and NAV MUST be derived from the ledger rather than from target weights.
 - THEN its quantity and cost basis are unchanged
 - AND only unrealized P&L moves with the mark
 
+### Requirement: Research and trading ledgers MUST remain domain-local
+
+The system MUST maintain separate state and persistence boundaries for research
+simulation and trading accounts. A ResearchSimulationLedger MAY record simulated
+fills and marks as immutable research evidence, but MUST NOT represent an
+operational trading account or read/write the trading account store. The
+TradingPortfolioLedger MUST be authoritative for TRADING_PAPER/LIVE positions,
+cash, orders, fills, rejections and account reconciliation, and MUST be owned by
+the trading runtime. Shared event schemas and accounting rules MUST NOT imply a
+shared database, shared account state, or a runtime dependency from trading to
+research.
+
+#### Scenario: Research simulation cannot mutate a trading account
+
+- GIVEN a BACKTEST, REPLAY or RESEARCH_SIMULATION run
+- WHEN simulated fills and marks are produced
+- THEN they are stored only as research simulation state or immutable research
+  artifacts
+- AND no trading order, account ledger or operational halt state is read or changed
+
+#### Scenario: Trading remains independent of research availability
+
+- GIVEN a TRADING_PAPER runtime with a promoted immutable StrategySpec artifact
+- WHEN the research service or research database is unavailable
+- THEN trading can continue using its pinned artifact and approved market-data
+  inputs
+- AND all order and account state remains in the trading domain
+
 ### Requirement: Fills and rejections MUST be persisted with reasons
 
-Every executed fill and every refused order MUST be persisted as an immutable
-ledger event carrying at least: the strategy id, spec hash, decision date,
-execution date, side, quantity, execution price, fees (commission, transfer fee,
-stamp duty, slippage), and — for refusals — a machine-readable reason code. This
-requirement changes only **persistence**: which orders are refused stays owned by
-the existing tradability and halt contracts, and this spec MUST NOT relax or
-redefine them. An order refused at the execution session MUST NOT be silently
-dropped, and the daily report MUST be able to reconstruct which intents became
-fills.
+Every fill and refused intent MUST be represented as an immutable event in its
+own domain: a research artifact event for research simulation, or a persisted
+ledger event for trading. Each event MUST carry at least strategy identity,
+`spec_hash`, decision date, execution date, side, quantity, price when filled,
+fee breakdown (commission, transfer fee, stamp duty and slippage), and a
+machine-readable refusal reason when rejected. Events MUST identify the source
+domain and link to the stable intent/order identity. Persistence MUST NOT relax
+the existing tradability or halt contracts. A refused order MUST NOT be silently
+dropped, and reports MUST reconstruct which intents became fills.
 
-#### Scenario: A limit-locked sell is visible in the ledger
+#### Scenario: A limit-locked sell is visible without fabricating a fill
 
-- GIVEN a held name leaving the target book whose session is limit-down
+- GIVEN a held name leaving the target whose session is limit-down
 - WHEN the session is executed
 - THEN no sell fill is written
 - AND a rejection event is written with the position retained
-- AND the report shows the refusal for that name
+- AND the report shows the refusal for that name and its reason code
 
 #### Scenario: A fee breakdown is attributable per fill
 
 - GIVEN a completed buy and a completed sell for one name
-- WHEN the ledger is queried for that name
-- THEN both fills expose their fee components
-- AND the round-trip cost can be recomputed from the events alone
+- WHEN the ledger or research artifact is queried for that name
+- THEN both fill events expose their fee components
+- AND the round-trip cost can be recomputed from those events alone
 
-### Requirement: The ledger MUST be rebuildable and deterministic
+### Requirement: Ledger events MUST be rebuildable, deterministic and idempotent
 
-Applying the same ordered fill events to an empty account MUST reproduce the same
-positions, cash and P&L, without reading target books or prior derived state.
-Marking a session twice MUST NOT double-count a fill or a fee.
+Applying the same ordered event stream to an empty domain-local ledger MUST
+reproduce the same positions, cash and P&L without reading target books or prior
+derived state. Event identity MUST distinguish an intent, an order, an execution
+attempt and each individual fill. Re-submitting the same event MUST be idempotent,
+while multiple legitimate partial fills for one order MUST remain distinct.
 
-#### Scenario: Rebuild from fills matches the live ledger
+#### Scenario: Re-running a session does not duplicate fills
 
-- GIVEN a ledger produced by a sequence of sessions
-- WHEN the same fill events are replayed into an empty account
-- THEN positions, cash and P&L match the original ledger
+- GIVEN a session already applied with identified fill events
+- WHEN the same session is replayed
+- THEN existing events are recognized by stable event identity
+- AND no duplicate fill or fee is applied
+
+#### Scenario: Partial fills remain distinct
+
+- GIVEN one order intent that receives two partial fills in the same session
+- WHEN both fill events are applied
+- THEN both fills are retained with distinct fill identities
+- AND their aggregate quantity is used for the position and cash projection
+
+#### Scenario: Rebuild from events matches the original ledger
+
+- GIVEN a ledger produced by an ordered sequence of fill and adjustment events
+- WHEN the same events are replayed into an empty ledger
+- THEN positions, cash and P&L match the original projection
 - AND no target book is consulted during the rebuild
 
-#### Scenario: Re-applying an event is idempotent
+### Requirement: Accounting MUST preserve causal and capital invariants
 
-- GIVEN a fill event already applied to the ledger
-- WHEN the same event is applied again
-- THEN the ledger state is unchanged
-- AND no duplicate fee is charged
+The ledger MUST preserve the existing causal T+1 and cash-accounting contracts.
+A close-of-session decision MUST NOT fill before the next eligible session open;
+cash changes MUST equal traded notional plus or minus the exact recorded fees;
+negative cash MUST be rejected. Actual holdings MUST respect the configured
+position cap even when an exit is blocked. Corporate actions and delisting
+exits MUST be explicit, and missing quotes or long suspensions MUST NOT silently
+zero a position's value.
 
-### Requirement: Ledger-backed reconciliation MUST preserve the existing contract
+#### Scenario: First session remains unfilled
 
-Reconciliation MUST keep the existing plan-versus-account contract: per-name
-planned and actual quantity with drift and tolerance, cash drift, missing planned
-names, unexpected holdings, a structured breaks list, JSON serialisation and
-fail-loud behaviour above tolerance. The planned side MUST be the plan of record
-— the ledger projection once the ledger is authoritative — and the ledger MUST
-NOT weaken any existing break or tolerance rule.
+- GIVEN a target decided at the close of session D
+- WHEN the ledger processes the close of D
+- THEN no fill occurs in session D
+- AND execution can occur no earlier than the next eligible session open
+
+#### Scenario: A blocked exit does not permit an over-cap entry
+
+- GIVEN the account is at its position cap and an exit is blocked
+- WHEN the next target includes a new name
+- THEN the new entry is blocked with a machine-readable reason
+- AND the residual holding remains visible in the ledger
+
+#### Scenario: A missing quote does not become a zero-value delisting
+
+- GIVEN a held name with a stale or missing quote and no explicit delisting event
+- WHEN the ledger marks the account
+- THEN it carries the last known valuation and flags staleness
+- AND it does not silently write the position off
+
+### Requirement: Trading reconciliation MUST use the trading ledger of record
+
+Trading account reconciliation MUST compare an external account snapshot with
+the trading ledger projection and report per-name planned/actual quantity and
+drift, cash drift, missing and unexpected holdings, structured breaks, JSON
+serialization and fail-loud behaviour above tolerance. The planned side MUST
+come from the trading ledger of record, not from a target book or a research
+simulation ledger. This requirement does not authorize research to access the
+trading database.
 
 #### Scenario: Quantity drift beyond tolerance is a break
 
-- GIVEN a planned position of 1,000 shares and an account holding of 900 shares
-- WHEN reconciliation runs with a zero quantity tolerance
+- GIVEN the trading ledger projects 1,000 shares and the account snapshot holds
+  900 shares with zero quantity tolerance
+- WHEN reconciliation runs
 - THEN the result reports a 100-share drift as a break
 - AND the command exits non-zero
 
-#### Scenario: A missing position is reported explicitly
+#### Scenario: Missing and unexpected positions are explicit
 
-- GIVEN a name present in the planned side and absent from the account snapshot
+- GIVEN a planned position absent from the account and an unplanned account
+  holding
 - WHEN reconciliation runs
-- THEN the result lists the name under missing positions and in the breaks list
-- AND the result is JSON-serialisable for logging
+- THEN both names are listed in the structured breaks
+- AND the result is JSON-serializable for logging
