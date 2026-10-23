@@ -110,7 +110,46 @@ CI checks, cross-mode golden tests, artifact/replay verification, operational
 runbook, and independent Spec/QA review must pass. A trading runtime or live
 broker adapter is not enabled or authorized by this PR.
 
-## 6. Current CI dependency
+## 6. Offline S0 and S2 verification commands
+
+Both commands operate on operator-provided frozen JSON snapshots and neither
+connects to research Mongo, trading accounts, or a broker:
+
+```bash
+# S0: validate a versioned Spec against decision-time target reference prices
+python -m app.jobs.strategy_spec_preflight \
+  --spec strategy.json --reference-prices target-prices.json \
+  --max-minimum-commission-pct 0.01
+
+# S2: replay risk gate decisions over an explicit ledger + market snapshot
+python -m app.jobs.strategy_risk_replay \
+  --spec strategy.json --account research-account.json \
+  --intents order-intents.json --market market-regime.json
+```
+
+Preflight uses the actual reference price and the correct A-share board
+minimum. A wide strategy that cannot afford a minimum order on the supplied
+target list fails before order intent generation; absent prices are **not**
+invented. The default minimum-commission tolerance is 1% of the minimum
+order notional and is an explicit parameter, not a hidden market fact.
+
+Risk reason codes include `INSUFFICIENT_HOLDINGS`, `MAX_POSITIONS`,
+`CASH_FLOOR`, `TURNOVER_BUDGET`, `DRAWDOWN_BREAKER`,
+`REGIME_BLOCKED`, `CONCENTRATION` and `GROSS_EXPOSURE`.
+Sells are evaluated before buys, then requests are ordered by descending
+`priority` with the original index as the tie-break. Approved sells reserve
+shares but do **not** release cash or position slots. Configured exposure
+caps require held positions' explicit `market_value`; a non-default regime
+policy requires the market snapshot to contain `bull`, `bear` or
+`sideways`. Unknown inputs fail closed.
+
+This is still a **research** decision and returns `REPLAY` evidence, never a
+trading order approval. The existing legacy research runner rejects non-default
+risk policies instead of silently skipping the risk gate. Trading paper/live
+enforcement and operator halt persistence remain separate, unimplemented
+domain-local responsibilities.
+
+## 7. Current CI dependency
 
 The public PR dispatches a dry-run workflow in the private overlay repository.
 Its failure must be investigated in the **private** Actions run and cannot be
