@@ -956,6 +956,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Legacy config JSON; defaults to flip_wide",
     )
     run_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")
+    run_cfg.add_argument(
+        "--spec-json", default=None, help="Versioned StrategySpec JSON document"
+    )
     p_run.add_argument("--dry-run", action="store_true")
     p_run.add_argument("--replace", action="store_true")
     p_run.add_argument(
@@ -997,6 +1000,7 @@ def build_parser() -> argparse.ArgumentParser:
     nav_cfg = p_nav.add_mutually_exclusive_group()
     nav_cfg.add_argument("--config-json", default=None)
     nav_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")
+    nav_cfg.add_argument("--spec-json", default=None, help="StrategySpec JSON")
     p_nav.add_argument(
         "--persist-research-artifact", action="store_true",
         help="Write an immutable research-only ledger/NAV artifact",
@@ -1029,6 +1033,7 @@ def build_parser() -> argparse.ArgumentParser:
     cert_cfg = p_cert.add_mutually_exclusive_group()
     cert_cfg.add_argument("--config-json", default=None)
     cert_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")
+    cert_cfg.add_argument("--spec-json", default=None, help="StrategySpec JSON")
     p_close = fsub.add_parser("close", help="Close the ACTIVE forward window")
     p_close.add_argument("--model-version", required=True)
     p_close.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
@@ -1113,11 +1118,14 @@ def _run_with_tracking(args, config: dict | None) -> None:
 
 def _load_cli_spec(args) -> tuple[dict | None, str | None]:
     """Resolve a spec file without silently changing legacy evidence."""
-    if getattr(args, "spec", None):
+    if getattr(args, "spec", None) or getattr(args, "spec_json", None):
         from app.lib.strategy_engine.spec import spec_hash, spec_to_legacy_config
 
-        with Path(args.spec).open(encoding="utf-8") as stream:
-            document = json.load(stream)
+        if getattr(args, "spec_json", None):
+            document = json.loads(args.spec_json)
+        else:
+            with Path(args.spec).open(encoding="utf-8") as stream:
+                document = json.load(stream)
         config = spec_to_legacy_config(document)
         identity = spec_hash(document)
         if getattr(args, "model_version", None) and (
