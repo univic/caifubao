@@ -534,7 +534,8 @@ def test_frozen_market_regime_snapshot_is_causal_and_fails_closed():
     assert market["decision_date"] == "2026-10-23"
     with pytest.raises(ValueError, match="after decision"):
         frozen_regime_snapshot(
-            decision, service=Service(),
+            decision,
+            service=Service(),
             snapshot_as_of=dt.datetime(2026, 10, 24),
         )
 
@@ -552,9 +553,16 @@ def test_risk_replay_halt_snapshot_never_reads_operational_store():
     from app.jobs.strategy_risk_replay import read_frozen_halt_snapshot
 
     assert read_frozen_halt_snapshot({"halted": False}) is False
-    assert read_frozen_halt_snapshot({
-        "halted": True, "changed_by": "research-test", "reason": "freeze",
-    }) is True
+    assert (
+        read_frozen_halt_snapshot(
+            {
+                "halted": True,
+                "changed_by": "research-test",
+                "reason": "freeze",
+            }
+        )
+        is True
+    )
     with pytest.raises(ValueError, match="boolean"):
         read_frozen_halt_snapshot({})
     with pytest.raises(ValueError, match="changed_by"):
@@ -567,16 +575,22 @@ def test_research_nav_returns_independent_daily_legacy_ledger_parity():
     quotes = {
         "sh600000": {
             "2026-10-26": QuoteView(
-                open_price=10, close_price=10,
-                previous_close=10, stock_code="sh600000",
+                open_price=10,
+                close_price=10,
+                previous_close=10,
+                stock_code="sh600000",
             ),
             "2026-10-27": QuoteView(
-                open_price=9.01, close_price=9.01,
-                previous_close=10, stock_code="sh600000",
+                open_price=9.01,
+                close_price=9.01,
+                previous_close=10,
+                stock_code="sh600000",
             ),
             "2026-10-28": QuoteView(
-                open_price=9, close_price=9,
-                previous_close=9.01, stock_code="sh600000",
+                open_price=9,
+                close_price=9,
+                previous_close=9.01,
+                stock_code="sh600000",
             ),
         }
     }
@@ -584,15 +598,18 @@ def test_research_nav_returns_independent_daily_legacy_ledger_parity():
         prices=quotes,
         schedule=[
             {
-                "date": "2026-10-26", "decision_date": "2026-10-23",
+                "date": "2026-10-26",
+                "decision_date": "2026-10-23",
                 "holdings": {"sh600000": 0.5},
             },
             {
-                "date": "2026-10-27", "decision_date": "2026-10-26",
+                "date": "2026-10-27",
+                "decision_date": "2026-10-26",
                 "holdings": {},
             },
             {
-                "date": "2026-10-28", "decision_date": "2026-10-27",
+                "date": "2026-10-28",
+                "decision_date": "2026-10-27",
                 "holdings": {},
             },
         ],
