@@ -246,3 +246,53 @@ def test_versioned_strategy_spec_has_frozen_hash_golden_vector():
     assert spec_hash(example) == (
         "7fb19ffc0ca190cdf3fcd2eaf94df3b0e40c99eb6a578a7a9d1a39d9320ec8ba"
     )
+
+
+def test_replay_and_paper_decisions_share_exact_spec_semantics():
+    import datetime
+    from types import SimpleNamespace
+
+    from app.lib.strategy_engine.replay import replay_strategy_spec_decision
+    from app.lib.strategy_engine.runner import assemble_daily_plan
+
+    legacy = validate_strategy_config(
+        {
+            "score_model_version": "frozen-decision-v1",
+            "selection": {"mode": "top_n", "portfolio_size": 2},
+        }
+    )
+    spec = legacy_to_spec(legacy)["spec"]
+    date = datetime.datetime(2026, 10, 23)
+    scores = [
+        SimpleNamespace(stock_code=code, score=score, percentile=0.9)
+        for code, score in [
+            ("sh600000", 0.8),
+            ("sh600001", 0.9),
+            ("sh600002", 0.7),
+        ]
+    ]
+    flags = {
+        code: {"is_st": False, "is_bse": False, "trade_status": 1}
+        for code in ("sh600000", "sh600001", "sh600002")
+    }
+    previous = [{"stock_code": "sh600002", "weight": 0.5}]
+    paper = assemble_daily_plan(
+        config=legacy,
+        date=date,
+        predictions=scores,
+        previous_holdings=previous,
+        flags=flags,
+    )
+    replay = replay_strategy_spec_decision(
+        spec=spec,
+        date=date,
+        predictions=scores,
+        previous_holdings=previous,
+        flags=flags,
+    )
+    assert replay == paper
+    assert [x["stock_code"] for x in replay["target_holdings"]] == [
+        "sh600001",
+        "sh600000",
+    ]
+    assert replay["rebalance"]["removed"] == ["sh600002"]
