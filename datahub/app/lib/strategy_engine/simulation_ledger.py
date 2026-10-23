@@ -78,9 +78,10 @@ class ResearchSimulationLedger:
             validated = {}
             for code in self.positions:
                 value = marks.get(code)
-                validated[code] = (
-                    None if value is None else _number(value, f"mark {code}", positive=True)
-                )
+                if value is None:
+                    validated[code] = None
+                else:
+                    validated[code] = _number(value, f"mark {code}", positive=True)
             for code, position in self.positions.items():
                 value = validated[code]
                 if value is None:
