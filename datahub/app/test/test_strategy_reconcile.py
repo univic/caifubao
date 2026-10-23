@@ -378,3 +378,18 @@ def test_trading_ledger_reconciliation_rejects_research_and_overrides_account_pl
             {key: value for key, value in projection.items() if key != "cash"},
             observed,
         )
+
+
+def test_shared_trading_projection_contract_is_pure_and_detached():
+    from caifubao_contracts.trading_projection import require_trading_projection
+
+    source = {
+        "source_domain": "trading", "account_id": "p1",
+        "cash": 1000, "positions": {"sh600001": {"quantity": 100}},
+    }
+    output = require_trading_projection(source)
+    assert output == source
+    output["positions"]["sh600001"]["quantity"] = 200
+    assert source["positions"]["sh600001"]["quantity"] == 100
+    with pytest.raises(ValueError, match="source_domain"):
+        require_trading_projection({**source, "source_domain": "research"})
