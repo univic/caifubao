@@ -88,9 +88,7 @@ def test_stale_mark_does_not_zero_position():
     nav = ledger.mark({})
     assert nav > ledger.initial_cash
     assert ledger.positions["sh600000"]["stale"] is True
-    rebuilt = ResearchSimulationLedger.rebuild(
-        ledger.events, initial_cash=10000
-    )
+    rebuilt = ResearchSimulationLedger.rebuild(ledger.events, initial_cash=10000)
     assert rebuilt.snapshot() == ledger.snapshot()
 
 
