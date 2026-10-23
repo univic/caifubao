@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import math
 
+from caifubao_contracts.strategy_execution import deterministic_fill_id
+
 from app.lib.strategy_engine.config import PAPER_EXECUTION
+from app.lib.strategy_engine.simulation_ledger import ResearchSimulationLedger
 from app.lib.strategy_engine.tradability import tradeable_open
 
 
@@ -229,15 +232,42 @@ def simulate_paper_nav(
     trades = []
     blocked = []
     peak = start_nav
+    # Target weights never create holdings: every position and cash mutation
+    # is recorded as a fill event in a research-only, rebuildable ledger.
+    ledger = ResearchSimulationLedger(initial_cash=start_nav)
 
     def _mark(date) -> float:
-        total = cash
+        marks = {}
+        legacy_total = cash
         for code, pos in positions.items():
             quote = (prices.get(code) or {}).get(date)
             if _tradable(quote) and _valid_price(quote.close):
                 pos["last_price"] = float(quote.close)
-            total += pos["qty"] * pos["last_price"]
-        return total
+                marks[code] = pos["last_price"]
+            legacy_total += pos["qty"] * pos["last_price"]
+        ledger_nav = ledger.mark(marks)
+        # Transitional golden parity: prove this execution loop and the new
+        # ledger agree, rather than silently changing pre-existing NAV curves.
+        if abs(ledger_nav - legacy_total) > 0.01 or abs(ledger.cash - cash) > 0.01:
+            raise ValueError("simulation ledger diverged from executed fills")
+        return ledger_nav
+
+    def _record_fill(date, code, side, quantity, price, costs, *, reference_price):
+        order_id = f"{date}:{code}:{side}"
+        fill_id = deterministic_fill_id(
+            order_id=order_id, attempt_id=str(date), execution_id="1"
+        )
+        ledger.apply({
+            "type": "FILL", "event_id": fill_id, "fill_id": fill_id,
+            "order_id": order_id, "stock_code": code, "side": side,
+            "execution_date": str(date), "quantity": int(quantity),
+            "price": price, "reference_price": reference_price,
+            "fees": {
+                "commission": costs["commission"],
+                "stamp_duty": costs["stamp_duty"],
+                "transfer_fee": costs["transfer_fee"],
+            },
+        })
 
     def _open_price(code, date, side):
         """(price, reason): the open this side may fill at, or the refusal.
@@ -258,6 +288,15 @@ def simulate_paper_nav(
                 "reason": reason,
             }
         )
+        ledger.apply({
+            "type": "REJECTED",
+            "event_id": f"blocked:{date}:{code}:{side}",
+            "order_id": f"{date}:{code}:{side}",
+            "stock_code": code,
+            "side": side,
+            "execution_date": str(date),
+            "reason_code": reason,
+        })
 
     for decision in schedule:
         date = decision["date"]
@@ -298,6 +337,10 @@ def simulate_paper_nav(
                 - cost["transfer_fee"]
             )
             sell_notional += cost["value"]
+            _record_fill(
+                date, code, "SELL", pos["qty"], exec_price, cost,
+                reference_price=price,
+            )
             trades.append(
                 {
                     "date": date,
@@ -344,6 +387,10 @@ def simulate_paper_nav(
             cash -= spend
             positions[code] = {"qty": qty, "last_price": raw_open}
             buy_notional += cost["value"]
+            _record_fill(
+                date, code, "BUY", qty, exec_price, cost,
+                reference_price=raw_open,
+            )
             trades.append(
                 {
                     "date": date,
@@ -388,6 +435,11 @@ def simulate_paper_nav(
         "terminal_nav": curve[-1]["nav"],
         "curve": curve,
         "trades": trades,
+        # Derived simulation artifacts: account states are research-local, not
+        # a trading account. Caller may persist these separately from FORWARD
+        # plan evidence; do not mutate the certified plan fields.
+        "ledger_events": ledger.events,
+        "ledger_snapshot": ledger.snapshot(),
         # Orders refused at the session open (limit-up BUY / limit-down SELL /
         # unknown limit verdict / suspension). Fail-loud reporting: the caller
         # persists these next to the plan instead of seeing a silent skip.
