@@ -152,7 +152,7 @@ def _query_flags(date, horizon, model_version=None) -> dict[str, dict]:
             # Signal-date traded amount, for the liquidity floor (roadmap 1.3).
             "trade_amount": quote.trade_amount,
             # This is a decision-time reference, not a future execution price.
-            "reference_close": quote.close,
+            "reference_close": getattr(quote, "close", None),
         }
     return flags
 
