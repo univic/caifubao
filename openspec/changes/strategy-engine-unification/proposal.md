@@ -65,12 +65,13 @@
 
 - `strategy-definition`: 版本化、可哈希、可迁移的 StrategySpec，以及「一份 Spec 驱动
   全部执行模式」的语义约束与可行性校验。
-- `strategy-portfolio-ledger`: 由 fills 重建的持仓/现金/批次/P&L 账本，目标组合与持仓
-  分离，拒绝订单持久化，可与账户快照对账。
-- `strategy-risk-gate`: 交易前/交易后的组合级风控阶段（换手预算、集中度、流动性、
-  回撤熔断、regime、halt），拒绝可解释、可重放。
-- `strategy-execution-model`: 所有模式共用的唯一撮合与费用语义，未知判定策略显式化，
-  成交幂等，券商适配器默认关闭。
+- `strategy-portfolio-ledger`: 统一账务事件与重建语义，但 research simulation ledger
+  与 trading portfolio ledger 分域持有；目标组合与持仓分离，拒绝事件可追溯，对账只读取
+  trading ledger。
+- `strategy-risk-gate`: 可复现的组合级风险政策（换手预算、集中度、流动性、回撤熔断、
+  regime）；研究侧只做模拟评估，交易侧由 trading runtime 权威执行并持有运维 halt 状态。
+- `strategy-execution-model`: 所有模式共用版本化的确定性执行规则和费用语义，域内 adapter
+  独立编排；未知判定策略显式化，部分成交幂等，券商适配器默认关闭。
 
 ### Modified Capabilities
 
