@@ -9,6 +9,8 @@ demonstration. It is not investment or trading advice.
   reviews, and Git/PR policy.
 - [`.project-rules.md`](./.project-rules.md): executable development, OpenSpec,
   Git, and PR commands.
+- [`openspec/README.md`](./openspec/README.md): contract-ledger index, capability
+  naming, authoring conventions, and change status.
 - `openspec/archive/mvp-quant-demo/`: archived contract ledger.
 - `skills/*/SKILL.md`: conditional domain guidance; load only when applicable.
 

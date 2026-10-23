@@ -14,6 +14,12 @@
 | [`SECURITY.md`](../SECURITY.md) | 安全政策 |
 | [`README.md`](../README.md) | 项目总览、环境、运行方式 |
 
+## 契约账本（`openspec/`）
+
+| 文档 | 作用 |
+|:---|:---|
+| [`openspec/README.md`](../openspec/README.md) | **契约账本索引**：活跃 change、能力命名、写作约定、归档状态与验证命令 |
+
 ## 架构与环境
 
 | 文档 | 作用 |

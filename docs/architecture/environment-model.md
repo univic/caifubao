@@ -107,10 +107,20 @@ quote→signal→scoring 例行任务，并作为 `dev` 的 `data sync` 只读�
 
 - `stock_factor_daily`、FQ/HFQ 派生逻辑、`stock_signal_daily` 等仍由 `datahub/`
   模块计算和写入（`fq-adj-factor-fix` 等既有契约仍以 datahub 为当前实现位置）；
+- `datahub/app/lib/strategy_engine/` 与 `datahub/app/jobs/strategy_runner.py` 目前仍承载策略
+  构建、研究模拟和前瞻计划证据。这是迁移期物理位置，不代表策略研究归 data domain 所有；
+  目标所有者仍是 research domain。不得借此在 datahub 中新增 trading 订单、账户账本、
+  运维 halt 或券商适配器；
+- `datahub/app/lib/execution/costs.py` 当前只是对
+  `shared/caifubao_contracts/friction.py` 的兼容转导，不是完整执行引擎。费用算术及跨域
+  共享的纯确定性规则应有唯一共享来源；research 模拟执行编排归 research domain，而
+  有状态的 trading 撮合、订单/成交、风控状态、持仓/资金账本、对账和券商适配器归
+  trading domain；
 - dev 的 `data sync` 仍直连旧 stable Mongo（TASK-404 完成前）；
 - 旧 stable 仍承载每日采集/信号/评分调度。
 
-凡引用这些现状的文档，必须标注「迁移期遗留」，不得写成目标架构。
+凡引用这些现状的文档，必须标注「迁移期遗留」，不得写成目标架构。物理目录或进程复用
+不能覆盖 §7 定义的 domain ownership；trading/paper 当前仍未启用。
 
 ## 9. FQ/HFQ：外部输入与派生数据职责
 
