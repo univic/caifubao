@@ -655,7 +655,10 @@ def replay_pair(
                 if _tradable(quote, pending):
                     if pending == "BUY":
                         quantity = _max_buy_quantity(
-                            state["cash"], float(open_price), board_lot, friction,
+                            state["cash"],
+                            float(open_price),
+                            board_lot,
+                            friction,
                             stock_code=stock_code,
                         )
                     else:
