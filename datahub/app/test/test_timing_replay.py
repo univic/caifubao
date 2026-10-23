@@ -451,3 +451,48 @@ def test_pair_is_deterministic_for_reordered_evidence():
     )
 
     assert first == second
+
+
+def test_timing_replay_shared_lot_and_cost_conformance():
+    from caifubao_contracts.friction import CostProfile
+    from caifubao_contracts.strategy_execution import (
+        adjusted_price,
+        execution_fees,
+        fit_buy_quantity,
+    )
+    from app.lib.strategy_engine.timing_replay import (
+        _filled_trade,
+        _max_buy_quantity,
+    )
+
+    friction = {
+        "commission_rate": 0.00025,
+        "minimum_commission": 5.0,
+        "stamp_duty_rate": 0.0005,
+        "slippage_rate": 0.001,
+    }
+    profile = CostProfile(
+        commission_rate=friction["commission_rate"],
+        minimum_commission_cny=friction["minimum_commission"],
+        sell_stamp_duty_rate=friction["stamp_duty_rate"],
+        slippage_per_side=friction["slippage_rate"],
+        transfer_fee_rate=0.0,
+    )
+    price = adjusted_price(10.0, "BUY", 0.001)
+    assert _max_buy_quantity(
+        5000, 10, 100, friction, stock_code="sh688001"
+    ) == fit_buy_quantity(5000, price, 200, 1, profile)
+    assert _max_buy_quantity(
+        1500, 10, 100, friction, stock_code="sh600001"
+    ) == fit_buy_quantity(1500, price, 100, 100, profile)
+    trade, cash_change = _filled_trade(
+        "2026-01-05", "SELL", 100, 10, friction
+    )
+    expected = execution_fees(
+        adjusted_price(10, "SELL", 0.001), 100, "SELL", profile
+    )
+    assert trade["commission"] == pytest.approx(round(expected["commission"], 4))
+    assert trade["stamp_duty"] == pytest.approx(round(expected["stamp_duty"], 4))
+    assert cash_change == pytest.approx(
+        100 * 9.99 - expected["commission"] - expected["stamp_duty"]
+    )
