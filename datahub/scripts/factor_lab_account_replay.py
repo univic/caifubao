@@ -128,6 +128,27 @@ def side_cost(notional: float, side: str = "BUY", cost_model: str = "legacy") ->
     return half + max(0.0, MIN_COMMISSION - COMMISSION_RATE * notional)
 
 
+def research_lot_size(code: str, cost_model: str = "legacy") -> int:
+    """Shared-v1 uses explicit board policy; legacy preserves frozen 100-lot math.
+
+    The historical replay stores lots rather than individual shares. STAR's
+    valid 200 + n order increments cannot be represented by this accounting
+    layout, so the shared mode refuses STAR rather than approximating a fill.
+    """
+    if cost_model == "legacy":
+        return LOT
+    if cost_model != "shared_v1":
+        raise ValueError("unknown cost_model")
+    from caifubao_contracts.strategy_execution import board_lot_rule
+
+    minimum, step = board_lot_rule(code, LOT)
+    if (minimum, step) != (LOT, LOT):
+        raise ValueError(
+            "STAR shared_v1 requires a share-level ledger, not legacy lots"
+        )
+    return step
+
+
 def tradeable_open(row, side: str) -> float | None:
     if row is None:
         return None
@@ -347,6 +368,8 @@ def replay_book(
                 )
                 slice_amount = (cash + book_now) / max(len(target), 1)
                 for code in target:
+                    if cost_model == "shared_v1":
+                        research_lot_size(code, cost_model)
                     attempted_entries += 1
                     price = tradeable_open(quote(execution, code), "buy")
                     if price is None:
