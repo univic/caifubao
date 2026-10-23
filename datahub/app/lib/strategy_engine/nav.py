@@ -176,6 +176,7 @@ def simulate_paper_nav(
     execution: dict | None = None,
     initial_nav: float | None = None,
     board_lot: int | None = None,
+    spec_hash: str | None = None,
 ) -> dict:
     """Simulate a paper portfolio over a rebalance schedule.
 
@@ -230,9 +231,19 @@ def simulate_paper_nav(
         ledger.apply(
             {
                 "type": "FILL",
+                "source_domain": "research",
+                "account_id": "research-simulation",
+                "currency": "CNY",
+                "spec_hash": spec_hash,
+                **(
+                    {"decision_date": decision["decision_date"]}
+                    if decision.get("decision_date")
+                    else {}
+                ),
                 "event_id": fill_id,
                 "fill_id": fill_id,
                 "order_id": order_id,
+                "intent_id": order_id,
                 "stock_code": code,
                 "side": side,
                 "execution_date": str(date),
@@ -269,8 +280,18 @@ def simulate_paper_nav(
         ledger.apply(
             {
                 "type": "REJECTED",
+                "source_domain": "research",
+                "account_id": "research-simulation",
+                "currency": "CNY",
+                "spec_hash": spec_hash,
+                **(
+                    {"decision_date": decision["decision_date"]}
+                    if decision.get("decision_date")
+                    else {}
+                ),
                 "event_id": f"blocked:{date}:{code}:{side}",
                 "order_id": f"{date}:{code}:{side}",
+                "intent_id": f"{date}:{code}:{side}",
                 "stock_code": code,
                 "side": side,
                 "execution_date": str(date),
