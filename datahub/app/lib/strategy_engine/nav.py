@@ -245,7 +245,7 @@ def simulate_paper_nav(
                 pos["last_price"] = float(quote.close)
                 marks[code] = pos["last_price"]
             legacy_total += pos["qty"] * pos["last_price"]
-        ledger_nav = ledger.mark(marks)
+        ledger_nav = ledger.mark(marks, as_of=str(date))
         # Transitional golden parity: prove this execution loop and the new
         # ledger agree, rather than silently changing pre-existing NAV curves.
         if abs(ledger_nav - legacy_total) > 0.01 or abs(ledger.cash - cash) > 0.01:

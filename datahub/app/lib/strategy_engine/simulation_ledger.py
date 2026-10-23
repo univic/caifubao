@@ -69,6 +69,19 @@ class ResearchSimulationLedger:
                 raise ValueError("rejection requires reason_code and order_id")
         elif kind == "FILL":
             self._fill(copied)
+        elif kind == "MARK":
+            marks = copied.get("marks")
+            if not isinstance(marks, dict):
+                raise ValueError("mark event needs a quote map")
+            for code, position in self.positions.items():
+                value = marks.get(code)
+                if value is None:
+                    position["stale"] = True
+                else:
+                    position["last_price"] = _number(
+                        value, f"mark {code}", positive=True
+                    )
+                    position["stale"] = False
         elif kind == "DIVIDEND":
             code = copied.get("stock_code")
             if code not in self.positions:
@@ -161,15 +174,18 @@ class ResearchSimulationLedger:
             if p["quantity"] == 0:
                 del self.positions[code]
 
-    def mark(self, quotes: dict[str, float | None]) -> float:
-        """Value known marks; carry last known price and flag stale quotes."""
-        for code, position in self.positions.items():
-            quote = quotes.get(code)
-            if quote is None:
-                position["stale"] = True
-            else:
-                position["last_price"] = _number(quote, f"mark {code}", positive=True)
-                position["stale"] = False
+    def mark(
+        self, quotes: dict[str, float | None], *, as_of: str | None = None
+    ) -> float:
+        """Record observed close marks as events, carrying stale marks forward."""
+        event_id = f"mark:{as_of}" if as_of else f"mark:sequence:{len(self.events)}"
+        self.apply(
+            {
+                "type": "MARK",
+                "event_id": event_id,
+                "marks": copy.deepcopy(quotes),
+            }
+        )
         return self.nav
 
     @property
