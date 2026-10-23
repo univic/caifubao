@@ -97,6 +97,7 @@ quote→signal→scoring 例行任务，并作为 `dev` 的 `data sync` 只读�
 | 数据 | 所有 domain | 说明 |
 |:---|:---|:---|
 | 行情（个股/指数）、交易日历、股票主数据（`basic_stock`）、外部 `adj_factor`、daily_basic 等外部参考数据、freshness/`data_asset_status` | **data** | 权威市场数据与外部原始数据；以版本化发布契约对外提供 |
+| 场内基金（ETF/LOF）主数据、`fund_daily` 行情、外部 `fund_adj` 因子 | **data** | 与股票同层的外部市场数据；`datahub-tushare-etf` 负责采集/校验/发布，行情复用 `stock_daily_quote`（`object_type=etf`） |
 | `stock_factor_daily`、因子定义/评估、`stock_signal_daily` | **research** | 派生因子数据。迁移期实现位于 datahub 模块（见 §8） |
 | `stock_score_predictions`、评分实验、模型版本注册表、回测/验证工件 | **research** | |
 | 策略发布/实例、订单、成交、持仓、资金流水、风控、对账 | **trading** | 目标态 PostgreSQL 账本；当前 trading 未启用 |
@@ -134,6 +135,9 @@ quote→signal→scoring 例行任务，并作为 `dev` 的 `data sync` 只读�
   给 research/dev。
 - 迁移期内该派生逻辑仍由 datahub 模块实现并写入 `stock_factor_daily` /
   `stock_daily_quote` 的 hfq 字段；这是实现位置，不是所有权变更。
+- 场内基金的复权同理由 research 用 data 发布的 `fund_daily` + 外部 `fund_adj`
+  独立重算；实现位于 datahub 模块（`EtfFQFactorService`），复用股票 FQ 算术，
+  派生结果写入同一 `stock_daily_quote` 的 `fq_factor` / `*_hfq` 字段。
 
 ## 10. `prod` 未启用声明
 
