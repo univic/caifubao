@@ -123,7 +123,6 @@ def tradable_open(
     return float(price), ""
 
 
-
 def session_limit_flags(
     open_price: float | None,
     previous_close: float | None,
@@ -156,6 +155,7 @@ def session_limit_flags(
         float(open_price) >= float(previous_close) * (1 + band),
         float(open_price) <= float(previous_close) * (1 - band),
     )
+
 
 def deterministic_fill_id(
     *,
