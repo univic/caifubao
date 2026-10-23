@@ -194,7 +194,9 @@ def validate_strategy_spec(spec: dict) -> dict:
     ):
         raise ValueError("risk.max_positions must be positive integer or null")
     if risk["regime_policy"] not in ("none", "bull_only", "bear_reduce_only"):
-        raise ValueError("risk.regime_policy must be none, bull_only or bear_reduce_only")
+        raise ValueError(
+            "risk.regime_policy must be none, bull_only or bear_reduce_only"
+        )
     normalized["risk"] = risk
 
     execution = {**DEFAULT_EXECUTION, **normalized["execution"]}
