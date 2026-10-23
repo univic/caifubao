@@ -20,7 +20,14 @@ from __future__ import annotations
 
 import math
 
-from caifubao_contracts.strategy_execution import deterministic_fill_id
+from caifubao_contracts.friction import CostProfile
+from caifubao_contracts.strategy_execution import (
+    adjusted_price,
+    board_lot_rule as shared_board_lot_rule,
+    deterministic_fill_id,
+    execution_fees,
+    fit_buy_quantity as shared_fit_buy_quantity,
+)
 
 from app.lib.strategy_engine.config import PAPER_EXECUTION
 from app.lib.strategy_engine.simulation_ledger import ResearchSimulationLedger
@@ -63,24 +70,12 @@ DEFAULT_MINIMUM = 100
 def board_lot_rule(
     stock_code: str, default_lot: int = DEFAULT_MINIMUM
 ) -> tuple[int, int]:
-    """(minimum quantity, increment) for a BUY in one A-share code.
-
-    STAR/科创板 (``sh688``/``sh689``, bare ``688``/``689``) requires at least
-    200 shares and then accepts any 1-share increment; ChiNext/创业板 and the
-    main board trade in ``default_lot`` (normally 100) share lots. SELL sizing
-    is deliberately exempt (see ``simulate_paper_nav``) so an odd-lot position
-    can always be closed out.
-    """
-    code = (stock_code or "").strip().lower()
-    if code.startswith(("sh688", "sh689", "688", "689")):
-        return STAR_MINIMUM, 1
-    lot = int(default_lot or DEFAULT_MINIMUM)
-    return lot, lot
+    """Compatibility wrapper for the shared board sizing rule."""
+    return shared_board_lot_rule(stock_code, default_lot)
 
 
 def _exec_price(price: float, side: str, cfg: dict) -> float:
-    slippage = float(cfg["slippage_per_side"])
-    return price * (1 + slippage if side == "BUY" else 1 - slippage)
+    return adjusted_price(price, side, float(cfg["slippage_per_side"]))
 
 
 def _valid_price(price) -> bool:
@@ -101,21 +96,22 @@ def _tradable(quote) -> bool:
         return False
 
 
-def _order_cost(exec_price: float, quantity: float, side: str, cfg: dict) -> dict:
-    value = exec_price * quantity
-    commission = max(
-        value * float(cfg["commission_rate"]),
-        float(cfg["minimum_commission_cny"]),
+def _cost_profile(cfg: dict) -> CostProfile:
+    """Translate the existing hashed execution block into a shared profile."""
+    return CostProfile(
+        commission_rate=float(cfg["commission_rate"]),
+        minimum_commission_cny=float(cfg["minimum_commission_cny"]),
+        sell_stamp_duty_rate=float(cfg["sell_stamp_duty_rate"]),
+        transfer_fee_rate=float(cfg.get("transfer_fee_rate", 0.0)),
+        slippage_per_side=float(cfg["slippage_per_side"]),
+        board_lot=int(cfg["board_lot"]),
     )
-    stamp_duty = value * float(cfg["sell_stamp_duty_rate"]) if side == "SELL" else 0.0
-    # A-share transfer fee (过户费) is charged on BOTH sides.
-    transfer_fee = value * float(cfg.get("transfer_fee_rate", 0.0))
-    return {
-        "value": value,
-        "commission": commission,
-        "stamp_duty": stamp_duty,
-        "transfer_fee": transfer_fee,
-    }
+
+
+def _order_cost(exec_price: float, quantity: float, side: str, cfg: dict) -> dict:
+    """Shared commission/transfer/stamp-duty calculation; slippage in price."""
+    fees = execution_fees(exec_price, quantity, side, _cost_profile(cfg))
+    return {"value": exec_price * quantity, **fees}
 
 
 def _buy_spend(exec_price: float, quantity: int, cfg: dict) -> float:
@@ -127,38 +123,12 @@ def _buy_spend(exec_price: float, quantity: int, cfg: dict) -> float:
 
 
 def _fit_buy_quantity(
-    budget: float,
-    exec_price: float,
-    minimum: int,
-    increment: int,
-    cfg: dict,
+    budget: float, exec_price: float, minimum: int, increment: int, cfg: dict
 ) -> int:
-    """Largest board-legal BUY quantity whose total spend fits ``budget``.
-
-    Quantity is either 0 (nothing fits; caller skips the order) or
-    ``minimum + k * increment`` for the largest feasible ``k >= 0`` (main board /
-    ChiNext: k lots of 100; STAR: the 200-share minimum plus 1-share steps).
-    Fees (slippage inside exec_price, commission, transfer fee) are reserved in
-    sizing so an order is skipped only when even the minimum cannot fit — never
-    because the fee-unadjusted quantity overshoots.
-
-    Binary search is valid because spend grows monotonically in k (commission
-    may floor at the minimum, but never decreases).
-    """
-    if budget <= 0 or minimum <= 0 or increment <= 0 or not _valid_price(exec_price):
-        return 0
-    if _buy_spend(exec_price, minimum, cfg) > budget:
-        return 0
-    # qty(k) = minimum + k*increment, so hi is a safe upper bound on k.
-    hi = int(budget // (exec_price * increment)) + 1
-    lo = 0
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if _buy_spend(exec_price, minimum + mid * increment, cfg) <= budget:
-            lo = mid
-        else:
-            hi = mid - 1
-    return minimum + lo * increment
+    """Shared fee-aware sizing; exposes the same legacy public surface."""
+    return shared_fit_buy_quantity(
+        budget, exec_price, minimum, increment, _cost_profile(cfg)
+    )
 
 
 # ---------------------------------------------------------------------------

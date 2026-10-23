@@ -51,7 +51,7 @@ def execution_fees(
     """Fees EXCLUDING slippage: the fill price already includes slippage."""
     if side not in ("BUY", "SELL"):
         raise ValueError("side must be BUY or SELL")
-    if not _positive(price) or type(quantity) is not int or quantity <= 0:
+    if not _positive(price) or not _positive(quantity):
         raise ValueError("price and quantity must be positive")
     notional = float(price) * quantity
     return {
