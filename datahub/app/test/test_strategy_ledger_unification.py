@@ -397,3 +397,47 @@ def test_factor_lab_replay_shared_cost_mode_matches_shared_friction():
     assert factor_side_cost(1000) != factor_side_cost(1000, "BUY", "shared_v1")
     with pytest.raises(ValueError, match="cost_model"):
         factor_side_cost(1000, "BUY", "unsupported")
+
+
+def test_frozen_spec_risk_replay_matches_shared_gate_and_never_promotes():
+    from app.jobs.strategy_risk_replay import replay_from_snapshots
+    from app.lib.strategy_engine.config import DEFAULT_STRATEGY_CONFIG
+    from app.lib.strategy_engine.spec import legacy_to_spec
+
+    spec = legacy_to_spec(DEFAULT_STRATEGY_CONFIG)["spec"]
+    spec["risk"]["regime_policy"] = "bull_only"
+    account = {"cash": 1000, "nav": 1000, "positions": {}}
+    intents = [
+        {
+            "intent_id": "buy",
+            "stock_code": "sh600001",
+            "side": "BUY",
+            "quantity": 100,
+            "price": 2,
+        }
+    ]
+    bear = replay_from_snapshots(
+        spec=spec,
+        account=account,
+        intents=intents,
+        market={"regime": "bear"},
+    )
+    assert bear["approved"] == []
+    assert bear["rejected"][0]["reason_code"] == "REGIME_BLOCKED"
+    assert bear["evidence_kind"] == "REPLAY"
+    assert bear["operational_approval"] is False
+    assert replay_from_snapshots(
+        spec=spec,
+        account=account,
+        intents=intents,
+        market={"regime": "bear"},
+    ) == bear
+    bull = replay_from_snapshots(
+        spec=spec,
+        account=account,
+        intents=intents,
+        market={"regime": "bull"},
+    )
+    assert len(bull["approved"]) == 1
+    assert bull["spec_hash"] == bear["spec_hash"]
+    assert account["cash"] == 1000
