@@ -130,9 +130,7 @@ class StrategySimulationArtifact(Document):
     execution_from = DateTimeField(required=True)
     execution_to = DateTimeField(required=True)
     payload = DictField(required=True)
-    created_at = DateTimeField(
-        default=lambda: datetime.datetime.now(datetime.UTC)
-    )
+    created_at = DateTimeField(default=lambda: datetime.datetime.now(datetime.UTC))
 
     meta = {
         "collection": "strategy_simulation_artifacts",
