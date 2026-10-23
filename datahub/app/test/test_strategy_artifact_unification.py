@@ -49,12 +49,14 @@ def test_research_artifact_is_content_addressed_and_never_mutates_plan(monkeypat
         "nav_parity": {
             "tolerance_cny": 0.01,
             "max_abs_delta_cny": 0.0,
-            "points": [{
-                "date": "2026-10-26",
-                "legacy_nav": 1000,
-                "ledger_nav": 1000,
-                "delta": 0,
-            }],
+            "points": [
+                {
+                    "date": "2026-10-26",
+                    "legacy_nav": 1000,
+                    "ledger_nav": 1000,
+                    "delta": 0,
+                }
+            ],
         },
         "curve": [{"date": "2026-10-26", "nav": 1000}],
     }
