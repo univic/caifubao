@@ -2,13 +2,15 @@
 
 ## ADDED Requirements
 
-### Requirement: A position MUST exist only as the result of a fill
+### Requirement: Position state MUST derive from ledger events, never from target weights
 
-A ledger projection MUST derive position quantity and cost basis from ordered fill
-events, not from target weights. It MUST track cash, board-legal quantities,
-cost basis, realized and unrealized P&L. A target portfolio is intent only and
-MUST NOT stand in for position state; NAV for a simulation or account MUST be
-derived from that domain's ledger projection.
+A ledger projection MUST derive position quantity and cost basis from ordered
+ledger events, not from target weights. Events MAY include fills, an explicitly
+audited opening balance, corporate actions, and approved adjustments; each
+non-fill event MUST carry its source and reason. The ledger MUST track cash,
+board-legal quantities, cost basis, realized and unrealized P&L. A target
+portfolio is intent only and MUST NOT stand in for position state; NAV for a
+simulation or account MUST be derived from that domain's ledger projection.
 
 #### Scenario: A blocked buy creates no position
 
@@ -24,6 +26,14 @@ derived from that domain's ledger projection.
 - WHEN the ledger is marked for a later session
 - THEN its quantity and cost basis are unchanged
 - AND only unrealized P&L moves with the mark
+
+#### Scenario: An opening balance is explicit and auditable
+
+- GIVEN a trading account that already holds shares before the ledger begins
+- WHEN the opening snapshot is imported
+- THEN an attributed opening-balance event establishes the initial quantity and
+  cost basis
+- AND no fill is fabricated and no target book is used as the opening position
 
 ### Requirement: Research and trading ledgers MUST remain domain-local
 
@@ -57,8 +67,9 @@ research.
 
 Every fill and refused intent MUST be represented as an immutable event in its
 own domain: a research artifact event for research simulation, or a persisted
-ledger event for trading. Each event MUST carry at least strategy identity,
-`spec_hash`, decision date, execution date, side, quantity, price when filled,
+ledger event for trading. Each event MUST carry at least `event_id`, account identity, symbol, strategy
+identity when applicable, `spec_hash` when applicable, decision date, execution
+date, side, quantity, price when filled, currency (CNY for the A-share ledger),
 fee breakdown (commission, transfer fee, stamp duty and slippage), and a
 machine-readable refusal reason when rejected. Events MUST identify the source
 domain and link to the stable intent/order identity. Persistence MUST NOT relax
@@ -132,6 +143,24 @@ zero a position's value.
 - WHEN the next target includes a new name
 - THEN the new entry is blocked with a machine-readable reason
 - AND the residual holding remains visible in the ledger
+
+#### Scenario: Cash is conserved
+
+- GIVEN a valid buy or sell fill with recorded notional and fee components
+- WHEN the ledger applies the event
+- THEN the cash delta equals the signed traded notional and exactly the recorded
+  fees
+- AND a fill that would make cash negative is rejected with an explicit reason
+
+#### Scenario: Corporate actions and delisting are explicit
+
+- GIVEN a held position with an ex-date share multiplier, cash distribution, or
+  an explicit delisting event
+- WHEN the ledger processes that event
+- THEN the share multiplier and cash distribution are applied on the ex-date
+- AND a delisting uses an explicit exit price or a reason-coded write-off whose
+  value is quantity multiplied by the declared write-off price
+- AND a missing quote alone never creates a delisting write-off
 
 #### Scenario: A missing quote does not become a zero-value delisting
 
