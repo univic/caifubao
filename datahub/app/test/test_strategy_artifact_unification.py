@@ -46,6 +46,16 @@ def test_research_artifact_is_content_addressed_and_never_mutates_plan(monkeypat
             {"type": "REJECTED", "event_id": "blocked:1", "reason_code": "suspended"}
         ],
         "ledger_snapshot": {"cash": 1000, "positions": {}, "nav": 1000},
+        "nav_parity": {
+            "tolerance_cny": 0.01,
+            "max_abs_delta_cny": 0.0,
+            "points": [{
+                "date": "2026-10-26",
+                "legacy_nav": 1000,
+                "ledger_nav": 1000,
+                "delta": 0,
+            }],
+        },
         "curve": [{"date": "2026-10-26", "nav": 1000}],
     }
     kwargs = {
@@ -64,6 +74,7 @@ def test_research_artifact_is_content_addressed_and_never_mutates_plan(monkeypat
     assert _persist_research_simulation(**kwargs) == identity
     assert len(artifacts) == 1
     assert artifacts[identity].payload["events"] == data["ledger_events"]
+    assert artifacts[identity].payload["nav_parity"] == data["nav_parity"]
     assert vars(plan) == original_plan
 
     # An existing content hash cannot be silently overwritten.
