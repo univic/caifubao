@@ -98,3 +98,44 @@ def test_top_n_migration_does_not_reintroduce_bounds():
     assert "lower" not in spec["selection"]
     assert "upper" not in spec["selection"]
     assert spec_to_legacy_config(spec)["selection"] == legacy["selection"]
+
+
+def test_cli_accepts_spec_and_legacy_config_exclusively():
+    from app.jobs.strategy_runner import build_parser
+
+    parser = build_parser()
+    assert parser.parse_args(
+        ["run", "--date", "2026-10-23", "--spec-json", "{}"]
+    ).spec_json == "{}"
+    with pytest.raises(SystemExit):
+        parser.parse_args([
+            "run", "--date", "2026-10-23",
+            "--config-json", "{}", "--spec-json", "{}",
+        ])
+
+
+def test_forward_hash_kind_mismatch_is_replay_even_if_hash_bytes_match():
+    import datetime
+    from types import SimpleNamespace
+
+    from app.lib.strategy_engine.runner import classify_evidence_kind
+
+    window = SimpleNamespace(
+        status="ACTIVE",
+        start_date=datetime.datetime.fromisoformat("2026-10-23"),
+        config_hash="same-bytes",
+        hash_kind="legacy",
+    )
+    kind = classify_evidence_kind(
+        date=datetime.datetime.fromisoformat("2026-10-23"),
+        decision_at=datetime.datetime.fromisoformat(
+            "2026-10-23T07:00:00+00:00"
+        ),
+        execution_date=datetime.datetime.fromisoformat("2026-10-26"),
+        window=window,
+        config_hash="same-bytes",
+        hash_kind="spec",
+        existing_status=None,
+        replace=False,
+    )
+    assert kind == "REPLAY"
