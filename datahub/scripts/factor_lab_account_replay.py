@@ -88,6 +88,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--components", default=None)
     parser.add_argument("--lookback", type=int, default=TRADING_DAYS)
     parser.add_argument("--min-ic-dates", type=int, default=120)
+    parser.add_argument(
+        "--cost-model",
+        choices=["legacy", "shared_v1"],
+        default="legacy",
+        help="Frozen historical replay or explicitly selected shared fee model",
+    )
     parser.add_argument("--output", default=None)
     parser.add_argument(
         "--detail",
@@ -108,7 +114,16 @@ def flag(value) -> bool:
     return bool(value)
 
 
-def side_cost(notional: float) -> float:
+def side_cost(
+    notional: float, side: str = "BUY", cost_model: str = "legacy"
+) -> float:
+    """Preserve frozen replay math unless shared_v1 is explicitly requested."""
+    if cost_model == "shared_v1":
+        from caifubao_contracts.friction import side_cost as shared_side_cost
+
+        return shared_side_cost(notional, side).total
+    if cost_model != "legacy":
+        raise ValueError("unknown cost_model; use legacy or shared_v1")
     from app.lib.factor_lab import metrics
 
     half = metrics.round_trip_cost() / 2.0 * notional
@@ -197,6 +212,7 @@ def replay_book(
     daily_marks: bool = True,
     include_nav: bool = False,
     include_detail: bool = False,
+    cost_model: str = "legacy",
 ) -> dict:
     """Daily account replay of the book ranked by ``frame['__score']``.
 
@@ -303,7 +319,7 @@ def replay_book(
                         continue
                     lots = positions.pop(code)
                     notional = lots * LOT * price
-                    cost = side_cost(notional)
+                    cost = side_cost(notional, "SELL", cost_model)
                     cash += notional - cost
                     fees += cost
                     traded += notional
@@ -352,7 +368,7 @@ def replay_book(
                     if delta <= 0:
                         continue
                     notional = delta * LOT * price
-                    cost = side_cost(notional)
+                    cost = side_cost(notional, "BUY", cost_model)
                     if notional + cost > cash:
                         failed_entries += 1
                         blocked_orders.append(
@@ -421,7 +437,7 @@ def replay_book(
                     continue
                 lots = positions.pop(code)
                 notional = lots * LOT * price
-                cost = side_cost(notional)
+                cost = side_cost(notional, "SELL", cost_model)
                 cash += notional - cost
                 fees += cost
                 traded += notional
@@ -608,6 +624,7 @@ def main(argv: list[str] | None = None) -> None:
             daily_marks=daily_marks,
             include_nav=args.detail and not require_label and daily_marks,
             include_detail=args.detail and not require_label and daily_marks,
+            cost_model=args.cost_model,
         )
 
     report = {
@@ -617,6 +634,7 @@ def main(argv: list[str] | None = None) -> None:
         "step_sessions": args.step,
         "names": args.names,
         "aum": args.aum,
+        "cost_model": args.cost_model,
         "liquidity_floor": args.liquidity_floor,
         "components": list(components),
         "weight_label": args.label,
