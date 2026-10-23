@@ -77,7 +77,10 @@ make data-sync
 
 Collections: `quote` → `stock_daily_quote`, `factor` → `stock_factor_daily`,
 `signal` → `stock_signal_daily`, `market` → `finance_market`,
-`industry` → `stock_industry`.
+`industry` → `stock_industry`, `etf` → `exchange_traded_fund`,
+`etf_quote` → `etf_daily_quote`. The two ETF collections are part of the
+online-sync/snapshot surface; they are not in the default fallback list because
+the legacy source may not carry them.
 
 Without `FROM_DATE`, date-based collections use the latest date already in dev
 from `data_sync_state` as a completed watermark and replay the preceding three
