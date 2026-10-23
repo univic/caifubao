@@ -202,6 +202,7 @@ def simulate_paper_nav(
     curve = []
     trades = []
     blocked = []
+    parity_points = []
     peak = start_nav
     # Target weights never create holdings: every position and cash mutation
     # is recorded as a fill event in a research-only, rebuildable ledger.
@@ -217,6 +218,12 @@ def simulate_paper_nav(
                 marks[code] = pos["last_price"]
             legacy_total += pos["qty"] * pos["last_price"]
         ledger_nav = ledger.mark(marks, as_of=str(date))
+        parity_points.append({
+            "date": str(date),
+            "legacy_nav": round(legacy_total, 2),
+            "ledger_nav": round(ledger_nav, 2),
+            "delta": round(ledger_nav - legacy_total, 6),
+        })
         # Transitional golden parity: prove this execution loop and the new
         # ledger agree, rather than silently changing pre-existing NAV curves.
         if abs(ledger_nav - legacy_total) > 0.01 or abs(ledger.cash - cash) > 0.01:
@@ -462,6 +469,15 @@ def simulate_paper_nav(
         # plan evidence; do not mutate the certified plan fields.
         "ledger_events": ledger.events,
         "ledger_snapshot": ledger.snapshot(),
+        # Independent, pre-ledger scratch-book calculation is retained as an
+        # explicit per-session audit vector; no legacy curve is rewritten.
+        "nav_parity": {
+            "tolerance_cny": 0.01,
+            "max_abs_delta_cny": round(
+                max(abs(point["delta"]) for point in parity_points), 6
+            ),
+            "points": parity_points,
+        },
         # Orders refused at the session open (limit-up BUY / limit-down SELL /
         # unknown limit verdict / suspension). Fail-loud reporting: the caller
         # persists these next to the plan instead of seeing a silent skip.
