@@ -38,7 +38,7 @@
 - [ ] 2.6 明确对账迁移边界：当前只读 CLI 保留既有输出契约；目标 trading 账户对账的计划侧来自 trading ledger projection，不得读取 research ledger
 - [ ] 2.6a 随 2.6 提交 `strategy-live-loop-minimal` 的 MODIFIED delta（对账计划侧来源变更）
 - [ ] 2.7 双跑对照：旧 NAV 曲线 vs 账本 NAV 曲线，逐日差异必须可解释
-- [ ] 2.8 文档：账本集合 schema、重建与对账 runbook
+- [ ] 2.8 文档：研究模拟账本事件 schema、重建 runbook，以及未来 trading ledger/对账的域边界契约
 
 ## 3. S2 — 风控门（`strategy-risk-gate`）
 
