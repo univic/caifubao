@@ -384,8 +384,10 @@ def test_shared_trading_projection_contract_is_pure_and_detached():
     from caifubao_contracts.trading_projection import require_trading_projection
 
     source = {
-        "source_domain": "trading", "account_id": "p1",
-        "cash": 1000, "positions": {"sh600001": {"quantity": 100}},
+        "source_domain": "trading",
+        "account_id": "p1",
+        "cash": 1000,
+        "positions": {"sh600001": {"quantity": 100}},
     }
     output = require_trading_projection(source)
     assert output == source
