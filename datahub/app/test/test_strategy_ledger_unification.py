@@ -383,3 +383,17 @@ def test_shared_risk_missing_exposure_snapshot_fails_closed():
             intents=[],
             policy={"regime_policy": "bull_only"},
         )
+
+
+def test_factor_lab_replay_shared_cost_mode_matches_shared_friction():
+    from caifubao_contracts.friction import side_cost as shared_side_cost
+    from scripts.factor_lab_account_replay import side_cost as factor_side_cost
+
+    for side in ("BUY", "SELL"):
+        for notional in (1000, 100000):
+            assert factor_side_cost(notional, side, "shared_v1") == pytest.approx(
+                shared_side_cost(notional, side).total
+            )
+    assert factor_side_cost(1000) != factor_side_cost(1000, "BUY", "shared_v1")
+    with pytest.raises(ValueError, match="cost_model"):
+        factor_side_cost(1000, "BUY", "unsupported")
