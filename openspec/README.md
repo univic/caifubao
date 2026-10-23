@@ -136,7 +136,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 
 | Change | 内容 | 主要能力 | 未完成 |
 |:---|:---|:---|:---:|
-| `strategy-engine-unification` | **本索引新增**：一个 Spec、一套撮合、一个账本 | `strategy-definition`、`strategy-portfolio-ledger`、`strategy-risk-gate`、`strategy-execution-model` | 42 |
+| `strategy-engine-unification` | **本索引新增**：统一策略契约、共享执行语义、分域账本 | `strategy-definition`、`strategy-portfolio-ledger`、`strategy-risk-gate`、`strategy-execution-model` | 42 |
 | `score-backtest-execution-integrity` | 评分驱动回测的执行时序安全 | `backtest-mvp` | 2 |
 | `strategy-forward-evidence-capture` | 不可变前瞻证据 + 120 会话计数 | `strategy-forward-evidence` | 1 |
 | `strategy-live-loop-minimal` | 最小实盘闭环（涨跌停/对账/熔断） | `strategy-live-loop-minimal`、`strategy-engine`、`strategy-nav-fee-budget` | 2 |
