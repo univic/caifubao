@@ -492,3 +492,40 @@ def test_timing_replay_shared_lot_and_cost_conformance():
     assert cash_change == pytest.approx(
         100 * 9.99 - expected["commission"] - expected["stamp_duty"]
     )
+
+
+def test_versioned_timing_manifest_opt_in_transfer_fee_uses_shared_arithmetic():
+    from caifubao_contracts.friction import CostProfile
+    from caifubao_contracts.strategy_execution import (
+        adjusted_price,
+        execution_fees,
+    )
+    from app.lib.strategy_engine.timing_replay import (
+        _filled_trade,
+        validate_replay_manifest,
+    )
+
+    manifest = _manifest()
+    manifest["friction"]["transfer_fee_rate"] = 0.00001
+    resolved = validate_replay_manifest(manifest)
+    assert resolved["friction"]["transfer_fee_rate"] == 0.00001
+    profile = CostProfile(
+        commission_rate=resolved["friction"]["commission_rate"],
+        minimum_commission_cny=resolved["friction"]["minimum_commission"],
+        sell_stamp_duty_rate=resolved["friction"]["stamp_duty_rate"],
+        transfer_fee_rate=0.00001,
+        slippage_per_side=resolved["friction"]["slippage_rate"],
+    )
+    trade, cash_delta = _filled_trade(
+        "2026-01-06", "BUY", 100, 10, resolved["friction"]
+    )
+    exec_price = adjusted_price(10, "BUY", profile.slippage_per_side)
+    fees = execution_fees(exec_price, 100, "BUY", profile)
+    assert trade["transfer_fee"] == pytest.approx(round(fees["transfer_fee"], 4))
+    assert cash_delta == pytest.approx(
+        -(100 * exec_price + fees["commission"] + fees["transfer_fee"])
+    )
+    with pytest.raises(ValueError, match="transfer_fee_rate"):
+        bad = _manifest()
+        bad["friction"]["transfer_fee_rate"] = -0.01
+        validate_replay_manifest(bad)
