@@ -24,8 +24,7 @@
 - [ ] 1.6 golden 测试：迁移后的 spec 产生与旧 config 相同的 target book / rebalance / 声明的执行行为；分别验证 `legacy_config_hash` 原样保留与 `spec_hash` 稳定，不要求两个哈希相等
 - [ ] 1.7 让 `strategy_runner run` 支持 `--spec`（与 `--config-json` 并存），输出 `spec_hash`
 - [ ] 1.8 让 replay 路径消费同一 spec，新增 paper↔replay 的 target book 对拍测试
-- [ ] 1.9 文档：`docs/operations/strategy-forward-window.md` 增加「spec 变更 = 新哈希 =
-  新窗口」的说明
+- [ ] 1.9 随 S0 实现 PR 为 `strategy-forward-evidence` 提交 MODIFIED delta：窗口显式 pin `legacy_config_hash` 或 `spec_hash`，禁止跨类型比较；并在 `docs/operations/strategy-forward-window.md` 说明「Spec 变更 = 新哈希 = 新窗口」
 
 ## 2. S1 — 账本（`strategy-portfolio-ledger`）
 
