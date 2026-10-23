@@ -766,7 +766,6 @@ def _persist_research_simulation(
     return identity
 
 
-
 def research_simulation_report(run) -> dict | None:
     """Read-only summary of persisted research fills/rejections for one run.
 
@@ -819,6 +818,7 @@ def research_simulation_report(run) -> dict | None:
         "blocked_truncated": len(blocked) > 50,
         "fills_count": len(fills),
     }
+
 
 def _resolve_start_date(now=None):
     """Certification session = the EARLIEST trading session at/after the
