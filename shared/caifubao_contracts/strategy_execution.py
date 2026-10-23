@@ -157,6 +157,27 @@ def session_limit_flags(
     )
 
 
+def require_t_plus_one(decision_date, execution_date) -> None:
+    """Enforce causality without inferring exchange sessions or calendar gaps.
+
+    The caller's trading calendar resolves the *next eligible* session; this
+    shared pure guard rejects any fill dated at/before the decision session.
+    """
+    import datetime
+
+    def parse(value):
+        if isinstance(value, datetime.datetime):
+            return value.date()
+        if isinstance(value, datetime.date):
+            return value
+        if not isinstance(value, str) or not value:
+            raise ValueError("decision/execution dates must be ISO dates")
+        return datetime.date.fromisoformat(value[:10])
+
+    if parse(execution_date) <= parse(decision_date):
+        raise ValueError("T+1: fill date must follow decision date")
+
+
 def deterministic_fill_id(
     *,
     order_id: str,
