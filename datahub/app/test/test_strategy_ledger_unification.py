@@ -73,6 +73,9 @@ def test_blocked_exit_retains_position_and_rejects_over_cap():
             "type": "REJECTED",
             "event_id": "reject-1",
             "order_id": "order-2",
+            "stock_code": "sh600000",
+            "side": "SELL",
+            "execution_date": "2026-10-23",
             "reason_code": "at_limit_down",
         }
     )
@@ -489,3 +492,21 @@ def test_shared_t_plus_one_rejects_same_day_and_accepts_next_session():
         require_t_plus_one("2026-10-23", "2026-10-23")
     with pytest.raises(ValueError, match="T\\+1"):
         require_t_plus_one("2026-10-24", "2026-10-23")
+
+
+def test_shared_ledger_event_schema_fail_closed_and_not_mutated():
+    from caifubao_contracts.strategy_ledger_events import validate_ledger_event
+
+    event = _fill("id-1", "BUY", 100)
+    validated = validate_ledger_event(event)
+    assert validated == event
+    validated["quantity"] = 200
+    assert event["quantity"] == 100
+    with pytest.raises(ValueError, match="currency=CNY"):
+        validate_ledger_event(
+            {**event, "source_domain": "research", "account_id": "a",
+             "currency": "USD"}
+        )
+    with pytest.raises(ValueError, match="order event"):
+        validate_ledger_event({"type": "REJECTED", "event_id": "r1",
+                               "reason_code": "suspended"})
