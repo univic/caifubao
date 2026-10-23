@@ -810,3 +810,175 @@ spec:
                 cpu: "500m"
           imagePullSecrets:
           - name: ccr-secret
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: caifubao-datahub-etf-daily
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: etf-daily
+spec:
+  # On-exchange fund (ETF/LOF) quotes and fund_adj factors for the latest
+  # session, after the stock quote chain (18:00) and daily_basic (18:20).
+  # Writes to stock_daily_quote with object_type=etf on the fund document;
+  # no stock, scoring or strategy state is touched.
+  schedule: "40 18 * * 1-5"
+  # Suspended during the TASK-404 transition; enable per writer via the private
+  # overlay, never beside another producer of the same documents.
+  suspend: true
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: caifubao-datahub
+            job.caifubao.io/type: etf-daily
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: etf-daily-runner
+            image: caifubao-datahub:latest
+            imagePullPolicy: Always
+            command: ["python", "-m", "app.jobs.etf_sync_runner", "daily"]
+            env:
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_HOST
+            - name: MONGODB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_PORT
+            - name: MONGODB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_NAME
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_USER
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: MONGODB_PASSWORD
+            - name: TUSHARE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: TUSHARE_TOKEN
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: ENVIRONMENT
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "200m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+          imagePullSecrets:
+          - name: ccr-secret
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: caifubao-datahub-paper-readiness
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: paper-readiness
+spec:
+  # Read-only paper-trading readiness gate. Runs after signal (18:30) and
+  # scoring (18:35) so a completed session is assessed; the job exits non-zero
+  # when the chain is NOT_READY (a FAIL, not a WARN). It writes nothing: no
+  # forward window is opened and no run is recorded. Leave it suspended until
+  # an operator has validated one manual `paper readiness` run with the real
+  # model version and halt-file path.
+  schedule: "30 19 * * 1-5"
+  suspend: true
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 900
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: caifubao-datahub
+            job.caifubao.io/type: paper-readiness
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: paper-readiness
+            image: caifubao-datahub:latest
+            imagePullPolicy: Always
+            command: ["python", "-m", "app.jobs.paper_readiness"]
+            env:
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_HOST
+            - name: MONGODB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_PORT
+            - name: MONGODB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_NAME
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_USER
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: MONGODB_PASSWORD
+            # The readiness job only needs to READ the halt flag location; the
+            # private overlay supplies the same path the strategy runner uses.
+            - name: CAIFUBAO_STRATEGY_HALT_FILE
+              value: ""
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "200m"
+          imagePullSecrets:
+          - name: ccr-secret

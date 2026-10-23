@@ -156,6 +156,22 @@ class StockIndex(BasicStock):
     object_type = StringField(required=True, default="stock_index")
 
 
+class ExchangeTradedFund(BasicStock):
+    """An on-exchange fund (ETF/LOF) whose daily quotes share the quote model.
+
+    Quote rows live in ``StockDailyQuote`` so the existing HFQ/derived-price
+    readers consume them unchanged; the fund's identity (benchmark, fee,
+    listing) lives here and its ``object_type`` keeps it out of stock
+    universes that filter on ``individual_stock``.
+    """
+
+    object_type = StringField(required=True, default="etf")
+    fund_type = StringField()
+    benchmark = StringField()
+    management_fee = FloatField()
+    list_date = DateTimeField()
+
+
 class ValuationIndicator(EmbeddedDocument):
     date = DateTimeField()
     pe = FloatField()

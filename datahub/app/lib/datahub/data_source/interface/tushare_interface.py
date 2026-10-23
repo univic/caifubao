@@ -1,4 +1,5 @@
 from caifubao_contracts.time import beijing_now_naive
+import datetime
 import os
 import time
 
@@ -153,6 +154,188 @@ def adj_factor_by_trade_date(trade_date):
             f"tushare adj_factor returned no rows: trade_date={trade_date}"
         )
     time.sleep(0.25)
+    return df
+
+
+#: tushare caps the fund endpoints at 200 calls/minute (stocks: 300). Fund
+#: calls therefore pace at 0.35 s, mirroring the exploratory ETF pipeline.
+FUND_CALL_PAUSE = 0.35
+#: Verified against the research account on 2026-10-23: ``pro.fund_adj``
+#: returns at most 2600 rows per call (latest-first). An 18-year window would
+#: silently drop the OLDEST rows of an old fund (510300 lost everything before
+#: 2016-02), so fund factors paginate in 10-year windows (~2,440 sessions).
+FUND_ADJ_WINDOW_YEARS = 10
+FUND_ADJ_MAX_ROWS = 2600
+#: ``pro.fund_daily`` caps at 5000 rows per call; 18 years (~4,400 sessions)
+#: stays under it.
+FUND_DAILY_MAX_ROWS = 5000
+
+
+def fund_basic_all():
+    """All on-exchange funds via tushare pro.fund_basic(market='E').
+
+    Columns include ts_code, name, fund_type, benchmark, m_fee, list_date,
+    delist_date, status. The frame is returned unfiltered; callers decide
+    whether ``status`` means listed / delisted.
+    """
+    pro = _get_pro()
+    df = call_with_retry(
+        lambda: pro.fund_basic(market="E"),
+        label="tushare.fund_basic:E",
+    )
+    if df is None or df.empty:
+        raise RuntimeError("tushare fund_basic returned no rows for market=E")
+    time.sleep(FUND_CALL_PAUSE)
+    return df
+
+
+def fund_daily_by_trade_date(trade_date):
+    """Full-market fund daily snapshot for one trade date (YYYYMMDD).
+
+    Columns: ts_code, trade_date, open, high, low, close, pre_close, change,
+    pct_chg, vol (手), amount (千元). Tushare omits suspended funds for that
+    date (absence = temporarily suspended / not traded).
+    """
+    pro = _get_pro()
+    df = call_with_retry(
+        lambda: pro.fund_daily(trade_date=trade_date),
+        label=f"tushare.fund_daily:{trade_date}",
+    )
+    if df is None or df.empty:
+        raise RuntimeError(
+            f"tushare fund_daily returned no rows: trade_date={trade_date}"
+        )
+    time.sleep(FUND_CALL_PAUSE)
+    return df
+
+
+def tushare_fund_daily(ts_code, start_date=None, end_date=None):
+    """Return daily bars for one fund via tushare pro.fund_daily.
+
+    Paginates by the same 18-year windows as the stock endpoint and paces
+    every call against the 200/min fund budget.
+    """
+    pro = _get_pro()
+    start_date = start_date or "19900101"
+    end_date = end_date or beijing_now_naive().date().strftime("%Y%m%d")
+    start_year = int(start_date[:4])
+    end_year = int(end_date[:4])
+
+    frames = []
+    for window_start in range(start_year, end_year + 1, WINDOW_YEARS):
+        window_end = min(window_start + WINDOW_YEARS - 1, end_year)
+        window_start_date = (
+            start_date if window_start == start_year else f"{window_start}0101"
+        )
+        window_end_date = end_date if window_end == end_year else f"{window_end}1231"
+        if window_start_date > window_end_date:
+            continue
+        df = call_with_retry(
+            lambda: pro.fund_daily(
+                ts_code=ts_code,
+                start_date=window_start_date,
+                end_date=window_end_date,
+            ),
+            label=f"tushare.fund_daily:{ts_code}:{window_start_date}-{window_end_date}",
+        )
+        if df is not None and not df.empty:
+            frames.append(df)
+        time.sleep(FUND_CALL_PAUSE)
+
+    if not frames:
+        return pandas.DataFrame()
+    return pandas.concat(frames, ignore_index=True)
+
+
+def _assert_window_not_truncated(
+    frame, *, window_start_date, window_end_date, row_cap, label
+):
+    """Fail loudly when a capped response starts after the requested window.
+
+    tushare returns rows latest-first and silently truncates the oldest rows
+    once the per-call cap is reached. The first returned date of a complete
+    window is within days of the requested start; a much later first date at
+    the cap means the window is too wide.
+    """
+    if frame is None or frame.empty or len(frame) < row_cap:
+        return
+    first = str(frame["trade_date"].min())
+    try:
+        gap = (
+            datetime.datetime.strptime(first, "%Y%m%d")
+            - datetime.datetime.strptime(window_start_date, "%Y%m%d")
+        ).days
+    except (TypeError, ValueError):
+        return
+    if gap > 60:
+        raise RuntimeError(
+            f"tushare {label} window truncated at the {row_cap}-row cap: "
+            f"requested {window_start_date}-{window_end_date} but the earliest "
+            f"returned row is {first}; narrow the window"
+        )
+
+
+def fund_adj(ts_code, start_date=None, end_date=None):
+    """Return real after-adjustment factors for one fund via pro.fund_adj.
+
+    Columns: ts_code, trade_date (YYYYMMDD), adj_factor. The factor only
+    changes on a distribution/split date. Paginates in 10-year windows and
+    fails loudly on an empty or truncated window instead of returning a silent
+    gap (the provider caps a call at 2600 latest-first rows).
+    """
+    pro = _get_pro()
+    start_date = start_date or "19900101"
+    end_date = end_date or beijing_now_naive().date().strftime("%Y%m%d")
+    start_year = int(start_date[:4])
+    end_year = int(end_date[:4])
+
+    frames = []
+    for window_start in range(start_year, end_year + 1, FUND_ADJ_WINDOW_YEARS):
+        window_end = min(window_start + FUND_ADJ_WINDOW_YEARS - 1, end_year)
+        window_start_date = (
+            start_date if window_start == start_year else f"{window_start}0101"
+        )
+        window_end_date = end_date if window_end == end_year else f"{window_end}1231"
+        if window_start_date > window_end_date:
+            continue
+        df = call_with_retry(
+            lambda: pro.fund_adj(
+                ts_code=ts_code,
+                start_date=window_start_date,
+                end_date=window_end_date,
+            ),
+            label=f"tushare.fund_adj:{ts_code}:{window_start_date}-{window_end_date}",
+        )
+        if df is None or df.empty:
+            raise RuntimeError(
+                "tushare fund_adj returned no rows: "
+                f"ts_code={ts_code} window={window_start_date}-{window_end_date}"
+            )
+        _assert_window_not_truncated(
+            df,
+            window_start_date=window_start_date,
+            window_end_date=window_end_date,
+            row_cap=FUND_ADJ_MAX_ROWS,
+            label="fund_adj",
+        )
+        frames.append(df)
+        time.sleep(FUND_CALL_PAUSE)
+
+    return pandas.concat(frames, ignore_index=True)
+
+
+def fund_adj_by_trade_date(trade_date):
+    """Full-market fund adj_factor snapshot for one trade date."""
+    pro = _get_pro()
+    df = call_with_retry(
+        lambda: pro.fund_adj(trade_date=trade_date),
+        label=f"tushare.fund_adj:{trade_date}",
+    )
+    if df is None or df.empty:
+        raise RuntimeError(
+            f"tushare fund_adj returned no rows: trade_date={trade_date}"
+        )
+    time.sleep(FUND_CALL_PAUSE)
     return df
 
 

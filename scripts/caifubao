@@ -692,6 +692,80 @@ cmd_system_pod() {
   _pod_name
 }
 
+# ---- ETF market data (tushare fund_basic/fund_daily/fund_adj) ----
+
+# Research/dev ingestion of on-exchange funds. Quotes land in the shared
+# stock_daily_quote collection with object_type=etf on the master document, and
+# fq_factor/*_hfq come from tushare fund_adj. These commands write data; they
+# never trade.
+
+cmd_etf_universe() {
+  info "Syncing the ETF universe from tushare fund_basic..."
+  _pod_exec "$PYTHON_BIN" -m app.jobs.etf_sync_runner universe
+}
+
+cmd_etf_daily() {
+  local date="${1:-}"
+  local args=(daily)
+  if [[ -n "$date" ]]; then args+=(--date "$date"); fi
+  info "Syncing ETF quotes + fund_adj FQ for ${date:-today}..."
+  _pod_exec "$PYTHON_BIN" -m app.jobs.etf_sync_runner "${args[@]}"
+}
+
+cmd_etf_backfill() {
+  local codes=() all=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all) all=1; shift ;;
+      --code) codes+=("$(_opt_value "$1" "${2:-}")"); shift 2 ;;
+      *)      codes+=("$1"); shift ;;
+    esac
+  done
+  local args=(backfill)
+  if [[ "$all" -eq 1 ]]; then
+    args+=(--all)
+  elif [[ ${#codes[@]} -gt 0 ]]; then
+    local code
+    for code in "${codes[@]}"; do args+=(--code "$code"); done
+  else
+    die "Usage: caifubao etf backfill <CODE...> | --all"
+  fi
+  info "Backfilling ETF history + FQ..."
+  _pod_exec "$PYTHON_BIN" -m app.jobs.etf_sync_runner "${args[@]}"
+}
+
+cmd_etf_status() {
+  local code="${1:-}"
+  local args=(status)
+  if [[ -n "$code" ]]; then args+=(--code "$code"); fi
+  _pod_exec "$PYTHON_BIN" -m app.jobs.etf_sync_runner "${args[@]}"
+}
+
+# ---- Paper readiness (read-only) ----
+
+# Read-only gate before a paper window is opened/continued on real quotes.
+# Exits non-zero when the chain is NOT_READY; WARN is reported, not fatal.
+cmd_paper_readiness() {
+  local model="" horizon=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --model-version) model="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --horizon)       horizon="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      *)               die "Unknown option for paper readiness: $1" ;;
+    esac
+  done
+  local args=()
+  if [[ -n "$model" ]]; then args+=(--model-version "$model"); fi
+  if [[ -n "$horizon" ]]; then args+=(--horizon "$horizon"); fi
+  info "Assessing paper-trading readiness (namespace=$CFB_NAMESPACE)..."
+  # Avoid an empty-array expansion under `set -u` (bash 3.2 on macOS).
+  if [[ ${#args[@]} -gt 0 ]]; then
+    _pod_exec "$PYTHON_BIN" -m app.jobs.paper_readiness "${args[@]}"
+  else
+    _pod_exec "$PYTHON_BIN" -m app.jobs.paper_readiness
+  fi
+}
+
 # ---- Dev commands ----
 
 cmd_dev() {
@@ -728,6 +802,17 @@ Data:
                                       SNAPSHOT_ID defaults to latest)
   data refresh-status [LIMIT]          Refresh data_asset_status freshness
   data status <STOCK>                  Check data completeness for a stock
+
+ETF (tushare on-exchange fund data; writes data, never trades):
+  etf universe                         Sync the ETF master list (fund_basic)
+  etf daily [DATE]                     Sync ETF quotes + fund_adj FQ for a date
+  etf backfill <CODE...> | --all       Backfill ETF history quotes + FQ
+  etf status [CODE]                    Show ETF quote/FQ coverage
+
+Paper (read-only readiness gate):
+  paper readiness [--model-version V] [--horizon H]
+                                      Assess whether today's chain is ready for a
+                                      forward paper run (exit 1 when NOT_READY)
 
 Score:
   score score-one <STOCK> [opts]      Score a single stock (--date --horizon --replace)
@@ -797,6 +882,8 @@ Examples:
   caifubao data status sz000977
   caifubao system health
   caifubao strategy forward progress --model-version flip_wide_shadow_v1 --horizon 20
+  caifubao etf daily 2026-10-23
+  caifubao paper readiness --model-version flip_wide_shadow_v1 --horizon 20
 EOF
 }
 
@@ -838,6 +925,23 @@ main() {
         *)              die "Unknown strategy command: $cmd (use: run|report|nav|forward|halt|reconcile|benchmark)" ;;
       esac
       ;;
+    etf)
+      local cmd="${1:-}"; shift || true
+      case "$cmd" in
+        universe)       cmd_etf_universe "$@" ;;
+        daily)          cmd_etf_daily "$@" ;;
+        backfill)       cmd_etf_backfill "$@" ;;
+        status)         cmd_etf_status "$@" ;;
+        *)              die "Unknown etf command: $cmd (use: universe|daily|backfill|status)" ;;
+      esac
+      ;;
+    paper)
+      local cmd="${1:-}"; shift || true
+      case "$cmd" in
+        readiness)      cmd_paper_readiness "$@" ;;
+        *)              die "Unknown paper command: $cmd (use: readiness)" ;;
+      esac
+      ;;
     system)
       local cmd="${1:-}"; shift || true
       case "$cmd" in
@@ -862,7 +966,7 @@ main() {
       usage
       ;;
     *)
-      die "Unknown domain: $domain (use: data|score|strategy|system|dev)"
+      die "Unknown domain: $domain (use: data|etf|score|strategy|paper|system|dev)"
       ;;
   esac
 }
