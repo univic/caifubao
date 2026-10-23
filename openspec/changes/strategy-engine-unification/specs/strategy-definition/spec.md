@@ -63,12 +63,14 @@ back to a default.
 
 ### Requirement: One spec MUST drive every execution mode
 
-The same spec, with the same canonical hash, MUST be consumable by BACKTEST,
-REPLAY, PAPER and LIVE execution. An execution mode MUST only change the market
-data source and the fill adapter; it MUST NOT change selection, sizing,
-constraints, rebalance, risk or cost semantics. A mode-specific semantic
-difference MUST be an explicit spec field with a documented default, not an
-implicit branch.
+The same immutable StrategySpec and canonical `spec_hash` MUST be consumable by
+BACKTEST, REPLAY, RESEARCH_SIMULATION, TRADING_PAPER and LIVE. Domain-local
+runtimes MAY use different data adapters and fill adapters, but MUST preserve the
+spec-declared selection, sizing, constraints, rebalance, risk policy and modeled
+cost assumptions. Actual LIVE fill prices and fees are execution facts and MUST
+be recorded as observed, not overwritten with simulation estimates. A mode-specific
+semantic difference MUST be an explicit spec field with a documented default,
+not an implicit branch.
 
 #### Scenario: Paper and replay agree for the same spec and inputs
 
@@ -110,6 +112,45 @@ the forward-evidence contract already classifies.
 - AND their original hash and evidence kind are preserved
 
 ### Requirement: Legacy configuration MUST migrate deterministically
+
+Existing strategy configurations MUST migrate through a deterministic, tested
+mapping. The migration MUST preserve the historical normalized configuration and
+its existing `config_hash` exactly as `legacy_config_hash`, while computing a
+separate canonical `spec_hash` from the complete versioned StrategySpec,
+including explicit defaults and every decision-affecting field. The two hashes
+MUST NOT be required to match because they identify different canonical
+representations. For a legacy configuration whose behaviour is representable,
+the migrated spec MUST reproduce the same target book, rebalance list and
+declared execution decisions. Historical records and forward windows MUST keep
+their original hash; a new spec hash MUST NOT inherit forward certification
+unless the existing evidence contract explicitly certifies that exact hash.
+
+#### Scenario: A legacy config preserves its historical identity and plan
+
+- GIVEN a configuration accepted by the current engine
+- WHEN it is migrated to a StrategySpec
+- THEN its legacy normalized config and `config_hash` are preserved as
+  `legacy_config_hash`
+- AND the migrated spec produces the same target book, rebalance list and
+  declared execution decisions
+- AND its independent canonical `spec_hash` is stable for the same spec content
+
+#### Scenario: A new spec does not silently inherit an old forward window
+
+- GIVEN an ACTIVE forward window pinned to legacy config hash A
+- WHEN the same configuration is represented by a StrategySpec with spec hash B
+- THEN B is not certified FORWARD under window A
+- AND the run follows the existing mismatch classification as REPLAY without
+  advancing the old window counter
+- AND a new window must be explicitly certified for B before B can count
+
+#### Scenario: Migration refuses behaviour it cannot express
+
+- GIVEN a legacy configuration with a field the target spec cannot represent
+- WHEN migration is attempted
+- THEN migration fails with a specific error
+- AND no partially migrated spec is written
+
 
 Existing strategy configurations MUST migrate to a spec through a deterministic,
 tested mapping. For a configuration that expresses only behaviour the current
