@@ -5,47 +5,61 @@
 
 ## 1. 目标形态
 
-四个执行模式共用同一套决策与账务语义，只有「数据来源」和「成交适配器」不同：
+目标是**一份不可变策略契约、共享的确定性规则、分域运行时与分域状态**，而不是把所有模式
+塞进 datahub 的同一个进程或共用一份数据库。以下为目标架构：
 
 ```
-不可变事实层  数据(PIT) · 因子 · 信号 · 评分(model_version + config_hash)
-                              │ 只读快照 snapshot(as_of)
-                    ┌─────────▼─────────┐
-                    │ S1 StrategySpec   │ 版本化、可 diff、可哈希、未知键拒绝
-                    └─────────┬─────────┘
-                    ┌─────────▼─────────┐
-                    │ S2 Builder (纯)   │ (spec, snapshot, ledger) → TargetBook + Intents
-                    └─────────┬─────────┘
-                    ┌─────────▼─────────┐
-                    │ S3 RiskGate (纯)  │ 换手预算/集中度/流动性/回撤/regime/halt
-                    └─────────┬─────────┘
-                    ┌─────────▼─────────┐
-                    │ S4 ExecutionModel │ 唯一撮合: 整手/T+1/涨跌停/停牌/费用
-                    └─────────┬─────────┘
-                    ┌─────────▼─────────┐
-                    │ S5 Ledger         │ 持仓/现金/批次/P&L（持久化、可重建）
-                    └─────────┬─────────┘
-                    ┌─────────▼─────────┐
-                    │ S6 Evidence       │ artifact(input_hash) · replay/forward · 升格门
-                    └───────────────────┘
+data domain
+  版本化行情 / 交易日历 / 股票主数据
+                 │ 只读 PIT snapshot
+                 ▼
+research domain
+  StrategySpec → Builder → ResearchSimulator → ResearchSimulationLedger
+       │                 回测 / Replay / 研究前瞻模拟 → 不可变研究证据
+       │
+       └── promotion：StrategySpec + hash + 验证证据（不可变工件）
+                              │
+                              ▼
+trading domain（当前 trading-paper / prod 均未启用）
+  工件消费者 → Trading RiskGate → domain-local ExecutionAdapter
+             → Trading Portfolio Ledger → 对账 / 审计 / 运维 halt
 ```
 
-| 模式 | 数据源 | 成交 | 产物 |
+共享边界：
+
+- `shared/caifubao_contracts/`：StrategySpec schema、规范化/哈希契约、费用算术，以及
+  必须跨域一致的纯确定性执行规则。共享函数只接受显式输入并返回结果，不读数据库、不调度
+  job、不持有账户状态、不连接券商。
+- research 的模拟账本与 trading 的账户账本可复用事件 schema、成本定义和对拍向量，但
+  **必须是不同的状态实例与持久化边界**。Research 不能读写 trading 在线库；trading
+  不能依赖 research 服务在线。
+- `datahub/app/lib/execution/` 当前是共享费用模型的兼容 façade，不是完整撮合引擎；
+  它可以暂时保留旧 import 路径，但不得继续承载有状态订单执行、持仓账本、风控状态或
+  券商适配器。Backend 是 API 层，不是新的交易引擎归宿。
+
+| 模式 | 所属 domain | 数据/输入 | 产物与状态 |
 |:---|:---|:---|:---|
-| BACKTEST | 历史全量面板 | ExecutionModel | 研究指标（research） |
-| REPLAY | 冻结工件 | ExecutionModel | `StrategyReplay`（REPLAY） |
-| PAPER | 每日 PIT 快照 | ExecutionModel（模拟） | `StrategyPaperRun`（REPLAY/FORWARD） |
-| LIVE | 收盘/实时行情 | 券商适配器（default-off） | 订单 + 成交回报 |
+| BACKTEST | research | 历史面板 + PIT 约束 | 研究指标与模拟账本工件 |
+| REPLAY | research | 冻结工件/快照 | `StrategyReplay`（REPLAY） |
+| RESEARCH_SIMULATION | research | 按时点可用的每日快照 | 研究模拟成交事件、NAV 与证据 |
+| TRADING_PAPER | trading（目标态） | 已 promotion 的 Spec + 交易时点市场数据 | paper 订单/成交/持仓/现金账本 |
+| LIVE | trading（目标态，default-off） | 已 promotion 的 Spec + 实时市场数据 | 券商订单与实际成交回报 |
+
+现有 `StrategyPaperRun` 名称是历史命名：它目前保存策略目标组合与前瞻计划证据，不代表
+已经有 trading/paper 订单账本。新契约应把研究模拟（`RESEARCH_SIMULATION`）与未来的
+`TRADING_PAPER` 明确区分；不要求本 PR 立即重命名历史集合或重写历史记录。
 
 设计原则（沿用现有约定，不新造）：
 
 1. **方向只在评分构造层**，策略层永远「选高」
    （`docs/autoresearch/runs/h20-excess-alpha/architecture-layers-strategy-design.md` §4.3）。
    本 change 不碰。
-2. **纯函数 + 适配器边界**：S2–S4 不 import Mongo；只有 runner/job 触碰持久化。现有
-   `selection.py` / `runner.py` 已是这个形态。
-3. **配置即契约**：Spec 进入 `config_hash`；语义变化必须 bump Spec 版本，不允许静默
-   改默认值（现有 `validate_strategy_config` 已拒绝未知键）。
+2. **纯函数 + 适配器边界**：共享规则不 import Mongo、不做 I/O；research runner 只负责
+   研究数据读取与工件落盘，trading runner 只负责订单/账户状态。现有
+   `selection.py` / `runner.py` 可作为迁移起点，但物理目录不改变 domain ownership。
+3. **配置即契约**：完整 Spec 使用独立 `spec_hash`；历史 `config_hash` 作为
+   `legacy_config_hash` 保留映射，不强求两个不同 canonicalizer 的哈希相等。语义变化必须
+   bump Spec 版本，不允许静默改变默认值。
 4. **证据不可变**：FORWARD 产物只能由窗口内、决策早于执行日开盘的运行产生；本 change
    只让证据引用统一 artifact id / hash，不改判定口径。
 
@@ -98,9 +112,10 @@ backend 回测请求 JSON、timing replay manifest、factor lab `profile.yaml`�
 - 可交易性：生产 fail closed，研究 fail open（`tradability.py` 明确记录）。
 - 基准：paper 合格股等权 vs backend 沪深 300，超额/IR 不可比。
 - 策略分支：6 种策略在单体 `_simulate` 内以 `if/elif` 实现，新增策略 = 改单体。
-- 成本：已在 `shared/caifubao_contracts/friction.py` 收敛，可复用的先例已经存在；
-  `datahub/app/lib/execution/` 已经是执行成本边界，S4 扩展它，不新建第二个
-  `execution` 包。
+- 成本：`shared/caifubao_contracts/friction.py` 是费用算术的权威实现；
+  `datahub/app/lib/execution/costs.py` 仅 re-export 该实现。尚未统一的是整手、T+1、
+  涨跌停/停牌和执行时序等规则。应扩展共享纯函数/契约并让域内 adapter 调用，不应把
+  `datahub/app/lib/execution/` 扩展为完整的有状态执行模块。
 
 **结论：不要求立刻删除任何一份，但必须指定唯一权威实现，其余显式标注 legacy / 兼容
 用途（S3）。**
@@ -113,39 +128,56 @@ backend 回测请求 JSON、timing replay manifest、factor lab `profile.yaml`�
 
 ## 4. 迁移顺序（S0–S3）
 
-每阶段独立可验收；后一阶段依赖前一阶段落地。
+每阶段独立可验收；后续实现不得用迁移便利绕过 domain 边界。
 
 ### S0 — 定义统一
 
-- 新增 `StrategySpec` schema（版本、字段、默认值、未知键拒绝、哈希）。
-- `DEFAULT_STRATEGY_CONFIG` → Spec 的确定性迁移；迁移后行为与 `config_hash` 兼容。
-- entry/exit/替代门槛、sizing（equal 之外至少留接口）、risk 块进入 Spec。
+- 新增 `StrategySpec` schema（版本、显式默认值、未知键拒绝、canonical `spec_hash`）。
+- 为旧 config 建立确定性映射：保留旧 `config_hash` 为 `legacy_config_hash`，另算
+  `spec_hash`；golden tests 验证目标组合、调仓和声明的执行行为一致，而不是强求哈希相等。
+- entry/exit/替代门槛、sizing、risk 与 execution policy 进入 Spec；所有会影响决策的字段进入
+  `spec_hash`。
 - 可行性校验：AUM × 宽度 × 板块最小手数 × 最低佣金。
-- **验收**：同一 Spec 分别驱动 paper 与 replay，模块边界测试绿；golden 对比证明
-  「旧 config ≡ 迁移后 Spec」。
+- **验收**：paper/replay 兼容路径在相同输入下 target book / intents 一致；Spec 哈希向量稳定；
+  新 Spec 不匹配旧前瞻窗口时按现有契约记为 REPLAY，不推进旧窗口。
 
-### S1 — 账本
+### S1 — 研究模拟账本（不是 trading 账户账本）
 
-- `strategy_fills` / `strategy_positions` / `strategy_cash`（或事件表 + 投影）。
-- `Ledger.apply(fills)` 可重建；`nav` 改为消费账本而非目标权重（随附 MODIFIED delta，
-  见 §5.1）。
-- blocked orders 落库；对账的**计划侧**改为账本投影，漂移/breaks/退出码契约不变。
-- **验收**：同输入重跑逐笔一致；账本能由 fills 从零重建；对账不再需要手填计划侧。
+- 新增可由模拟成交事件重建的 `ResearchSimulationLedger`，用于 NAV、现金、持仓、批次和 P&L；
+  研究输出以不可变工件/事件记录保存，不创建可操作的 trading 账户状态。
+- NAV 改为消费研究模拟账本，而非由目标权重直接推导（随附 `strategy-engine` 的
+  `MODIFIED` delta）；blocked simulated intents/fills/rejections 可由研究报告重建。
+- 研究模拟账本保留 T+1、现金守恒、持仓上限、公司行为、退市显式退出、长停牌估值陈旧标记等
+  已有账本不变量；同一账户跨窗口连续模拟，不得隐式重置资金。
+- Trading 账户账本、运维 halt 与真实账户对账状态归 trading domain；如果启用 trading/paper，
+  必须在独立运行时/存储内实现，不复用 research ledger 的数据库。
+- **验收**：同输入重跑逐笔一致；由成交事件从零重建与原投影一致；旧 NAV vs 新 NAV 的差异
+  逐日可解释；拒绝订单不改变持仓/现金。
 
 ### S2 — 风控门
 
-- `RiskGate`：换手/再平衡预算、集中度、流动性、现金下限、组合回撤熔断、regime
-  （复用 `market_regime.py`）、halt（复用 `halt.py`）。
-- 拒绝订单带原因码，可在 replay 中复现。
-- **验收**：预算耗尽/回撤触发的订单被拒绝且可解释；同一输入重放结果一致。
+- 风险政策和可复现的纯判定逻辑可共享；research 使用冻结 ledger/snapshot 做历史回放与模拟，
+  trading runtime 对 paper/live 订单执行权威风险门控。
+- 覆盖换手预算、集中度、流动性、现金下限、组合回撤熔断与 regime；运维 halt 的状态、操作
+  历史和优先级由 trading domain 拥有，research 只能消费明确提供的快照，不得修改该状态。
+- 拒绝订单带原因码和限额版本，可在 replay 中复现。
+- **验收**：预算耗尽/回撤触发的开仓被拒绝且可解释；减风险退出仍可通过；相同输入的风险决策
+  与拒绝原因完全一致。
 
-### S3 — 执行与收敛
+### S3 — 共享执行规则与域内适配器
 
-- `ExecutionModel` 收敛唯一撮合语义，落点是现有的 `datahub/app/lib/execution/`；未知
-  判定改为显式策略参数（默认 fail closed，研究复现 opt-in）。
-- `ExecutionAdapter` 接口 + SIM 实现（默认）+ BROKER 占位（default-off）。
-- backend 6 策略冻结为 legacy；新增策略只走 Spec。
-- **验收**：paper 与 replay 走同一状态机；适配器不改变 Spec 语义；legacy 路径只读。
+- 费用算术以 `shared/caifubao_contracts/friction.py` 为唯一来源；保留
+  `datahub/app/lib/execution/` 为兼容 re-export，禁止在那里增加第二套成本逻辑或有状态撮合。
+- 将板块最小量、T+1、涨跌停、停牌和可交易性未知策略整理为显式、可测试的共享纯规则；
+  若共享包不适合承载某条规则，必须在设计评审中说明理由并提供跨域 conformance tests。
+- research 的 BACKTEST/REPLAY/RESEARCH_SIMULATION 使用 research-owned simulator；未来
+  TRADING_PAPER/LIVE 使用 trading-owned adapter / order state machine / ledger。两者共享规则和
+  测试向量，不共享进程、数据库或运行时依赖。
+- backend 六种旧策略冻结为 legacy；不将新策略分支或有状态执行引擎搬入 Flask API 服务。
+- 统一工件引用 `artifact_id` / `artifact_hash` / `input_snapshot`；历史 replay 的
+  `input_hash` 只映射、不重写语义。
+- **验收**：共享规则 conformance tests 通过；跨域相同输入的确定性决策/成本规则一致；LIVE 无
+  adapter 时 fail loud，且任何模式差异均可由显式配置或实际成交事实解释。
 
 ## 5. 与现有 change 的关系
 
@@ -155,7 +187,7 @@ backend 回测请求 JSON、timing replay manifest、factor lab `profile.yaml`�
 | `strategy-portfolio-risk-limits` | S2 在其静态约束之上增加预算/回撤/regime |
 | `strategy-live-loop-minimal` | S3 复用其 halt / tradability / reconcile 的判定与输出契约；S1 只改对账的**计划侧来源** |
 | `strategy-forward-evidence-capture` | 证据判定口径不变；S6 只统一 artifact 引用 |
-| `artifact-contract` | S6 落地其 `artifact_id` / `artifact_hash` / `input_snapshot` 契约（replay 产物现有字段为 `input_hash`，只做映射，不改其语义） |
+| `artifact-contract` | 落地 `artifact_id` / `artifact_hash` / `input_snapshot` 契约（replay 现有 `input_hash` 只做映射，不改语义） |
 | `production-capability-roadmap` | 本 change 是阶段 1（决策与治理地基）的引擎侧细化 |
 
 ### 5.1 计划中的 supersession（S1 实现时必须补 MODIFIED delta）
@@ -169,8 +201,10 @@ OpenSpec 的 delta 规则，实现 PR 必须为它们提交 `## MODIFIED Require
 | `strategy-engine` | `strategy-live-loop-minimal/specs/strategy-engine/spec.md`「Paper NAV simulation uses realistic T+1 cost semantics」 | NAV 由「按 `StrategyPaperRun` 目标权重推演」改为「由账本投影推导」；费用/手数/T+1 语义不变 |
 | `strategy-live-loop-minimal` | `strategy-live-loop-minimal/specs/strategy-live-loop-minimal/spec.md`「Plan-versus-account reconciliation MUST be structured and fail loud」 | 对账的计划侧由「计划目标组合」改为「账本投影」；漂移/缺失/breaks/非零退出语义不变 |
 
-在这两个 MODIFIED delta 合并前，上述 Requirement 仍是现行契约；本 change 不得被当作
-已生效的替代。
+在对应实现 PR 的 MODIFIED delta 合并前，上述 Requirement 仍是现行契约；本 change 不得被
+当作已生效的替代。另：当前 FORWARD 认证仍针对 research-side `StrategyPaperRun` 计划证据，
+不是 trading/paper 的成交账本证据；本 change 不改变该认证口径。若未来要把 promotion 的
+120-session 门槛改为 trading/paper 成交证据，必须另提明确的 MODIFIED delta。
 
 ## 6. 关键取舍
 
@@ -187,8 +221,8 @@ OpenSpec 的 delta 规则，实现 PR 必须为它们提交 `## MODIFIED Require
 
 | 风险 | 缓解 |
 |:---|:---|
-| Spec 迁移改变既有 `config_hash`，使历史 run 不可比 | 迁移函数保证旧 config 生成同一哈希；golden 测试；历史产物只读 |
+| Spec 迁移改变既有 `config_hash`，使历史 run 不可比 | 保留 `legacy_config_hash`，另算 `spec_hash`；golden 对拍行为；新 Spec 不继承旧窗口资格；历史产物只读 |
 | 账本引入后 NAV 与旧曲线不一致 | 双跑对照 + 差异报告，差异必须可解释（费用/手数/成交） |
 | 风控参数化诱发过拟合 | 预算/门槛走 replay 网格并记录；默认值保守 |
-| 收敛撮合时悄悄改变研究结论 | 研究侧 fail-open 作为显式 opt-in 保留，默认策略不变 |
+| 收敛撮合时悄悄改变研究结论或越过 domain 边界 | 共享纯规则 + 跨域 conformance tests；研究/交易分域状态；研究兼容策略必须显式 opt-in |
 | 阶段依赖导致长期半成品 | 每阶段独立可交付、可回滚；S0 之后即可停 |
