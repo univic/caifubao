@@ -185,10 +185,11 @@ backend 回测请求 JSON、timing replay manifest、factor lab `profile.yaml`�
 |:---|:---|
 | `strategy-paper-runner` | 本 change 的 S0/S1 是其 config/runner 契约的演进，不推翻 |
 | `strategy-portfolio-risk-limits` | S2 在其静态约束之上增加预算/回撤/regime |
-| `strategy-live-loop-minimal` | S3 复用其 halt / tradability / reconcile 的判定与输出契约；S1 只改对账的**计划侧来源** |
+| `strategy-live-loop-minimal` | 保留既有 halt / tradability / reconcile 契约；S1 只定义账本投影对账目标，未来 trading runtime 接管订单/账户状态时须保持输出与 fail-loud 语义，不得由 research 访问 trading 状态 |
 | `strategy-forward-evidence-capture` | 本 change 不改 FORWARD 认证口径；研究模拟工件只统一 artifact 引用，trading/paper 成交证据若成为门槛需另提契约变更 |
 | `artifact-contract` | 落地 `artifact_id` / `artifact_hash` / `input_snapshot` 契约（replay 现有 `input_hash` 只做映射，不改语义） |
-| `production-capability-roadmap` | 本 change 是阶段 1（决策与治理地基）的引擎侧细化 |
+| `environment-model` | 本 change 遵守 data / research / trading 的目标所有权；物理路径暂留不等于 domain ownership，trading/paper 当前仍未启用 |
+| `production-capability-roadmap` | 本 change 细化策略契约与执行规则；trading/paper 与 prod 仍须独立满足其 promotion、隔离和实盘门槛 |
 
 ### 5.1 计划中的 supersession（S1 实现时必须补 MODIFIED delta）
 
