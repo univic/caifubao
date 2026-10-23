@@ -36,12 +36,18 @@ def board_lot_rule(code: str, default_lot: int = 100) -> tuple[int, int]:
 def adjusted_price(open_price: float, side: str, slippage: float) -> float:
     if side not in ("BUY", "SELL"):
         raise ValueError("side must be BUY or SELL")
-    if not _positive(open_price) or not isinstance(slippage, (int, float)) or not 0 <= slippage < 1:
+    if (
+        not _positive(open_price)
+        or not isinstance(slippage, (int, float))
+        or not 0 <= slippage < 1
+    ):
         raise ValueError("invalid open price or slippage")
     return float(open_price) * (1 + slippage if side == "BUY" else 1 - slippage)
 
 
-def execution_fees(price: float, quantity: int, side: str, profile: CostProfile = DEFAULT_COST_PROFILE) -> dict:
+def execution_fees(
+    price: float, quantity: int, side: str, profile: CostProfile = DEFAULT_COST_PROFILE
+) -> dict:
     """Fees EXCLUDING slippage: the fill price already includes slippage."""
     if side not in ("BUY", "SELL"):
         raise ValueError("side must be BUY or SELL")
@@ -49,14 +55,21 @@ def execution_fees(price: float, quantity: int, side: str, profile: CostProfile 
         raise ValueError("price and quantity must be positive")
     notional = float(price) * quantity
     return {
-        "commission": max(notional * profile.commission_rate, profile.minimum_commission_cny),
+        "commission": max(
+            notional * profile.commission_rate, profile.minimum_commission_cny
+        ),
         "transfer_fee": notional * profile.transfer_fee_rate,
-        "stamp_duty": notional * profile.sell_stamp_duty_rate if side == "SELL" else 0.0,
+        "stamp_duty": notional * profile.sell_stamp_duty_rate
+        if side == "SELL"
+        else 0.0,
     }
 
 
 def fit_buy_quantity(
-    budget: float, price: float, minimum: int, step: int,
+    budget: float,
+    price: float,
+    minimum: int,
+    step: int,
     profile: CostProfile = DEFAULT_COST_PROFILE,
 ) -> int:
     """Largest legal quantity with fee-inclusive cash spend <= budget."""
@@ -80,7 +93,9 @@ def fit_buy_quantity(
 
 
 def tradable_open(
-    quote: dict | None, side: str, *,
+    quote: dict | None,
+    side: str,
+    *,
     unknown_limit_policy: str = "fail_closed",
 ) -> tuple[float | None, str]:
     """Resolve a preclassified market snapshot without inventing board rules.
@@ -109,7 +124,10 @@ def tradable_open(
 
 
 def deterministic_fill_id(
-    *, order_id: str, attempt_id: str, execution_id: str,
+    *,
+    order_id: str,
+    attempt_id: str,
+    execution_id: str,
 ) -> str:
     """Unique event identity: never key fills merely by date/side/symbol."""
     if not all(isinstance(x, str) and x for x in (order_id, attempt_id, execution_id)):

@@ -723,7 +723,10 @@ def _resolve_start_date(now=None):
 
 
 def certify_forward_window(
-    *, model_version: str, horizon: int, config: dict,
+    *,
+    model_version: str,
+    horizon: int,
+    config: dict,
     strategy_spec_hash: str | None = None,
 ) -> dict:
     """Certify an ACTIVE forward-evidence window (NEXT.1).
@@ -842,7 +845,8 @@ def forward_progress(*, model_version: str, horizon: int) -> dict:
     # Historical runs lacking hash_kind are always legacy, never spec.
     window_kind = getattr(window, "hash_kind", None) or "legacy"
     runs = [
-        run for run in runs
+        run
+        for run in runs
         if (getattr(run, "hash_kind", None) or "legacy") == window_kind
     ]
     dates = sorted({r.date.date().isoformat() for r in runs})
@@ -889,7 +893,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--date", required=True, help="Evaluation date (YYYY-MM-DD)")
     run_cfg = p_run.add_mutually_exclusive_group()
     run_cfg.add_argument(
-        "--config-json", default=None,
+        "--config-json",
+        default=None,
         help="Legacy config JSON; defaults to flip_wide",
     )
     run_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")

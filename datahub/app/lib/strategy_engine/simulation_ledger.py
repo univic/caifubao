@@ -13,11 +13,17 @@ import math
 
 
 def _number(value, field: str, *, positive: bool = False) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+    ):
         raise ValueError(f"{field} must be finite")
     result = float(value)
     if result <= 0 if positive else result < 0:
-        raise ValueError(f"{field} must be {'positive' if positive else 'non-negative'}")
+        raise ValueError(
+            f"{field} must be {'positive' if positive else 'non-negative'}"
+        )
     return result
 
 
@@ -34,7 +40,9 @@ class ResearchSimulationLedger:
 
     def __init__(self, *, initial_cash: float, max_positions: int | None = None):
         self.initial_cash = _number(initial_cash, "initial_cash", positive=True)
-        if max_positions is not None and (type(max_positions) is not int or max_positions <= 0):
+        if max_positions is not None and (
+            type(max_positions) is not int or max_positions <= 0
+        ):
             raise ValueError("max_positions must be a positive integer or None")
         self.max_positions = max_positions
         self.cash = self.initial_cash
@@ -71,11 +79,15 @@ class ResearchSimulationLedger:
             code = copied.get("stock_code")
             if code not in self.positions:
                 raise ValueError("split requires existing position")
-            multiplier = _number(copied.get("share_multiplier"), "share_multiplier", positive=True)
+            multiplier = _number(
+                copied.get("share_multiplier"), "share_multiplier", positive=True
+            )
             p = self.positions[code]
             quantity = p["quantity"] * multiplier
             if int(quantity) != quantity:
-                raise ValueError("split produces fractional shares without cash-in-lieu")
+                raise ValueError(
+                    "split produces fractional shares without cash-in-lieu"
+                )
             p["quantity"] = int(quantity)
         elif kind == "WRITE_OFF":
             code = copied.get("stock_code")
@@ -99,9 +111,15 @@ class ResearchSimulationLedger:
         code = e.get("stock_code")
         if not isinstance(code, str) or not code:
             raise ValueError("stock_code is required")
-        if not e.get("order_id") or not e.get("fill_id") or e["event_id"] != e["fill_id"]:
+        if (
+            not e.get("order_id")
+            or not e.get("fill_id")
+            or e["event_id"] != e["fill_id"]
+        ):
             raise ValueError("fill must have stable order_id and fill_id=event_id")
-        if "decision_date" in e and _date(e["execution_date"]) <= _date(e["decision_date"]):
+        if "decision_date" in e and _date(e["execution_date"]) <= _date(
+            e["decision_date"]
+        ):
             raise ValueError("T+1: fill date must follow decision date")
         qty = e.get("quantity")
         if type(qty) is not int or qty <= 0:
@@ -115,10 +133,17 @@ class ResearchSimulationLedger:
         if side == "BUY":
             if notional + expense > self.cash + 1e-8:
                 raise ValueError("insufficient cash; cash cannot go negative")
-            if code not in self.positions and self.max_positions is not None and len(self.positions) >= self.max_positions:
+            if (
+                code not in self.positions
+                and self.max_positions is not None
+                and len(self.positions) >= self.max_positions
+            ):
                 raise ValueError("max_positions exceeded")
             self.cash -= notional + expense
-            position = self.positions.setdefault(code, {"quantity": 0, "cost_basis": 0.0, "last_price": price, "stale": False})
+            position = self.positions.setdefault(
+                code,
+                {"quantity": 0, "cost_basis": 0.0, "last_price": price, "stale": False},
+            )
             position["quantity"] += qty
             position["cost_basis"] += notional + expense
             position["last_price"] = _number(
@@ -149,7 +174,9 @@ class ResearchSimulationLedger:
 
     @property
     def nav(self) -> float:
-        return self.cash + sum(p["quantity"] * p["last_price"] for p in self.positions.values())
+        return self.cash + sum(
+            p["quantity"] * p["last_price"] for p in self.positions.values()
+        )
 
     def snapshot(self) -> dict:
         return {
@@ -162,7 +189,13 @@ class ResearchSimulationLedger:
         }
 
     @classmethod
-    def rebuild(cls, events: list[dict], *, initial_cash: float, max_positions: int | None = None):
+    def rebuild(
+        cls,
+        events: list[dict],
+        *,
+        initial_cash: float,
+        max_positions: int | None = None,
+    ):
         ledger = cls(initial_cash=initial_cash, max_positions=max_positions)
         for e in events:
             ledger.apply(e)

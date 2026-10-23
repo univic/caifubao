@@ -28,6 +28,8 @@ def spec_to_legacy_config(spec: dict) -> dict:
 
 
 __all__ = [
-    "legacy_to_spec", "spec_to_legacy_config", "spec_hash",
+    "legacy_to_spec",
+    "spec_to_legacy_config",
+    "spec_hash",
     "validate_strategy_spec",
 ]

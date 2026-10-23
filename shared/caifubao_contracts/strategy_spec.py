@@ -33,16 +33,29 @@ DEFAULT_EXECUTION = {
 }
 _ALLOWED = {
     "": {
-        "spec_version", "universe", "signal", "selection", "sizing",
-        "constraints", "rebalance", "risk", "execution", "evidence", "initial_nav",
+        "spec_version",
+        "universe",
+        "signal",
+        "selection",
+        "sizing",
+        "constraints",
+        "rebalance",
+        "risk",
+        "execution",
+        "evidence",
+        "initial_nav",
     },
     "universe": {"market", "as_of"},
     "signal": {"score_model_version", "horizon"},
     "selection": {"mode", "lower", "upper", "portfolio_size"},
     "sizing": {"weighting", "cash_reserve_pct"},
     "constraints": {
-        "exclude_st", "exclude_bse", "exclude_suspended",
-        "max_single_stock_pct", "max_industry_pct", "min_trade_amount_cny",
+        "exclude_st",
+        "exclude_bse",
+        "exclude_suspended",
+        "max_single_stock_pct",
+        "max_industry_pct",
+        "min_trade_amount_cny",
     },
     "rebalance": {"cadence_days"},
     "risk": set(DEFAULT_RISK),
@@ -80,11 +93,19 @@ def _required(value: dict, field: str, path: str):
 
 def canonical_json(value) -> str:
     """Stable hash input; refuse NaN/Inf rather than hashing invalid JSON."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
 
 
 def spec_hash(spec: dict) -> str:
-    return hashlib.sha256(canonical_json(validate_strategy_spec(spec)).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        canonical_json(validate_strategy_spec(spec)).encode("utf-8")
+    ).hexdigest()
 
 
 def validate_strategy_spec(spec: dict) -> dict:
@@ -93,8 +114,17 @@ def validate_strategy_spec(spec: dict) -> dict:
     normalized = copy.deepcopy(data)
     if normalized.get("spec_version") != SPEC_VERSION:
         raise ValueError(f"spec_version must be {SPEC_VERSION}")
-    for part in ("universe", "signal", "selection", "sizing", "constraints",
-                 "rebalance", "risk", "execution", "evidence"):
+    for part in (
+        "universe",
+        "signal",
+        "selection",
+        "sizing",
+        "constraints",
+        "rebalance",
+        "risk",
+        "execution",
+        "evidence",
+    ):
         _object(_required(normalized, part, "spec"), part)
 
     universe = normalized["universe"]
@@ -104,7 +134,9 @@ def validate_strategy_spec(spec: dict) -> dict:
     name = _required(signal, "score_model_version", "signal")
     if not isinstance(name, str) or not name.strip():
         raise ValueError("signal.score_model_version must be nonempty")
-    if type(_required(signal, "horizon", "signal")) is not int or signal["horizon"] not in (5, 20, 60):
+    if type(_required(signal, "horizon", "signal")) is not int or signal[
+        "horizon"
+    ] not in (5, 20, 60):
         raise ValueError("signal.horizon must be one of 5, 20, 60")
 
     selection = normalized["selection"]
@@ -115,7 +147,9 @@ def validate_strategy_spec(spec: dict) -> dict:
         raise ValueError("selection.portfolio_size must be positive")
     if selection["mode"] == "top_percentile":
         for key in ("lower", "upper"):
-            selection[key] = _finite_number(_required(selection, key, "selection"), f"selection.{key}", high=1)
+            selection[key] = _finite_number(
+                _required(selection, key, "selection"), f"selection.{key}", high=1
+            )
         if selection["lower"] > selection["upper"]:
             raise ValueError("selection.lower must be <= upper")
     elif "lower" in selection or "upper" in selection:
@@ -125,7 +159,9 @@ def validate_strategy_spec(spec: dict) -> dict:
     if sizing.get("weighting") != "equal":
         raise ValueError("sizing.weighting currently supports equal only")
     sizing["cash_reserve_pct"] = _finite_number(
-        _required(sizing, "cash_reserve_pct", "sizing"), "sizing.cash_reserve_pct", high=1
+        _required(sizing, "cash_reserve_pct", "sizing"),
+        "sizing.cash_reserve_pct",
+        high=1,
     )
     if sizing["cash_reserve_pct"] >= 1:
         raise ValueError("sizing.cash_reserve_pct must be < 1")
@@ -145,22 +181,31 @@ def validate_strategy_spec(spec: dict) -> dict:
     for key in ("max_turnover_pct", "cash_floor_pct", "max_drawdown_pct"):
         if risk[key] is not None:
             risk[key] = _finite_number(risk[key], f"risk.{key}", high=1)
-    if risk["max_positions"] is not None and (type(risk["max_positions"]) is not int or risk["max_positions"] <= 0):
+    if risk["max_positions"] is not None and (
+        type(risk["max_positions"]) is not int or risk["max_positions"] <= 0
+    ):
         raise ValueError("risk.max_positions must be positive integer or null")
     if risk["regime_policy"] != "none":
         raise ValueError("risk.regime_policy currently supports none only")
     normalized["risk"] = risk
 
     execution = {**DEFAULT_EXECUTION, **normalized["execution"]}
-    for key in ("commission_rate", "minimum_commission_cny", "sell_stamp_duty_rate",
-                "transfer_fee_rate", "slippage_per_side"):
+    for key in (
+        "commission_rate",
+        "minimum_commission_cny",
+        "sell_stamp_duty_rate",
+        "transfer_fee_rate",
+        "slippage_per_side",
+    ):
         execution[key] = _finite_number(execution[key], f"execution.{key}")
         if key != "minimum_commission_cny" and execution[key] >= 1:
             raise ValueError(f"execution.{key} must be < 1")
     if type(execution["board_lot"]) is not int or execution["board_lot"] < 1:
         raise ValueError("execution.board_lot must be positive integer")
     if execution["unknown_limit_policy"] not in ("fail_closed", "replay_compat"):
-        raise ValueError("execution.unknown_limit_policy must be explicit and supported")
+        raise ValueError(
+            "execution.unknown_limit_policy must be explicit and supported"
+        )
     normalized["execution"] = execution
 
     evidence = normalized["evidence"]
@@ -183,16 +228,33 @@ def migrate_legacy_config(config: dict) -> dict:
     """
     legacy = copy.deepcopy(config)
     allowed = {
-        "timing_version", "score_model_version", "horizon", "initial_nav",
-        "selection", "constraints", "rebalance", "weighting",
-        "cash_reserve_pct", "execution",
+        "timing_version",
+        "score_model_version",
+        "horizon",
+        "initial_nav",
+        "selection",
+        "constraints",
+        "rebalance",
+        "weighting",
+        "cash_reserve_pct",
+        "execution",
     }
     if not isinstance(legacy, dict) or set(legacy) - allowed:
         raise ValueError("legacy config has unsupported keys")
-    if not all(key in legacy for key in (
-        "timing_version", "score_model_version", "horizon", "initial_nav",
-        "selection", "constraints", "rebalance", "weighting", "cash_reserve_pct",
-    )):
+    if not all(
+        key in legacy
+        for key in (
+            "timing_version",
+            "score_model_version",
+            "horizon",
+            "initial_nav",
+            "selection",
+            "constraints",
+            "rebalance",
+            "weighting",
+            "cash_reserve_pct",
+        )
+    ):
         raise ValueError("legacy config must be validated and normalized first")
     raw_execution = dict(legacy.get("execution") or {})
     # The existing paper model nests initial_nav under execution, but the
@@ -226,9 +288,15 @@ def migrate_legacy_config(config: dict) -> dict:
     }
     spec = validate_strategy_spec(spec)
     legacy_hash = hashlib.sha256(
-        json.dumps(legacy, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        json.dumps(legacy, sort_keys=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
     ).hexdigest()
-    return {"spec": spec, "spec_hash": spec_hash(spec), "legacy_config_hash": legacy_hash}
+    return {
+        "spec": spec,
+        "spec_hash": spec_hash(spec),
+        "legacy_config_hash": legacy_hash,
+    }
 
 
 def to_legacy_config(spec: dict) -> dict:
@@ -239,7 +307,9 @@ def to_legacy_config(spec: dict) -> dict:
     """
     resolved = validate_strategy_spec(spec)
     if resolved["risk"] != DEFAULT_RISK:
-        raise ValueError("legacy strategy runner cannot enforce non-default risk policy")
+        raise ValueError(
+            "legacy strategy runner cannot enforce non-default risk policy"
+        )
     if resolved["execution"]["unknown_limit_policy"] != "fail_closed":
         raise ValueError("legacy strategy runner cannot enforce replay compatibility")
     execution = dict(resolved["execution"])

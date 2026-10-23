@@ -25,9 +25,17 @@ def test_legacy_migration_preserves_identity_and_behavior_fields():
     assert migrated["spec_hash"] == spec_hash(migrated["spec"])
     assert migrated["spec_hash"] != migrated["legacy_config_hash"]
     config = spec_to_legacy_config(migrated["spec"])
-    for key in ("selection", "constraints", "rebalance", "weighting",
-                "cash_reserve_pct", "score_model_version", "horizon",
-                "initial_nav", "timing_version"):
+    for key in (
+        "selection",
+        "constraints",
+        "rebalance",
+        "weighting",
+        "cash_reserve_pct",
+        "score_model_version",
+        "horizon",
+        "initial_nav",
+        "timing_version",
+    ):
         assert config[key] == legacy[key]
 
 
@@ -81,7 +89,10 @@ def test_spec_rejects_nan_and_unsupported_sizing():
 
 def test_top_n_migration_does_not_reintroduce_bounds():
     legacy = validate_strategy_config(
-        {"score_model_version": "v1", "selection": {"mode": "top_n", "portfolio_size": 3}}
+        {
+            "score_model_version": "v1",
+            "selection": {"mode": "top_n", "portfolio_size": 3},
+        }
     )
     spec = legacy_to_spec(legacy)["spec"]
     assert "lower" not in spec["selection"]

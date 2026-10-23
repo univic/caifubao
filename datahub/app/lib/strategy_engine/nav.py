@@ -257,17 +257,25 @@ def simulate_paper_nav(
         fill_id = deterministic_fill_id(
             order_id=order_id, attempt_id=str(date), execution_id="1"
         )
-        ledger.apply({
-            "type": "FILL", "event_id": fill_id, "fill_id": fill_id,
-            "order_id": order_id, "stock_code": code, "side": side,
-            "execution_date": str(date), "quantity": int(quantity),
-            "price": price, "reference_price": reference_price,
-            "fees": {
-                "commission": costs["commission"],
-                "stamp_duty": costs["stamp_duty"],
-                "transfer_fee": costs["transfer_fee"],
-            },
-        })
+        ledger.apply(
+            {
+                "type": "FILL",
+                "event_id": fill_id,
+                "fill_id": fill_id,
+                "order_id": order_id,
+                "stock_code": code,
+                "side": side,
+                "execution_date": str(date),
+                "quantity": int(quantity),
+                "price": price,
+                "reference_price": reference_price,
+                "fees": {
+                    "commission": costs["commission"],
+                    "stamp_duty": costs["stamp_duty"],
+                    "transfer_fee": costs["transfer_fee"],
+                },
+            }
+        )
 
     def _open_price(code, date, side):
         """(price, reason): the open this side may fill at, or the refusal.
@@ -288,15 +296,17 @@ def simulate_paper_nav(
                 "reason": reason,
             }
         )
-        ledger.apply({
-            "type": "REJECTED",
-            "event_id": f"blocked:{date}:{code}:{side}",
-            "order_id": f"{date}:{code}:{side}",
-            "stock_code": code,
-            "side": side,
-            "execution_date": str(date),
-            "reason_code": reason,
-        })
+        ledger.apply(
+            {
+                "type": "REJECTED",
+                "event_id": f"blocked:{date}:{code}:{side}",
+                "order_id": f"{date}:{code}:{side}",
+                "stock_code": code,
+                "side": side,
+                "execution_date": str(date),
+                "reason_code": reason,
+            }
+        )
 
     for decision in schedule:
         date = decision["date"]
@@ -338,7 +348,12 @@ def simulate_paper_nav(
             )
             sell_notional += cost["value"]
             _record_fill(
-                date, code, "SELL", pos["qty"], exec_price, cost,
+                date,
+                code,
+                "SELL",
+                pos["qty"],
+                exec_price,
+                cost,
                 reference_price=price,
             )
             trades.append(
@@ -388,7 +403,12 @@ def simulate_paper_nav(
             positions[code] = {"qty": qty, "last_price": raw_open}
             buy_notional += cost["value"]
             _record_fill(
-                date, code, "BUY", qty, exec_price, cost,
+                date,
+                code,
+                "BUY",
+                qty,
+                exec_price,
+                cost,
                 reference_price=raw_open,
             )
             trades.append(
