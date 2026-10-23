@@ -194,6 +194,7 @@ def test_feasibility_preflight_fails_closed_on_cash_and_board_minimum():
 
     spec = legacy_to_spec(DEFAULT_STRATEGY_CONFIG)["spec"]
     spec["selection"]["portfolio_size"] = 4
+    spec["constraints"]["max_single_stock_pct"] = 0.5
     spec["initial_nav"] = 20_000
     result = preflight_execution_feasibility(
         spec, reference_prices={"sh600000": 10, "sh688001": 10}
