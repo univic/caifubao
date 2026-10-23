@@ -19,8 +19,15 @@ def frozen_regime_snapshot(
 ) -> dict:
     if not isinstance(decision_date, datetime.datetime):
         raise ValueError("decision_date must be datetime")
-    if snapshot_as_of is not None and snapshot_as_of.date() > decision_date.date():
-        raise ValueError("market snapshot is after decision_date")
+    if snapshot_as_of is not None:
+        if not isinstance(snapshot_as_of, datetime.datetime):
+            raise ValueError("snapshot_as_of must be datetime")
+        try:
+            late = snapshot_as_of > decision_date
+        except TypeError as exc:
+            raise ValueError("market snapshot timezone does not match decision") from exc
+        if late:
+            raise ValueError("market snapshot is after decision_date")
     if service is None:
         from app.lib.market_regime import get_service
 
