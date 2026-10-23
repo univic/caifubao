@@ -39,19 +39,20 @@ MUST remain outside the shared contract library.
 ### Requirement: Unknown tradability verdicts MUST follow an explicit policy
 
 When the price-limit verdict for a session cannot be derived, the engine MUST
-apply a policy declared in the spec. The default MUST fail closed for the side a
-limit would block. A replay-compatibility policy that treats an unknown verdict
-as tradable MAY be selected explicitly for research reproduction; it MUST be
-visible in the spec hash and MUST NOT be the default. Trading paper/live MUST
-NOT opt into fail-open behaviour unless a separate approved trading policy
-explicitly authorizes it.
+apply a policy declared in the spec. Under the default fail-closed policy, the
+affected order intent MUST be refused rather than assuming its requested side
+is tradable; unrelated orders MUST continue. A replay-compatibility policy that
+treats an unknown verdict as tradable MAY be selected explicitly for research
+reproduction; it MUST be visible in the spec hash and MUST NOT be the default.
+Trading paper/live MUST NOT opt into fail-open behaviour unless a separate
+approved trading policy explicitly authorizes it.
 
-#### Scenario: The default refuses an unknown verdict
+#### Scenario: The default refuses an order with an unknown verdict
 
-- GIVEN a spec with the default policy and a session whose limit verdict is
-  underivable
+- GIVEN a spec with the default policy and an order whose session limit verdict
+  cannot be derived
 - WHEN orders are evaluated
-- THEN the side that a limit would block is refused and reported
+- THEN that affected order is refused with an unknown-limit reason
 - AND unrelated orders are still processed
 
 #### Scenario: The compatibility policy is explicit and hashed
