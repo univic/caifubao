@@ -714,8 +714,15 @@ def run_nav(
 
 
 def _persist_research_simulation(
-    *, runs, config_hash, hash_kind, schedule, result, benchmark,
-    execution_from, execution_to,
+    *,
+    runs,
+    config_hash,
+    hash_kind,
+    schedule,
+    result,
+    benchmark,
+    execution_from,
+    execution_to,
 ) -> str:
     """Store an immutable research derivation separately from FORWARD plans."""
     from app.model.strategy import StrategySimulationArtifact
@@ -732,13 +739,15 @@ def _persist_research_simulation(
         "benchmark_returns": benchmark,
     }
     content = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
-        default=str, allow_nan=False,
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+        allow_nan=False,
     )
     identity = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    existing = StrategySimulationArtifact.objects(
-        artifact_hash=identity
-    ).first()
+    existing = StrategySimulationArtifact.objects(artifact_hash=identity).first()
     if existing is not None:
         if existing.payload != payload:
             raise ValueError("immutable research artifact hash collision")
@@ -1002,7 +1011,8 @@ def build_parser() -> argparse.ArgumentParser:
     nav_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")
     nav_cfg.add_argument("--spec-json", default=None, help="StrategySpec JSON")
     p_nav.add_argument(
-        "--persist-research-artifact", action="store_true",
+        "--persist-research-artifact",
+        action="store_true",
         help="Write an immutable research-only ledger/NAV artifact",
     )
     p_nav.add_argument("--model-version", default=None)
