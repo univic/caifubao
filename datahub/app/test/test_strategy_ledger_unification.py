@@ -167,6 +167,44 @@ def test_risk_does_not_assume_approved_sell_filled():
     assert "sh600000" in account["positions"]
 
 
+def test_sell_approval_does_not_spend_cash_or_double_reserve_shares():
+    account = {
+        "cash": 1200,
+        "nav": 2200,
+        "positions": {"sh600000": {"quantity": 100}},
+    }
+    intents = [
+        {
+            "intent_id": "sell-1",
+            "side": "SELL",
+            "stock_code": "sh600000",
+            "quantity": 60,
+            "price": 10,
+        },
+        {
+            "intent_id": "sell-2",
+            "side": "SELL",
+            "stock_code": "sh600000",
+            "quantity": 60,
+            "price": 10,
+        },
+        {
+            "intent_id": "buy",
+            "side": "BUY",
+            "stock_code": "sh600001",
+            "quantity": 100,
+            "price": 10,
+        },
+    ]
+    first = evaluate_risk(intents=intents, account=account, policy={})
+    assert [x["intent_id"] for x in first["approved"]] == ["sell-1", "buy"]
+    assert first["rejected"][0]["intent"]["intent_id"] == "sell-2"
+    assert first["rejected"][0]["reason_code"] == "INSUFFICIENT_HOLDINGS"
+    assert evaluate_risk(intents=intents, account=account, policy={}) == first
+    assert account["cash"] == 1200
+    assert account["positions"]["sh600000"]["quantity"] == 100
+
+
 def test_risk_halt_and_drawdown_are_explainable():
     account = {"cash": 1000, "nav": 1000, "positions": {}, "drawdown": -0.2}
     order = [
