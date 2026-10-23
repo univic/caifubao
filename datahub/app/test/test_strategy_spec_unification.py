@@ -187,3 +187,42 @@ def test_forward_hash_kind_mismatch_is_replay_even_if_hash_bytes_match():
         replace=False,
     )
     assert kind == "REPLAY"
+
+
+def test_feasibility_preflight_fails_closed_on_cash_and_board_minimum():
+    from caifubao_contracts.strategy_spec import preflight_execution_feasibility
+
+    spec = legacy_to_spec(DEFAULT_STRATEGY_CONFIG)["spec"]
+    spec["selection"]["portfolio_size"] = 4
+    spec["initial_nav"] = 20_000
+    result = preflight_execution_feasibility(
+        spec, reference_prices={"sh600000": 10, "sh688001": 10}
+    )
+    assert result["checked_names"] == 2
+    assert result["details"][0]["board_minimum"] == 100
+    assert result["details"][1]["board_minimum"] == 200
+    assert result["per_name_budget_cny"] == 5000
+    with pytest.raises(ValueError, match="board minimum"):
+        preflight_execution_feasibility(
+            spec, reference_prices={"sh688001": 40}
+        )
+    with pytest.raises(ValueError, match="uneconomic"):
+        preflight_execution_feasibility(
+            spec,
+            reference_prices={"sh600001": 5},
+            max_minimum_commission_pct=0.005,
+        )
+    with pytest.raises(ValueError, match="decision-time quote map"):
+        preflight_execution_feasibility(spec, reference_prices={})
+
+
+def test_spec_risk_policy_exposure_regime_is_hashed_and_validated():
+    spec = legacy_to_spec(DEFAULT_STRATEGY_CONFIG)["spec"]
+    first = spec_hash(spec)
+    spec["risk"]["max_gross_exposure_pct"] = 0.7
+    spec["risk"]["max_single_stock_pct"] = 0.1
+    spec["risk"]["regime_policy"] = "bear_reduce_only"
+    assert spec_hash(spec) != first
+    assert validate_strategy_spec(spec)["risk"]["regime_policy"] == "bear_reduce_only"
+    with pytest.raises(ValueError, match="non-default risk"):
+        spec_to_legacy_config(spec)
