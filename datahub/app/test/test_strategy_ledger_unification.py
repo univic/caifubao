@@ -441,3 +441,42 @@ def test_frozen_spec_risk_replay_matches_shared_gate_and_never_promotes():
     assert len(bull["approved"]) == 1
     assert bull["spec_hash"] == bear["spec_hash"]
     assert account["cash"] == 1000
+
+
+def test_simulated_fills_carry_decision_date_and_spec_identity():
+    from app.lib.strategy_engine.nav import QuoteView, simulate_paper_nav
+
+    result = simulate_paper_nav(
+        prices={
+            "sh600000": {
+                "2026-10-26": QuoteView(
+                    open_price=10,
+                    close_price=10,
+                    previous_close=10,
+                    stock_code="sh600000",
+                )
+            }
+        },
+        schedule=[
+            {
+                "date": "2026-10-26",
+                "decision_date": "2026-10-23",
+                "holdings": {"sh600000": 0.5},
+            }
+        ],
+        initial_nav=10000,
+        spec_hash="frozen-spec-sha",
+    )
+    fills = [x for x in result["ledger_events"] if x["type"] == "FILL"]
+    assert len(fills) == 1
+    fill = fills[0]
+    assert fill["decision_date"] == "2026-10-23"
+    assert fill["execution_date"] == "2026-10-26"
+    assert fill["spec_hash"] == "frozen-spec-sha"
+    assert fill["source_domain"] == "research"
+    assert fill["intent_id"] == fill["order_id"]
+    assert fill["currency"] == "CNY"
+    rebuilt = ResearchSimulationLedger.rebuild(
+        result["ledger_events"], initial_cash=10000
+    )
+    assert rebuilt.snapshot() == result["ledger_snapshot"]
