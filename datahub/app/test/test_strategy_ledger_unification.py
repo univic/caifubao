@@ -271,3 +271,84 @@ def test_risk_halt_and_drawdown_are_explainable():
         ]
         == "HALTED"
     )
+
+
+def test_shared_risk_priority_budget_regime_and_exposure():
+    from caifubao_contracts.strategy_risk import evaluate_risk as shared_risk
+
+    assert shared_risk is evaluate_risk
+    account = {
+        "cash": 1600,
+        "nav": 2000,
+        "positions": {"sh600000": {"quantity": 100, "market_value": 400}},
+    }
+    intents = [
+        {
+            "intent_id": "low",
+            "side": "BUY",
+            "stock_code": "sh600001",
+            "quantity": 100,
+            "price": 4,
+            "priority": 1,
+        },
+        {
+            "intent_id": "high",
+            "side": "BUY",
+            "stock_code": "sh600002",
+            "quantity": 100,
+            "price": 5,
+            "priority": 10,
+        },
+        {
+            "intent_id": "sell",
+            "side": "SELL",
+            "stock_code": "sh600000",
+            "quantity": 100,
+            "price": 4,
+        },
+    ]
+    policy = {
+        "max_turnover_pct": 0.5,
+        "max_single_stock_pct": 0.3,
+        "max_gross_exposure_pct": 0.8,
+        "regime_policy": "bull_only",
+    }
+    passed = shared_risk(
+        account=account, intents=intents, policy=policy,
+        market={"regime": "bull"},
+    )
+    assert [x["intent_id"] for x in passed["approved"]] == ["sell", "high"]
+    assert [x["reason_code"] for x in passed["rejected"]] == [
+        "TURNOVER_BUDGET"
+    ]
+    assert shared_risk(
+        account=account, intents=intents, policy=policy,
+        market={"regime": "bull"},
+    ) == passed
+    blocked = shared_risk(
+        account=account, intents=intents, policy=policy,
+        market={"regime": "bear"},
+    )
+    assert [x["intent_id"] for x in blocked["approved"]] == ["sell"]
+    assert all(x["reason_code"] == "REGIME_BLOCKED" for x in blocked["rejected"])
+    assert account["cash"] == 1600
+
+
+def test_shared_risk_missing_exposure_snapshot_fails_closed():
+    account = {
+        "cash": 1000,
+        "nav": 2000,
+        "positions": {"sh600000": {"quantity": 100}},
+    }
+    with pytest.raises(ValueError, match="market_value"):
+        evaluate_risk(
+            account=account,
+            intents=[],
+            policy={"max_single_stock_pct": 0.2},
+        )
+    with pytest.raises(ValueError, match="market.regime"):
+        evaluate_risk(
+            account={"cash": 1000, "nav": 1000, "positions": {}},
+            intents=[],
+            policy={"regime_policy": "bull_only"},
+        )
