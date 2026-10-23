@@ -1,10 +1,10 @@
 """tushare on-exchange fund (ETF/LOF) normalization.
 
 Turns ``pro.fund_basic`` / ``pro.fund_daily`` responses into the canonical
-``exchange_traded_fund`` universe rows and ``stock_daily_quote`` quote rows.
-The quote schema is intentionally the stock schema: ETF prices reuse the same
-HFQ fields, so scoring/research readers keep working unchanged and the fund is
-distinguished only by its ``object_type=etf`` master document.
+``exchange_traded_fund`` universe rows and ``etf_daily_quote`` quote rows.
+The quote shape mirrors the stock schema (raw OHLC + ``fq_factor``/``*_hfq``)
+but lives in its own collection, so stock readers cannot pick fund rows up
+implicitly.
 
 Units follow the tushare payload: ``vol`` is 手 (kept as-is, like the stock
 path) and ``amount`` is 千元, converted to CNY (×1000). Suspended funds are

@@ -239,7 +239,7 @@ def test_sync_daily_wires_quotes_then_fq(monkeypatch):
     calls = {}
 
     monkeypatch.setattr(service, "sync_universe", lambda: {"written_count": 1})
-    monkeypatch.setattr(service, "_active_funds", lambda: {"sh510300": fund})
+    monkeypatch.setattr(service, "_fund_index", lambda: {"sh510300": fund})
     monkeypatch.setattr(
         etf_market.zh_etf_daily,
         "normalize_tushare_fund_snapshot",
@@ -395,9 +395,14 @@ def test_write_quotes_bulk_writes_selected_funds():
         def bulk_write(self, operations, ordered):
             self.calls.append((list(operations), ordered))
 
+    from app.model.stock import EtfDailyQuote
+
     class FakeQuoteModel:
         def __init__(self):
             self.collection = FakeCollection()
+
+        def __call__(self):
+            return EtfDailyQuote()
 
         def _get_collection(self):
             return self.collection
@@ -438,7 +443,7 @@ def test_sync_daily_rejects_unknown_snapshot_codes(monkeypatch):
 
     service = etf_market.EtfMarketService()
     monkeypatch.setattr(service, "sync_universe", lambda: {"written_count": 0})
-    monkeypatch.setattr(service, "_active_funds", lambda: {})
+    monkeypatch.setattr(service, "_fund_index", lambda: {})
     monkeypatch.setattr(
         etf_market.zh_etf_daily,
         "normalize_tushare_fund_snapshot",

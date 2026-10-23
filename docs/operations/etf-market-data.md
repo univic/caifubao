@@ -68,6 +68,8 @@ one-writer-at-a-time 规则，由私有 overlay 显式启用。
 - `vol` 为手、`amount` 千元 → 元（与股票 tushare 路径一致）。
 - `previous_close = pre_close`；`trade_status=1`（tushare 当日快照缺行 = 未交易，
   **不**补 0 价行）。
+- 当日快照按“已入库的全部基金”匹配（含退市整理期 `status=D` 但仍在交易的基金）；
+  未知代码（不在 `fund_basic`）仍然 fail loud。
 - `fq_factor = fund_adj`；`close_hfq = close × fq_factor`，open/high/low 同比例。
 - `daily` 的 FQ 阶段是 all-or-nothing：`fund_adj` 缺任一当日有行情代码的因子 →
   整批不写、状态不前进、运行失败；不回退 `factor=1`。

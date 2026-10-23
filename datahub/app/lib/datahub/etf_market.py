@@ -4,8 +4,9 @@ Two responsibilities, both behind explicit operator commands:
 
 ``EtfMarketService``
     Maintain the ``exchange_traded_fund`` universe and persist daily OHLCV
-    quotes into the shared ``stock_daily_quote`` collection (``object_type``
-    stays ``etf`` on the master document, so stock universes are unaffected).
+    quotes into the dedicated ``etf_daily_quote`` collection. Fund data never
+    enters the stock collections, so stock universes, research panels and the
+    public stock APIs are structurally unaffected.
 
 ``EtfFQFactorService``
     Reuse the tested stock FQ pipeline, but read the distribution/split factor
@@ -123,6 +124,16 @@ class EtfMarketService:
             "data_capabilities": {"daily_quote": True, "fq_factor": True},
         }
 
+    def _fund_index(self) -> dict[str, object]:
+        """Every known fund, so a delisting-period fund that still trades on a
+        trade date is not misread as an unknown code."""
+        return {
+            fund.code: fund
+            for fund in self.fund_model.objects().only(
+                "code", "name", "object_type", "data_capabilities"
+            )
+        }
+
     def _active_funds(self) -> dict[str, object]:
         return {
             fund.code: fund
@@ -132,9 +143,8 @@ class EtfMarketService:
         }
 
     # -- quotes --------------------------------------------------------------
-    @staticmethod
-    def _quote_operation(fund, row: dict) -> UpdateOne:
-        daily_quote = EtfDailyQuote()
+    def _quote_operation(self, fund, row: dict) -> UpdateOne:
+        daily_quote = self.quote_model()
         daily_quote.code = fund.code
         for column, value in row.items():
             setattr(daily_quote, column, value)
@@ -189,7 +199,7 @@ class EtfMarketService:
         target = pandas.Timestamp(target_date).normalize()
         trade_date = target.strftime("%Y%m%d")
         self.sync_universe()
-        funds = self._active_funds()
+        funds = self._fund_index()
         rows = zh_etf_daily.normalize_tushare_fund_snapshot(
             tushare_interface.fund_daily_by_trade_date(trade_date),
             trade_date,

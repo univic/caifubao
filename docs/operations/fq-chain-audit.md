@@ -37,7 +37,9 @@ python scripts/fq_chain_audit.py --skip-source --jump-scan
   容差 5e-4 与 writer-switch 验收（`fq-adj-factor-fix` 6.5）一致。
 - 跳变扫描：复用 `fq_factor_integrity.scan_fq_factor_jumps`，以已落库交易日历做
   相邻日判定。
-- 退出码：PASS=0，WARN=1，FAIL=2（FAIL 用于缺因子或超出容差的样本）。
+- 退出码：PASS=0，WARN=1，FAIL=2。FAIL 用于：活跃覆盖率为 0 或低于 90%、活跃行缺
+  因子、样本超出容差、请求了源校验但没有任何样本可比较、或跳变扫描命中全市场级异常
+  （目标日跳变占比 ≥5%）。单只/单次源错误但仍有样本可比时为 WARN。
 
 实现：`datahub/scripts/fq_chain_audit.py` +
 `datahub/app/lib/datahub/data_integrity_keeper/handler/fq_chain_audit.py`。

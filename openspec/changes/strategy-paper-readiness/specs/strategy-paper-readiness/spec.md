@@ -120,8 +120,9 @@ import or depend on the strategy engine's in-process objects.
   names are preserved
 - WHEN the assessment runs
 - THEN its window and progress checks work unchanged
-- AND a renamed persisted field is a visible schema mismatch rather than a
-  silent pass
+- AND a renamed persisted field degrades to a visible WARN (not READY) rather
+  than a silent pass
+- AND the operator must update the check when the underlying schema changes
 
 ### Requirement: Readiness never substitutes for authorization or certification
 

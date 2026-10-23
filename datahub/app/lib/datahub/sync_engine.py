@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 # quote→factor→signal pipeline locally; in prod, signals are computed locally.
 # stock_daily_basic is tushare valuation snapshots (dev-first research data;
 # once prod backfills it, dev keeps in sync here like the other collections).
+#: Collections published in snapshots but not part of the implicit "all"
+#: fallback: the legacy online source may not carry them, and a missing
+#: collection would fail the date-index preflight. Request them explicitly.
+OPTIONAL_SYNC_COLLECTIONS = {"exchange_traded_fund", "etf_daily_quote"}
+
 SYNCABLE_COLLECTIONS = {
     "stock_daily_quote": {"date_field": "date"},
     "stock_daily_basic": {"date_field": "date"},
@@ -90,7 +95,9 @@ def _resolve_sync_collections(
     is_dev_environment: bool,
 ) -> list[str]:
     """Resolve aliases and remove collections that are unsafe for this env."""
-    selected = target_collections or list(SYNCABLE_COLLECTIONS.keys())
+    selected = target_collections or [
+        name for name in SYNCABLE_COLLECTIONS if name not in OPTIONAL_SYNC_COLLECTIONS
+    ]
     resolved = list(
         dict.fromkeys(COLLECTION_ALIASES.get(c.strip(), c.strip()) for c in selected)
     )

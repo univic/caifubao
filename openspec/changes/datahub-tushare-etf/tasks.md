@@ -55,3 +55,8 @@
   `feature/strategy-engine-unification` PR #307).
 - [ ] 6.3 Draft PR; CI green before marking ready (only when delivery includes
   a PR).
+
+> Archive order: this change carries a `MODIFIED` delta for
+> `dev-snapshot-import`. Archive `dev-snapshot-import` first (so its `ADDED`
+> requirement exists in `openspec/specs/`), or use `--skip-specs` for the
+> structural archive; otherwise `openspec archive datahub-tushare-etf` fails.

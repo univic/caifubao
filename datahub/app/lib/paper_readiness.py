@@ -383,7 +383,15 @@ def load_inputs(
     )
     inputs.active_stock_count = len(active_codes)
 
-    latest = db[QUOTE_COLLECTION].find_one({}, {"date": 1}, sort=[("date", -1)])
+    # Anchor the session on the supported stock universe: an index row (which
+    # is not a stock) must not make a fully stale stock session look current.
+    latest = (
+        db[QUOTE_COLLECTION].find_one(
+            {"code": {"$in": sorted(active_codes)}}, {"date": 1}, sort=[("date", -1)]
+        )
+        if active_codes
+        else None
+    )
     inputs.latest_quote_date = _as_date((latest or {}).get("date"))
     if inputs.latest_quote_date is not None:
         quote_day = datetime.datetime.combine(
