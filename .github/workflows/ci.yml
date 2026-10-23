@@ -154,6 +154,7 @@ jobs:
       - name: Run Ruff
         run: |
           ruff check backend/ shared/
+          ruff format --diff backend/ shared/ || true
           ruff format --check backend/ shared/
 
   frontend-check:
