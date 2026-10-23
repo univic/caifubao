@@ -314,19 +314,26 @@ def test_shared_risk_priority_budget_regime_and_exposure():
         "regime_policy": "bull_only",
     }
     passed = shared_risk(
-        account=account, intents=intents, policy=policy,
+        account=account,
+        intents=intents,
+        policy=policy,
         market={"regime": "bull"},
     )
     assert [x["intent_id"] for x in passed["approved"]] == ["sell", "high"]
-    assert [x["reason_code"] for x in passed["rejected"]] == [
-        "TURNOVER_BUDGET"
-    ]
-    assert shared_risk(
-        account=account, intents=intents, policy=policy,
-        market={"regime": "bull"},
-    ) == passed
+    assert [x["reason_code"] for x in passed["rejected"]] == ["TURNOVER_BUDGET"]
+    assert (
+        shared_risk(
+            account=account,
+            intents=intents,
+            policy=policy,
+            market={"regime": "bull"},
+        )
+        == passed
+    )
     blocked = shared_risk(
-        account=account, intents=intents, policy=policy,
+        account=account,
+        intents=intents,
+        policy=policy,
         market={"regime": "bear"},
     )
     assert [x["intent_id"] for x in blocked["approved"]] == ["sell"]
