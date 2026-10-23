@@ -430,12 +430,15 @@ def test_frozen_spec_risk_replay_matches_shared_gate_and_never_promotes():
     assert bear["rejected"][0]["reason_code"] == "REGIME_BLOCKED"
     assert bear["evidence_kind"] == "REPLAY"
     assert bear["operational_approval"] is False
-    assert replay_from_snapshots(
-        spec=spec,
-        account=account,
-        intents=intents,
-        market={"regime": "bear"},
-    ) == bear
+    assert (
+        replay_from_snapshots(
+            spec=spec,
+            account=account,
+            intents=intents,
+            market={"regime": "bear"},
+        )
+        == bear
+    )
     bull = replay_from_snapshots(
         spec=spec,
         account=account,
@@ -504,9 +507,9 @@ def test_shared_ledger_event_schema_fail_closed_and_not_mutated():
     assert event["quantity"] == 100
     with pytest.raises(ValueError, match="currency=CNY"):
         validate_ledger_event(
-            {**event, "source_domain": "research", "account_id": "a",
-             "currency": "USD"}
+            {**event, "source_domain": "research", "account_id": "a", "currency": "USD"}
         )
     with pytest.raises(ValueError, match="order event"):
-        validate_ledger_event({"type": "REJECTED", "event_id": "r1",
-                               "reason_code": "suspended"})
+        validate_ledger_event(
+            {"type": "REJECTED", "event_id": "r1", "reason_code": "suspended"}
+        )
