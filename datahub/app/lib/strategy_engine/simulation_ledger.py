@@ -11,6 +11,7 @@ import copy
 import math
 
 from caifubao_contracts.strategy_execution import require_t_plus_one
+from caifubao_contracts.strategy_ledger_events import validate_ledger_event
 
 
 def _number(value, field: str, *, positive: bool = False) -> float:
@@ -46,9 +47,8 @@ class ResearchSimulationLedger:
 
     def apply(self, event: dict) -> bool:
         """Apply once; duplicate identity+payload is no-op, conflicting is fatal."""
-        copied = copy.deepcopy(event)
-        if not isinstance(copied, dict):
-            raise ValueError("event must be an object")
+        # Validate the shared schema before touching any account state.
+        copied = validate_ledger_event(event)
         identity = copied.get("event_id")
         if not isinstance(identity, str) or not identity:
             raise ValueError("event_id is required")
