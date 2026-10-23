@@ -113,6 +113,7 @@ def evaluate_risk(
     sell_reserved: dict[str, int] = {}
     reserved_positions = set(held)
     turnover = 0.0
+
     # Sellers first, then higher priority; original index breaks ties.
     def rank(entry):
         index, item = entry
@@ -150,9 +151,10 @@ def evaluate_risk(
         if side == "SELL":
             if held.get(code, 0) - sell_reserved.get(code, 0) < quantity:
                 reason = "INSUFFICIENT_HOLDINGS"
-        elif normalized["max_drawdown_pct"] is not None and drawdown <= -normalized[
-            "max_drawdown_pct"
-        ]:
+        elif (
+            normalized["max_drawdown_pct"] is not None
+            and drawdown <= -normalized["max_drawdown_pct"]
+        ):
             reason = "DRAWDOWN_BREAKER"
         elif regime_policy == "bull_only" and market_regime != "bull":
             reason = "REGIME_BLOCKED"
@@ -171,7 +173,9 @@ def evaluate_risk(
             and (exposed.get(code, 0.0) + notional) > exposure_cap * nav + 1e-8
         ):
             reason = "CONCENTRATION"
-        elif gross_cap is not None and exposure_total + notional > gross_cap * nav + 1e-8:
+        elif (
+            gross_cap is not None and exposure_total + notional > gross_cap * nav + 1e-8
+        ):
             reason = "GROSS_EXPOSURE"
         if (
             reason is None
