@@ -20,7 +20,9 @@ def evaluate_risk(
     """Return approved and rejected intents, without mutating input or state.
 
     Each intent contains intent_id, side, stock_code, quantity and price.
-    Sells are considered first; blocked exits remain in the account snapshot.
+    A sell approval is not assumed filled: no cash or position capacity is
+    released until the actual ledger changes. Blocked exits therefore cannot
+    accidentally permit an over-cap buy.
     """
     if halted:
         return {
@@ -56,11 +58,9 @@ def evaluate_risk(
         if side == "SELL":
             if positions.get(code, 0) < quantity:
                 reason = "INSUFFICIENT_HOLDINGS"
-            else:
-                positions[code] -= quantity
-                if not positions[code]:
-                    del positions[code]
-                cash += notional
+            # A submitted sell is not a fill: do NOT release cash or position
+            # capacity for new buys. A limit-down or suspended exit might fail.
+            # The caller must re-evaluate buys after actual fill events.
         elif max_drawdown is not None and drawdown <= -float(max_drawdown):
             reason = "DRAWDOWN_BREAKER"
         elif max_positions is not None and code not in positions and len(positions) >= int(max_positions):
