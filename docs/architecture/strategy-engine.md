@@ -212,8 +212,11 @@ and `sideways` (60-session CSI 300 classifier); missing classification
 
 **Reconciliation source authority:** `reconcile_plan_vs_account` retains
 the historical operator CLI and JSON/exit contracts. The new read-only
-`reconcile_trading_projection` accepts only `source_domain=trading`,
-an explicit `account_id`, filled-position quantities and projected cash.
+`reconcile_trading_projection` uses
+`shared/caifubao_contracts/trading_projection.py` to validate its source
+without a trading-to-datahub dependency; it accepts only
+`source_domain=trading`, an explicit `account_id`, filled-position quantities
+and projected cash.
 It overrides any caller-supplied `planned_cash` with the trading projection.
 Research position targets, estimated fills or research ledger snapshots are
 rejected as substitutes. This adapter does not create a TradingPortfolioLedger
