@@ -31,7 +31,13 @@ class StrategyPaperRun(Document):
     evidence_kind = StringField(choices=["REPLAY", "FORWARD"], default="REPLAY")
     model_version = StringField(required=True)
     horizon = IntField(required=True, choices=[5, 20, 60])
-    config_hash = StringField(required=True)  # hash of the VALIDATED config
+    # config_hash remains the authoritative identity for legacy readers.
+    # New spec-backed records pin spec_hash there; the hash_kind disambiguates
+    # it from legacy config hashes, so old forward windows remain independent.
+    config_hash = StringField(required=True)
+    hash_kind = StringField(choices=["legacy", "spec"], default="legacy")
+    spec_hash = StringField()
+    legacy_config_hash = StringField()
     config = DictField()
 
     status = StringField(
@@ -89,6 +95,9 @@ class StrategyForwardWindow(Document):
     model_version = StringField(required=True)
     horizon = IntField(required=True, choices=[5, 20, 60])
     config_hash = StringField(required=True)
+    hash_kind = StringField(choices=["legacy", "spec"], default="legacy")
+    spec_hash = StringField()
+    legacy_config_hash = StringField()
     start_date = DateTimeField(required=True)  # first signal date allowed FORWARD
     status = StringField(choices=["ACTIVE", "CLOSED"], default="ACTIVE")
     decision_at = DateTimeField()  # when the window was opened
