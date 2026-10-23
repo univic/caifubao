@@ -104,14 +104,24 @@ def test_cli_accepts_spec_and_legacy_config_exclusively():
     from app.jobs.strategy_runner import build_parser
 
     parser = build_parser()
-    assert parser.parse_args(
-        ["run", "--date", "2026-10-23", "--spec-json", "{}"]
-    ).spec_json == "{}"
+    assert (
+        parser.parse_args(
+            ["run", "--date", "2026-10-23", "--spec-json", "{}"]
+        ).spec_json
+        == "{}"
+    )
     with pytest.raises(SystemExit):
-        parser.parse_args([
-            "run", "--date", "2026-10-23",
-            "--config-json", "{}", "--spec-json", "{}",
-        ])
+        parser.parse_args(
+            [
+                "run",
+                "--date",
+                "2026-10-23",
+                "--config-json",
+                "{}",
+                "--spec-json",
+                "{}",
+            ]
+        )
 
 
 def test_forward_hash_kind_mismatch_is_replay_even_if_hash_bytes_match():
@@ -128,9 +138,7 @@ def test_forward_hash_kind_mismatch_is_replay_even_if_hash_bytes_match():
     )
     kind = classify_evidence_kind(
         date=datetime.datetime.fromisoformat("2026-10-23"),
-        decision_at=datetime.datetime.fromisoformat(
-            "2026-10-23T07:00:00+00:00"
-        ),
+        decision_at=datetime.datetime.fromisoformat("2026-10-23T07:00:00+00:00"),
         execution_date=datetime.datetime.fromisoformat("2026-10-26"),
         window=window,
         config_hash="same-bytes",
