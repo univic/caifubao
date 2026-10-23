@@ -73,14 +73,20 @@ class ResearchSimulationLedger:
             marks = copied.get("marks")
             if not isinstance(marks, dict):
                 raise ValueError("mark event needs a quote map")
-            for code, position in self.positions.items():
+            # Validate the full mark batch before touching any position: a bad
+            # quote must not leave half of the portfolio revalued.
+            validated = {}
+            for code in self.positions:
                 value = marks.get(code)
+                validated[code] = (
+                    None if value is None else _number(value, f"mark {code}", positive=True)
+                )
+            for code, position in self.positions.items():
+                value = validated[code]
                 if value is None:
                     position["stale"] = True
                 else:
-                    position["last_price"] = _number(
-                        value, f"mark {code}", positive=True
-                    )
+                    position["last_price"] = value
                     position["stale"] = False
         elif kind == "DIVIDEND":
             code = copied.get("stock_code")
@@ -106,8 +112,8 @@ class ResearchSimulationLedger:
             code = copied.get("stock_code")
             if code not in self.positions or not copied.get("reason_code"):
                 raise ValueError("write-off requires held name and reason_code")
-            p = self.positions.pop(code)
             price = _number(copied.get("exit_price"), "exit_price")
+            p = self.positions.pop(code)
             proceeds = p["quantity"] * price
             self.cash += proceeds
             self.realized_pnl += proceeds - p["cost_basis"]
@@ -144,6 +150,9 @@ class ResearchSimulationLedger:
         expense = sum(_number(value, f"fees.{key}") for key, value in fees.items())
         notional = qty * price
         if side == "BUY":
+            reference_price = _number(
+                e.get("reference_price", price), "reference_price", positive=True
+            )
             if notional + expense > self.cash + 1e-8:
                 raise ValueError("insufficient cash; cash cannot go negative")
             if (
@@ -159,9 +168,7 @@ class ResearchSimulationLedger:
             )
             position["quantity"] += qty
             position["cost_basis"] += notional + expense
-            position["last_price"] = _number(
-                e.get("reference_price", price), "reference_price", positive=True
-            )
+            position["last_price"] = reference_price
         else:
             p = self.positions.get(code)
             if p is None or qty > p["quantity"]:
