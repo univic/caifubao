@@ -19,7 +19,7 @@
   `constraints`、`rebalance`、`risk`、`execution`、`evidence`
 - [x] 1.2 实现未知键拒绝与缺省值显式化，复用现有 `validate_strategy_config` 的错误风格
 - [x] 1.3 实现 canonical `spec_hash`（字段排序、类型规范化），并锁定 golden 向量；旧 `config_hash` 只保留为 `legacy_config_hash`
-- [ ] 1.4 实现 AUM × 宽度 × 板块最小手数 × 最低佣金的可行性校验
+- [x] 1.4 实现 AUM × 宽度 × 板块最小手数 × 最低佣金的可行性校验（Spec 路径按决策日参考收盘价和目标权重执行；legacy 路径保持兼容）
 - [x] 1.5 实现 `DEFAULT_STRATEGY_CONFIG` → `StrategySpec` 的确定性迁移函数
 - [x] 1.6 golden 测试：迁移后的 spec 产生与旧 config 相同的 target book / rebalance / 声明的执行行为；分别验证 `legacy_config_hash` 原样保留与 `spec_hash` 稳定，不要求两个哈希相等
 - [x] 1.7 让 `strategy_runner run` 支持 `--spec`（与 `--config-json` 并存），输出 `spec_hash`
