@@ -90,8 +90,11 @@ not an implicit branch.
 ### Requirement: A spec used as evidence MUST be immutable
 
 Once evidence is certified, any spec change MUST produce a new version and hash.
-The engine MUST NOT mutate a spec in place, and a run whose supplied spec hash
-does not match the active evidence window's hash MUST NOT be certified FORWARD.
+The engine MUST NOT mutate a spec in place. Each evidence window MUST explicitly
+identify the hash kind it pins (`legacy_config_hash` or `spec_hash`); hashes from
+different kinds MUST NOT be compared as if they were the same namespace. A run
+whose supplied identity does not match the active evidence window's pinned hash
+MUST NOT be certified FORWARD.
 Such a run MUST be recorded with the existing out-of-window classification
 (`evidence_kind=REPLAY`) or fail; it MUST NOT advance the window's counter, and
 the engine MUST NOT introduce a new hard-rejection policy for a mismatch that
@@ -99,8 +102,8 @@ the forward-evidence contract already classifies.
 
 #### Scenario: A mismatched spec is not certified forward
 
-- GIVEN an ACTIVE forward window with a pinned spec hash
-- WHEN a run is started with a spec whose hash differs
+- GIVEN an ACTIVE forward window pinned to one declared hash kind
+- WHEN a run is started with a different hash value or a different hash kind
 - THEN the run is recorded outside the window's evidence as `REPLAY`
 - AND the pinned evidence window and its counter are not advanced
 
