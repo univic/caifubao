@@ -121,7 +121,9 @@ class ResearchSimulationLedger:
             position = self.positions.setdefault(code, {"quantity": 0, "cost_basis": 0.0, "last_price": price, "stale": False})
             position["quantity"] += qty
             position["cost_basis"] += notional + expense
-            position["last_price"] = price
+            position["last_price"] = _number(
+                e.get("reference_price", price), "reference_price", positive=True
+            )
         else:
             p = self.positions.get(code)
             if p is None or qty > p["quantity"]:
