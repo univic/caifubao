@@ -114,9 +114,7 @@ def flag(value) -> bool:
     return bool(value)
 
 
-def side_cost(
-    notional: float, side: str = "BUY", cost_model: str = "legacy"
-) -> float:
+def side_cost(notional: float, side: str = "BUY", cost_model: str = "legacy") -> float:
     """Preserve frozen replay math unless shared_v1 is explicitly requested."""
     if cost_model == "shared_v1":
         from caifubao_contracts.friction import side_cost as shared_side_cost
