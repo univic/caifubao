@@ -203,9 +203,7 @@ def test_feasibility_preflight_fails_closed_on_cash_and_board_minimum():
     assert result["details"][1]["board_minimum"] == 200
     assert result["per_name_budget_cny"] == 5000
     with pytest.raises(ValueError, match="board minimum"):
-        preflight_execution_feasibility(
-            spec, reference_prices={"sh688001": 40}
-        )
+        preflight_execution_feasibility(spec, reference_prices={"sh688001": 40})
     with pytest.raises(ValueError, match="uneconomic"):
         preflight_execution_feasibility(
             spec,
