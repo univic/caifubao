@@ -64,6 +64,7 @@ explicitly authorizes it.
 
 ### Requirement: Order and fill identities MUST make retries idempotent without losing partial fills
 
+The event model MUST make retries idempotent without losing partial fills.
 For a given intent and execution policy, rerunning the same simulated session
 MUST NOT duplicate its order or fill events. The event model MUST distinguish
 stable `intent_id`, `order_id`, execution-attempt identity and individual
