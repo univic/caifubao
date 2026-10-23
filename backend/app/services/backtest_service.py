@@ -20,7 +20,10 @@ from app.model.stock import IndividualStock, StockDailyQuote
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Constants
+# Legacy strategy registry — FROZEN by strategy-engine-unification (PR #306).
+# These six historical code-branch strategies remain read-only for backward
+# compatibility. New strategies MUST use versioned StrategySpec in research;
+# do not add seventh strategy here or move broker/account logic into the API.
 # ---------------------------------------------------------------------------
 TRADING_DAYS_PER_YEAR = 252
 RISK_FREE_RATE = 0.03  # annual
