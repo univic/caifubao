@@ -38,6 +38,7 @@ from __future__ import annotations
 import math
 
 from caifubao_contracts.strategy_execution import (
+    session_limit_flags,
     tradable_open as shared_tradable_open,
 )
 
@@ -73,11 +74,9 @@ def limit_verdict(
     if not _finite_positive(previous_close) or not _finite_positive(open_price):
         return None, None
     board = price_limit(stock_code, is_st=is_st)
-    previous = float(previous_close)
-    opened = float(open_price)
-    upper = previous * (1 + (board - LIMIT_EPSILON) / 100)
-    lower = previous * (1 - (board - LIMIT_EPSILON) / 100)
-    return opened >= upper, opened <= lower
+    return session_limit_flags(
+        open_price, previous_close, board, tolerance_pct=LIMIT_EPSILON
+    )
 
 
 def tradeable_open(
