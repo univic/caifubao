@@ -208,7 +208,56 @@ and `sideways` (60-session CSI 300 classifier); missing classification
 | `GROSS_EXPOSURE` | Gross exposure after BUY exceeds cap |
 | `HALTED` | Explicitly captured halt takes precedence; no intents approved |
 
-## 8. Current CI dependency
+## 8. Implementation close-out notes for PR #307
+
+**Reconciliation source authority:** `reconcile_plan_vs_account` retains
+the historical operator CLI and JSON/exit contracts. The new read-only
+`reconcile_trading_projection` accepts only `source_domain=trading`,
+an explicit `account_id`, filled-position quantities and projected cash.
+It overrides any caller-supplied `planned_cash` with the trading projection.
+Research position targets, estimated fills or research ledger snapshots are
+rejected as substitutes. This adapter does not create a TradingPortfolioLedger
+or authorize a broker operation. Normative delta:
+`strategy-live-loop-minimal/spec.md` in this change.
+
+**Daily NAV parity:** `simulate_paper_nav` now returns an additional
+`nav_parity` audit vector per rebalance session: independent legacy-shaped
+cash+positions mark, event-ledger mark and the numeric delta; differences
+greater than 0.01 CNY fail loudly. Tests include blocked exits followed by
+subsequent liquidation and event-stream rebuild. This checks accounting
+equivalence over supplied frozen sessions; it does not assert that a new
+multi-year historical dataset has been retrieved or replayed.
+
+**Market and halt authority:** `market_snapshot.frozen_regime_snapshot`
+calls the existing 60-day CSI300 classifier at a *decision-date* cut-off;
+unknown classifications and post-decision snapshots fail closed.
+`strategy_risk_replay.replay_with_market_regime` then passes that
+explicit snapshot to the side-effect-free risk gate. Research may read a
+separately captured `--halt-snapshot` JSON with operator attribution,
+but never reads or changes the live halt file from risk replay. The older
+datahub halt command remains a temporary legacy physical implementation,
+not the target Trading halt authority.
+
+**Cross-consumer rule migration:** timing replay now consumes shared
+slippage, fee, and board-lot functions. Its existing manifest has no
+transfer-fee key and therefore retains its historical zero-transfer
+semantics unless a versioned policy supplies one. Factor Lab offers the
+explicit `shared_v1` cost policy while its default `legacy` calculation
+is unchanged. Factor Lab's old lot-counting ledger cannot represent
+STAR 200+n (1-share increments), so shared mode fails closed for STAR;
+migration to a share-level ledger is a follow-up, not hidden truncation.
+
+**Execution runtime separation:** `strategy_modes` maps
+BACKTEST/REPLAY/RESEARCH_SIMULATION to research and
+TRADING_PAPER/LIVE to trading. The research simulator refuses the
+trading modes. A separate trading-owned adapter, persistent account
+ledger and an end-to-end cross-mode golden trace are **not implemented**.
+Likewise the repository-wide `artifact-contract` (hash input units,
+CI-injected code provenance and field manifests) is not satisfied merely
+by an existing research `content_hash`; it requires its own conformity
+work before declaring S3 complete.
+
+## 9. Current CI dependency
 
 The public PR dispatches a dry-run workflow in the private overlay repository.
 Its failure must be investigated in the **private** Actions run and cannot be
