@@ -98,7 +98,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--market", type=Path)
     parser.add_argument("--halted-snapshot", action="store_true")
     parser.add_argument(
-        "--halt-snapshot", type=Path,
+        "--halt-snapshot",
+        type=Path,
         help="Frozen research-only JSON halt snapshot; never the live halt store",
     )
     args = parser.parse_args(argv)
