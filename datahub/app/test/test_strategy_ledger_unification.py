@@ -513,3 +513,99 @@ def test_shared_ledger_event_schema_fail_closed_and_not_mutated():
         validate_ledger_event(
             {"type": "REJECTED", "event_id": "r1", "reason_code": "suspended"}
         )
+
+
+def test_frozen_market_regime_snapshot_is_causal_and_fails_closed():
+    import datetime as dt
+
+    from app.lib.strategy_engine.market_snapshot import frozen_regime_snapshot
+
+    class Service:
+        lookback_days = 60
+
+        def classify_date(self, date):
+            assert date == dt.datetime(2026, 10, 23)
+            return "bear"
+
+    decision = dt.datetime(2026, 10, 23)
+    market = frozen_regime_snapshot(decision, service=Service())
+    assert market["regime"] == "bear"
+    assert market["regime_lookback_days"] == 60
+    assert market["decision_date"] == "2026-10-23"
+    with pytest.raises(ValueError, match="after decision"):
+        frozen_regime_snapshot(
+            decision, service=Service(),
+            snapshot_as_of=dt.datetime(2026, 10, 24),
+        )
+
+    class Missing:
+        lookback_days = 60
+
+        def classify_date(self, date):
+            return "unknown"
+
+    with pytest.raises(ValueError, match="unavailable"):
+        frozen_regime_snapshot(decision, service=Missing())
+
+
+def test_risk_replay_halt_snapshot_never_reads_operational_store():
+    from app.jobs.strategy_risk_replay import read_frozen_halt_snapshot
+
+    assert read_frozen_halt_snapshot({"halted": False}) is False
+    assert read_frozen_halt_snapshot({
+        "halted": True, "changed_by": "research-test", "reason": "freeze",
+    }) is True
+    with pytest.raises(ValueError, match="boolean"):
+        read_frozen_halt_snapshot({})
+    with pytest.raises(ValueError, match="changed_by"):
+        read_frozen_halt_snapshot({"halted": True})
+
+
+def test_research_nav_returns_independent_daily_legacy_ledger_parity():
+    from app.lib.strategy_engine.nav import QuoteView, simulate_paper_nav
+
+    quotes = {
+        "sh600000": {
+            "2026-10-26": QuoteView(
+                open_price=10, close_price=10,
+                previous_close=10, stock_code="sh600000",
+            ),
+            "2026-10-27": QuoteView(
+                open_price=9.01, close_price=9.01,
+                previous_close=10, stock_code="sh600000",
+            ),
+            "2026-10-28": QuoteView(
+                open_price=9, close_price=9,
+                previous_close=9.01, stock_code="sh600000",
+            ),
+        }
+    }
+    result = simulate_paper_nav(
+        prices=quotes,
+        schedule=[
+            {
+                "date": "2026-10-26", "decision_date": "2026-10-23",
+                "holdings": {"sh600000": 0.5},
+            },
+            {
+                "date": "2026-10-27", "decision_date": "2026-10-26",
+                "holdings": {},
+            },
+            {
+                "date": "2026-10-28", "decision_date": "2026-10-27",
+                "holdings": {},
+            },
+        ],
+        initial_nav=10000,
+    )
+    parity = result["nav_parity"]
+    assert len(parity["points"]) == 3
+    assert parity["max_abs_delta_cny"] <= 0.01
+    assert [x["ledger_nav"] for x in parity["points"]] == [
+        x["nav"] for x in result["curve"]
+    ]
+    assert all(abs(x["delta"]) <= 0.01 for x in parity["points"])
+    restored = ResearchSimulationLedger.rebuild(
+        result["ledger_events"], initial_cash=10000
+    )
+    assert restored.snapshot() == result["ledger_snapshot"]
