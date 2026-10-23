@@ -644,26 +644,32 @@ def test_research_market_regime_gate_uses_snapshot_and_halt_first():
 
     spec = legacy_to_spec(DEFAULT_STRATEGY_CONFIG)["spec"]
     spec["risk"]["regime_policy"] = "bull_only"
-    intents = [{
-        "intent_id": "buy",
-        "stock_code": "sh600001",
-        "side": "BUY",
-        "quantity": 100,
-        "price": 2,
-    }]
+    intents = [
+        {
+            "intent_id": "buy",
+            "stock_code": "sh600001",
+            "side": "BUY",
+            "quantity": 100,
+            "price": 2,
+        }
+    ]
     account = {"cash": 1000, "nav": 1000, "positions": {}}
     result = replay_with_market_regime(
-        spec=spec, account=account, intents=intents,
-        decision_date=dt.datetime(2026, 10, 23), regime_service=Bear(),
+        spec=spec,
+        account=account,
+        intents=intents,
+        decision_date=dt.datetime(2026, 10, 23),
+        regime_service=Bear(),
     )
     assert result["rejected"][0]["reason_code"] == "REGIME_BLOCKED"
     assert result["evidence_kind"] == "REPLAY"
     halted = replay_with_market_regime(
-        spec=spec, account=account, intents=intents,
-        decision_date=dt.datetime(2026, 10, 23), regime_service=Bear(),
-        halt_snapshot={
-            "halted": True, "changed_by": "operator", "reason": "incident"
-        },
+        spec=spec,
+        account=account,
+        intents=intents,
+        decision_date=dt.datetime(2026, 10, 23),
+        regime_service=Bear(),
+        halt_snapshot={"halted": True, "changed_by": "operator", "reason": "incident"},
     )
     assert halted["status"] == "HALTED"
     assert halted["rejected"][0]["reason_code"] == "HALTED"
@@ -682,8 +688,6 @@ def test_research_simulator_never_runs_as_trading_paper_or_live():
     for mode in ("TRADING_PAPER", "LIVE"):
         assert strategy_domain(mode) == "trading"
         with pytest.raises(ValueError, match="independent trading runtime"):
-            simulate_paper_nav(
-                prices={}, schedule=[], initial_nav=10000, mode=mode
-            )
+            simulate_paper_nav(prices={}, schedule=[], initial_nav=10000, mode=mode)
     with pytest.raises(ValueError, match="unsupported"):
         strategy_domain("paper")
