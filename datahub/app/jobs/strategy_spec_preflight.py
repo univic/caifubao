@@ -18,9 +18,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--spec", required=True, type=Path)
     parser.add_argument("--reference-prices", required=True, type=Path)
-    parser.add_argument(
-        "--max-minimum-commission-pct", type=float, default=0.01
-    )
+    parser.add_argument("--max-minimum-commission-pct", type=float, default=0.01)
     args = parser.parse_args(argv)
     with args.spec.open(encoding="utf-8") as stream:
         spec = json.load(stream)
