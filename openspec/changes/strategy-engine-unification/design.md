@@ -186,7 +186,7 @@ backend 回测请求 JSON、timing replay manifest、factor lab `profile.yaml`�
 | `strategy-paper-runner` | 本 change 的 S0/S1 是其 config/runner 契约的演进，不推翻 |
 | `strategy-portfolio-risk-limits` | S2 在其静态约束之上增加预算/回撤/regime |
 | `strategy-live-loop-minimal` | S3 复用其 halt / tradability / reconcile 的判定与输出契约；S1 只改对账的**计划侧来源** |
-| `strategy-forward-evidence-capture` | 证据判定口径不变；S6 只统一 artifact 引用 |
+| `strategy-forward-evidence-capture` | 本 change 不改 FORWARD 认证口径；研究模拟工件只统一 artifact 引用，trading/paper 成交证据若成为门槛需另提契约变更 |
 | `artifact-contract` | 落地 `artifact_id` / `artifact_hash` / `input_snapshot` 契约（replay 现有 `input_hash` 只做映射，不改语义） |
 | `production-capability-roadmap` | 本 change 是阶段 1（决策与治理地基）的引擎侧细化 |
 
