@@ -28,41 +28,42 @@ openspec/
 
 ## 2. 生命周期
 
-1. **Gate**：先按 `RULES.md#spec-gate` 判断是否需要 change。内部重构、测试、格式化、
-   等价的小修复不需要。
-2. **新建**：`openspec new change <kebab-name>`（会生成 `.openspec.yaml`）。
-3. **写作顺序**：`proposal.md` → `specs/` → `design.md`（需要时）→ `tasks.md`。
-4. **实现**：按 `tasks.md` 勾选；每个 change 保持单一目标。
-5. **验证**：`openspec validate <change> --strict`，合并前 `--all --strict`。
-6. **归档**：完成后 `openspec archive <change>`（本仓库当前未执行，见 §7）。
+`new → proposal → specs → design（可选）→ tasks → validate → archive` 的完整流程由
+[`.project-rules.md`](../.project-rules.md) 的 OpenSpec 一节定义；本仓库只需补充两个
+事实：
 
-状态口径：
+- 本仓库尚未启用 `openspec/specs/`，delta 全部写在 change 内，契约账本由
+  `openspec/changes/` + `openspec/archive/` 共同构成；
+- `openspec archive` 至今没有执行过（见 §7.1），首次归档会创建 `openspec/specs/`。
 
-| 标记 | 含义 |
-|:---|:---|
-| ✅ 任务已勾选 | `tasks.md` 无未完成项；**不等于**已验收或已归档 |
-| 🟡 进行中 | 仍有未完成任务 |
-| 📋 契约先行 | 只有 proposal/specs，实现未开始（如 `artifact-contract`） |
+状态只在 §5 的「未完成」列体现：`0` = 任务已勾选（**不等于**已验收或已归档）；
+`>0` = 进行中；`artifact-contract` 这类 0 勾选的是「契约先行、实现未开始」。
 
 ## 3. 写作约定（与 CLI 1.1.1 对齐）
 
-CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`。以下
-是**会被严格校验**的点：
+CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`。
+**strict 实际强制的**是：
 
-- `proposal.md` 需要 `## Why`、`## What Changes`、`## Capabilities`（含
-  `### New Capabilities` / `### Modified Capabilities`）、`## Impact`。
-- proposal 列出的每个新能力，必须在 `specs/<capability>/spec.md` 有对应文件；
-  capability 名用 kebab-case。
-- delta 文件用 `## ADDED Requirements` / `## MODIFIED Requirements` /
-  `## REMOVED Requirements` / `## RENAMED Requirements` 之一或多个。
-- 每条 `### Requirement: <名称>` 至少有一个 `#### Scenario:`（**必须 4 个 `#`**）。
+- 非空的 `## Why` 与 `## What Changes`；
+- delta 使用 `## ADDED Requirements` / `## MODIFIED Requirements` /
+  `## REMOVED Requirements` / `## RENAMED Requirements` 之一或多个；
+- 每条 `### Requirement: <名称>` 至少有一个 `#### Scenario:`（**必须 4 个 `#`**）；
 - **Requirement 正文的第一行必须包含 `SHALL` 或 `MUST`**——CLI 只把第一行当作规范性
   文本做检查，后续行不参与该判断。这是最容易踩的格式坑。
-- `MODIFIED` 要求 `openspec/specs/<capability>/spec.md` 已存在。本仓库没有该目录，
-  所以**新增契约一律用 `ADDED`**；等启用归档后再按 `MODIFIED` 写增量。
-- `tasks.md` 用 `- [ ]` / `- [x]`，每条控制在约 2 小时；需要跨阶段时拆成
-  `## 1. S0 — ...` 这样的段。
-- 语言：中文为主，规范句可用英文 `MUST`；金额/费率/口径必须写清单位与来源。
+
+以下**不是** strict 校验项，而是本仓库的写作约定（评审会看）：
+
+- `## Capabilities`（含 `### New Capabilities` / `### Modified Capabilities`）与
+  `## Impact`：模板要求，但实测 37 个 change 中只有少数包含，仍能通过；
+- 每个新能力一个 `specs/<capability>/spec.md`：CLI 不强制，归档时会用到；
+- `MODIFIED` 要求目标 `openspec/specs/<capability>/spec.md` 已存在——这是
+  **`openspec archive` 的检查**（`validate` 不检查）。本仓库已有 7 个 change 使用
+  MODIFIED 并通过校验；在 `openspec/specs/` 启用前，新增契约默认用 `ADDED` 是约定，
+  不是 CLI 约束。
+
+其余约定：`tasks.md` 用 `- [ ]` / `- [x]`，每条约 2 小时；跨阶段用
+`## 1. S0 — ...` 分段；语言中文为主，规范句用英文 `MUST`；金额/费率/口径必须写清
+单位与来源。
 
 ## 4. 领域与能力（capability）命名
 
@@ -84,7 +85,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
   `strategy-paper-research-ledger`、`strategy-portfolio-risk-limits`、
   `strategy-target-export`、`strategy-replay-artifact`、`backtest-mvp`、
   `core-satellite-allocation`、`small-account-execution-plan`、
-  `etf-benchmark-paper`、`stock-timing-*`
+  `small-account-strategy-research`、`etf-benchmark-paper`、`stock-timing-*`
 - **治理**：`environment-model`、`artifact-contract`、`production-capability`、
   `architecture-integrity`
 
@@ -96,7 +97,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 
 ## 5. 活跃 change 索引
 
-共 37 个（36 个既有 + 1 个新增），未完成任务合计 147。按领域分组，组内按 change 名排序。
+共 37 个（36 个既有 + 1 个新增），未完成任务合计 149。按领域分组，组内按 change 名排序。
 
 ### 5.1 数据与管道
 
@@ -135,8 +136,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 
 | Change | 内容 | 主要能力 | 未完成 |
 |:---|:---|:---|:---:|
-| `strategy-engine-unification` | **本索引新增**：一个 Spec、一套撮合、一个账本 | `strategy-definition`、`strategy-portfolio-ledger`、`strategy-risk-gate`、`strategy-execution-model` | 40 |
-| `artifact-contract` | 不可变研究工件契约（S2） | `artifact-contract` | 13 |
+| `strategy-engine-unification` | **本索引新增**：一个 Spec、一套撮合、一个账本 | `strategy-definition`、`strategy-portfolio-ledger`、`strategy-risk-gate`、`strategy-execution-model` | 42 |
 | `score-backtest-execution-integrity` | 评分驱动回测的执行时序安全 | `backtest-mvp` | 2 |
 | `strategy-forward-evidence-capture` | 不可变前瞻证据 + 120 会话计数 | `strategy-forward-evidence` | 1 |
 | `strategy-live-loop-minimal` | 最小实盘闭环（涨跌停/对账/熔断） | `strategy-live-loop-minimal`、`strategy-engine`、`strategy-nav-fee-budget` | 2 |
@@ -157,6 +157,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 | Change | 内容 | 主要能力 | 未完成 |
 |:---|:---|:---|:---:|
 | `production-capability-roadmap` | 研究/MVP → 实盘能力的分阶段闸门 | `production-capability` | 20 |
+| `artifact-contract` | 不可变研究工件契约（S2；契约先行） | `artifact-contract` | 13 |
 | `architecture-hardening` | 契约、运行时诚实性与死代码清理 | `architecture-integrity` | 0 |
 | `environment-model` | 两轴环境模型（domain × stage） | `environment-model` | 0 |
 
@@ -175,9 +176,12 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 
 ## 7. 已知整理缺口
 
-1. **归档积压**：20 个 change 的 `tasks.md` 已全部勾选但未 `openspec archive`。首次归档
-   会创建 `openspec/specs/` 并合并全部 delta，属于结构性动作，建议单开一个
-   `chore/openspec-archive` 分支执行，不与内容变更混在一起。
+1. **归档积压**：20 个 change 的 `tasks.md` 已全部勾选但未 `openspec archive`。归档属于
+   结构性动作，建议单开 `chore/openspec-archive` 分支，不与内容变更混在一起。注意：
+   `openspec archive` 每次只合并**该 change 自己**的 delta；含 `## MODIFIED
+   Requirements` 的 change（如 `balanced-core-satellite`、`stock-timing-pit-consumer-p2b`）
+   在 `openspec/specs/` 为空时会失败，需要先归档创建该能力的 `ADDED` change，或显式
+   `openspec archive --skip-specs` 只做结构归档。
 2. **实现进度与任务勾选不完全等价**：`artifact-contract`、`production-capability-roadmap`
    等以契约先行，任务勾选不代表能力已上线。
 3. **本索引是人工维护的**：新增/归档 change 后必须同步 §5 的表与 §4 的能力列表；CI 只

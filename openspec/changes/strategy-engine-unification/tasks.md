@@ -34,8 +34,10 @@
 - [ ] 2.2 实现 `Ledger.apply(fill)` 与幂等键（decision + session + side + name）
 - [ ] 2.3 实现由 fills 重建账本的 `rebuild()`，并加「重建 == 实时」测试
 - [ ] 2.4 `nav.py` 改为消费账本持仓；目标权重仅作为 intent
+- [ ] 2.4a 随 2.4 提交 `strategy-engine` 的 MODIFIED delta（NAV 由账本推导，费用/手数/T+1 语义不变）
 - [ ] 2.5 把 `blocked_orders` 从 CLI 返回值改为持久化事件，并在 `report` 中可见
-- [ ] 2.6 让 `reconcile` 直接读账本，保留现有 JSON 输出契约与容差语义
+- [ ] 2.6 对账的计划侧改为账本投影；保留现有 JSON 输出、漂移/breaks 与容差语义
+- [ ] 2.6a 随 2.6 提交 `strategy-live-loop-minimal` 的 MODIFIED delta（对账计划侧来源变更）
 - [ ] 2.7 双跑对照：旧 NAV 曲线 vs 账本 NAV 曲线，逐日差异必须可解释
 - [ ] 2.8 文档：账本集合 schema、重建与对账 runbook
 
@@ -54,16 +56,16 @@
 
 ## 4. S3 — 执行与收敛（`strategy-execution-model`）
 
-- [ ] 4.1 抽出 `ExecutionModel`（整手/板块最小量/T+1/涨跌停/停牌/费用），
-  以现有 `nav.py` + `tradability.py` 为唯一事实源
+- [ ] 4.1 在 `datahub/app/lib/execution/` 扩展 `ExecutionModel`（整手/板块最小量/T+1/
+  涨跌停/停牌/费用），以现有 `nav.py` + `tradability.py` 为唯一事实源
 - [ ] 4.2 把「未知涨跌停判定」改为 spec 显式策略（默认 fail closed，研究复现 opt-in）
 - [ ] 4.3 迁移 `timing_replay` 与 factor lab 的成交计算到 `ExecutionModel`（至少共享费用
   与整手规则）
 - [ ] 4.4 定义 `ExecutionAdapter` 接口 + `SIM` 实现；`LIVE` 无适配器时 fail loud
 - [ ] 4.5 冻结 `backend/app/services/backtest_service.py` 为 legacy：加注释与只读策略清单，
   不再新增策略分支
-- [ ] 4.6 把 paper / replay / backtest 产物统一挂 `artifact_id` / `input_hash`
-  （落地 `artifact-contract`）
+- [ ] 4.6 把 paper / replay / backtest 产物统一挂 `artifact_id` / `artifact_hash` /
+  `input_snapshot`（replay 现有 `input_hash` 只做映射；落地 `artifact-contract`）
 - [ ] 4.7 交叉对拍：同一 spec 下 paper、replay、legacy 单票回测的共享语义一致
 - [ ] 4.8 文档：`docs/architecture/strategy-engine.md`（把 `design.md` 的目标形态固化为
   现行架构文档）

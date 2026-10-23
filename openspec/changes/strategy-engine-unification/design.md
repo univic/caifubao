@@ -39,14 +39,15 @@
 
 设计原则（沿用现有约定，不新造）：
 
-1. **方向只在评分构造层**，策略层永远「选高」（`architecture-layers-strategy-design.md`
-   §4.3）。本 change 不碰。
+1. **方向只在评分构造层**，策略层永远「选高」
+   （`docs/autoresearch/runs/h20-excess-alpha/architecture-layers-strategy-design.md` §4.3）。
+   本 change 不碰。
 2. **纯函数 + 适配器边界**：S2–S4 不 import Mongo；只有 runner/job 触碰持久化。现有
    `selection.py` / `runner.py` 已是这个形态。
 3. **配置即契约**：Spec 进入 `config_hash`；语义变化必须 bump Spec 版本，不允许静默
    改默认值（现有 `validate_strategy_config` 已拒绝未知键）。
 4. **证据不可变**：FORWARD 产物只能由窗口内、决策早于执行日开盘的运行产生；本 change
-   只让证据引用统一 artifact id，不改判定口径。
+   只让证据引用统一 artifact id / hash，不改判定口径。
 
 ## 2. 现状盘点（证据）
 
@@ -87,16 +88,19 @@ backend 回测请求 JSON、timing replay manifest、factor lab `profile.yaml`�
 
 ### 3.1 目标组合 = 持仓（状态混同）
 
-`simulate_paper_nav` 以目标权重推演持仓，`StrategyPaperRun` 不存 fills。于是：部分成交
-无法表达、P&L 无法归因、blocked orders 不落库、对账只能读操作者手填 JSON、一个账户
-挂多个策略不可能。**这是 S1 必须先做的原因。**
+`simulate_paper_nav` 以目标权重推演持仓，`StrategyPaperRun` 不存 fills（只存
+`target_holdings` / `rebalance` / `nav_snapshot`）。于是：部分成交无法表达、P&L 无法
+归因、blocked orders 不落库、对账的账户侧只能读操作者手填 JSON（计划侧由
+`account_plan` 生成）、一个账户挂多个策略不可能。**这是 S1 必须先做的原因。**
 
 ### 3.2 一个语义，多处实现
 
 - 可交易性：生产 fail closed，研究 fail open（`tradability.py` 明确记录）。
 - 基准：paper 合格股等权 vs backend 沪深 300，超额/IR 不可比。
 - 策略分支：6 种策略在单体 `_simulate` 内以 `if/elif` 实现，新增策略 = 改单体。
-- 成本：已在 `shared/caifubao_contracts/friction.py` 收敛，可复用的先例已经存在。
+- 成本：已在 `shared/caifubao_contracts/friction.py` 收敛，可复用的先例已经存在；
+  `datahub/app/lib/execution/` 已经是执行成本边界，S4 扩展它，不新建第二个
+  `execution` 包。
 
 **结论：不要求立刻删除任何一份，但必须指定唯一权威实现，其余显式标注 legacy / 兼容
 用途（S3）。**
@@ -123,9 +127,10 @@ backend 回测请求 JSON、timing replay manifest、factor lab `profile.yaml`�
 ### S1 — 账本
 
 - `strategy_fills` / `strategy_positions` / `strategy_cash`（或事件表 + 投影）。
-- `Ledger.apply(fills)` 可重建；`nav` 改为消费账本而非目标权重。
-- blocked orders 落库；`reconcile` 直接读账本。
-- **验收**：同输入重跑逐笔一致；账本能由 fills 从零重建；对账无手填 JSON。
+- `Ledger.apply(fills)` 可重建；`nav` 改为消费账本而非目标权重（随附 MODIFIED delta，
+  见 §5.1）。
+- blocked orders 落库；对账的**计划侧**改为账本投影，漂移/breaks/退出码契约不变。
+- **验收**：同输入重跑逐笔一致；账本能由 fills 从零重建；对账不再需要手填计划侧。
 
 ### S2 — 风控门
 
@@ -136,8 +141,8 @@ backend 回测请求 JSON、timing replay manifest、factor lab `profile.yaml`�
 
 ### S3 — 执行与收敛
 
-- `ExecutionModel` 收敛唯一撮合语义；未知判定改为显式策略参数（默认 fail closed，
-  研究复现 opt-in）。
+- `ExecutionModel` 收敛唯一撮合语义，落点是现有的 `datahub/app/lib/execution/`；未知
+  判定改为显式策略参数（默认 fail closed，研究复现 opt-in）。
 - `ExecutionAdapter` 接口 + SIM 实现（默认）+ BROKER 占位（default-off）。
 - backend 6 策略冻结为 legacy；新增策略只走 Spec。
 - **验收**：paper 与 replay 走同一状态机；适配器不改变 Spec 语义；legacy 路径只读。
@@ -148,10 +153,24 @@ backend 回测请求 JSON、timing replay manifest、factor lab `profile.yaml`�
 |:---|:---|
 | `strategy-paper-runner` | 本 change 的 S0/S1 是其 config/runner 契约的演进，不推翻 |
 | `strategy-portfolio-risk-limits` | S2 在其静态约束之上增加预算/回撤/regime |
-| `strategy-live-loop-minimal` | S3 复用其 halt / tradability / reconcile，收敛而非替换 |
+| `strategy-live-loop-minimal` | S3 复用其 halt / tradability / reconcile 的判定与输出契约；S1 只改对账的**计划侧来源** |
 | `strategy-forward-evidence-capture` | 证据判定口径不变；S6 只统一 artifact 引用 |
-| `artifact-contract` | S6 直接落地其 `artifact_id` / `input_hash` 契约 |
+| `artifact-contract` | S6 落地其 `artifact_id` / `artifact_hash` / `input_snapshot` 契约（replay 产物现有字段为 `input_hash`，只做映射，不改其语义） |
 | `production-capability-roadmap` | 本 change 是阶段 1（决策与治理地基）的引擎侧细化 |
+
+### 5.1 计划中的 supersession（S1 实现时必须补 MODIFIED delta）
+
+本 change 的 specs 描述目标态，但 S1 落地会改变两条**已经生效**的 Requirement。按
+OpenSpec 的 delta 规则，实现 PR 必须为它们提交 `## MODIFIED Requirements`（完整复制并
+更新原文，而不是在本 change 里静默覆盖）：
+
+| 目标能力 | 现行 Requirement（来源） | S1 后的变化 |
+|:---|:---|:---|
+| `strategy-engine` | `strategy-live-loop-minimal/specs/strategy-engine/spec.md`「Paper NAV simulation uses realistic T+1 cost semantics」 | NAV 由「按 `StrategyPaperRun` 目标权重推演」改为「由账本投影推导」；费用/手数/T+1 语义不变 |
+| `strategy-live-loop-minimal` | `strategy-live-loop-minimal/specs/strategy-live-loop-minimal/spec.md`「Plan-versus-account reconciliation MUST be structured and fail loud」 | 对账的计划侧由「计划目标组合」改为「账本投影」；漂移/缺失/breaks/非零退出语义不变 |
+
+在这两个 MODIFIED delta 合并前，上述 Requirement 仍是现行契约；本 change 不得被当作
+已生效的替代。
 
 ## 6. 关键取舍
 

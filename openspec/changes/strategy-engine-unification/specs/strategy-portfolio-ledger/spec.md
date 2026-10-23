@@ -29,9 +29,12 @@ state, and NAV MUST be derived from the ledger rather than from target weights.
 Every executed fill and every refused order MUST be persisted as an immutable
 ledger event carrying at least: the strategy id, spec hash, decision date,
 execution date, side, quantity, execution price, fees (commission, transfer fee,
-stamp duty, slippage), and — for refusals — a machine-readable reason code. An
-order refused at the execution session MUST NOT be silently dropped, and the
-daily report MUST be able to reconstruct which intents became fills.
+stamp duty, slippage), and — for refusals — a machine-readable reason code. This
+requirement changes only **persistence**: which orders are refused stays owned by
+the existing tradability and halt contracts, and this spec MUST NOT relax or
+redefine them. An order refused at the execution session MUST NOT be silently
+dropped, and the daily report MUST be able to reconstruct which intents became
+fills.
 
 #### Scenario: A limit-locked sell is visible in the ledger
 
@@ -68,12 +71,14 @@ Marking a session twice MUST NOT double-count a fill or a fee.
 - THEN the ledger state is unchanged
 - AND no duplicate fee is charged
 
-### Requirement: Reconciliation MUST compare the ledger with an account snapshot
+### Requirement: Ledger-backed reconciliation MUST preserve the existing contract
 
-Reconciliation MUST diff the ledger against an operator-supplied account snapshot
-(positions and cash) and MUST report quantity drift, cash drift, missing planned
-names, unexpected holdings and a structured breaks list. A breach above the
-declared tolerance MUST fail loudly rather than produce a clean report.
+Reconciliation MUST keep the existing plan-versus-account contract: per-name
+planned and actual quantity with drift and tolerance, cash drift, missing planned
+names, unexpected holdings, a structured breaks list, JSON serialisation and
+fail-loud behaviour above tolerance. The planned side MUST be the plan of record
+— the ledger projection once the ledger is authoritative — and the ledger MUST
+NOT weaken any existing break or tolerance rule.
 
 #### Scenario: Quantity drift beyond tolerance is a break
 
@@ -84,7 +89,7 @@ declared tolerance MUST fail loudly rather than produce a clean report.
 
 #### Scenario: A missing position is reported explicitly
 
-- GIVEN a name present in the ledger and absent from the account snapshot
+- GIVEN a name present in the planned side and absent from the account snapshot
 - WHEN reconciliation runs
 - THEN the result lists the name under missing positions and in the breaks list
 - AND the result is JSON-serialisable for logging

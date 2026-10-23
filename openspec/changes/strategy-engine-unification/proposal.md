@@ -7,9 +7,10 @@
 
 1. **目标组合被当成持仓。** `simulate_paper_nav` 用「目标权重 × NAV」推演持仓
    （`datahub/app/lib/strategy_engine/nav.py`），`StrategyPaperRun` 只存
-   `target_holdings`，没有 fills、现金账本、逐日持仓或 P&L。后果是部分成交无从表达、
-   盈亏无法归因、对账靠操作者手填 JSON（`reconcile.py`）、多策略共用一个账户不可能、
-   blocked orders 只存在于 CLI 返回值（`run_nav` 算完即丢）。
+   `target_holdings` / `rebalance` / `nav_snapshot`，没有 fills、现金账本、逐日持仓或
+   P&L。后果是部分成交无从表达、盈亏无法归因、对账的账户侧只能靠操作者手填 JSON
+   （计划侧由 `account_plan` 生成）、多策略共用一个账户不可能、blocked orders 只存在
+   于 CLI 返回值（`run_nav` 算完即丢）。
 2. **同一语义多处实现。** 可交易性在 `tradability.py` 对「涨跌停判定不可得」**fail
    closed**，研究侧 `factor_lab_account_replay.tradeable_open` **fail open**（文档明说
    "intentional divergence"）；paper 用合格股等权基准、backend 回测用沪深 300，两者
@@ -50,7 +51,8 @@
 - **Legacy 冻结**：`backend/app/services/backtest_service.py` 的 6 种策略冻结为
   legacy（只读、不再新增策略），策略语义只在 datahub 策略引擎演进。
 - **证据收敛**：paper/replay/backtest 产物统一引用 `artifact-contract` 的
-  `artifact_id` / `input_hash` 契约，前瞻窗口只认这一种证据。
+  `artifact_id` / `artifact_hash` / `input_snapshot` 契约（replay 产物中的对应字段是
+  `input_hash`），前瞻窗口只认这一种证据。证据**判定口径**不变。
 
 ## Capabilities
 
@@ -67,14 +69,22 @@
 
 ### Modified Capabilities
 
-无。本仓库没有独立的 `openspec/specs/` 主规格目录，现有 `strategy-engine` 等能力只以
-change 内的 delta specs 存在；本 change 新增的是上层契约，不修改任何已合入 change 的
-Requirement 文本。两者关系与迁移映射见 `design.md` §5。
+本 change 的 delta 全部是 `ADDED`，不修改任何已合入 change 的 Requirement 文本。
+但 S1 落地时会**必然**触及两条既有契约，届时必须先让 `openspec/specs/` 可用（归档，
+见 `openspec/README.md` §7.1），再在实现 PR 中附 `## MODIFIED Requirements` delta
+（完整清单见 `design.md` §5）：
+
+- `strategy-engine`：paper NAV 由「目标权重推演」改为「账本投影」；
+- `strategy-live-loop-minimal`：对账的计划侧由「计划目标组合」改为「账本投影」。
+
+在这两个 MODIFIED delta 合并之前，既有 Requirement 仍然是现行契约，本 change 的
+specs 只描述目标态。
 
 ## Impact
 
-- **代码（后续阶段，非本 PR）**：`datahub/app/lib/strategy_engine/`（新增
-  spec / ledger / risk / execution 模块，`nav.py` 改为消费账本）、
+- **代码（后续阶段，非本 PR）**：`datahub/app/lib/strategy_engine/`（新增 spec /
+  ledger / risk 模块，`nav.py` 改为消费账本）、`datahub/app/lib/execution/`（扩展现有
+  执行成本边界为唯一撮合语义，**不新建第二个 execution 包**）、
   `datahub/app/jobs/strategy_runner.py`（装配新阶段）、
   `datahub/app/model/strategy.py`（新增账本集合），`shared/caifubao_contracts/`（Spec
   与账本 schema 的单一来源）。

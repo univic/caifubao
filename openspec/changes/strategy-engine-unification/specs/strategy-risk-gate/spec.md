@@ -52,7 +52,8 @@ The gate MUST support portfolio-level controls that have no per-name
 counterpart: exposure or concentration limits, a cash floor, a drawdown
 circuit-breaker, and a market-regime condition. A breached circuit-breaker MUST
 stop new risk rather than silently reduce it, and it MUST be visible in the run
-record and in the halt state.
+record as a derived breaker state. It MUST NOT mutate the operator halt flag,
+whose who/when/why semantics stay owned by the existing halt contract.
 
 #### Scenario: A drawdown breaker blocks new entries
 
