@@ -63,12 +63,13 @@ whose who/when/why semantics stay owned by the existing halt contract.
 - AND risk-reducing intents (exits) remain approvable
 - AND the run record states that the breaker was active
 
-#### Scenario: Ops halt takes precedence over the gate
+#### Scenario: Trading ops halt takes precedence over the gate
 
-- GIVEN an engaged halt flag and a valid intent list
-- WHEN a run starts
-- THEN no plan and no order intents are produced
+- GIVEN an engaged trading-domain halt flag and a valid intent list
+- WHEN a trading run starts
+- THEN no trading plan or order intents are produced
 - AND the run is recorded as halted rather than as a normal no-op
+- AND a research replay may only use an explicitly captured halt snapshot and MUST NOT read or mutate the operational halt store
 
 ### Requirement: Risk decisions MUST be replayable and auditable
 
@@ -89,3 +90,28 @@ records.
 - WHEN the new spec is validated and hashed
 - THEN the hash differs from the previous one
 - AND historical runs keep their original spec hash and decisions
+
+
+### Requirement: Risk state and enforcement MUST respect domain ownership
+
+The risk policy and deterministic evaluation semantics MAY be shared as pure
+functions, but operational risk state, the authoritative pre-trade gate, halt
+switch, and order rejection persistence MUST be owned by the trading runtime.
+Research MUST use only its own simulation ledger and explicit market/risk
+snapshots; it MUST NOT read or mutate trading account state or operational halt
+state. Trading MUST consume an immutable promoted StrategySpec and MUST remain
+operational when research is unavailable.
+
+#### Scenario: Research risk replay is isolated
+
+- GIVEN a REPLAY run with a frozen simulation ledger and risk snapshot
+- WHEN the risk gate is evaluated
+- THEN it produces reproducible research evidence
+- AND it does not access the trading ledger or operational halt store
+
+#### Scenario: Trading risk gate is authoritative
+
+- GIVEN a TRADING_PAPER order intent from a promoted StrategySpec
+- WHEN the trading risk gate evaluates it
+- THEN the trading runtime records the approval or rejection and reason
+- AND it does not call the research runtime to decide whether the order may proceed
