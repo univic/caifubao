@@ -76,16 +76,15 @@
 
 ### Modified Capabilities
 
-本 change 的 delta 全部是 `ADDED`，不修改任何已合入 change 的 Requirement 文本。
-但 S1 落地时会**必然**触及两条既有契约，届时必须先让 `openspec/specs/` 可用（归档，
-见 `openspec/README.md` §7.1），再在实现 PR 中附 `## MODIFIED Requirements` delta
-（完整清单见 `design.md` §5）：
+本 change 的 delta 全部是 `ADDED`，不修改任何现行 Requirement 文本。后续实现会触及三条
+既有契约；届时必须按 OpenSpec delta 规则在对应实现 PR 提交 `## MODIFIED Requirements`
+（完整清单见 `design.md` §5），不能在本 change 中静默覆盖现行契约：
 
-- `strategy-engine`：paper NAV 由「目标权重推演」改为「账本投影」；
-- `strategy-live-loop-minimal`：对账的计划侧由「计划目标组合」改为「账本投影」。
+- `strategy-engine`：研究模拟 NAV 由「目标权重推演」改为「研究模拟账本投影」；
+- `strategy-live-loop-minimal`：账户对账计划侧改为 trading ledger 投影，且不读取 research ledger；
+- `strategy-forward-evidence`：显式记录窗口 pin 的身份类型（`legacy_config_hash` 或 `spec_hash`），禁止跨哈希命名空间比较；现有 FORWARD 判定和计数规则保持不变。
 
-在这两个 MODIFIED delta 合并之前，既有 Requirement 仍然是现行契约，本 change 的
-specs 只描述目标态。
+在对应 MODIFIED delta 合并之前，既有 Requirement 仍然是现行契约，本 change 的 specs 只描述目标态。
 
 ## Impact
 
