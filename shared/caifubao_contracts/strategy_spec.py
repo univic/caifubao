@@ -335,3 +335,91 @@ def to_legacy_config(spec: dict) -> dict:
         "cash_reserve_pct": resolved["sizing"]["cash_reserve_pct"],
         "execution": execution,
     }
+
+
+def preflight_execution_feasibility(
+    spec: dict,
+    *,
+    reference_prices: dict[str, float],
+    max_minimum_commission_pct: float = 0.01,
+) -> dict:
+    """Fail closed on an explicit target-price snapshot before generating orders.
+
+    Static spec validation cannot know stock prices or board composition; the
+    caller MUST supply decision-time prices of prospective target names. This
+    validation uses the same board lot and fee arithmetic as the simulator.
+    A per-name budget represents equal weighting after the cash reserve and
+    any per-name cap. A 1% minimum-commission cap is explicit and configurable.
+    No target is silently assumed affordable from cash alone.
+    """
+    from caifubao_contracts.strategy_execution import (
+        adjusted_price,
+        board_lot_rule,
+        execution_fees,
+    )
+    from caifubao_contracts.friction import CostProfile
+
+    normalized = validate_strategy_spec(spec)
+    if (
+        isinstance(max_minimum_commission_pct, bool)
+        or not isinstance(max_minimum_commission_pct, (int, float))
+        or not math.isfinite(max_minimum_commission_pct)
+        or not 0 < max_minimum_commission_pct <= 1
+    ):
+        raise ValueError("max_minimum_commission_pct must be finite in (0, 1]")
+    if not isinstance(reference_prices, dict) or not reference_prices:
+        raise ValueError("reference_prices must be a nonempty decision-time quote map")
+    width = normalized["selection"]["portfolio_size"]
+    if len(reference_prices) > width:
+        raise ValueError("reference_prices exceeds selection.portfolio_size")
+    initial_nav = normalized["initial_nav"]
+    investable = initial_nav * (1 - normalized["sizing"]["cash_reserve_pct"])
+    budget = investable / width
+    cap = normalized["constraints"].get("max_single_stock_pct")
+    if cap is not None:
+        budget = min(budget, initial_nav * cap)
+    execution = normalized["execution"]
+    if execution["minimum_commission_cny"] >= budget:
+        raise ValueError("initial_nav/portfolio_size cannot cover minimum commission")
+    profile = CostProfile(
+        commission_rate=execution["commission_rate"],
+        minimum_commission_cny=execution["minimum_commission_cny"],
+        sell_stamp_duty_rate=execution["sell_stamp_duty_rate"],
+        transfer_fee_rate=execution["transfer_fee_rate"],
+        slippage_per_side=execution["slippage_per_side"],
+        board_lot=execution["board_lot"],
+    )
+    details = []
+    for code in sorted(reference_prices):
+        raw = _finite_number(
+            reference_prices[code], f"reference_prices.{code}", low=0.000001
+        )
+        minimum, _ = board_lot_rule(code, execution["board_lot"])
+        price = adjusted_price(raw, "BUY", execution["slippage_per_side"])
+        fees = execution_fees(price, minimum, "BUY", profile)
+        minimum_spend = price * minimum + fees["commission"] + fees["transfer_fee"]
+        minimum_share = fees["commission"] / (price * minimum)
+        if minimum_spend > budget:
+            raise ValueError(
+                f"initial_nav/portfolio_size cannot buy board minimum for {code}: "
+                f"budget={budget:.2f}, needed={minimum_spend:.2f}"
+            )
+        if minimum_share > max_minimum_commission_pct:
+            raise ValueError(
+                f"minimum_commission_cny makes trade uneconomic for {code}: "
+                f"share={minimum_share:.6f}, maximum={max_minimum_commission_pct:.6f}"
+            )
+        details.append(
+            {
+                "stock_code": code,
+                "board_minimum": minimum,
+                "minimum_spend_cny": round(minimum_spend, 2),
+                "minimum_commission_pct": round(minimum_share, 8),
+            }
+        )
+    return {
+        "spec_hash": spec_hash(normalized),
+        "per_name_budget_cny": round(budget, 2),
+        "checked_names": len(details),
+        "details": details,
+    }
