@@ -70,3 +70,60 @@ def test_research_artifact_is_content_addressed_and_never_mutates_plan(monkeypat
     artifacts[identity].payload = {"different": True}
     with pytest.raises(ValueError, match="immutable research artifact"):
         _persist_research_simulation(**kwargs)
+
+
+def test_report_exposes_only_matching_research_blocked_events(monkeypatch):
+    from app.jobs.strategy_runner import research_simulation_report
+    from app.model import strategy as strategy_model
+
+    execution = datetime.datetime(2026, 10, 26)
+    run = SimpleNamespace(
+        strategy_name="flip_wide_paper",
+        config_hash="spec-a",
+        hash_kind="spec",
+        execution_date=execution,
+    )
+    events = [
+        {
+            "type": "REJECTED",
+            "execution_date": "2026-10-26",
+            "stock_code": "sh600000",
+            "side": "SELL",
+            "reason_code": "at_limit_down",
+            "order_id": "o-1",
+        },
+        {
+            "type": "REJECTED",
+            "execution_date": "2026-10-27",
+            "stock_code": "sh600001",
+            "reason_code": "suspended",
+        },
+        {
+            "type": "FILL",
+            "execution_date": "2026-10-26",
+            "stock_code": "sh600002",
+        },
+    ]
+    document = SimpleNamespace(artifact_hash="sha", payload={"events": events})
+
+    class FakeQuery:
+        def order_by(self, *args):
+            return self
+
+        def first(self):
+            return document
+
+    class FakeArtifact:
+        @classmethod
+        def objects(cls, **kwargs):
+            assert kwargs["config_hash"] == "spec-a"
+            assert kwargs["hash_kind"] == "spec"
+            assert kwargs["execution_from__lte"] == execution
+            return FakeQuery()
+
+    monkeypatch.setattr(strategy_model, "StrategySimulationArtifact", FakeArtifact)
+    summary = research_simulation_report(run)
+    assert summary["research_only"] is True
+    assert summary["blocked_count"] == 1
+    assert summary["blocked"][0]["reason_code"] == "at_limit_down"
+    assert summary["fills_count"] == 1
