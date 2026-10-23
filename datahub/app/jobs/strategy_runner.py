@@ -20,6 +20,7 @@ import datetime
 import json
 import logging
 import sys
+from pathlib import Path
 
 from app.lib.strategy_engine.config import (
     DEFAULT_HORIZON,
@@ -214,6 +215,7 @@ def run_strategy(
     dry_run: bool = False,
     replace: bool = False,
     halt_path: str | None = None,
+    strategy_spec_hash: str | None = None,
 ) -> dict:
     from app.lib.strategy_engine.halt import assert_not_halted
     from app.lib.strategy_engine.runner import assemble_daily_plan
@@ -231,7 +233,9 @@ def run_strategy(
     resolved = validate_strategy_config(config or DEFAULT_STRATEGY_CONFIG)
     model_version = _resolve_model_version(resolved)
     horizon = int(resolved.get("horizon", DEFAULT_HORIZON))
-    config_hash = strategy_config_hash(resolved)
+    legacy_hash = strategy_config_hash(resolved)
+    config_hash = strategy_spec_hash or legacy_hash
+    hash_kind = "spec" if strategy_spec_hash is not None else "legacy"
 
     query = StrategyPaperRun.objects(
         strategy_name=DEFAULT_STRATEGY_NAME,
@@ -277,6 +281,7 @@ def run_strategy(
         config_hash=config_hash,
         existing_status=getattr(existing, "status", None),
         replace=replace,
+        hash_kind=hash_kind,
     )
 
     # Previous holdings come from the most recent COMPLETED run BEFORE this
@@ -333,6 +338,9 @@ def run_strategy(
             "model_version": model_version,
             "horizon": horizon,
             "config_hash": config_hash,
+            "hash_kind": hash_kind,
+            "spec_hash": strategy_spec_hash,
+            "legacy_config_hash": legacy_hash,
             "previous_run_date": (
                 previous_run.date.date() if previous_run is not None else None
             ),
@@ -353,6 +361,9 @@ def run_strategy(
         model_version=model_version,
         horizon=horizon,
         config_hash=config_hash,
+        hash_kind=hash_kind,
+        spec_hash=strategy_spec_hash,
+        legacy_config_hash=legacy_hash,
         config=resolved,
         decision_at=decision_at,
         execution_date=execution_date,
@@ -370,6 +381,9 @@ def run_strategy(
         "horizon": horizon,
         "config_hash": config_hash,
         "status": run.status,
+        "hash_kind": hash_kind,
+        "spec_hash": strategy_spec_hash,
+        "legacy_config_hash": legacy_hash,
         "decision_at": decision_at,
         "execution_date": execution_date,
         "evidence_kind": run.evidence_kind,
@@ -578,6 +592,7 @@ def run_nav(
     config: dict | None = None,
     model_version: str | None = None,
     horizon: int | None = None,
+    strategy_spec_hash: str | None = None,
 ) -> dict:
     """Recompute the paper NAV curve over a range of COMPLETED runs.
 
@@ -599,7 +614,7 @@ def run_nav(
         {**resolved, "score_model_version": eff_version, "horizon": eff_horizon}
     )
     _resolve_model_version(resolved)
-    config_hash = strategy_config_hash(resolved)
+    config_hash = strategy_spec_hash or strategy_config_hash(resolved)
 
     query = StrategyPaperRun.objects(
         strategy_name=DEFAULT_STRATEGY_NAME,
@@ -668,6 +683,7 @@ def run_nav(
         "curve_points": len(result["curve"]),
         "benchmark_dates": len(benchmark),
         "config_hash": config_hash,
+        "hash_kind": "spec" if strategy_spec_hash is not None else "legacy",
         "evidence_kinds": sorted(
             {getattr(r, "evidence_kind", "REPLAY") or "REPLAY" for r in runs}
         ),
@@ -706,7 +722,10 @@ def _resolve_start_date(now=None):
     return datetime.datetime.fromisoformat(sessions[0])
 
 
-def certify_forward_window(*, model_version: str, horizon: int, config: dict) -> dict:
+def certify_forward_window(
+    *, model_version: str, horizon: int, config: dict,
+    strategy_spec_hash: str | None = None,
+) -> dict:
     """Certify an ACTIVE forward-evidence window (NEXT.1).
 
     Closes any ACTIVE predecessor on (model_version, horizon); start_date =
@@ -723,7 +742,9 @@ def certify_forward_window(*, model_version: str, horizon: int, config: dict) ->
     )
     eff_version = _resolve_model_version(resolved)
     eff_horizon = int(resolved.get("horizon"))
-    config_hash = strategy_config_hash(resolved)
+    legacy_hash = strategy_config_hash(resolved)
+    config_hash = strategy_spec_hash or legacy_hash
+    hash_kind = "spec" if strategy_spec_hash is not None else "legacy"
     now = datetime.datetime.now(datetime.UTC)
 
     closed = []
@@ -740,6 +761,9 @@ def certify_forward_window(*, model_version: str, horizon: int, config: dict) ->
         model_version=eff_version,
         horizon=eff_horizon,
         config_hash=config_hash,
+        hash_kind=hash_kind,
+        spec_hash=strategy_spec_hash,
+        legacy_config_hash=legacy_hash,
         start_date=start_date,
         status="ACTIVE",
         decision_at=now,
@@ -749,6 +773,9 @@ def certify_forward_window(*, model_version: str, horizon: int, config: dict) ->
         "model_version": eff_version,
         "horizon": eff_horizon,
         "config_hash": config_hash,
+        "hash_kind": hash_kind,
+        "spec_hash": strategy_spec_hash,
+        "legacy_config_hash": legacy_hash,
         "start_date": start_date,
         "status": window.status,
         "decision_at": now,
@@ -812,6 +839,12 @@ def forward_progress(*, model_version: str, horizon: int) -> dict:
             date__gte=window.start_date,
         ).order_by("date")
     )
+    # Historical runs lacking hash_kind are always legacy, never spec.
+    window_kind = getattr(window, "hash_kind", None) or "legacy"
+    runs = [
+        run for run in runs
+        if (getattr(run, "hash_kind", None) or "legacy") == window_kind
+    ]
     dates = sorted({r.date.date().isoformat() for r in runs})
     gaps = []
     leading = 0
@@ -837,6 +870,7 @@ def forward_progress(*, model_version: str, horizon: int) -> dict:
         "certified": True,
         "window_status": window.status,
         "config_hash": window.config_hash,
+        "hash_kind": window_kind,
         "start_date": window.start_date.date().isoformat(),
         "count": len(dates),
         "target": 120,
@@ -853,11 +887,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="Run one day's paper strategy")
     p_run.add_argument("--date", required=True, help="Evaluation date (YYYY-MM-DD)")
-    p_run.add_argument(
-        "--config-json",
-        default=None,
-        help="Strategy config JSON; defaults to the flip_wide paper config",
+    run_cfg = p_run.add_mutually_exclusive_group()
+    run_cfg.add_argument(
+        "--config-json", default=None,
+        help="Legacy config JSON; defaults to flip_wide",
     )
+    run_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")
     p_run.add_argument("--dry-run", action="store_true")
     p_run.add_argument("--replace", action="store_true")
     p_run.add_argument(
@@ -896,7 +931,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_nav.add_argument("--from", dest="from_date", required=True)
     p_nav.add_argument("--to", dest="to_date", required=True)
-    p_nav.add_argument("--config-json", default=None)
+    nav_cfg = p_nav.add_mutually_exclusive_group()
+    nav_cfg.add_argument("--config-json", default=None)
+    nav_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")
     p_nav.add_argument("--model-version", default=None)
     p_nav.add_argument("--horizon", type=int, choices=[5, 20, 60], default=None)
 
@@ -922,7 +959,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_cert = fsub.add_parser("certify", help="Open an ACTIVE forward window")
     p_cert.add_argument("--model-version", required=True)
     p_cert.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
-    p_cert.add_argument("--config-json", default=None)
+    cert_cfg = p_cert.add_mutually_exclusive_group()
+    cert_cfg.add_argument("--config-json", default=None)
+    cert_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")
     p_close = fsub.add_parser("close", help="Close the ACTIVE forward window")
     p_close.add_argument("--model-version", required=True)
     p_close.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
@@ -948,13 +987,16 @@ def _run_with_tracking(args, config: dict | None) -> None:
     )
     job_run = job_run_helper.create_job_run(context)
     try:
-        result = run_strategy(
-            date=parse_date(args.date),
-            config=config,
-            dry_run=args.dry_run,
-            replace=args.replace,
-            halt_path=getattr(args, "halt_file", None),
-        )
+        kwargs = {
+            "date": parse_date(args.date),
+            "config": config,
+            "dry_run": args.dry_run,
+            "replace": args.replace,
+            "halt_path": getattr(args, "halt_file", None),
+        }
+        if getattr(args, "strategy_spec_hash", None) is not None:
+            kwargs["strategy_spec_hash"] = args.strategy_spec_hash
+        result = run_strategy(**kwargs)
         if args.dry_run:
             # Preview only: nothing persisted -> record SKIPPED (not SUCCESS),
             # with the resolved score source for traceability.
@@ -1002,32 +1044,53 @@ def _run_with_tracking(args, config: dict | None) -> None:
         raise
 
 
+def _load_cli_spec(args) -> tuple[dict | None, str | None]:
+    """Resolve a spec file without silently changing legacy evidence."""
+    if getattr(args, "spec", None):
+        from app.lib.strategy_engine.spec import spec_hash, spec_to_legacy_config
+
+        with Path(args.spec).open(encoding="utf-8") as stream:
+            document = json.load(stream)
+        config = spec_to_legacy_config(document)
+        identity = spec_hash(document)
+        if getattr(args, "model_version", None) and (
+            args.model_version != config["score_model_version"]
+        ):
+            raise ValueError("--model-version conflicts with --spec signal")
+        if getattr(args, "horizon", None) and args.horizon != config["horizon"]:
+            raise ValueError("--horizon conflicts with --spec signal")
+        return config, identity
+    if getattr(args, "config_json", None):
+        return json.loads(args.config_json), None
+    return None, None
+
+
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
     args = build_parser().parse_args(argv)
     _init_db()
     if args.command == "run":
-        config = json.loads(args.config_json) if args.config_json else None
+        config, args.strategy_spec_hash = _load_cli_spec(args)
         _run_with_tracking(args, config)
     elif args.command == "nav":
-        config = json.loads(args.config_json) if args.config_json else None
+        config, identity = _load_cli_spec(args)
         result = run_nav(
             from_date=parse_date(args.from_date),
             to_date=parse_date(args.to_date),
             config=config,
             model_version=args.model_version,
             horizon=args.horizon,
+            **({"strategy_spec_hash": identity} if identity is not None else {}),
         )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     elif args.command == "forward":
-        config = (
-            json.loads(args.config_json) if getattr(args, "config_json", None) else None
-        )
+        config, identity = _load_cli_spec(args)
         if args.forward_command == "certify":
             result = certify_forward_window(
                 model_version=args.model_version,
                 horizon=args.horizon,
                 config=config,
+                **({"strategy_spec_hash": identity} if identity is not None else {}),
             )
         elif args.forward_command == "close":
             result = close_forward_window(
