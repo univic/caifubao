@@ -126,7 +126,8 @@
 - **缺口不可补**：漏一天就是少一天，只能用 `forward progress` 如实记录。
 - **paper 不等于真实账户**：目标权重不是你的持仓；卖出定量与对账属 roadmap 1.1/2.3。
 - **paper NAV 不计现金分红**：`nav.py` 用原始 open/close 估值，除息日会假跌，
-  总收益被低估；修复属于执行模型（与 PR #307 协调），在修好之前不要把 paper
-  收益当作可上钱的实盘有效性证据。
+  总收益被低估。统一研究账本契约已支持 `DIVIDEND`/`SPLIT` 事件，但当前 NAV 路径
+  尚未从 `fq_factor` 推导并应用它们；在修好之前不要把 paper 收益当作可上钱的
+  实盘有效性证据。
 - **风控仍有缺口**：换手/再平衡预算未落地（roadmap 1.3 后续切片）。宽书下
   `max_single_stock_pct` 通常不 binding，真正的集中度护栏是 `max_industry_pct`。

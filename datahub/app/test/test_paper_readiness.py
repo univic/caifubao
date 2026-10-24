@@ -173,3 +173,58 @@ def test_current_session_not_yet_run_is_not_a_gap():
     assert check["status"] == "PASS"
     assert check["detail"]["missing_sessions"] == 0
     assert check["detail"]["current_session_recorded"] is False
+
+
+def test_forward_run_query_matches_the_engine_hash_namespace():
+    # Merged #307 requires BOTH config_hash and hash_kind to match. Pre-#307
+    # rows have no hash_kind field and are legacy, so a legacy window must
+    # match the explicit legacy value and the missing field.
+    legacy = paper_readiness.forward_run_query(
+        {
+            "model_version": "flip_wide_shadow_v1",
+            "horizon": 20,
+            "config_hash": "abc",
+            "hash_kind": "legacy",
+            "start_date": datetime.datetime(2026, 10, 20),
+        }
+    )
+    assert legacy["config_hash"] == "abc"
+    assert legacy["evidence_kind"] == "FORWARD"
+    assert legacy["$or"] == [
+        {"hash_kind": "legacy"},
+        {"hash_kind": {"$exists": False}},
+    ]
+    assert "hash_kind" not in legacy
+
+    spec = paper_readiness.forward_run_query(
+        {
+            "model_version": "v",
+            "horizon": 20,
+            "config_hash": "spec-hash",
+            "hash_kind": "spec",
+            "start_date": datetime.datetime(2026, 10, 20),
+        }
+    )
+    assert spec["hash_kind"] == "spec"
+    assert "$or" not in spec
+
+
+def test_window_check_reports_the_hash_kind():
+    report = paper_readiness.evaluate(
+        _inputs(
+            active_window={
+                "model_version": "flip_wide_shadow_v1",
+                "horizon": 20,
+                "config_hash": "spec-hash",
+                "hash_kind": "spec",
+                "spec_hash": "spec-hash",
+                "legacy_config_hash": "legacy-hash",
+                "start_date": datetime.datetime(2026, 10, 20),
+            }
+        )
+    )
+
+    check = {item["id"]: item for item in report["checks"]}["forward_window"]
+    assert check["detail"]["hash_kind"] == "spec"
+    assert check["detail"]["spec_hash"] == "spec-hash"
+    assert check["detail"]["legacy_config_hash"] == "legacy-hash"

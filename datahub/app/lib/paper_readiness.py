@@ -36,16 +36,12 @@ MARKET_NAME = "ChinaAStock"
 SESSION_CLOSE_MINUTE = 15 * 60
 
 LIMITATIONS = [
-    "the current (pre-#307) paper NAV marks positions at raw open/close: cash "
-    "distributions are not credited, so total return is understated across "
-    "ex-dividend dates. This limitation is scoped to the NAV implementation "
-    "the check observes; the coordinated execution-model change retires it "
-    "when the ledger credits distributions and share multipliers",
+    "the current research NAV path (simulate_paper_nav + the merged simulation ledger) marks raw open/close and does not emit DIVIDEND/SPLIT events, so cash distributions are not credited and total return is understated across ex-dividend dates. The shared ledger contract supports those events, but this path does not derive them from fq_factor yet; until it does, paper results must not be read as live-tradable evidence",
     "paper target weights are not an account: no broker, no order, no fill "
     "against a real account",
     "forward-window gaps are permanent (a missed session is never backfilled)",
     "ETF prices are distribution-adjusted (fund_adj) for analysis, but ETF "
-    "cash distributions are subject to the same paper-NAV gap above",
+    "cash distributions are subject to the same research-NAV gap above",
 ]
 
 
@@ -229,6 +225,9 @@ def _window_check(inputs: ReadinessInputs, expected) -> dict:
         "model_version": window.get("model_version"),
         "horizon": window.get("horizon"),
         "config_hash": window.get("config_hash"),
+        "hash_kind": window.get("hash_kind") or "legacy",
+        "spec_hash": window.get("spec_hash"),
+        "legacy_config_hash": window.get("legacy_config_hash"),
         "start_date": str(start) if start else None,
         "forward_sessions": len(forward_dates),
         "current_session_recorded": bool(expected and expected in forward_dates),
@@ -350,6 +349,33 @@ def evaluate(inputs: ReadinessInputs) -> dict:
     }
 
 
+def forward_run_query(window: dict) -> dict:
+    """Mongo filter for runs that the engine would certify FORWARD.
+
+    Mirrors ``classify_evidence_kind`` (merged #307): the ACTIVE window's
+    ``config_hash`` AND ``hash_kind`` must both match. Pre-#307 rows have no
+    ``hash_kind`` field and are legacy by definition, so a legacy window
+    matches both the explicit legacy value and the missing field; a spec
+    window only matches an explicit spec value.
+    """
+    kind = window.get("hash_kind") or "legacy"
+    query = {
+        "model_version": window.get("model_version"),
+        "horizon": window.get("horizon"),
+        "config_hash": window.get("config_hash"),
+        "evidence_kind": "FORWARD",
+        "date": {"$gte": window.get("start_date")},
+    }
+    if kind == "legacy":
+        query["$or"] = [
+            {"hash_kind": "legacy"},
+            {"hash_kind": {"$exists": False}},
+        ]
+    else:
+        query["hash_kind"] = kind
+    return query
+
+
 def load_inputs(
     db,
     *,
@@ -425,14 +451,9 @@ def load_inputs(
     window = db[WINDOW_COLLECTION].find_one(window_query, {"_id": 0})
     inputs.active_window = window
     if window:
-        run_query = {
-            "model_version": window.get("model_version"),
-            "horizon": window.get("horizon"),
-            "config_hash": window.get("config_hash"),
-            "evidence_kind": "FORWARD",
-            "date": {"$gte": window.get("start_date")},
-        }
-        inputs.forward_dates = list(db[RUN_COLLECTION].distinct("date", run_query))
+        inputs.forward_dates = list(
+            db[RUN_COLLECTION].distinct("date", forward_run_query(window))
+        )
 
     inputs.halt_path = halt_path or os.getenv(HALT_PATH_ENV) or None
     if inputs.halt_path and os.path.exists(inputs.halt_path):

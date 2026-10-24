@@ -61,32 +61,44 @@ etf_market_data  WARN  尚无 ETF 数据
    `DEFAULT_MODEL_VERSION=score_v2_202605b`；`flip_wide_shadow_v1` /
    `pit_*` 等影子模型是**按需**计算，最新只到 2026-09-10。二选一：
    - 用每日调度的 `score_v2_202605b` 开窗；或
-   - 为候选影子模型增加一个每日 `scoring_runner run --model-version <候选>` 的
-     CronJob（同一 18:35 之后、且不改变已有评分），再开窗。
+   - 为候选影子模型增加每日评分。先手工验证一天（写库，需授权）：
+
+     ```bash
+     # 在 datahub pod 内；日期用最近一个已收盘交易日
+     python -m app.jobs.scoring_runner run --model-version flip_wide_shadow_v1 --date <DATE>
+     ```
+
+     验证通过后，再挂一个排在默认评分（18:35）之后、默认 `suspend: true` 的
+     每日 CronJob，不改变已有 `score_v2_202605b` 的记录。
 2. **halt 路径**：在 datahub pod 上设置 `CAIFUBAO_STRATEGY_HALT_FILE`（与私有
    overlay 一致），否则 readiness 永远 WARN、下单路径 fail-closed。
 3. **ETF 数据**（若策略涉及 ETF）：按 [`etf-market-data.md`](etf-market-data.md)
    部署后执行 `etf universe` → 抽样 `etf backfill` → `etf daily`。
 
-## 3. 与 PR #307 的先后关系（重要）
+## 3. 与已合并 #307 的关系（重要）
 
-PR #307（`feature/strategy-engine-unification`）正在重构统一 `StrategySpec`、
-`config_hash`/`spec_hash`、研究账本、风控与执行原语；它**尚未合并**，且自述
-S0–S3 未完成、未启用 paper/LIVE 部署。影响：
+PR #307（`7464d6b`）已合并：统一 `StrategySpec`、legacy/spec 双哈希、研究模拟账本、
+风控与共享执行原语。其 change 仍标 S0–S3 收尾（8 项未完成），**未启用**
+trading paper/LIVE 部署；随后合并的 #308/#309 分别补了 trading 侧账本/halt 基座与
+不可变研究发布，但都不等于实盘能力。
 
-- 前瞻窗口的归类依赖 `config_hash`。引擎/规格迁移后，旧窗口的 run 是否仍算
-  FORWARD，取决于迁移是否保持同一 `config_hash` 与证据分类；PR #307 明确要把
-  legacy 配置迁移为独立 `legacy_config_hash`。
-- 因此**不建议**在 #307 合并前就开启 120 日窗口：一旦迁移改变了哈希/账本语义，
-  已消耗的时钟可能作废；窗口只有一次。
-- 本准备工作的所有代码都刻意**不碰** #307 拥有的文件
+对开窗的实际影响：
+
+- FORWARD 判定现在同时要求窗口与 run 的 **`config_hash` 和 `hash_kind` 匹配**
+  （`classify_evidence_kind`）；旧记录没有 `hash_kind` 字段，按 legacy 处理。
+- 迁移只保证目标组合/调仓等行为对拍，**不会**把旧 FORWARD 记录升级成 Spec 证据。
+  legacy 窗口继续用 `--config-json`；Spec 候选必须用 `--spec` **新开窗**、每日用
+  完全相同的 spec 内容，不能中途切换命名空间。
+- `paper readiness` 已按新语义过滤：输出 `hash_kind`/`spec_hash`/
+  `legacy_config_hash`；legacy 窗口匹配显式 legacy 与缺字段行，spec 窗口只匹配
+  spec 行。
+- 本工作仍不修改 #307 owned 文件
   （`strategy_engine/{nav,replay,runner,tradability,spec,simulation_ledger}.py`、
   `jobs/strategy_runner.py`、`model/strategy.py`、`shared/strategy_*.py`）；
-  `paper readiness` 只读 `strategy_forward_windows` / `strategy_paper_runs` /
-  行情 / 评分 / 信号 / 状态集合，因此在两种引擎形态下都能用。
-- 推荐顺序：**#307 合并并完成迁移校验 → 用同一份 `config_hash` 跑通 1 天
-  `strategy run`（确认为 FORWARD）→ `paper readiness` READY/DEGRADED 可接受 →
-  人工授权后 `forward certify --yes`**。
+  readiness 只读已持久化字段。
+- 推荐顺序：**legacy 或 spec 二选一 → 用同一配置/spec 跑通 1 天并确认 FORWARD →
+  `paper readiness` 无 FAIL → 人工授权后 `forward certify --yes`**。窗口只有一次，
+  不要在窗口中途迁移 hash 命名空间。
 
 ## 4. 开窗前检查清单
 
@@ -99,15 +111,20 @@ S0–S3 未完成、未启用 paper/LIVE 部署。影响：
 - [ ] **手工试跑一天**：`strategy run <DATE> --dry-run` 与一次非 dry-run，
       确认记录为 `FORWARD`（或明确为 `REPLAY` 并知道原因）。
 - [ ] 已获**显式人工授权**（开窗、每日写库、promote 都需要）。
-- [ ] 记录准备使用的完整 `--config-json` 与预期 `config_hash`。
+- [ ] 记录准备使用的完整 `--config-json` / `--spec`、预期 `config_hash` 与
+      `hash_kind`（legacy 或 spec）。
 
 ## 5. 开窗与每日闭环
 
 ```bash
 # 1) 开窗（先关闭同键 ACTIVE 前身；start_date = 认证当日）
+#    legacy 配置：
 ./scripts/caifubao strategy forward certify \
   --model-version <MODEL> --horizon 20 --config-json '<CONFIG>' --yes
-# 记下打印的 config_hash，之后每天必须用完全相同的配置
+#    Spec 候选（二选一，不能与 legacy 窗口混用）：
+# ./scripts/caifubao strategy forward certify \
+#   --model-version <MODEL> --horizon 20 --spec path/to/strategy.json --yes
+# 记下打印的 config_hash 与 hash_kind；之后每天必须用完全相同的配置/spec
 
 # 2) 每交易日收盘后（评分完成之后）
 ./scripts/caifubao paper readiness --model-version <MODEL> --horizon 20
@@ -124,7 +141,9 @@ S0–S3 未完成、未启用 paper/LIVE 部署。影响：
 ## 6. 已知限制（readiness 每次都会打印）
 
 1. **Paper NAV 用原始价**：现金分红不入账，除息日会假跌；总收益被低估。研究回放/
-   评分用 HFQ，paper 账本没有。修复属于执行模型（PR #307 协调范围）。
+   评分用 HFQ，paper 账本没有。统一研究账本契约已支持 `DIVIDEND`/`SPLIT` 事件，
+   但当前 NAV 路径尚未从 `fq_factor` 推导并应用它们；在那之前 paper 结果不能当作
+   可上钱的实盘有效性证据。
 2. **目标权重不是持仓**：没有账户、没有成交、没有券商；不能把 paper 结果表述为
    可交易建议。
 3. **窗口缺口永久**：漏一天就少一天。

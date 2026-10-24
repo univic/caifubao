@@ -92,13 +92,13 @@ The CLI MUST exit non-zero only for `NOT_READY`.
 
 ### Requirement: Known limitations are surfaced with the verdict
 
-Every assessment result SHALL include the current limitations: the current
-(pre-#307) paper NAV marks raw prices and does not credit cash distributions,
-paper targets are not a real account, forward-window gaps are permanent, and
-ETF distributions share that pre-#307 NAV gap. The distribution limitation is
-explicitly scoped to the NAV implementation this check observes; it is retired
-when the coordinated execution-model change (PR #307) makes the ledger credit
-cash distributions and share multipliers.
+Every assessment result SHALL include the current limitations: the research
+NAV path marks raw prices and does not emit DIVIDEND/SPLIT ledger events, so
+cash distributions are not credited; paper targets are not a real account;
+forward-window gaps are permanent; and ETF distributions share that NAV gap.
+The shared ledger contract already supports these event types, so the
+limitation is scoped to the research NAV path that does not yet derive them
+from `fq_factor`, not to the ledger contract itself.
 
 #### Scenario: Limitations accompany a READY verdict
 
@@ -111,8 +111,19 @@ cash distributions and share multipliers.
 
 The assessment MUST read the persisted `strategy_forward_windows` and
 `strategy_paper_runs` collections by their stable fields (`model_version`,
-`horizon`, `config_hash`, `start_date`, `evidence_kind`, `date`) and SHALL NOT
-import or depend on the strategy engine's in-process objects.
+`horizon`, `config_hash`, `hash_kind`, `spec_hash`, `legacy_config_hash`,
+`start_date`, `evidence_kind`, `date`) and SHALL NOT import or depend on the
+strategy engine's in-process objects.
+
+#### Scenario: FORWARD runs are filtered by hash namespace
+
+- GIVEN an ACTIVE window whose `hash_kind` is `legacy`, `spec` or absent
+- WHEN the assessment counts FORWARD runs
+- THEN it requires both `config_hash` and `hash_kind` to match the window
+- AND a legacy window matches rows with the explicit legacy kind or no
+  `hash_kind` field
+- AND a spec window matches only rows with the spec kind
+- AND the window detail reports the hash kinds and hashes
 
 #### Scenario: Engine refactor does not change the inputs
 

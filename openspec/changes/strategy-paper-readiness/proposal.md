@@ -11,15 +11,18 @@ before the first certification.
 
 This change adds a read-only assessment and the operator runbook, and ties the
 new ETF market-data capability into the same gate. It deliberately does **not**
-change the strategy engine: PR #307
-(`feature/strategy-engine-unification`) is refactoring `strategy_engine/nav.py`,
-`replay.py`, `runner.py`, `tradability.py`, the strategy models and the shared
-execution contracts. The readiness check reads only the persisted
+change the strategy engine: PR #307 (merged as `7464d6b`) refactored
+`strategy_engine/nav.py`, `replay.py`, `runner.py`, `tradability.py`, `spec.py`,
+`simulation_ledger.py`, the strategy models and the shared execution contracts.
+The readiness check reads only the persisted
 `strategy_forward_windows` / `strategy_paper_runs` / quote / scoring / signal /
-`data_asset_status` state by its field names, so it layers on top of either
-engine shape and adds no file that PR #307 owns. That coupling is explicit: a
+`data_asset_status` state by its field names, so it layers on top of the merged
+engine and adds no file that PR #307 owns. That coupling is explicit: a later
 refactor that renames a persisted window/run field must update the check with
-it, and a renamed field is a schema mismatch rather than a silent pass.
+it, and a renamed field is a schema mismatch rather than a silent pass. The
+merged dual-hash model (`hash_kind` + `config_hash`; `spec_hash` /
+`legacy_config_hash`) is mirrored in the FORWARD-run filter and reported in the
+window detail.
 
 ## What Changes
 
@@ -54,7 +57,8 @@ window.
 - Opening, certifying or closing a forward window; that stays an explicit
   operator action with `--yes`.
 - Placing orders, broker adapters or live-account reconciliation.
-- Fixing the raw-price paper-NAV distribution gap; that belongs to the
-  execution-model work and must be coordinated with PR #307.
+- Fixing the raw-price research-NAV distribution gap. The merged unified ledger
+  already supports DIVIDEND/SPLIT events; deriving and applying them in the
+  research NAV path is a separate execution-model change.
 - Changing the strategy engine or its ledger (PR #307 owns that refactor).
 - Automatic remediation or self-healing of a failed check.

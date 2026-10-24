@@ -29,6 +29,29 @@
 ```
 
 ## 进度记录
+### 2026-10-24 20:10 CST — 同步 develop（#307/#308/#309）与 readiness 双哈希适配
+
+- 状态：进行中（代码/文档已同步；部署与开窗未执行）
+- 已完成：
+  - 合并 `origin/develop`：#307 统一策略基础（`StrategySpec`、legacy/spec 双哈希、
+    研究模拟账本、共享执行/风控）、#308 trading paper/halt 基座、#309 不可变研究
+    发布。唯一冲突为 `openspec/README.md` 索引，已解决（40 changes / 124 open tasks）。
+  - `paper readiness` 对齐 #307 的 `classify_evidence_kind`：FORWARD 计数同时匹配
+    `config_hash` 与 `hash_kind`（legacy 窗口兼容缺字段的历史行），窗口详情输出
+    `hash_kind`/`spec_hash`/`legacy_config_hash`；新增 2 个测试（共 14 个）。
+  - 文档同步：`docs/operations/paper-live-readiness.md` §3 改为“#307 已合并”，说明
+    legacy/spec 二选一、不得中途迁移命名空间；`strategy-paper-readiness` 的
+    proposal/tasks/spec 同步双哈希语义与测试。
+  - 修正实施口径：统一研究账本契约已支持 `DIVIDEND`/`SPLIT` 事件，但 research NAV
+    路径尚未从 `fq_factor` 推导并应用它们，paper 分红缺口仍在；limitation 文案不再
+    写成“pre-#307/由 #307 退休”，并补充候选模型手工评分验证命令。
+- 验证：datahub 1,542 passed；OpenSpec strict 40/40；ruff `E4,E7,E9,F` + format
+  （303 files）；三个 kustomize overlay；`bash -n scripts/caifubao`。
+- 下一步：部署含 #307 与 ETF 能力的新镜像到 research → `etf universe` → 抽样
+  `etf backfill` → `etf daily`；为候选模型补每日评分；readiness 无 FAIL 后由人工
+  授权开窗。
+- 阻塞：research/dev 仍运行 `sha-f3f29c8`（未部署 #307/ETF）；候选
+  `flip_wide_shadow_v1` 评分仍停在 2026-09-10。
 ### 2026-10-24 01:45 CST — 除复权审计 + tushare ETF 能力 + 模拟盘就绪门禁
 
 - 状态：进行中（实现与本地校验完成；评审门禁与部署未完成）

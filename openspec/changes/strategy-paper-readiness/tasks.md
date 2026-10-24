@@ -5,7 +5,8 @@
 - [x] 1.1 Freeze the read-only, non-evidence, non-authorization semantics and
   the READY/DEGRADED/NOT_READY rules in the delta spec.
 - [x] 1.2 State the PR #307 relationship: the check reads persisted state only
-  and does not own any strategy-engine file PR #307 refactors.
+  and does not own any strategy-engine file PR #307 refactors (PR #307 merged
+  as `7464d6b`; the check was re-synced to its dual-hash model).
 
 ## 2. Implementation
 
@@ -21,6 +22,9 @@
   (non-zero only for NOT_READY).
 - [x] 2.6 Add suspended-by-default research CronJobs for the readiness check
   and the daily ETF sync.
+- [x] 2.7 Mirror `classify_evidence_kind`'s dual-hash rule: filter FORWARD runs
+  by `config_hash` + `hash_kind` (legacy matches the missing field) and report
+  `hash_kind` / `spec_hash` / `legacy_config_hash`.
 
 ## 3. Documentation
 
