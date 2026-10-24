@@ -102,6 +102,8 @@ one-writer-at-a-time 规则，由私有 overlay 显式启用。
 - 复权方向说明：`fund_adj` 因子在**份额拆分/折算**日可能下降（如 sh510500
   2015-04-15 因子 1.0 → 0.2803），在**现金分红**日上升；验收标准是
   `*_hfq` 序列在事件日连续，而不是因子单调。
-- `caifubao-datahub-etf-daily` 已于 2026-10-25 在 research 启用（18:40，工作日）；
-  readiness CronJob 仍 suspend；私有 overlay 的 suspend 开关与镜像 tag 尚未同步。
+- `caifubao-datahub-etf-daily` 已于 2026-10-25 在 research 启用（18:40，工作日），
+  并把 CronJob 镜像固定为当前部署的 `sha-62ab25490950`（公共模板里的
+  `caifubao-datahub:latest` 在集群内不可拉取）；readiness CronJob 仍 suspend；
+  私有 overlay 的 suspend 开关与镜像 tag 尚未同步。
 - 本次未回补全市场（约 2,329 只活跃基金）；由运维决定窗口与节奏。
