@@ -33,7 +33,7 @@
 | 估值/市值基本面 | ✅ 已实现 | `stock_daily_basic`（`datahub/app/model/daily_basic.py`）：pe_ttm/pb/ps_ttm/dv_ttm/total_mv/circ_mv/turnover_rate，按 trade_date 的 point-in-time 快照；`daily_basic_backfill` 支持断点续传，已接入 stable→dev 数据同步（#175/#176；在线同步为迁移期遗留） |
 | Tushare 数据源 | ✅ 已实现 | 历史行情、`adj_factor`、`daily_basic`、股票池四个接口；全部调用按 300/min 限速节流、带重试与空结果显式失败（`datahub/app/lib/datahub/data_source/interface/tushare_interface.py`） |
 | 全市场股票池 | ✅ 已实现 | `stock_basic_active`（tushare `pro.stock_basic`，`list_status='L'`），用于股票池刷新（#130） |
-| 场内基金（ETF/LOF）行情与复权 | ✅ 已实现（待部署） | `ExchangeTradedFund`（`object_type=etf`）+ tushare `fund_basic/fund_daily/fund_adj`；独立集合 `exchange_traded_fund` / `etf_daily_quote`、FQ 同股票口径；`etf universe/daily/backfill/status` CLI 与 research CronJob 模板（`datahub-tushare-etf`） |
+| 场内基金（ETF/LOF）行情与复权 | ✅ 已实现并在 research 上线 | `ExchangeTradedFund`（`object_type=etf`）+ tushare `fund_basic/fund_daily/fund_adj`；独立集合 `exchange_traded_fund` / `etf_daily_quote`、FQ 同股票口径；`etf universe/daily/backfill/status` CLI 与 research CronJob 模板（`datahub-tushare-etf`）；2026-10-24 已在 research 落库 2,176 条当日行情/FQ 与 11,850 行抽样历史 |
 | 财务报表（ROE、营收增速等三表） | ❌ 未实现 | 仅采集 daily_basic 估值/市值，利润表/资产负债表/现金流量表未采集 |
 | 融资融券数据 | ❌ 未实现 | 需要新采集器 |
 | 北向资金流向 | ❌ 未实现 | 需要新采集器 |

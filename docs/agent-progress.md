@@ -29,6 +29,33 @@
 ```
 
 ## 进度记录
+### 2026-10-25 00:55 CST — research 上线：ETF 数据 + #307 + readiness（DEGRADED）
+
+- 状态：进行中（数据/评分/ETF 已就绪；开窗与 halt 未授权）
+- 已完成：
+  - 合并并发布：PR #313（ETF/审计/readiness，merge `1078fa4`）与 PR #314
+    （ETF backfill ts_code 修复 + readiness active ETF 计数，merge `62ab254`）；
+    CI 全绿（含私有 dry-run，runner `caifubao-private-ci`）。
+  - research datahub 升级到 `sha-62ab25490950`；`etf universe` 3,007 只
+    （活跃 2,329）；`etf daily 2026-10-23` 写入 2,176 行情 + 2,176 FQ；
+    抽样 backfill 4 只 → 11,850 行；`etf_daily_quote` 共 14,022 行/2,176 代码，
+    样本 `close_hfq = close×fq_factor` 0 偏差、无缺失 FQ，sh510300 完整回到
+    2012-05-28（10 年分页未截断）。
+  - 候选 `flip_wide_shadow_v1` 补 2026-10-23 h=20 评分（5,578 只）；readiness
+    **DEGRADED（无 FAIL）**：行情/复权/评分/信号/ETF 全 PASS，仅
+    `forward_window`（未开窗）与 `halt_switch`（未配置路径）WARN。
+  - 发现并修复：ETF backfill 把内部代码传给 tushare（#314）；readiness
+    `etf_active_count` 恒为 0；`main` 上的 datahub-publish 仍用旧
+    `context: ./datahub`，导致 develop 的 workflow_run 构建失败（本次用
+    `workflow_dispatch --ref develop` 发布）；私有部署 runner 的 tailnet
+    preflight 因容器 `sudo` 限制失败（本次用受控 `kubectl set image` 上线）。
+- 验证：datahub 1,543 passed；ruff/OpenSpec；research readiness 实跑；
+  ETF 数据逐行算术与历史覆盖核对。
+- 下一步：单独授权后配置 halt 路径、启用/新增候选每日评分（`scoring-shadow`
+  已 apply 但 suspend）、私有无 suspend 开关，再由人工授权
+  `strategy forward certify --yes`。
+- 阻塞：开窗口令未授权；候选模型仅补一天评分；私有 deploy runner 尚不能完成
+  tailnet preflight。
 ### 2026-10-24 20:10 CST — 同步 develop（#307/#308/#309）与 readiness 双哈希适配
 
 - 状态：进行中（代码/文档已同步；部署与开窗未执行）

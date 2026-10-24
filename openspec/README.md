@@ -98,7 +98,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 
 ## 5. 活跃 change 索引
 
-共 40 个（36 个既有 + 1 个已转实现 + 3 个新增），未完成任务合计 124。按领域分组，组内按 change 名排序。
+共 40 个（36 个既有 + 1 个已转实现 + 3 个新增），未完成任务合计 115。按领域分组，组内按 change 名排序。
 
 ### 5.1 数据与管道
 
@@ -110,8 +110,8 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 | `datahub-tushare-source` | tushare 数据源（行情/复权/每日指标） | `datahub-runners` | 0 |
 | `datahub-tushare-universe` | tushare 全市场股票池 | `datahub-runners` | 0 |
 | `fq-adj-factor-fix` | 复权因子改用真实 `adj_factor` | `datahub-factors` | 3 |
-| `datahub-tushare-etf` | tushare 场内基金（ETF/LOF）行情 + `fund_adj` 除复权 | `datahub-etf-market-data` | 3 |
-| `datahub-fq-chain-audit` | 除复权链路只读审计（覆盖/算术/源头/跳变） | `datahub-fq-audit` | 2 |
+| `datahub-tushare-etf` | tushare 场内基金（ETF/LOF）行情 + `fund_adj` 除复权；已在 research 上线 | `datahub-etf-market-data` | 0 |
+| `datahub-fq-chain-audit` | 除复权链路只读审计（覆盖/算术/源头/跳变） | `datahub-fq-audit` | 0 |
 | `industry-classification-code-normalization` | 行业分类代码规范化 | `datahub-industry-classification`、`stock-scoring` | 18 |
 
 ### 5.2 评分
@@ -150,7 +150,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 | `strategy-fee-aware-opening-budget` | 费用感知开盘买入预算 | `strategy-nav-fee-budget` | 0 |
 | `strategy-paper-causal-timing` | 因果 paper 时序与证据边界 | `strategy-paper-timing` | 0 |
 | `etf-benchmark-paper` | 单 ETF paper 基准 | `etf-benchmark-paper` | 0 |
-| `strategy-paper-readiness` | 模拟盘就绪门禁（只读）与 research 上线清单 | `strategy-paper-readiness` | 4 |
+| `strategy-paper-readiness` | 模拟盘就绪门禁（只读）与 research 上线清单；readiness 已实测 DEGRADED | `strategy-paper-readiness` | 0 |
 | `stock-timing-evaluator-p0` | 单股择时评估器（成对证据） | `stock-timing-evaluator` | 0 |
 | `stock-timing-replay-p1` | 单股择时回放适配器 | `stock-timing-replay` | 0 |
 | `stock-timing-pit-evidence-p2` | 单股 PIT 输入证据 P2a | `stock-timing-pit-evidence` | 0 |
