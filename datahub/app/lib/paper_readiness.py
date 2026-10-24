@@ -257,7 +257,17 @@ def _halt_check(inputs: ReadinessInputs) -> dict:
             "no halt-file path configured: order generation fails closed",
             {"path_configured": False},
         )
-    state = inputs.halt_state or {}
+    # A configured path is not proof that the volume/file is readable. The
+    # scheduled research writer must fail closed when the operator halt state
+    # is missing (for example, a CronJob mounts a different/empty volume).
+    if inputs.halt_state is None:
+        return _check(
+            "halt_switch",
+            "WARN",
+            "halt file does not exist or cannot be read; verify the persistent mount",
+            {"path_configured": True, "state_verified": False},
+        )
+    state = inputs.halt_state
     detail = {
         "path_configured": True,
         "halted": bool(state.get("halted")),
