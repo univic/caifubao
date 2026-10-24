@@ -32,22 +32,34 @@ def main(argv: list[str] | None = None) -> None:
     if not isinstance(snapshot, dict):
         raise ValueError("producer snapshot must be a dictionary")
     allowed = {
-        "artifact_type", "legacy_payload", "numeric_units", "inputs",
-        "as_of", "generated_at", "grade",
+        "artifact_type",
+        "legacy_payload",
+        "numeric_units",
+        "inputs",
+        "as_of",
+        "generated_at",
+        "grade",
     }
     unknown = set(snapshot) - allowed
     if unknown:
         raise ValueError(f"unsupported producer snapshot fields: {sorted(unknown)}")
     artifact = publish_versioned_research_artifact(**snapshot)
     saved = ImmutableArtifactStore(args.output_dir).publish(artifact)
-    print(json.dumps({
-        "artifact_id": saved["artifact_id"],
-        "artifact_hash": saved["artifact_hash"],
-        "grade": saved["grade"],
-        "producer": saved["producer"],
-        "as_of": saved["as_of"],
-        "generated_at": saved["generated_at"],
-    }, ensure_ascii=False, sort_keys=True, allow_nan=False))
+    print(
+        json.dumps(
+            {
+                "artifact_id": saved["artifact_id"],
+                "artifact_hash": saved["artifact_hash"],
+                "grade": saved["grade"],
+                "producer": saved["producer"],
+                "as_of": saved["as_of"],
+                "generated_at": saved["generated_at"],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            allow_nan=False,
+        )
+    )
 
 
 if __name__ == "__main__":
