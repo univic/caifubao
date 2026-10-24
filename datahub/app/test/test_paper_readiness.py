@@ -147,6 +147,15 @@ def test_evaluate_warns_when_etf_universe_is_empty():
     ] == "WARN"
 
 
+def test_evaluate_warns_when_halt_file_is_missing():
+    report = paper_readiness.evaluate(
+        _inputs(halt_path="/persist/strategy/halt.json", halt_state=None)
+    )
+    check = {item["id"]: item for item in report["checks"]}["halt_switch"]
+    assert check["status"] == "WARN"
+    assert check["detail"]["state_verified"] is False
+
+
 def test_evaluate_warns_when_halt_path_is_not_configured():
     report = paper_readiness.evaluate(_inputs(halt_path=None, halt_state=None))
 
