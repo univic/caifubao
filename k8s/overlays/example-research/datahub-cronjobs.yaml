@@ -1096,3 +1096,99 @@ spec:
                 cpu: "1000m"
           imagePullSecrets:
           - name: ccr-secret
+
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: caifubao-datahub-strategy-forward-daily
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: strategy-forward-daily
+spec:
+  # Milestone A: explicitly authorized, immutable StrategySpec FORWARD capture.
+  # Leave suspended until operator has verified the spec ConfigMap, the
+  # persistent halt volume, the ACTIVE window, and a manual trading-day smoke.
+  # After shadow scoring (19:00; 3-hour deadline), not before the next open.
+  schedule: "15 22 * * 1-5"
+  suspend: true
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 1800
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app: caifubao-datahub
+            job.caifubao.io/type: strategy-forward-daily
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: strategy-forward-daily
+            image: caifubao-datahub:latest
+            imagePullPolicy: Always
+            command: ["python", "-m", "app.jobs.strategy_forward_daily"]
+            args: ["--spec", "/etc/caifubao/research/strategy.json"]
+            env:
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_HOST
+            - name: MONGODB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_PORT
+            - name: MONGODB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_NAME
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_USER
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: MONGODB_PASSWORD
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: ENVIRONMENT
+            # Deliberately unset in this public example. An operator must
+            # inject the durable halt path AND mount the matching volume in the
+            # private overlay before this job can pass the readiness gate.
+            - name: CAIFUBAO_STRATEGY_HALT_FILE
+              value: ""
+            volumeMounts:
+            - name: strategy-spec
+              mountPath: /etc/caifubao/research
+              readOnly: true
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "200m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+          volumes:
+          - name: strategy-spec
+            configMap:
+              name: caifubao-research-strategy-spec
+              items:
+              - key: strategy.json
+                path: strategy.json
+          imagePullSecrets:
+          - name: ccr-secret
