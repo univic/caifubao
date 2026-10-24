@@ -292,10 +292,11 @@ _opt_value() {
 
 cmd_strategy_run() {
   local date="${1:-}"; shift || true
-  local config="" halt_file="" extra=()
+  local config="" spec_file="" halt_file="" extra=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --config-json) config="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --spec)        spec_file="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
       --halt-file)   halt_file="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
       --replace)     extra+=(--replace); shift ;;
       --dry-run)     extra+=(--dry-run); shift ;;
@@ -308,11 +309,16 @@ cmd_strategy_run() {
       *) die "Unknown option: $1" ;;
     esac
   done
+  if [[ -n "$config" && -n "$spec_file" ]]; then die "--spec and --config-json are mutually exclusive"; fi
   date="${date:-$(python3 -c 'import datetime;print(datetime.date.today().isoformat())')}"
   # Build a non-empty args array: `"${arr[@]}"` on an empty array trips `set -u`
   # on the bash 3.2 that ships with macOS.
   local args=(run --date "$date")
   if [[ -n "$config" ]]; then args+=(--config-json "$config"); fi
+  if [[ -n "$spec_file" ]]; then
+    [[ -r "$spec_file" ]] || die "Cannot read StrategySpec: $spec_file"
+    args+=(--spec-json "$(cat -- "$spec_file")")
+  fi
   if [[ -n "$halt_file" ]]; then args+=(--halt-file "$halt_file"); fi
   if [[ ${#extra[@]} -gt 0 ]]; then args+=("${extra[@]}"); fi
   info "Running the paper strategy for $date..."
@@ -337,12 +343,14 @@ cmd_strategy_report() {
 }
 
 cmd_strategy_nav() {
-  local from="" to="" config="" model_version="" horizon=""
+  local from="" to="" config="" spec_file="" model_version="" horizon="" persist=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --from)          from="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
       --to)            to="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
       --config-json)   config="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --spec)          spec_file="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --persist-research-artifact) persist="1"; shift ;;
       --model-version) model_version="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
       --horizon)       horizon="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
       *)               die "Unknown option: $1" ;;
@@ -351,8 +359,14 @@ cmd_strategy_nav() {
   if [[ -z "$from" || -z "$to" ]]; then
     die "Usage: caifubao strategy nav --from DATE --to DATE [--config-json JSON] [--model-version V] [--horizon H]"
   fi
+  if [[ -n "$config" && -n "$spec_file" ]]; then die "--spec and --config-json are mutually exclusive"; fi
   local args=(nav --from "$from" --to "$to")
   if [[ -n "$config" ]]; then args+=(--config-json "$config"); fi
+  if [[ -n "$spec_file" ]]; then
+    [[ -r "$spec_file" ]] || die "Cannot read StrategySpec: $spec_file"
+    args+=(--spec-json "$(cat -- "$spec_file")")
+  fi
+  if [[ -n "$persist" ]]; then args+=(--persist-research-artifact); fi
   if [[ -n "$model_version" ]]; then args+=(--model-version "$model_version"); fi
   if [[ -n "$horizon" ]]; then args+=(--horizon "$horizon"); fi
   info "Recomputing the paper NAV curve $from → $to..."
@@ -361,12 +375,13 @@ cmd_strategy_nav() {
 
 cmd_strategy_forward() {
   local sub="${1:-}"; shift || true
-  local model_version="" horizon="" config="" confirmed=""
+  local model_version="" horizon="" config="" spec_file="" confirmed=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model-version) model_version="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
       --horizon)       horizon="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
       --config-json)   config="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
+      --spec)          spec_file="$(_opt_value "$1" "${2:-}")"; shift 2 ;;
       --yes)           confirmed="1"; shift ;;
       *)               die "Unknown option: $1" ;;
     esac
@@ -379,6 +394,10 @@ cmd_strategy_forward() {
     die "Usage: caifubao strategy forward $sub --model-version V --horizon H"
   fi
   # Only certify takes a config or a confirmation; close/progress are plain.
+  if [[ -n "$config" && -n "$spec_file" ]]; then die "--spec and --config-json are mutually exclusive"; fi
+  if [[ -n "$spec_file" && "$sub" != "certify" ]]; then
+    die "--spec is only accepted by strategy forward certify"
+  fi
   if [[ -n "$config" && "$sub" != "certify" ]]; then
     die "--config-json is only accepted by 'strategy forward certify'"
   fi
@@ -395,6 +414,10 @@ cmd_strategy_forward() {
       die "refusing to certify without --yes (explicit operator authorization required); see docs/operations/strategy-forward-window.md"
     fi
     if [[ -n "$config" ]]; then args+=(--config-json "$config"); fi
+    if [[ -n "$spec_file" ]]; then
+      [[ -r "$spec_file" ]] || die "Cannot read StrategySpec: $spec_file"
+      args+=(--spec-json "$(cat -- "$spec_file")")
+    fi
   fi
   _pod_exec "$PYTHON_BIN" -m app.jobs.strategy_runner "${args[@]}"
 }

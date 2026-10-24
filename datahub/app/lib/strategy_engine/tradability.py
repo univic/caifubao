@@ -37,6 +37,11 @@ from __future__ import annotations
 
 import math
 
+from caifubao_contracts.strategy_execution import (
+    session_limit_flags,
+    tradable_open as shared_tradable_open,
+)
+
 from app.lib.factor_lab.panel import LIMIT_EPSILON, price_limit
 
 SIDES = ("BUY", "SELL")
@@ -69,11 +74,9 @@ def limit_verdict(
     if not _finite_positive(previous_close) or not _finite_positive(open_price):
         return None, None
     board = price_limit(stock_code, is_st=is_st)
-    previous = float(previous_close)
-    opened = float(open_price)
-    upper = previous * (1 + (board - LIMIT_EPSILON) / 100)
-    lower = previous * (1 - (board - LIMIT_EPSILON) / 100)
-    return opened >= upper, opened <= lower
+    return session_limit_flags(
+        open_price, previous_close, board, tolerance_pct=LIMIT_EPSILON
+    )
 
 
 def tradeable_open(
@@ -117,14 +120,15 @@ def tradeable_open(
             limit_up = derived_up
         if limit_down is None:
             limit_down = derived_down
-    if normalized == "BUY":
-        if limit_up is None:
-            return None, "limit_unknown"
-        if bool(limit_up):
-            return None, "at_limit_up"
-    else:
-        if limit_down is None:
-            return None, "limit_unknown"
-        if bool(limit_down):
-            return None, "at_limit_down"
-    return float(open_price), ""
+    # Shared pure fill gate owns refusal policy; the domain-local adapter
+    # remains responsible only for the board-aware price-limit classification.
+    return shared_tradable_open(
+        {
+            "trade_status": status,
+            "open": open_price,
+            "limit_up": limit_up,
+            "limit_down": limit_down,
+        },
+        normalized,
+        unknown_limit_policy="fail_closed",
+    )

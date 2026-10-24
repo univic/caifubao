@@ -1,0 +1,36 @@
+name: Immutable Strategy Artifact Contract
+
+on:
+  pull_request:
+    branches: [develop, main, feature/strategy-engine-unification]
+    paths:
+      - 'shared/**'
+      - 'datahub/app/jobs/strategy_artifact_publish.py'
+      - '.github/workflows/strategy-artifact-publication.yml'
+  push:
+    branches: [develop, main]
+    paths:
+      - 'shared/**'
+      - 'datahub/app/jobs/strategy_artifact_publish.py'
+      - '.github/workflows/strategy-artifact-publication.yml'
+
+jobs:
+  artifact-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install shared contracts and Ruff
+        run: |
+          python -m pip install -e ./shared
+          python -m pip install ruff==0.15.15
+      - name: Lint and format
+        run: |
+          ruff check shared/ datahub/app/jobs/strategy_artifact_publish.py
+          ruff format --diff shared/ datahub/app/jobs/strategy_artifact_publish.py || true
+          ruff format --check shared/ datahub/app/jobs/strategy_artifact_publish.py
+      - name: Test deterministic publication and immutable storage
+        run: |
+          python -m unittest discover -s shared/tests -p 'test_strategy_artifact_publish.py' -v

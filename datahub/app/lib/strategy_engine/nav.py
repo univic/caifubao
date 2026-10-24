@@ -20,7 +20,18 @@ from __future__ import annotations
 
 import math
 
+from caifubao_contracts.friction import CostProfile
+from caifubao_contracts.strategy_modes import require_research_mode
+from caifubao_contracts.strategy_execution import (
+    adjusted_price,
+    board_lot_rule as shared_board_lot_rule,
+    deterministic_fill_id,
+    execution_fees,
+    fit_buy_quantity as shared_fit_buy_quantity,
+)
+
 from app.lib.strategy_engine.config import PAPER_EXECUTION
+from app.lib.strategy_engine.simulation_ledger import ResearchSimulationLedger
 from app.lib.strategy_engine.tradability import tradeable_open
 
 
@@ -60,24 +71,12 @@ DEFAULT_MINIMUM = 100
 def board_lot_rule(
     stock_code: str, default_lot: int = DEFAULT_MINIMUM
 ) -> tuple[int, int]:
-    """(minimum quantity, increment) for a BUY in one A-share code.
-
-    STAR/科创板 (``sh688``/``sh689``, bare ``688``/``689``) requires at least
-    200 shares and then accepts any 1-share increment; ChiNext/创业板 and the
-    main board trade in ``default_lot`` (normally 100) share lots. SELL sizing
-    is deliberately exempt (see ``simulate_paper_nav``) so an odd-lot position
-    can always be closed out.
-    """
-    code = (stock_code or "").strip().lower()
-    if code.startswith(("sh688", "sh689", "688", "689")):
-        return STAR_MINIMUM, 1
-    lot = int(default_lot or DEFAULT_MINIMUM)
-    return lot, lot
+    """Compatibility wrapper for the shared board sizing rule."""
+    return shared_board_lot_rule(stock_code, default_lot)
 
 
 def _exec_price(price: float, side: str, cfg: dict) -> float:
-    slippage = float(cfg["slippage_per_side"])
-    return price * (1 + slippage if side == "BUY" else 1 - slippage)
+    return adjusted_price(price, side, float(cfg["slippage_per_side"]))
 
 
 def _valid_price(price) -> bool:
@@ -98,21 +97,22 @@ def _tradable(quote) -> bool:
         return False
 
 
-def _order_cost(exec_price: float, quantity: float, side: str, cfg: dict) -> dict:
-    value = exec_price * quantity
-    commission = max(
-        value * float(cfg["commission_rate"]),
-        float(cfg["minimum_commission_cny"]),
+def _cost_profile(cfg: dict) -> CostProfile:
+    """Translate the existing hashed execution block into a shared profile."""
+    return CostProfile(
+        commission_rate=float(cfg["commission_rate"]),
+        minimum_commission_cny=float(cfg["minimum_commission_cny"]),
+        sell_stamp_duty_rate=float(cfg["sell_stamp_duty_rate"]),
+        transfer_fee_rate=float(cfg.get("transfer_fee_rate", 0.0)),
+        slippage_per_side=float(cfg["slippage_per_side"]),
+        board_lot=int(cfg["board_lot"]),
     )
-    stamp_duty = value * float(cfg["sell_stamp_duty_rate"]) if side == "SELL" else 0.0
-    # A-share transfer fee (过户费) is charged on BOTH sides.
-    transfer_fee = value * float(cfg.get("transfer_fee_rate", 0.0))
-    return {
-        "value": value,
-        "commission": commission,
-        "stamp_duty": stamp_duty,
-        "transfer_fee": transfer_fee,
-    }
+
+
+def _order_cost(exec_price: float, quantity: float, side: str, cfg: dict) -> dict:
+    """Shared commission/transfer/stamp-duty calculation; slippage in price."""
+    fees = execution_fees(exec_price, quantity, side, _cost_profile(cfg))
+    return {"value": exec_price * quantity, **fees}
 
 
 def _buy_spend(exec_price: float, quantity: int, cfg: dict) -> float:
@@ -124,38 +124,12 @@ def _buy_spend(exec_price: float, quantity: int, cfg: dict) -> float:
 
 
 def _fit_buy_quantity(
-    budget: float,
-    exec_price: float,
-    minimum: int,
-    increment: int,
-    cfg: dict,
+    budget: float, exec_price: float, minimum: int, increment: int, cfg: dict
 ) -> int:
-    """Largest board-legal BUY quantity whose total spend fits ``budget``.
-
-    Quantity is either 0 (nothing fits; caller skips the order) or
-    ``minimum + k * increment`` for the largest feasible ``k >= 0`` (main board /
-    ChiNext: k lots of 100; STAR: the 200-share minimum plus 1-share steps).
-    Fees (slippage inside exec_price, commission, transfer fee) are reserved in
-    sizing so an order is skipped only when even the minimum cannot fit — never
-    because the fee-unadjusted quantity overshoots.
-
-    Binary search is valid because spend grows monotonically in k (commission
-    may floor at the minimum, but never decreases).
-    """
-    if budget <= 0 or minimum <= 0 or increment <= 0 or not _valid_price(exec_price):
-        return 0
-    if _buy_spend(exec_price, minimum, cfg) > budget:
-        return 0
-    # qty(k) = minimum + k*increment, so hi is a safe upper bound on k.
-    hi = int(budget // (exec_price * increment)) + 1
-    lo = 0
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if _buy_spend(exec_price, minimum + mid * increment, cfg) <= budget:
-            lo = mid
-        else:
-            hi = mid - 1
-    return minimum + lo * increment
+    """Shared fee-aware sizing; exposes the same legacy public surface."""
+    return shared_fit_buy_quantity(
+        budget, exec_price, minimum, increment, _cost_profile(cfg)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +177,8 @@ def simulate_paper_nav(
     execution: dict | None = None,
     initial_nav: float | None = None,
     board_lot: int | None = None,
+    spec_hash: str | None = None,
+    mode: str = "RESEARCH_SIMULATION",
 ) -> dict:
     """Simulate a paper portfolio over a rebalance schedule.
 
@@ -212,6 +188,7 @@ def simulate_paper_nav(
     {"date", "nav", "daily_return", "turnover", "drawdown",
     "benchmark_return"?, "positions_count"}.
     """
+    require_research_mode(mode)
     if not schedule:
         raise ValueError("schedule must contain at least one rebalance decision")
 
@@ -228,16 +205,70 @@ def simulate_paper_nav(
     curve = []
     trades = []
     blocked = []
+    parity_points = []
     peak = start_nav
+    # Target weights never create holdings: every position and cash mutation
+    # is recorded as a fill event in a research-only, rebuildable ledger.
+    ledger = ResearchSimulationLedger(initial_cash=start_nav)
 
     def _mark(date) -> float:
-        total = cash
+        marks = {}
+        legacy_total = cash
         for code, pos in positions.items():
             quote = (prices.get(code) or {}).get(date)
             if _tradable(quote) and _valid_price(quote.close):
                 pos["last_price"] = float(quote.close)
-            total += pos["qty"] * pos["last_price"]
-        return total
+                marks[code] = pos["last_price"]
+            legacy_total += pos["qty"] * pos["last_price"]
+        ledger_nav = ledger.mark(marks, as_of=str(date))
+        parity_points.append(
+            {
+                "date": str(date),
+                "legacy_nav": round(legacy_total, 2),
+                "ledger_nav": round(ledger_nav, 2),
+                "delta": round(ledger_nav - legacy_total, 6),
+            }
+        )
+        # Transitional golden parity: prove this execution loop and the new
+        # ledger agree, rather than silently changing pre-existing NAV curves.
+        if abs(ledger_nav - legacy_total) > 0.01 or abs(ledger.cash - cash) > 0.01:
+            raise ValueError("simulation ledger diverged from executed fills")
+        return ledger_nav
+
+    def _record_fill(date, code, side, quantity, price, costs, *, reference_price):
+        order_id = f"{date}:{code}:{side}"
+        fill_id = deterministic_fill_id(
+            order_id=order_id, attempt_id=str(date), execution_id="1"
+        )
+        ledger.apply(
+            {
+                "type": "FILL",
+                "source_domain": "research",
+                "account_id": "research-simulation",
+                "currency": "CNY",
+                "spec_hash": spec_hash,
+                **(
+                    {"decision_date": decision["decision_date"]}
+                    if decision.get("decision_date")
+                    else {}
+                ),
+                "event_id": fill_id,
+                "fill_id": fill_id,
+                "order_id": order_id,
+                "intent_id": order_id,
+                "stock_code": code,
+                "side": side,
+                "execution_date": str(date),
+                "quantity": int(quantity),
+                "price": price,
+                "reference_price": reference_price,
+                "fees": {
+                    "commission": costs["commission"],
+                    "stamp_duty": costs["stamp_duty"],
+                    "transfer_fee": costs["transfer_fee"],
+                },
+            }
+        )
 
     def _open_price(code, date, side):
         """(price, reason): the open this side may fill at, or the refusal.
@@ -258,8 +289,40 @@ def simulate_paper_nav(
                 "reason": reason,
             }
         )
+        ledger.apply(
+            {
+                "type": "REJECTED",
+                "source_domain": "research",
+                "account_id": "research-simulation",
+                "currency": "CNY",
+                "spec_hash": spec_hash,
+                **(
+                    {"decision_date": decision["decision_date"]}
+                    if decision.get("decision_date")
+                    else {}
+                ),
+                "event_id": f"blocked:{date}:{code}:{side}",
+                "order_id": f"{date}:{code}:{side}",
+                "intent_id": f"{date}:{code}:{side}",
+                "stock_code": code,
+                "side": side,
+                "execution_date": str(date),
+                "reason_code": reason,
+            }
+        )
 
     for decision in schedule:
+        # Ledger is authoritative across sessions. The legacy-shaped scratch
+        # book exists only for this session's sizing and NAV golden parity;
+        # it is rebuilt from the event projection before every decision.
+        cash = ledger.cash
+        positions = {
+            code: {
+                "qty": position["quantity"],
+                "last_price": position["last_price"],
+            }
+            for code, position in ledger.positions.items()
+        }
         date = decision["date"]
         targets = decision.get("holdings") or {}
         target_codes = set(targets)
@@ -298,6 +361,15 @@ def simulate_paper_nav(
                 - cost["transfer_fee"]
             )
             sell_notional += cost["value"]
+            _record_fill(
+                date,
+                code,
+                "SELL",
+                pos["qty"],
+                exec_price,
+                cost,
+                reference_price=price,
+            )
             trades.append(
                 {
                     "date": date,
@@ -344,6 +416,15 @@ def simulate_paper_nav(
             cash -= spend
             positions[code] = {"qty": qty, "last_price": raw_open}
             buy_notional += cost["value"]
+            _record_fill(
+                date,
+                code,
+                "BUY",
+                qty,
+                exec_price,
+                cost,
+                reference_price=raw_open,
+            )
             trades.append(
                 {
                     "date": date,
@@ -388,6 +469,20 @@ def simulate_paper_nav(
         "terminal_nav": curve[-1]["nav"],
         "curve": curve,
         "trades": trades,
+        # Derived simulation artifacts: account states are research-local, not
+        # a trading account. Caller may persist these separately from FORWARD
+        # plan evidence; do not mutate the certified plan fields.
+        "ledger_events": ledger.events,
+        "ledger_snapshot": ledger.snapshot(),
+        # Independent, pre-ledger scratch-book calculation is retained as an
+        # explicit per-session audit vector; no legacy curve is rewritten.
+        "nav_parity": {
+            "tolerance_cny": 0.01,
+            "max_abs_delta_cny": round(
+                max(abs(point["delta"]) for point in parity_points), 6
+            ),
+            "points": parity_points,
+        },
         # Orders refused at the session open (limit-up BUY / limit-down SELL /
         # unknown limit verdict / suspension). Fail-loud reporting: the caller
         # persists these next to the plan instead of seeing a silent skip.

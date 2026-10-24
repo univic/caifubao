@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import logging
 import sys
+from pathlib import Path
 
 from app.lib.strategy_engine.config import (
     DEFAULT_HORIZON,
@@ -149,6 +151,8 @@ def _query_flags(date, horizon, model_version=None) -> dict[str, dict]:
             "trade_status": quote.trade_status,
             # Signal-date traded amount, for the liquidity floor (roadmap 1.3).
             "trade_amount": quote.trade_amount,
+            # This is a decision-time reference, not a future execution price.
+            "reference_close": getattr(quote, "close", None),
         }
     return flags
 
@@ -214,6 +218,7 @@ def run_strategy(
     dry_run: bool = False,
     replace: bool = False,
     halt_path: str | None = None,
+    strategy_spec_hash: str | None = None,
 ) -> dict:
     from app.lib.strategy_engine.halt import assert_not_halted
     from app.lib.strategy_engine.runner import assemble_daily_plan
@@ -231,7 +236,9 @@ def run_strategy(
     resolved = validate_strategy_config(config or DEFAULT_STRATEGY_CONFIG)
     model_version = _resolve_model_version(resolved)
     horizon = int(resolved.get("horizon", DEFAULT_HORIZON))
-    config_hash = strategy_config_hash(resolved)
+    legacy_hash = strategy_config_hash(resolved)
+    config_hash = strategy_spec_hash or legacy_hash
+    hash_kind = "spec" if strategy_spec_hash is not None else "legacy"
 
     query = StrategyPaperRun.objects(
         strategy_name=DEFAULT_STRATEGY_NAME,
@@ -277,6 +284,7 @@ def run_strategy(
         config_hash=config_hash,
         existing_status=getattr(existing, "status", None),
         replace=replace,
+        hash_kind=hash_kind,
     )
 
     # Previous holdings come from the most recent COMPLETED run BEFORE this
@@ -323,6 +331,25 @@ def run_strategy(
         industry_by_code=industry_by_code,
         horizon=horizon,
     )
+    if strategy_spec_hash is not None and not plan["skipped"]:
+        # Definition-time execution feasibility uses ONLY signal-date closes,
+        # never future execution opens. An infeasible Spec is not certified.
+        from caifubao_contracts.strategy_spec import preflight_execution_feasibility
+        from app.lib.strategy_engine.spec import legacy_to_spec
+
+        reconstructed = legacy_to_spec(resolved)
+        if reconstructed["spec_hash"] != strategy_spec_hash:
+            raise ValueError("StrategySpec identity changed during legacy adaptation")
+        targets = plan["target_holdings"]
+        prices = {
+            item["stock_code"]: flags.get(item["stock_code"], {}).get("reference_close")
+            for item in targets
+        }
+        preflight_execution_feasibility(
+            reconstructed["spec"],
+            reference_prices=prices,
+            target_weights={item["stock_code"]: item["weight"] for item in targets},
+        )
     if dry_run:
         return {
             "dry_run": True,
@@ -333,6 +360,9 @@ def run_strategy(
             "model_version": model_version,
             "horizon": horizon,
             "config_hash": config_hash,
+            "hash_kind": hash_kind,
+            "spec_hash": strategy_spec_hash,
+            "legacy_config_hash": legacy_hash,
             "previous_run_date": (
                 previous_run.date.date() if previous_run is not None else None
             ),
@@ -353,6 +383,9 @@ def run_strategy(
         model_version=model_version,
         horizon=horizon,
         config_hash=config_hash,
+        hash_kind=hash_kind,
+        spec_hash=strategy_spec_hash,
+        legacy_config_hash=legacy_hash,
         config=resolved,
         decision_at=decision_at,
         execution_date=execution_date,
@@ -370,6 +403,9 @@ def run_strategy(
         "horizon": horizon,
         "config_hash": config_hash,
         "status": run.status,
+        "hash_kind": hash_kind,
+        "spec_hash": strategy_spec_hash,
+        "legacy_config_hash": legacy_hash,
         "decision_at": decision_at,
         "execution_date": execution_date,
         "evidence_kind": run.evidence_kind,
@@ -578,6 +614,8 @@ def run_nav(
     config: dict | None = None,
     model_version: str | None = None,
     horizon: int | None = None,
+    strategy_spec_hash: str | None = None,
+    persist_research_artifact: bool = False,
 ) -> dict:
     """Recompute the paper NAV curve over a range of COMPLETED runs.
 
@@ -599,7 +637,7 @@ def run_nav(
         {**resolved, "score_model_version": eff_version, "horizon": eff_horizon}
     )
     _resolve_model_version(resolved)
-    config_hash = strategy_config_hash(resolved)
+    config_hash = strategy_spec_hash or strategy_config_hash(resolved)
 
     query = StrategyPaperRun.objects(
         strategy_name=DEFAULT_STRATEGY_NAME,
@@ -616,6 +654,15 @@ def run_nav(
         return {"found_runs": 0, "reason": "no COMPLETED runs in range"}
 
     schedule = schedule_from_runs(runs)
+    # Provenance is attached only to this research simulation's transient
+    # schedule; immutable persisted forward plans are never rewritten.
+    decision_by_execution = {
+        run.execution_date.date().isoformat(): run.date.date().isoformat()
+        for run in runs
+        if getattr(run, "execution_date", None) is not None
+    }
+    for item in schedule:
+        item["decision_date"] = decision_by_execution[item["date"]]
     if not schedule:
         return {"found_runs": len(runs), "reason": "no runs carry holdings"}
     execution_from = datetime.datetime.fromisoformat(schedule[0]["date"])
@@ -647,8 +694,24 @@ def run_nav(
         benchmark_returns=benchmark,
         execution=resolve_execution(resolved),
         initial_nav=float(resolved.get("initial_nav", 1_000_000.0)),
+        spec_hash=strategy_spec_hash,
     )
     attached = attach_nav_points(runs, result["curve"])
+
+    artifact_hash = None
+    # New Spec-backed research runs always persist the derived event evidence;
+    # legacy runs preserve their explicitly opt-in persistence behaviour.
+    if persist_research_artifact or strategy_spec_hash is not None:
+        artifact_hash = _persist_research_simulation(
+            runs=runs,
+            config_hash=config_hash,
+            hash_kind="spec" if strategy_spec_hash is not None else "legacy",
+            schedule=schedule,
+            result=result,
+            benchmark=benchmark,
+            execution_from=execution_from,
+            execution_to=execution_to,
+        )
 
     updated = 0
     for run in runs:
@@ -668,6 +731,9 @@ def run_nav(
         "curve_points": len(result["curve"]),
         "benchmark_dates": len(benchmark),
         "config_hash": config_hash,
+        "hash_kind": "spec" if strategy_spec_hash is not None else "legacy",
+        "research_artifact_hash": artifact_hash,
+        "nav_parity_max_abs_delta_cny": result["nav_parity"]["max_abs_delta_cny"],
         "evidence_kinds": sorted(
             {getattr(r, "evidence_kind", "REPLAY") or "REPLAY" for r in runs}
         ),
@@ -678,6 +744,112 @@ def run_nav(
         # limit verdicts) are surfaced, not silently absent from the curve.
         "blocked_orders": result.get("blocked_count", 0),
         "blocked": result.get("blocked", []),
+    }
+
+
+def _persist_research_simulation(
+    *,
+    runs,
+    config_hash,
+    hash_kind,
+    schedule,
+    result,
+    benchmark,
+    execution_from,
+    execution_to,
+) -> str:
+    """Store an immutable research derivation separately from FORWARD plans."""
+    from app.model.strategy import StrategySimulationArtifact
+
+    payload = {
+        "schema_version": "research-simulation-v1",
+        "config_hash": config_hash,
+        "hash_kind": hash_kind,
+        "run_dates": [run.date.date().isoformat() for run in runs],
+        "schedule": schedule,
+        "events": result["ledger_events"],
+        "ledger_snapshot": result["ledger_snapshot"],
+        "nav_parity": result.get("nav_parity"),
+        "curve": result["curve"],
+        "benchmark_returns": benchmark,
+    }
+    content = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+        allow_nan=False,
+    )
+    identity = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    existing = StrategySimulationArtifact.objects(artifact_hash=identity).first()
+    if existing is not None:
+        if existing.payload != payload:
+            raise ValueError("immutable research artifact hash collision")
+        return identity
+    StrategySimulationArtifact(
+        strategy_name=DEFAULT_STRATEGY_NAME,
+        config_hash=config_hash,
+        hash_kind=hash_kind,
+        artifact_hash=identity,
+        execution_from=execution_from,
+        execution_to=execution_to,
+        payload=payload,
+    ).save()
+    return identity
+
+
+def research_simulation_report(run) -> dict | None:
+    """Read-only summary of persisted research fills/rejections for one run.
+
+    Research simulation events are not trading account orders. A missing
+    artifact simply means a NAV run has not persisted research evidence yet.
+    The output is bounded so the CLI does not accidentally dump a full window.
+    """
+    from app.model.strategy import StrategySimulationArtifact
+
+    execution = getattr(run, "execution_date", None)
+    if execution is None:
+        return None
+    identity = getattr(run, "config_hash", None)
+    hash_kind = getattr(run, "hash_kind", None) or "legacy"
+    artifact = (
+        StrategySimulationArtifact.objects(
+            strategy_name=run.strategy_name,
+            config_hash=identity,
+            hash_kind=hash_kind,
+            execution_from__lte=execution,
+            execution_to__gte=execution,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if artifact is None:
+        return None
+    events = artifact.payload.get("events", [])
+    day = execution.date().isoformat()
+    blocked = [
+        {
+            "stock_code": event.get("stock_code"),
+            "side": event.get("side"),
+            "reason_code": event.get("reason_code"),
+            "order_id": event.get("order_id"),
+        }
+        for event in events
+        if event.get("type") == "REJECTED" and event.get("execution_date") == day
+    ]
+    fills = [
+        event
+        for event in events
+        if event.get("type") == "FILL" and event.get("execution_date") == day
+    ]
+    return {
+        "artifact_hash": artifact.artifact_hash,
+        "research_only": True,
+        "blocked_count": len(blocked),
+        "blocked": blocked[:50],
+        "blocked_truncated": len(blocked) > 50,
+        "fills_count": len(fills),
     }
 
 
@@ -706,7 +878,13 @@ def _resolve_start_date(now=None):
     return datetime.datetime.fromisoformat(sessions[0])
 
 
-def certify_forward_window(*, model_version: str, horizon: int, config: dict) -> dict:
+def certify_forward_window(
+    *,
+    model_version: str,
+    horizon: int,
+    config: dict,
+    strategy_spec_hash: str | None = None,
+) -> dict:
     """Certify an ACTIVE forward-evidence window (NEXT.1).
 
     Closes any ACTIVE predecessor on (model_version, horizon); start_date =
@@ -723,7 +901,9 @@ def certify_forward_window(*, model_version: str, horizon: int, config: dict) ->
     )
     eff_version = _resolve_model_version(resolved)
     eff_horizon = int(resolved.get("horizon"))
-    config_hash = strategy_config_hash(resolved)
+    legacy_hash = strategy_config_hash(resolved)
+    config_hash = strategy_spec_hash or legacy_hash
+    hash_kind = "spec" if strategy_spec_hash is not None else "legacy"
     now = datetime.datetime.now(datetime.UTC)
 
     closed = []
@@ -740,6 +920,9 @@ def certify_forward_window(*, model_version: str, horizon: int, config: dict) ->
         model_version=eff_version,
         horizon=eff_horizon,
         config_hash=config_hash,
+        hash_kind=hash_kind,
+        spec_hash=strategy_spec_hash,
+        legacy_config_hash=legacy_hash,
         start_date=start_date,
         status="ACTIVE",
         decision_at=now,
@@ -749,6 +932,9 @@ def certify_forward_window(*, model_version: str, horizon: int, config: dict) ->
         "model_version": eff_version,
         "horizon": eff_horizon,
         "config_hash": config_hash,
+        "hash_kind": hash_kind,
+        "spec_hash": strategy_spec_hash,
+        "legacy_config_hash": legacy_hash,
         "start_date": start_date,
         "status": window.status,
         "decision_at": now,
@@ -812,6 +998,13 @@ def forward_progress(*, model_version: str, horizon: int) -> dict:
             date__gte=window.start_date,
         ).order_by("date")
     )
+    # Historical runs lacking hash_kind are always legacy, never spec.
+    window_kind = getattr(window, "hash_kind", None) or "legacy"
+    runs = [
+        run
+        for run in runs
+        if (getattr(run, "hash_kind", None) or "legacy") == window_kind
+    ]
     dates = sorted({r.date.date().isoformat() for r in runs})
     gaps = []
     leading = 0
@@ -837,6 +1030,7 @@ def forward_progress(*, model_version: str, horizon: int) -> dict:
         "certified": True,
         "window_status": window.status,
         "config_hash": window.config_hash,
+        "hash_kind": window_kind,
         "start_date": window.start_date.date().isoformat(),
         "count": len(dates),
         "target": 120,
@@ -853,10 +1047,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="Run one day's paper strategy")
     p_run.add_argument("--date", required=True, help="Evaluation date (YYYY-MM-DD)")
-    p_run.add_argument(
+    run_cfg = p_run.add_mutually_exclusive_group()
+    run_cfg.add_argument(
         "--config-json",
         default=None,
-        help="Strategy config JSON; defaults to the flip_wide paper config",
+        help="Legacy config JSON; defaults to flip_wide",
+    )
+    run_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")
+    run_cfg.add_argument(
+        "--spec-json", default=None, help="Versioned StrategySpec JSON document"
     )
     p_run.add_argument("--dry-run", action="store_true")
     p_run.add_argument("--replace", action="store_true")
@@ -896,7 +1095,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_nav.add_argument("--from", dest="from_date", required=True)
     p_nav.add_argument("--to", dest="to_date", required=True)
-    p_nav.add_argument("--config-json", default=None)
+    nav_cfg = p_nav.add_mutually_exclusive_group()
+    nav_cfg.add_argument("--config-json", default=None)
+    nav_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")
+    nav_cfg.add_argument("--spec-json", default=None, help="StrategySpec JSON")
+    p_nav.add_argument(
+        "--persist-research-artifact",
+        action="store_true",
+        help="Write an immutable research-only ledger/NAV artifact",
+    )
     p_nav.add_argument("--model-version", default=None)
     p_nav.add_argument("--horizon", type=int, choices=[5, 20, 60], default=None)
 
@@ -922,7 +1129,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_cert = fsub.add_parser("certify", help="Open an ACTIVE forward window")
     p_cert.add_argument("--model-version", required=True)
     p_cert.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
-    p_cert.add_argument("--config-json", default=None)
+    cert_cfg = p_cert.add_mutually_exclusive_group()
+    cert_cfg.add_argument("--config-json", default=None)
+    cert_cfg.add_argument("--spec", default=None, help="StrategySpec JSON file")
+    cert_cfg.add_argument("--spec-json", default=None, help="StrategySpec JSON")
     p_close = fsub.add_parser("close", help="Close the ACTIVE forward window")
     p_close.add_argument("--model-version", required=True)
     p_close.add_argument("--horizon", type=int, choices=[5, 20, 60], required=True)
@@ -948,13 +1158,16 @@ def _run_with_tracking(args, config: dict | None) -> None:
     )
     job_run = job_run_helper.create_job_run(context)
     try:
-        result = run_strategy(
-            date=parse_date(args.date),
-            config=config,
-            dry_run=args.dry_run,
-            replace=args.replace,
-            halt_path=getattr(args, "halt_file", None),
-        )
+        kwargs = {
+            "date": parse_date(args.date),
+            "config": config,
+            "dry_run": args.dry_run,
+            "replace": args.replace,
+            "halt_path": getattr(args, "halt_file", None),
+        }
+        if getattr(args, "strategy_spec_hash", None) is not None:
+            kwargs["strategy_spec_hash"] = args.strategy_spec_hash
+        result = run_strategy(**kwargs)
         if args.dry_run:
             # Preview only: nothing persisted -> record SKIPPED (not SUCCESS),
             # with the resolved score source for traceability.
@@ -1002,32 +1215,57 @@ def _run_with_tracking(args, config: dict | None) -> None:
         raise
 
 
+def _load_cli_spec(args) -> tuple[dict | None, str | None]:
+    """Resolve a spec file without silently changing legacy evidence."""
+    if getattr(args, "spec", None) or getattr(args, "spec_json", None):
+        from app.lib.strategy_engine.spec import spec_hash, spec_to_legacy_config
+
+        if getattr(args, "spec_json", None):
+            document = json.loads(args.spec_json)
+        else:
+            with Path(args.spec).open(encoding="utf-8") as stream:
+                document = json.load(stream)
+        config = spec_to_legacy_config(document)
+        identity = spec_hash(document)
+        if getattr(args, "model_version", None) and (
+            args.model_version != config["score_model_version"]
+        ):
+            raise ValueError("--model-version conflicts with --spec signal")
+        if getattr(args, "horizon", None) and args.horizon != config["horizon"]:
+            raise ValueError("--horizon conflicts with --spec signal")
+        return config, identity
+    if getattr(args, "config_json", None):
+        return json.loads(args.config_json), None
+    return None, None
+
+
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
     args = build_parser().parse_args(argv)
     _init_db()
     if args.command == "run":
-        config = json.loads(args.config_json) if args.config_json else None
+        config, args.strategy_spec_hash = _load_cli_spec(args)
         _run_with_tracking(args, config)
     elif args.command == "nav":
-        config = json.loads(args.config_json) if args.config_json else None
+        config, identity = _load_cli_spec(args)
         result = run_nav(
             from_date=parse_date(args.from_date),
             to_date=parse_date(args.to_date),
             config=config,
             model_version=args.model_version,
             horizon=args.horizon,
+            **({"strategy_spec_hash": identity} if identity is not None else {}),
+            persist_research_artifact=args.persist_research_artifact,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     elif args.command == "forward":
-        config = (
-            json.loads(args.config_json) if getattr(args, "config_json", None) else None
-        )
+        config, identity = _load_cli_spec(args)
         if args.forward_command == "certify":
             result = certify_forward_window(
                 model_version=args.model_version,
                 horizon=args.horizon,
                 config=config,
+                **({"strategy_spec_hash": identity} if identity is not None else {}),
             )
         elif args.forward_command == "close":
             result = close_forward_window(
@@ -1096,6 +1334,7 @@ def main(argv: list[str] | None = None) -> None:
                         "evidence_kind": doc.evidence_kind or "REPLAY",
                         "skip_reason": doc.skip_reason,
                         "target_holdings_count": len(doc.target_holdings or []),
+                        "research_simulation": research_simulation_report(doc),
                     },
                     ensure_ascii=False,
                     indent=2,

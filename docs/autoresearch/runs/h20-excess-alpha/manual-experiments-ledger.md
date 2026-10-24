@@ -27,6 +27,8 @@
 | 2026-09-06 | flip_wide 生产链 replay（task 3.3 实跑） | dev 全市场 ranked backfill 06-03~06-09（5 交易日），flip_wide_shadow_v1（注册 config_hash 8c8f3ee4）| 27,770 条（25,671 VERIFIED / 1,816 BLOCKED / 283 不足）；每日 ~5,134 VERIFIED，score 范围 -75~0（翻转语义正确），percentile 中位 ~0.50，推荐分布 BUY~258/WATCH~777/AVOID~1,023；compare vs score_v2_202605b（06-03）：basis=percentile，verdict=「Candidate clearly wins on both hit rate and return」；同 50 只子集 flip=baseline 收益（翻转改选择不改个股收益，数学正确）。⚠️ 口径：dev baseline VERIFIED 仅旧 50 只×42 天研究子集，非全市场——verdict 为候选全市场 vs baseline 子集，非对等比较；对等对比待 task 4.4 回补全市场 baseline VERIFIED 后可行| 生产链 flip_wide 全市场 replay + T+1 verify + 校准对比全链路可用；选择有效性需 ≥120 天窗口判定（task 4.4）| task-3.3-flip-wide-shadow-validation.md |
 | 2026-09-05 | 2025 异常年归因 | 2019-2026 + size 分桶 | 极端小盘轮动（H1 最强小盘溢价），非信号失效/伪影 | style-aware 评估 | attrib-2025-anomaly.md |
 
+| 2026-10-24 | StrategySpec / ledger / 风控门 / shared execution 迁移回归（PR #307） | 固定合成价格/账户快照；测试 harness + OpenSpec，**不运行新的历史 alpha / Sharpe / IC 评估** | 研究账本日度旧算术↔事件投影 `nav_parity`、交易域拒绝路由、60 日 CSI300 frozen regime、冻结 halt、timing replay/shared fee+lot 对拍已实现；公开 CI 状态见 PR #307 | 仅代码正确性验证，不延长 120-session FORWARD 窗口，不更改 flip_wide 研究推荐/历史收益 | [PR #307](https://github.com/univic/caifubao/pull/307)、`docs/architecture/strategy-engine.md` |
+
 ## 关键口径提示（避免误读）
 
 1. **flip_wide 官方窗口 IR 为正、仅因 decay 门被拦**：官方口径（train 2024→val 2025）

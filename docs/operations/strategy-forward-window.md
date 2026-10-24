@@ -65,6 +65,31 @@
 ./scripts/caifubao strategy forward close --model-version flip_wide_shadow_v1 --horizon 20
 ```
 
+### 3.1 StrategySpec 模式（PR #307 新增，仍待整体验收）
+
+老窗口以 `(hash_kind=legacy, config_hash=legacy_config_hash)` 识别，新的 Spec 窗口
+以 `(hash_kind=spec, config_hash=spec_hash)` 识别。即使两个 hash 的十六进制值恰好相同，
+也不得跨命名空间继承认证。配置迁移只保持目标组合/调仓等行为对拍，
+**不会**把旧的 FORWARD 记录升级为新的 Spec 证据。
+
+对于明确采用新 Spec 的候选，先在研究环境完成回放验证，再经单独人工授权认证新窗口：
+
+```bash
+# 仅为命令示例，不构成执行授权；spec 文件须经过版本审查
+./scripts/caifubao strategy forward certify \
+  --model-version flip_wide_shadow_v1 --horizon 20 \
+  --spec path/to/strategy.json --yes
+
+# 窗口打开后，每日必须使用完全相同的 spec 内容与 hash 类型
+./scripts/caifubao strategy run <DATE> --spec path/to/strategy.json
+```
+
+对于只使用 `--config-json` 的历史配置，原本的 `legacy_config_hash`、
+`REPLAY` / `FORWARD` 判定规则不变。切换为 `--spec` / `--spec-json` 不是
+无损续跑旧窗口，而是需要全新认证的候选。NAV 回算本身不会推进 120 日计数。
+研究模拟账本与 `StrategySimulationArtifact` 不代表 trading/paper 的真实订单账本，
+也不会授权策略 promotion。
+
 ## 4. 每日运行与进度
 
 每交易日**在当日评分完成之后**运行（评分未完成时记录 `SKIPPED`，不算证据）：

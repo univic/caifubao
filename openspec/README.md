@@ -89,15 +89,16 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 - **治理**：`environment-model`、`artifact-contract`、`production-capability`、
   `architecture-integrity`
 
-本索引新增（尚未实现）：
+本索引新增（**#307 已合并实现基础，S0–S3 收尾中**）：
 
 - **策略引擎统一**：`strategy-definition`、`strategy-portfolio-ledger`、
   `strategy-risk-gate`、`strategy-execution-model`
   → [`changes/strategy-engine-unification/`](./changes/strategy-engine-unification/proposal.md)
+  （8 项任务未完成，不等于阶段级验收或实盘能力）
 
 ## 5. 活跃 change 索引
 
-共 40 个（37 个既有 + 3 个新增），未完成任务合计 158。按领域分组，组内按 change 名排序。
+共 40 个（36 个既有 + 1 个已转实现 + 3 个新增），未完成任务合计 124。按领域分组，组内按 change 名排序。
 
 ### 5.1 数据与管道
 
@@ -138,7 +139,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 
 | Change | 内容 | 主要能力 | 未完成 |
 |:---|:---|:---|:---:|
-| `strategy-engine-unification` | **本索引新增**：统一策略契约、共享执行语义、分域账本 | `strategy-definition`、`strategy-portfolio-ledger`、`strategy-risk-gate`、`strategy-execution-model` | 42 |
+| `strategy-engine-unification` | **#307 已合并**：统一策略契约、共享执行语义、分域账本；S0–S3 收尾中 | `strategy-definition`、`strategy-portfolio-ledger`、`strategy-risk-gate`、`strategy-execution-model` | 8 |
 | `score-backtest-execution-integrity` | 评分驱动回测的执行时序安全 | `backtest-mvp` | 2 |
 | `strategy-forward-evidence-capture` | 不可变前瞻证据 + 120 会话计数 | `strategy-forward-evidence` | 1 |
 | `strategy-live-loop-minimal` | 最小实盘闭环（涨跌停/对账/熔断） | `strategy-live-loop-minimal`、`strategy-engine`、`strategy-nav-fee-budget` | 2 |
