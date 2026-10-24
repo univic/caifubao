@@ -41,18 +41,23 @@ class TradingPaperAccount:
         self._by_id: dict[str, str] = {}
 
     def risk_preview(
-        self, *, intents: list[dict], nav: float, policy: dict,
-        market: dict | None, halt_store,
+        self,
+        *,
+        intents: list[dict],
+        nav: float,
+        policy: dict,
+        market: dict | None,
+        halt_store,
     ) -> dict:
         # Authority-first: no orders or risk approvals while operational halt.
         halt_store.assert_orders_allowed()
         return evaluate_risk(
             intents=intents,
             account={
-                "cash": self.cash, "nav": nav,
+                "cash": self.cash,
+                "nav": nav,
                 "positions": {
-                    code: {"quantity": qty}
-                    for code, qty in self.positions.items()
+                    code: {"quantity": qty} for code, qty in self.positions.items()
                 },
             },
             policy=policy,
@@ -102,8 +107,11 @@ class TradingPaperAccount:
             if qty > self.positions.get(code, 0):
                 raise ValueError("insufficient paper shares")
             next_cash = (
-                self.cash + gross - fees["commission"]
-                - fees["stamp_duty"] - fees["transfer_fee"]
+                self.cash
+                + gross
+                - fees["commission"]
+                - fees["stamp_duty"]
+                - fees["transfer_fee"]
             )
             next_positions = dict(self.positions)
             remain = next_positions[code] - qty
@@ -119,19 +127,23 @@ class TradingPaperAccount:
         return self.projection()
 
     def projection(self) -> dict:
-        return require_trading_projection({
-            "source_domain": "trading",
-            "account_id": self.account_id,
-            "currency": "CNY",
-            "cash": self.cash,
-            "positions": {
-                code: {"quantity": qty}
-                for code, qty in sorted(self.positions.items())
-            },
-        })
+        return require_trading_projection(
+            {
+                "source_domain": "trading",
+                "account_id": self.account_id,
+                "currency": "CNY",
+                "cash": self.cash,
+                "positions": {
+                    code: {"quantity": qty}
+                    for code, qty in sorted(self.positions.items())
+                },
+            }
+        )
 
     @classmethod
-    def rebuild(cls, *, account_id: str, initial_cash: float, events: list[dict], halt_store):
+    def rebuild(
+        cls, *, account_id: str, initial_cash: float, events: list[dict], halt_store
+    ):
         obj = cls(account_id=account_id, initial_cash=initial_cash)
         for event in events:
             obj.apply_fill(event, halt_store=halt_store)
