@@ -70,6 +70,25 @@ def _check_numbers(value, where: str) -> None:
     raise ValueError(f"{where}: unsupported hashed value")
 
 
+def _numeric_paths(value, prefix="") -> list[str]:
+    """Collect exact paths to numeric leaves for manifest unit verification."""
+    if type(value) is int:
+        return [prefix]
+    if isinstance(value, dict):
+        return [
+            path
+            for key, item in value.items()
+            for path in _numeric_paths(item, f"{prefix}.{key}" if prefix else key)
+        ]
+    if isinstance(value, list):
+        return [
+            path
+            for index, item in enumerate(value)
+            for path in _numeric_paths(item, f"{prefix}[{index}]")
+        ]
+    return []
+
+
 def build_strategy_artifact(
     *,
     producer: str,
@@ -127,10 +146,14 @@ def build_strategy_artifact(
             or any(name not in inputs for name in info["inputs"])
         ):
             raise ValueError(f"invalid payload manifest declaration: {field}")
-        if isinstance(payload[field], int) and not isinstance(
-            payload[field], bool
-        ) and not info.get("unit"):
-            raise ValueError(f"numeric payload {field} requires a unit")
+    numeric_paths = _numeric_paths(payload)
+    units = field_manifest.get("numeric_units")
+    if numeric_paths:
+        if not isinstance(units, dict) or any(
+            not isinstance(units.get(path), str) or not units[path]
+            for path in numeric_paths
+        ):
+            raise ValueError("every numeric payload leaf requires a declared unit")
     as_of_utc = utc_instant(as_of)
     hashed = {
         "schema_version": schema_version,
