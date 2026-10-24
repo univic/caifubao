@@ -46,12 +46,17 @@ def _integer_units(value, path: str, supplied: dict, used: set) -> object:
         if isinstance(value, float) and not math.isfinite(value):
             raise ValueError(f"nonfinite numeric payload field {path}")
         try:
-            number = Decimal(str(value)) * scale
+            number = Decimal(str(value))
         except InvalidOperation as exc:
             raise ValueError(f"invalid numeric payload field {path}") from exc
-        if not number.is_finite() or number != number.to_integral_value():
+        if not number.is_finite():
             raise ValueError(f"numeric value of {path} cannot be represented as {unit}")
-        return int(number)
+        # Integer-ratio arithmetic never rounds under the ambient Decimal context.
+        numerator, denominator = number.as_integer_ratio()
+        encoded, remainder = divmod(numerator * int(scale), denominator)
+        if remainder:
+            raise ValueError(f"numeric value of {path} cannot be represented as {unit}")
+        return encoded
     if isinstance(value, dict):
         if not all(isinstance(key, str) for key in value):
             raise ValueError("artifact dictionary keys must be strings")

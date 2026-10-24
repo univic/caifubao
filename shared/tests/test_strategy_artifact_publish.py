@@ -95,5 +95,145 @@ class StrategyArtifactPublisherTests(unittest.TestCase):
             publish(grade="TRADING_APPROVED")
 
 
+class PublicationRegressionTests(unittest.TestCase):
+    def test_large_integer_is_lossless_and_fraction_is_rejected(self):
+        from decimal import Decimal
+
+        large = 12345678901234567890123456789
+        result = publish(legacy_payload={"n": large}, numeric_units={"n": "count"})
+        self.assertEqual(result["payload"]["n"], large)
+        with self.assertRaisesRegex(ValueError, "cannot be represented"):
+            publish(
+                legacy_payload={"n": Decimal("1.00000000000000000000000000001")},
+                numeric_units={"n": "count"},
+            )
+
+    def test_failed_write_can_be_retried(self):
+        with tempfile.TemporaryDirectory() as root:
+            store = ImmutableArtifactStore(root)
+            artifact = publish()
+            with patch(
+                "caifubao_contracts.strategy_artifact_store.json.dump",
+                side_effect=OSError("disk full"),
+            ):
+                with self.assertRaises(OSError):
+                    store.publish(artifact)
+            self.assertEqual(list(Path(root).iterdir()), [])
+            self.assertEqual(store.publish(artifact), artifact)
+
+    def test_concurrent_publishers_observe_complete_first_record(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        with tempfile.TemporaryDirectory() as root:
+            artifacts = [
+                publish(generated_at=f"2026-10-{day:02d}T00:00:00Z")
+                for day in range(24, 32)
+            ]
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                results = list(
+                    pool.map(ImmutableArtifactStore(root).publish, artifacts)
+                )
+            self.assertTrue(all(result == results[0] for result in results))
+            self.assertEqual(len(list(Path(root).iterdir())), 1)
+
+    def test_cli_preserves_json_decimal_precision(self):
+        import contextlib
+        import io
+        import json
+        import runpy
+
+        job = (
+            Path(__file__).resolve().parents[2]
+            / "datahub/app/jobs/strategy_artifact_publish.py"
+        )
+        main = runpy.run_path(str(job))["main"]
+        with tempfile.TemporaryDirectory() as root:
+            snapshot = Path(root) / "snapshot.json"
+            values = {
+                "artifact_type": "replay",
+                "legacy_payload": {"nav": "EXACT_DECIMAL"},
+                "numeric_units": {"nav": "cny_cent"},
+                "inputs": INPUTS,
+                "as_of": AS_OF,
+                "generated_at": "2026-10-24T00:00:00Z",
+            }
+            snapshot.write_text(
+                json.dumps(values).replace('"EXACT_DECIMAL"', "9007199254740992.01"),
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with patch.dict("os.environ", {"CAIFUBAO_BUILD_SHA": SHA}):
+                with contextlib.redirect_stdout(output):
+                    main(
+                        [
+                            "--snapshot",
+                            str(snapshot),
+                            "--output-dir",
+                            root + "/artifacts",
+                        ]
+                    )
+            identity = json.loads(output.getvalue())["artifact_id"]
+            self.assertEqual(
+                ImmutableArtifactStore(root + "/artifacts").read(identity)["payload"][
+                    "nav"
+                ],
+                900719925474099201,
+            )
+
+    def test_incomplete_write_is_not_visible_at_final_path(self):
+        from concurrent.futures import ThreadPoolExecutor
+        import json
+        from threading import Event
+
+        started, release = Event(), Event()
+        real_dump = json.dump
+
+        def delayed_dump(*args, **kwargs):
+            started.set()
+            if not release.wait(5):
+                raise TimeoutError("test did not release writer")
+            return real_dump(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as root:
+            store = ImmutableArtifactStore(root)
+            artifact = publish()
+            with patch(
+                "caifubao_contracts.strategy_artifact_store.json.dump", delayed_dump
+            ):
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(store.publish, artifact)
+                    try:
+                        self.assertTrue(started.wait(5))
+                        self.assertEqual(list(Path(root).glob("*.json")), [])
+                    finally:
+                        release.set()
+                    self.assertEqual(future.result(), artifact)
+
+    def test_retry_after_directory_fsync_failure_syncs_existing_record(self):
+        import os
+        import stat
+
+        real_fsync = os.fsync
+        directory_syncs = []
+
+        def sync_once_fails(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                directory_syncs.append(descriptor)
+                if len(directory_syncs) == 1:
+                    raise OSError("directory fsync failed")
+            return real_fsync(descriptor)
+
+        with tempfile.TemporaryDirectory() as root:
+            store = ImmutableArtifactStore(root)
+            artifact = publish()
+            with patch(
+                "caifubao_contracts.strategy_artifact_store.os.fsync", sync_once_fails
+            ):
+                with self.assertRaisesRegex(OSError, "directory fsync failed"):
+                    store.publish(artifact)
+                self.assertEqual(store.publish(artifact), artifact)
+            self.assertEqual(len(directory_syncs), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

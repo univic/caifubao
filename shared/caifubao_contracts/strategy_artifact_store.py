@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import tempfile
 
 from caifubao_contracts.strategy_artifact import verify_strategy_artifact
 
@@ -42,12 +43,10 @@ class ImmutableArtifactStore:
         verify_strategy_artifact(artifact)
         target = self._path(artifact["artifact_id"])
         self.directory.mkdir(parents=True, exist_ok=True)
-        try:
-            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            existing = self.read(artifact["artifact_id"])
-            # Re-publication keeps the first generated_at, not the new caller's.
-            return existing
+        # Publish a complete, durable inode atomically without replacing an ID.
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=".artifact-", dir=self.directory
+        )
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                 json.dump(
@@ -59,8 +58,17 @@ class ImmutableArtifactStore:
                 )
                 stream.flush()
                 os.fsync(stream.fileno())
-        except BaseException:
-            # A crash during publication will be caught on next read; never
-            # treat a partial document as an existing valid artifact.
-            raise
+            try:
+                os.link(temporary, target)
+            except FileExistsError:
+                # Concurrent or repeated publication retains the first timestamp.
+                # Also sync the winner: its directory fsync may have failed.
+                pass
+            directory_fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            os.unlink(temporary)
         return self.read(artifact["artifact_id"])

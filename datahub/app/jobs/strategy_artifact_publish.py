@@ -13,6 +13,7 @@ This job never advances FORWARD certification and never calls a broker.
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal
 import json
 from pathlib import Path
 
@@ -28,7 +29,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     with args.snapshot.open(encoding="utf-8") as stream:
-        snapshot = json.load(stream)
+        snapshot = json.load(stream, parse_float=Decimal)
     if not isinstance(snapshot, dict):
         raise ValueError("producer snapshot must be a dictionary")
     allowed = {
