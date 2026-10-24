@@ -515,3 +515,52 @@ def test_truncation_guard_accepts_a_complete_at_cap_window():
         row_cap=ti.FUND_ADJ_MAX_ROWS,
         label="fund_adj",
     )
+
+
+def test_backfill_code_passes_a_tushare_ts_code(monkeypatch):
+    from app.lib.datahub import etf_market
+    from app.model.stock import ExchangeTradedFund
+
+    service = etf_market.EtfMarketService()
+    fund = ExchangeTradedFund(
+        code="sh510300", name="沪深300ETF", list_date=datetime.datetime(2012, 5, 28)
+    )
+    seen = {}
+
+    class FakeFundModel:
+        def objects(self, **kwargs):
+            class Query:
+                def first(self):
+                    return fund
+
+            return Query()
+
+    service = etf_market.EtfMarketService(fund_model=FakeFundModel())
+
+    def fake_history(ts_code, start_date, end_date):
+        seen["ts_code"] = ts_code
+        return object()
+
+    monkeypatch.setattr(
+        etf_market.tushare_interface, "tushare_fund_daily", fake_history
+    )
+    monkeypatch.setattr(
+        etf_market.zh_etf_daily,
+        "normalize_tushare_fund_history",
+        lambda raw, code: pandas.DataFrame(
+            [{"date": datetime.datetime(2012, 5, 28), "code": code}]
+        ),
+    )
+    monkeypatch.setattr(service, "_write_quotes", lambda funds, rows: 1)
+    monkeypatch.setattr(
+        service, "_refresh_quote_statuses", lambda codes, expected: None
+    )
+    monkeypatch.setattr(
+        service.fq_service,
+        "update_code",
+        lambda code: {"code": code, "written_count": 1},
+    )
+
+    service.backfill_code("sh510300")
+
+    assert seen["ts_code"] == "510300.SH"

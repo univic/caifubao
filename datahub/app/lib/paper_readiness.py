@@ -465,6 +465,9 @@ def load_inputs(
 
     etf_codes = set(db[ETF_COLLECTION].distinct("code", {"active_status": 0}))
     inputs.etf_count = len(etf_codes)
+    # The query already filters active_status=0; keep both fields explicit so
+    # the report does not read "2329 ETF(s)" next to active_etf_count=0.
+    inputs.etf_active_count = len(etf_codes)
     if etf_codes:
         etf_latest = db[ETF_QUOTE_COLLECTION].find_one(
             {"code": {"$in": sorted(etf_codes)}}, {"date": 1}, sort=[("date", -1)]
