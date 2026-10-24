@@ -63,7 +63,12 @@ def verify_daily_gate(
         raise ValueError("readiness did not assess today's closed session")
     checks = {item["id"]: item["status"] for item in report.get("checks", [])}
     # WARN on one of these is not sufficient to record a new strategy plan.
-    for check in ("quote_freshness", "scoring_freshness", "signal_freshness", "halt_switch"):
+    for check in (
+        "quote_freshness",
+        "scoring_freshness",
+        "signal_freshness",
+        "halt_switch",
+    ):
         if checks.get(check) != "PASS":
             raise ValueError(f"critical readiness check is not PASS: {check}")
     if report.get("overall") == "NOT_READY":
@@ -173,7 +178,9 @@ def main(argv: list[str] | None = None) -> int:
         ).first()
         if existing is not None and existing.status == "COMPLETED":
             if existing.evidence_kind != "FORWARD" or existing.hash_kind != "spec":
-                raise ValueError("existing completed plan is not matching FORWARD evidence")
+                raise ValueError(
+                    "existing completed plan is not matching FORWARD evidence"
+                )
             result = {"status": "ALREADY_COMPLETED", "date": today.isoformat()}
             job_run_helper.finish_job_run(
                 job_run, status=job_run_helper.STATUS_SKIPPED, summary=result
@@ -186,7 +193,10 @@ def main(argv: list[str] | None = None) -> int:
         result = strategy_runner.run_strategy(
             date=target, config=config, strategy_spec_hash=identity
         )
-        if result.get("status") != "COMPLETED" or result.get("evidence_kind") != "FORWARD":
+        if (
+            result.get("status") != "COMPLETED"
+            or result.get("evidence_kind") != "FORWARD"
+        ):
             raise ValueError(
                 "strategy did not complete as FORWARD; no success may be claimed"
             )
