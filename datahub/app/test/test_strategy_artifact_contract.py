@@ -34,7 +34,8 @@ def _contract(monkeypatch, *, grade="RESEARCH", points=None, generated_at=None):
             "numeric_units": {"nav_cents": "cny_cent"},
             "fields": {
                 "nav_cents": {
-                    "kind": "payload", "derived": False,
+                    "kind": "payload",
+                    "derived": False,
                     "code_version": sha,
                     "inputs": ["strategy", "quote"],
                     "unit": "cny_cent",
@@ -59,8 +60,13 @@ def test_artifact_identity_is_closed_and_deterministic(monkeypatch):
     hashed = {
         field: first[field]
         for field in (
-            "schema_version", "producer", "as_of", "grade",
-            "input_snapshot", "field_manifest", "payload"
+            "schema_version",
+            "producer",
+            "as_of",
+            "grade",
+            "input_snapshot",
+            "field_manifest",
+            "payload",
         )
     }
     expected = hashlib.sha256(
