@@ -124,6 +124,8 @@ def build_strategy_artifact(
             entry["as_of"] = utc_instant(entry["as_of"])
         clean_inputs[name] = entry
     snapshot = {"code_version": code_version, "inputs": clean_inputs}
+    if _numeric_paths(snapshot):
+        raise ValueError("input versions must be strings, not numeric JSON")
     if not isinstance(payload, dict) or not isinstance(field_manifest, dict):
         raise ValueError("payload and field_manifest must be objects")
     declared = field_manifest.get("fields")
@@ -146,6 +148,8 @@ def build_strategy_artifact(
             or any(name not in inputs for name in info["inputs"])
         ):
             raise ValueError(f"invalid payload manifest declaration: {field}")
+    if _numeric_paths(field_manifest):
+        raise ValueError("field manifest numeric values must be strings")
     numeric_paths = _numeric_paths(payload)
     units = field_manifest.get("numeric_units")
     if numeric_paths:
