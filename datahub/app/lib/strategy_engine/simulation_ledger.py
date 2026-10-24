@@ -8,6 +8,7 @@ or trading account access; its event stream is stored in research artifacts.
 from __future__ import annotations
 
 import copy
+import datetime
 import math
 
 from caifubao_contracts.strategy_execution import require_t_plus_one
@@ -29,6 +30,18 @@ def _number(value, field: str, *, positive: bool = False) -> float:
     return result
 
 
+def _valid_action_date(value, field: str) -> datetime.date:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be an ISO date string")
+    try:
+        result = datetime.date.fromisoformat(value)
+    except ValueError:
+        raise ValueError(f"{field} must be YYYY-MM-DD") from None
+    if result.isoformat() != value:
+        raise ValueError(f"{field} must be canonical YYYY-MM-DD")
+    return result
+
+
 class ResearchSimulationLedger:
     """Rebuildable account state; not a trading/paper operational ledger."""
 
@@ -44,6 +57,8 @@ class ResearchSimulationLedger:
         self.events: list[dict] = []
         self._by_id: dict[str, dict] = {}
         self.realized_pnl = 0.0
+        # Accrued on ex-date, spendable only on the actual payment date.
+        self.receivables: dict[str, dict] = {}
 
     def apply(self, event: dict) -> bool:
         """Apply once; duplicate identity+payload is no-op, conflicting is fatal."""
@@ -82,6 +97,45 @@ class ResearchSimulationLedger:
                 else:
                     position["last_price"] = value
                     position["stale"] = False
+        elif kind == "DIVIDEND_ENTITLEMENT":
+            # Preserve the ex-date total return without granting spendable
+            # cash early. At ex-open the registered holder owns a receivable.
+            code = copied.get("stock_code")
+            if code not in self.positions:
+                raise ValueError("dividend entitlement requires held stock")
+            quantity = copied.get("quantity")
+            if type(quantity) is not int or quantity <= 0:
+                raise ValueError("entitled quantity must be a positive integer")
+            if quantity != self.positions[code]["quantity"]:
+                raise ValueError("entitled quantity must equal record-date holdings")
+            per_share = _number(
+                copied.get("cash_per_share"), "cash_per_share", positive=True
+            )
+            record_date = _valid_action_date(copied.get("record_date"), "record_date")
+            ex_date = _valid_action_date(copied.get("ex_date"), "ex_date")
+            pay_date = _valid_action_date(copied.get("pay_date"), "pay_date")
+            if not (record_date < ex_date <= pay_date):
+                raise ValueError("dividend dates must be record < ex <= pay")
+            self.receivables[identity] = {
+                "stock_code": code,
+                "quantity": quantity,
+                "amount": quantity * per_share,
+                "record_date": record_date.isoformat(),
+                "ex_date": ex_date.isoformat(),
+                "pay_date": pay_date.isoformat(),
+            }
+        elif kind == "DIVIDEND_SETTLEMENT":
+            # Settlement is independent of current holdings: shares can be
+            # sold after ex-date without forfeiting the earned distribution.
+            entitlement_id = copied.get("entitlement_id")
+            if entitlement_id not in self.receivables:
+                raise ValueError("dividend settlement needs outstanding entitlement")
+            due = self.receivables[entitlement_id]
+            pay_date = _valid_action_date(copied.get("pay_date"), "pay_date")
+            if pay_date < datetime.date.fromisoformat(due["pay_date"]):
+                raise ValueError("cannot settle dividend before payable date")
+            self.cash += due["amount"]
+            del self.receivables[entitlement_id]
         elif kind == "DIVIDEND":
             code = copied.get("stock_code")
             if code not in self.positions:
@@ -191,14 +245,20 @@ class ResearchSimulationLedger:
 
     @property
     def nav(self) -> float:
-        return self.cash + sum(
-            p["quantity"] * p["last_price"] for p in self.positions.values()
+        return (
+            self.cash
+            + sum(item["amount"] for item in self.receivables.values())
+            + sum(p["quantity"] * p["last_price"] for p in self.positions.values())
         )
 
     def snapshot(self) -> dict:
         return {
             "initial_cash": self.initial_cash,
             "cash": self.cash,
+            "receivables": copy.deepcopy(self.receivables),
+            "receivable_balance": sum(
+                item["amount"] for item in self.receivables.values()
+            ),
             "positions": copy.deepcopy(self.positions),
             "realized_pnl": self.realized_pnl,
             "nav": self.nav,
