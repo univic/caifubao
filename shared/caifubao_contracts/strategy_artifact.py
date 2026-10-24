@@ -14,7 +14,6 @@ import json
 import os
 import re
 
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _DECIMAL = re.compile(r"^-?[0-9]+\.[0-9]+$")
 _HASH_KEYS = (
     "as_of",
@@ -42,8 +41,10 @@ def utc_instant(value: str | dt.datetime) -> str:
 def injected_code_version(env: dict | None = None) -> str:
     source = os.environ if env is None else env
     version = source.get("CAIFUBAO_BUILD_SHA") or source.get("GITHUB_SHA")
-    if not isinstance(version, str) or not _SHA256.fullmatch(version):
-        raise ValueError("artifact code version requires injected 40+ identity")
+    if not isinstance(version, str) or not re.fullmatch(
+        r"[0-9a-f]{40}|[0-9a-f]{64}", version
+    ):
+        raise ValueError("artifact code version requires a build-injected SHA")
     return version
 
 
@@ -79,7 +80,6 @@ def build_strategy_artifact(
     field_manifest: dict,
     inputs: dict,
     generated_at: str | dt.datetime,
-    code_version: str,
 ) -> dict:
     """Create and validate an artifact-contract envelope, no persistence.
 
@@ -91,11 +91,7 @@ def build_strategy_artifact(
         raise ValueError("artifact identity fields cannot be empty")
     if grade not in ("RESEARCH", "OBSERVATION"):
         raise ValueError("unpromoted strategy artifact must remain research-grade")
-    if not isinstance(code_version, str) or not (
-        _SHA256.fullmatch(code_version) or
-        re.fullmatch(r"[0-9a-f]{40}", code_version)
-    ):
-        raise ValueError("code_version must be an injected immutable source SHA")
+    code_version = injected_code_version()
     if not isinstance(inputs, dict) or not inputs:
         raise ValueError("artifact inputs must be nonempty")
     clean_inputs = {}
