@@ -167,8 +167,11 @@ def build_strategy_artifact(
     assert set(hashed) == set(_HASH_KEYS)
     _check_numbers(hashed, "artifact")
     encoded = json.dumps(
-        hashed, ensure_ascii=False, sort_keys=True,
-        separators=(",", ":"), allow_nan=False,
+        hashed,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
     ).encode("utf-8")
     artifact_hash = hashlib.sha256(encoded).hexdigest()
     identity = hashlib.sha256(
@@ -188,8 +191,11 @@ def verify_strategy_artifact(artifact: dict) -> bool:
     hashed = {key: artifact[key] for key in _HASH_KEYS}
     _check_numbers(hashed, "artifact")
     bytes_value = json.dumps(
-        hashed, ensure_ascii=False, sort_keys=True,
-        separators=(",", ":"), allow_nan=False,
+        hashed,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
     ).encode("utf-8")
     expected = hashlib.sha256(bytes_value).hexdigest()
     producer, as_of = artifact["producer"], utc_instant(artifact["as_of"])
