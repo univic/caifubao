@@ -43,9 +43,7 @@ class ImmutableArtifactStore:
         target = self._path(artifact["artifact_id"])
         self.directory.mkdir(parents=True, exist_ok=True)
         try:
-            descriptor = os.open(
-                target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-            )
+            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError:
             existing = self.read(artifact["artifact_id"])
             # Re-publication keeps the first generated_at, not the new caller's.
@@ -53,8 +51,11 @@ class ImmutableArtifactStore:
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                 json.dump(
-                    artifact, stream, sort_keys=True,
-                    ensure_ascii=False, allow_nan=False,
+                    artifact,
+                    stream,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    allow_nan=False,
                 )
                 stream.flush()
                 os.fsync(stream.fileno())
