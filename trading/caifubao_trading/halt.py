@@ -36,9 +36,7 @@ class TradingHaltStore:
             raise ValueError("trading halt state malformed: FAIL_CLOSED")
         return copy.deepcopy(state)
 
-    def change(
-        self, *, halted: bool, actor: str, reason: str, at: dt.datetime
-    ) -> dict:
+    def change(self, *, halted: bool, actor: str, reason: str, at: dt.datetime) -> dict:
         if type(halted) is not bool:
             raise ValueError("halted must be a boolean")
         if not isinstance(actor, str) or not actor.strip():
