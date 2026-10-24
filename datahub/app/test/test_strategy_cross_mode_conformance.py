@@ -49,6 +49,10 @@ def _schedule():
 
 
 def test_three_research_modes_have_identical_fills_nav_and_event_replay():
+    from app.lib.strategy_engine.config import DEFAULT_STRATEGY_CONFIG
+    from app.lib.strategy_engine.spec import legacy_to_spec
+
+    pinned_hash = legacy_to_spec(DEFAULT_STRATEGY_CONFIG)["spec_hash"]
     results = []
     for mode in ("BACKTEST", "REPLAY", "RESEARCH_SIMULATION"):
         require_research_mode(mode)
@@ -58,7 +62,7 @@ def test_three_research_modes_have_identical_fills_nav_and_event_replay():
                 schedule=_schedule(),
                 mode=mode,
                 initial_nav=10000,
-                spec_hash="frozen-identical-spec",
+                spec_hash=pinned_hash,
             )
         )
     assert results[0] == results[1] == results[2]
@@ -74,7 +78,7 @@ def test_three_research_modes_have_identical_fills_nav_and_event_replay():
         schedule=_schedule(),
         mode="RESEARCH_SIMULATION",
         initial_nav=10000,
-        spec_hash="frozen-identical-spec",
+        spec_hash=pinned_hash,
     )
     assert original == before
 
