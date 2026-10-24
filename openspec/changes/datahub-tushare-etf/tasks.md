@@ -56,8 +56,9 @@
 - [x] 6.3 Draft PR #313, CI green, merged; follow-up fix PR #314 (ts_code).
 - [x] 6.4 Research rollout (2026-10-24): image `sha-62ab25490950`, universe
   3,007/2,329 active, daily 2,176 quotes + FQ, sample backfill 11,850 rows;
-  data verified. Full-universe backfill and private suspend switches remain
-  operator decisions.
+  data verified. The daily ETF CronJob is enabled in research (2026-10-25);
+  full-universe backfill and private-overlay suspend switches remain operator
+  decisions.
 
 > Archive order: this change carries a `MODIFIED` delta for
 > `dev-snapshot-import`. Archive `dev-snapshot-import` first (so its `ADDED`

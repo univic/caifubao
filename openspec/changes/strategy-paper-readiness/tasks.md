@@ -25,6 +25,9 @@
 - [x] 2.7 Mirror `classify_evidence_kind`'s dual-hash rule: filter FORWARD runs
   by `config_hash` + `hash_kind` (legacy matches the missing field) and report
   `hash_kind` / `spec_hash` / `legacy_config_hash`.
+- [x] 2.8 Research enablement (2026-10-25): configure the halt path (engage/resume
+  verified, OFF), enable the daily ETF sync and candidate scoring schedules, and
+  leave the readiness CronJob suspended until a window is certified.
 
 ## 3. Documentation
 
