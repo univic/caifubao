@@ -35,7 +35,8 @@ def utc_instant(value: str | dt.datetime) -> str:
     if not isinstance(value, dt.datetime) or value.tzinfo is None:
         raise ValueError("instant requires an explicit timezone")
     result = value.astimezone(dt.timezone.utc)
-    return result.isoformat(timespec="seconds").replace("+00:00", "Z")
+    precision = "microseconds" if result.microsecond else "seconds"
+    return result.isoformat(timespec=precision).replace("+00:00", "Z")
 
 
 def injected_code_version(env: dict | None = None) -> str:
