@@ -78,6 +78,17 @@ def test_artifact_identity_is_closed_and_deterministic(monkeypatch):
     assert verify_strategy_artifact(first)
 
 
+def test_utc_normalization_preserves_subsecond_data_cutoffs():
+    from caifubao_contracts.strategy_artifact import utc_instant
+
+    assert utc_instant("2026-10-23T15:00:00.123+08:00") == (
+        "2026-10-23T07:00:00.123000Z"
+    )
+    assert utc_instant("2026-10-23T07:00:00.123000Z") == (
+        "2026-10-23T07:00:00.123000Z"
+    )
+
+
 def test_artifact_grade_payload_and_manifest_changes_are_detected(monkeypatch):
     base = _contract(monkeypatch)
     changed_grade = _contract(monkeypatch, grade="OBSERVATION")
