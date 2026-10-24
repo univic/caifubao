@@ -34,25 +34,17 @@ class TradingDomainTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.halt = TradingHaltStore(Path(self.tmp.name) / "halt.json")
-        self.account = TradingPaperAccount(
-            account_id="paper-test", initial_cash=10000
-        )
+        self.account = TradingPaperAccount(account_id="paper-test", initial_cash=10000)
 
     def arm(self):
-        self.halt.change(
-            halted=True, actor="operator", reason="initialize", at=NOW
-        )
-        self.halt.change(
-            halted=False, actor="operator", reason="offline paper", at=NOW
-        )
+        self.halt.change(halted=True, actor="operator", reason="initialize", at=NOW)
+        self.halt.change(halted=False, actor="operator", reason="offline paper", at=NOW)
 
     def test_missing_state_fails_closed_and_requires_operator(self):
         with self.assertRaisesRegex(ValueError, "TRADING_HALTED"):
             self.account.apply_fill(fill("one", "BUY"), halt_store=self.halt)
         with self.assertRaisesRegex(ValueError, "initialize"):
-            self.halt.change(
-                halted=False, actor="operator", reason="skip", at=NOW
-            )
+            self.halt.change(halted=False, actor="operator", reason="skip", at=NOW)
         self.arm()
         self.assertFalse(self.halt.snapshot()["halted"])
         self.assertEqual(len(self.halt.snapshot()["history"]), 2)
@@ -80,8 +72,10 @@ class TradingDomainTests(unittest.TestCase):
         self.account.apply_fill(fill("b", "SELL"), halt_store=self.halt)
         self.assertEqual(self.account.positions, {})
         rebuilt = TradingPaperAccount.rebuild(
-            account_id="paper-test", initial_cash=10000,
-            events=self.account.events, halt_store=self.halt,
+            account_id="paper-test",
+            initial_cash=10000,
+            events=self.account.events,
+            halt_store=self.halt,
         )
         self.assertEqual(rebuilt.projection(), self.account.projection())
         self.assertEqual(len(rebuilt.events), 2)
@@ -96,9 +90,7 @@ class TradingDomainTests(unittest.TestCase):
                 halt_store=self.halt,
             )
         with self.assertRaisesRegex(ValueError, "insufficient paper shares"):
-            self.account.apply_fill(
-                fill("sell", "SELL"), halt_store=self.halt
-            )
+            self.account.apply_fill(fill("sell", "SELL"), halt_store=self.halt)
         with self.assertRaisesRegex(ValueError, "insufficient paper cash"):
             self.account.apply_fill(
                 fill("expensive", "BUY", price=500),
@@ -112,18 +104,29 @@ class TradingDomainTests(unittest.TestCase):
         self.assertEqual(self.account.positions["sh688001"], 201)
 
     def test_operational_halt_priority_before_risk(self):
-        intents = [{
-            "intent_id": "buy", "stock_code": "sh600000",
-            "side": "BUY", "quantity": 100, "price": 10,
-        }]
+        intents = [
+            {
+                "intent_id": "buy",
+                "stock_code": "sh600000",
+                "side": "BUY",
+                "quantity": 100,
+                "price": 10,
+            }
+        ]
         with self.assertRaisesRegex(ValueError, "TRADING_HALTED"):
             self.account.risk_preview(
-                intents=intents, nav=10000, policy={}, market=None,
+                intents=intents,
+                nav=10000,
+                policy={},
+                market=None,
                 halt_store=self.halt,
             )
         self.arm()
         result = self.account.risk_preview(
-            intents=intents, nav=10000, policy={}, market=None,
+            intents=intents,
+            nav=10000,
+            policy={},
+            market=None,
             halt_store=self.halt,
         )
         self.assertEqual(len(result["approved"]), 1)
