@@ -81,23 +81,31 @@ def test_refuses_missing_identity_or_causality_inputs(field, value):
 
 def test_non_spec_window_refused():
     with pytest.raises(ValueError, match="hash_kind"):
-        _gate(window=SimpleNamespace(
-            status="ACTIVE",
-            model_version="shadow_v1",
-            horizon=20,
-            config_hash="abc123",
-            hash_kind="legacy",
-            start_date=dt.datetime(2026, 10, 26),
-        ))
+        _gate(
+            window=SimpleNamespace(
+                status="ACTIVE",
+                model_version="shadow_v1",
+                horizon=20,
+                config_hash="abc123",
+                hash_kind="legacy",
+                start_date=dt.datetime(2026, 10, 26),
+            )
+        )
 
 
 def test_requires_current_session_readiness():
     report = {
         "overall": "READY",
         "expected_session": "2026-10-23",
-        "checks": [{"id": n, "status": "PASS"} for n in (
-            "quote_freshness", "scoring_freshness", "signal_freshness", "halt_switch"
-        )],
+        "checks": [
+            {"id": n, "status": "PASS"}
+            for n in (
+                "quote_freshness",
+                "scoring_freshness",
+                "signal_freshness",
+                "halt_switch",
+            )
+        ],
     }
     with pytest.raises(ValueError, match="today"):
         _gate(report=report)
@@ -123,11 +131,15 @@ def test_allows_noncritical_gap_warn_once_window_active():
         "overall": "DEGRADED",
         "expected_session": TODAY.isoformat(),
         "checks": [
-            {"id": n, "status": "PASS"} for n in (
-                "quote_freshness", "scoring_freshness",
-                "signal_freshness", "halt_switch"
+            {"id": n, "status": "PASS"}
+            for n in (
+                "quote_freshness",
+                "scoring_freshness",
+                "signal_freshness",
+                "halt_switch",
             )
-        ] + [{"id": "forward_window", "status": "WARN"}],
+        ]
+        + [{"id": "forward_window", "status": "WARN"}],
     }
     assert _gate(report=report) == "RUN"
 
