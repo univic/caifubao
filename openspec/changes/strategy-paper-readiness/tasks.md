@@ -40,12 +40,13 @@
   overall status mapping and the limitations presence.
 - [x] 4.2 Ruff (CI rule set + format), focused pytest and the OpenSpec strict
   validation pass.
-- [ ] 4.3 One read-only readiness run against the research environment with the
-  real model version and halt path (operator evidence).
+- [x] 4.3 Read-only readiness runs against research (2026-10-23 and 2026-10-24
+  after the rollout; DEGRADED with only the no-window and no-halt WARNs).
 
 ## 5. Review and delivery
 
-- [ ] 5.1 Spec, contract and QA reviewer gates pass.
-- [ ] 5.2 Branch conflict check against the target base (including PR #307).
-- [ ] 5.3 Draft PR; CI green before marking ready (only when delivery includes
-  a PR).
+- [x] 5.1 Spec, contract and QA reviewer gates pass (PR #313).
+- [x] 5.2 Branch conflict check against the target base (clean vs develop;
+  PR #307 merged before delivery).
+- [x] 5.3 Draft PR #313, CI green, merged; readiness dual-hash and active-ETF
+  count fixes shipped with the same PR / follow-up #314.

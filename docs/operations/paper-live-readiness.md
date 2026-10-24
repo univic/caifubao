@@ -75,6 +75,25 @@ etf_market_data  WARN  尚无 ETF 数据
 3. **ETF 数据**（若策略涉及 ETF）：按 [`etf-market-data.md`](etf-market-data.md)
    部署后执行 `etf universe` → 抽样 `etf backfill` → `etf daily`。
 
+### 2026-10-24 research 上线后的实测
+
+在授权范围内完成：research datahub 升级到 `sha-62ab25490950`、ETF universe/daily/
+抽样 backfill、对 `flip_wide_shadow_v1` 的 2026-10-23 补评分后，readiness 为
+**DEGRADED（无 FAIL）**：
+
+| 检查 | 结果 |
+|:---|:---|
+| quote_freshness | PASS（5,217/5,225，99.85%） |
+| fq_coverage | PASS（活跃行情缺因子 = 0） |
+| scoring_freshness | PASS（候选模型最新 2026-10-23） |
+| signal_freshness | PASS（2026-10-23） |
+| etf_market_data | PASS（2,329 只活跃 ETF，2,176 条当日行情 + FQ） |
+| forward_window | WARN（尚无 ACTIVE 窗口；未授权开窗） |
+| halt_switch | WARN（未配置 halt 文件路径） |
+
+因此“数据链/评分/ETF”已就绪；**只剩开窗与 halt 配置**，两者都需要单独授权。
+候选模型当前只补了 2026-10-23 一天评分，若要连续开窗必须先挂每日评分任务。
+
 ## 3. 与已合并 #307 的关系（重要）
 
 PR #307（`7464d6b`）已合并：统一 `StrategySpec`、legacy/spec 双哈希、研究模拟账本、

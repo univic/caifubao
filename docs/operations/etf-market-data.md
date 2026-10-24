@@ -87,9 +87,20 @@ one-writer-at-a-time 规则，由私有 overlay 显式启用。
 | `snapshot contains codes missing from the ETF universe` | 新基金未入池 | 先跑 `etf universe` |
 | `missing valid factors` | 个别基金当日无因子 | 运行失败但不写 FQ；查该基金是否停牌/退市，勿放宽校验 |
 
-## 6. 当前状态
+## 6. 当前状态（2026-10-24 research 上线）
 
-- 代码、单测、CronJob 模板、CLI 已完成并通过本地校验。
-- **尚未部署到 research**：镜像发布后需按顺序执行 `etf universe` → 抽样
-  `etf backfill` → `etf daily <最新交易日>`，然后再接 `paper readiness` 的 ETF 检查。
-- 本次未回补全市场（约 1,000 只活跃基金）；由运维决定窗口与节奏。
+- 代码、单测、CronJob 模板、CLI 已合并（PR #313/#314），research datahub 已运行
+  含本能力的镜像 `sha-62ab25490950`。
+- 已执行并通过：
+  - `etf universe` → 3,007 只（含退市），活跃 **2,329**；
+  - `etf daily 2026-10-23` → **2,176** 条行情 + **2,176** 条 `fund_adj` FQ，
+    额外 29 个因子被忽略；
+  - 抽样 `etf backfill`（sh510300/sh510500/sh588000/sz159915）→ **11,850** 行
+    行情 + FQ；`etf_daily_quote` 共 14,022 行、2,176 个代码；
+  - 数据核对：4 只样本 `close_hfq == round(close × fq_factor, 4)` 偏差 >0.02 的为 0，
+    无缺失 FQ；sh510300 完整回到 2012-05-28（验证 10 年分页未截断）。
+- 复权方向说明：`fund_adj` 因子在**份额拆分/折算**日可能下降（如 sh510500
+  2015-04-15 因子 1.0 → 0.2803），在**现金分红**日上升；验收标准是
+  `*_hfq` 序列在事件日连续，而不是因子单调。
+- 三个新增 CronJob 已 apply 且 `suspend: true`；私有 overlay 的 suspend 开关尚未添加。
+- 本次未回补全市场（约 2,329 只活跃基金）；由运维决定窗口与节奏。

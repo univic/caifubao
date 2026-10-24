@@ -50,11 +50,14 @@
 
 ## 6. Review and delivery
 
-- [ ] 6.1 Spec, contract and QA reviewer gates pass.
-- [ ] 6.2 Branch conflict check against the target base (including the open
-  `feature/strategy-engine-unification` PR #307).
-- [ ] 6.3 Draft PR; CI green before marking ready (only when delivery includes
-  a PR).
+- [x] 6.1 Spec, contract and QA reviewer gates pass (PR #313).
+- [x] 6.2 Branch conflict check against the target base, including the then-open
+  `feature/strategy-engine-unification` PR #307 (merged before delivery).
+- [x] 6.3 Draft PR #313, CI green, merged; follow-up fix PR #314 (ts_code).
+- [x] 6.4 Research rollout (2026-10-24): image `sha-62ab25490950`, universe
+  3,007/2,329 active, daily 2,176 quotes + FQ, sample backfill 11,850 rows;
+  data verified. Full-universe backfill and private suspend switches remain
+  operator decisions.
 
 > Archive order: this change carries a `MODIFIED` delta for
 > `dev-snapshot-import`. Archive `dev-snapshot-import` first (so its `ADDED`

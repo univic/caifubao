@@ -28,5 +28,7 @@
 - [x] 4.1 Unit tests cover tolerance boundaries, source gaps, arithmetic,
   error/no-compare verdicts, coverage floors and jump verdicts.
 - [x] 4.2 Ruff (CI rule set), focused pytest and OpenSpec strict pass.
-- [ ] 4.3 Spec, contract and QA reviewer gates pass on the committed tree.
-- [ ] 4.4 Branch conflict check against the target base (including PR #307).
+- [x] 4.3 Spec, contract and QA reviewer gates pass on the committed tree
+  (PR #313; blockers fixed and re-reviewed).
+- [x] 4.4 Branch conflict check against the target base (clean vs develop;
+  PR #307 merged before delivery).
