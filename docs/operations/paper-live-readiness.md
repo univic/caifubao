@@ -236,3 +236,40 @@ trading paper/LIVE 部署；随后合并的 #308/#309 分别补了 trading 侧�
 4) 以上验证通过后，开窗 <模型>/<horizon>/<legacy|spec>，配置 <config/spec 路径>
 不授权：prod、真实券商、promote、任何真实资金动作
 ```
+
+
+## 9. Milestone A: guarded research FORWARD daily capture (disabled template)
+
+The public research example now includes
+\`caifubao-datahub-strategy-forward-daily\` (22:15 Asia/Shanghai, weekdays),
+**suspended by default**. It is a research-plan capture, not an operational
+Trading Paper account and not NAV accounting acceptance. The job runs:
+
+\`\`\`bash
+python -m app.jobs.strategy_forward_daily \
+  --spec /etc/caifubao/research/strategy.json
+\`\`\`
+
+The spec must be mounted as read-only from the operator-managed
+\`caifubao-research-strategy-spec\` ConfigMap, and its \`spec_hash\`, model
+version, horizon and \`hash_kind=spec\` MUST match an already ACTIVE,
+separately operator-certified forward window. The job never opens that window,
+accepts no \`--date\` or \`--replace\`, and calculates today's session in
+Asia/Shanghai. It exits nonzero for stale market/scoring/signal data, an unreadable
+or active halt, a wrong/missing window, or a non-FORWARD outcome; a genuine
+holiday is logged as SKIP_NON_SESSION without strategy writes.
+
+**Do not enable based on this public template alone.** Private deployment must
+mount the same authoritative persistent halt file read by the current Research
+runner; the example's blank halt path intentionally prevents a false PASS.
+A private writer suspend switch, active-writer acknowledgement and immutable
+image pin are required before any activation. Run the existing
+\`paper readiness\` and \`strategy run --dry-run\` operator procedures first;
+after a separately approved window, perform a supervised real-day smoke before
+letting the CronJob own the schedule. Missing days remain real gaps.
+
+This runner records plan-capture job statuses in \`datahub_job_runs\`, but
+**does not automatically compute or certify a correct account NAV**. The
+research NAV's current dividend/split/distribution gap remains a blocking
+milestone-A accounting item, and automated NAV projection should be enabled
+only after the corresponding ledger reconciliation tests pass.
