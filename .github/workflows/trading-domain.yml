@@ -33,6 +33,7 @@ jobs:
             exit 1
           fi
           ruff check trading/
+          ruff format --diff trading/ || true
           ruff format --check trading/
       - name: Isolated offline Trading unit tests
         run: |
