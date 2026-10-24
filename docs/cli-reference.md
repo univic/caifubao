@@ -217,6 +217,51 @@ python -m app.jobs.tech_factor_runner evaluate bb_position 2024-01-01 2024-12-31
   --stock-code sh600519 --horizon 20
 ```
 
+## ETF Market Data Runner
+
+`python -m app.jobs.etf_sync_runner <command> [options]`
+
+Tushare on-exchange fund (ETF/LOF) universe, quotes and `fund_adj` after-adjustment
+factors. The master lives in `exchange_traded_fund` and quotes in
+`etf_daily_quote` (never in the stock collections), and FQ uses the same
+arithmetic as stocks. See
+[`operations/etf-market-data.md`](operations/etf-market-data.md).
+
+```bash
+# Universe (fund_basic(market='E'), SH/SZ only)
+python -m app.jobs.etf_sync_runner universe
+
+# One trade date: quotes first, then the all-or-nothing fund_adj FQ batch
+python -m app.jobs.etf_sync_runner daily --date 2026-10-23
+
+# Per-fund history (10-year fund_adj windows; truncated windows fail loudly)
+python -m app.jobs.etf_sync_runner backfill --code sh510300
+python -m app.jobs.etf_sync_runner backfill --all
+
+# Read-only coverage
+python -m app.jobs.etf_sync_runner status --code sh510300
+```
+
+## Paper Readiness Runner
+
+`python -m app.jobs.paper_readiness --model-version V --horizon 20`
+
+Read-only gate before a research paper window is opened or continued on real
+quotes. Checks quote freshness/coverage, FQ coverage, scoring and signal
+freshness, the ACTIVE forward window and its gaps, the halt switch and ETF data;
+prints `READY` / `DEGRADED` / `NOT_READY` and exits 1 only for `NOT_READY`. It
+writes nothing. See
+[`operations/paper-live-readiness.md`](operations/paper-live-readiness.md).
+
+## FQ/HFQ Chain Audit
+
+`python scripts/fq_chain_audit.py --jump-scan --sample-size 4`
+
+Read-only audit of the stock FQ chain: active-universe coverage, stored HFQ
+arithmetic, a sampled tushare `adj_factor` comparison and the market-wide factor
+jump scan. Exit code 0 PASS / 1 WARN / 2 FAIL. See
+[`operations/fq-chain-audit.md`](operations/fq-chain-audit.md).
+
 ## OpenCode Closed-Loop Workflow
 
 The typical closed-loop workflow for validating and fixing issues:

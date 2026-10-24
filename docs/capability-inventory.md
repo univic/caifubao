@@ -1,6 +1,6 @@
 # Caifubao 系统能力清单
 
-> 最后更新：2026-09-14
+> 最后更新：2026-10-23
 
 本文档以分层视角列出 caifubao 系统的全部能力，标注各项能力的现状：✅ 已实现 / 📋 已规划 / ❌ 未实现。
 
@@ -33,6 +33,7 @@
 | 估值/市值基本面 | ✅ 已实现 | `stock_daily_basic`（`datahub/app/model/daily_basic.py`）：pe_ttm/pb/ps_ttm/dv_ttm/total_mv/circ_mv/turnover_rate，按 trade_date 的 point-in-time 快照；`daily_basic_backfill` 支持断点续传，已接入 stable→dev 数据同步（#175/#176；在线同步为迁移期遗留） |
 | Tushare 数据源 | ✅ 已实现 | 历史行情、`adj_factor`、`daily_basic`、股票池四个接口；全部调用按 300/min 限速节流、带重试与空结果显式失败（`datahub/app/lib/datahub/data_source/interface/tushare_interface.py`） |
 | 全市场股票池 | ✅ 已实现 | `stock_basic_active`（tushare `pro.stock_basic`，`list_status='L'`），用于股票池刷新（#130） |
+| 场内基金（ETF/LOF）行情与复权 | ✅ 已实现（待部署） | `ExchangeTradedFund`（`object_type=etf`）+ tushare `fund_basic/fund_daily/fund_adj`；独立集合 `exchange_traded_fund` / `etf_daily_quote`、FQ 同股票口径；`etf universe/daily/backfill/status` CLI 与 research CronJob 模板（`datahub-tushare-etf`） |
 | 财务报表（ROE、营收增速等三表） | ❌ 未实现 | 仅采集 daily_basic 估值/市值，利润表/资产负债表/现金流量表未采集 |
 | 融资融券数据 | ❌ 未实现 | 需要新采集器 |
 | 北向资金流向 | ❌ 未实现 | 需要新采集器 |
@@ -115,6 +116,7 @@
 | 组合风控限制 | ✅ 已实现 | `max_single_stock_pct` 真实生效、新增行业上限 `max_industry_pct`（CSRC 一级，UNKNOWN 桶同样受限）、`min_trade_amount_cny` 流动性下限；分类须 `assigned_at <= signal date`；配置缺失时 fail closed（#221、`strategy-portfolio-risk-limits`） |
 | 费用感知开盘买入预算 | ✅ 已实现 | `nav.py _fit_buy_quantity`：整手二分，使「含滑点成交额 + commission ≤ min(现金, 目标预算)」，仅当一手都放不下才跳过（#204、`strategy-fee-aware-opening-budget`） |
 | 因果 paper 时序 | ✅ 已实现 | `paper_causal_v1`：消费 PENDING/TRACKING/VERIFIED/INSUFFICIENT_DATA、记录真实 UTC `decision_at` 与下一交易日 `execution_date`、按完整 config_hash 隔离轨道、只用开盘信息定量，产物标记 `evidence_kind=REPLAY`（#202） |
+| 模拟盘就绪门禁（paper readiness） | ✅ 已实现 | `lib/paper_readiness.py` + `jobs/paper_readiness.py` + `scripts/caifubao paper readiness`：只读检查行情/复权/评分/信号/前瞻窗口缺口/halt/ETF，输出 READY/DEGRADED/NOT_READY；不开窗、不计数（`strategy-paper-readiness`） |
 | 前瞻证据认证 + 120 交易日计数器 | ✅ 已实现 | `StrategyForwardWindow`（append-only，按 model_version+horizon ACTIVE 唯一）+ `strategy forward certify/close/progress`：仅窗口内决策先于执行日开盘的 COMPLETED 记录标 FORWARD，计数 distinct 信号日/120，缺口如实报告；FORWARD 计划不可改写，NAV 仅为派生（#207、`strategy-forward-evidence-capture`） |
 | 研究级目标组合导出 | ✅ 已实现 | `lib/strategy_engine/export.py` + `strategy_runner export`：COMPLETED run 的 BUY/SELL/HOLD 目标权重与金额、CSV/JSON；固定 `grade=RESEARCH` + 非投资建议免责声明，歧义 config_hash fail closed；不写库不下单（#220、`strategy-target-export`） |
 | 可信股票择时评估器 | ✅ 已实现 | `backend/app/services/timing_evaluator.py`（依赖自由、纯函数）+ `backtest_runner timing-pool` CLI：对显式冻结 cohort 聚合 timing vs buy_hold 成对证据，未达门槛输出 UNVALIDATED/研究级（#237、`stock-timing-evaluator-p0`） |
@@ -179,6 +181,7 @@
 | 决策日志（DecisionJournal） | ✅ 已实现 | `DecisionJournal` 模型含推荐内容/信心/目标价/止损 + `executed`/成交价量/`realized_pnl` 全链字段，`/api/decisions/journal*` 四端点（#104/#108） |
 | Compute-Worker K3s 部署 | ✅ 已实现 | node-type=compute 亲和性、资源限制、存活探针 |
 | OpenClaw 评分/推荐端点 | ✅ 已实现 | `/scores` (含解释/验证) + `/recommendations/daily` + `/recommendations/performance` |
+| FQ/HFQ 链路审计 | ✅ 已实现 | `datahub/scripts/fq_chain_audit.py` + handler：只读覆盖/算术/tushare 源头抽样比对 + 全市场因子跳变扫描，PASS/WARN/FAIL 退出码；2026-10-23 research 实测见 `docs/operations/fq-chain-audit.md`（`datahub-fq-chain-audit`） |
 | Health Watcher | ✅ 已实现 | `jobs/health_watcher.py`：近 26h FAILED/SKIPPED 任务 + STALE/NO_DATA 资产，JSON 报告、`--fail-on-issues`、可选 webhook；dev overlay 有 CronJob（#148） |
 | MongoDB 备份/恢复 + 恢复演练 | ✅ 已实现 | `k8s/base/mongodb-backup.yaml`、`mongodb-restore-job.example.yaml`，runbook 见 `docs/operations/mongodb-resilience.md`；13/13 集合非破坏性恢复演练通过（2026-09-13） |
 | MongoDB 启动连接重试 | ✅ 已实现 | backend（#149）与 datahub（#153）`connect_to_db` 10×5s 重试，耗尽后 exit(1) |
@@ -288,10 +291,10 @@
 
 | 层级 | 已实现 | 已规划 | 未实现 | 完成率 |
 |------|--------|--------|--------|--------|
-| 第一层 基础数据 | 12 | 0 | 4 | 75% |
+| 第一层 基础数据 | 13 | 0 | 4 | 76% |
 | 第二层 派生数据与因子 | 24 | 2 | 0 | 92% |
-| 第三层 分析引擎 | 35 | 0 | 4 | 90% |
+| 第三层 分析引擎 | 36 | 0 | 4 | 90% |
 | 第四层 用户界面 | 21 | 2 | 0 | 91% |
-| 第五层 集成与运维 | 19 | 0 | 3 | 86% |
+| 第五层 集成与运维 | 20 | 0 | 3 | 87% |
 | 第六层 数据管道 | 21 | 0 | 1 | 95% |
-| **总计** | **132** | **4** | **12** | **89%** |
+| **总计** | **135** | **4** | **12** | **89%** |

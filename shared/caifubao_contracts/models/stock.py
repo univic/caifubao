@@ -156,6 +156,76 @@ class StockIndex(BasicStock):
     object_type = StringField(required=True, default="stock_index")
 
 
+class ExchangeTradedFund(Document):
+    """An on-exchange fund (ETF/LOF), kept out of the stock collections.
+
+    This is a standalone document in its own collection (not a ``BasicStock``
+    subclass): stock queries such as ``BasicStock.objects()`` must never pick
+    up funds, and ETF workflows opt in explicitly. Its quotes live in
+    ``EtfDailyQuote`` for the same reason.
+    """
+
+    meta = {
+        "collection": "exchange_traded_fund",
+        "indexes": [
+            {"fields": ["code"], "unique": True},
+            ("active_status", "code"),
+        ],
+    }
+    code = StringField(unique=True, required=True)
+    name = StringField(required=True)
+    object_type = StringField(required=True, default="etf")
+    active_status = IntField(default=0)  # 2 - terminated  1 - inactive  0 - listed
+    data_capabilities = EmbeddedDocumentField(
+        StockDataCapabilities, default=StockDataCapabilities
+    )
+    fund_type = StringField()
+    benchmark = StringField()
+    management_fee = FloatField()
+    list_date = DateTimeField()
+
+
+class EtfDailyQuote(Document):
+    """One exchange-traded fund's daily bar + derived FQ prices.
+
+    Deliberately separate from ``StockDailyQuote``: date-range quote scans used
+    by stock research, scoring and signals iterate the stock collection without
+    a fund filter, so a shared collection would silently mix funds into stock
+    panels.
+    """
+
+    meta = {
+        "collection": "etf_daily_quote",
+        "indexes": [
+            {"fields": ["code", "-date"], "unique": True},
+            ("date", "code"),
+            "code",
+            {"fields": ["-date"], "cls": False},
+        ],
+    }
+    code = StringField(required=True, unique_with="date")
+    date = DateTimeField(required=True)
+    open = FloatField()
+    close = FloatField()
+    previous_close = FloatField()
+    high = FloatField()
+    low = FloatField()
+    amplitude = FloatField()
+    change_rate = FloatField()
+    change_amount = FloatField()
+    turnover_rate = FloatField()
+    volume = IntField()
+    trade_amount = FloatField()
+    trade_status = IntField()  # 1 - 正常交易  0 - 停牌
+
+    # restatement factor and price calculation
+    fq_factor = FloatField()
+    open_hfq = FloatField()
+    close_hfq = FloatField()
+    high_hfq = FloatField()
+    low_hfq = FloatField()
+
+
 class ValuationIndicator(EmbeddedDocument):
     date = DateTimeField()
     pe = FloatField()

@@ -38,6 +38,9 @@
 | [`mongodb-node-migration.md`](./operations/mongodb-node-migration.md) | 单副本 MongoDB 节点迁移 runbook |
 | [`service-tokens.md`](./operations/service-tokens.md) | Service token 运维 |
 | [`strategy-forward-window.md`](./operations/strategy-forward-window.md) | 前瞻证据窗口 operator runbook |
+| [`paper-live-readiness.md`](./operations/paper-live-readiness.md) | research 环境模拟盘（paper）上线准备：readiness 门禁、实测状态、PR #307 先后关系、开窗清单 |
+| [`fq-chain-audit.md`](./operations/fq-chain-audit.md) | 除复权（FQ/HFQ）链路只读审计：覆盖率、算术、源头比对、残留风险与复跑方法 |
+| [`etf-market-data.md`](./operations/etf-market-data.md) | tushare 场内基金（ETF/LOF）行情 + `fund_adj` 除复权的数据能力与操作 |
 | [`stock-timing-pit-evidence.md`](./operations/stock-timing-pit-evidence.md) | 单股 PIT 前向证据链（P2a/P2b/P1）与工件持久化 runbook |
 | [`tailscale-k8s-deploy.md`](./operations/tailscale-k8s-deploy.md) | Tailscale Kubernetes API server 部署路径 |
 | [`perf-analysis-2026-08.md`](./operations/perf-analysis-2026-08.md) | 性能 / CPU 热点分析与修复路线（被 `openspec/changes/datahub-perf-optimization/` 引用） |

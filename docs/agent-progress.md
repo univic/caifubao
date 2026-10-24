@@ -29,6 +29,63 @@
 ```
 
 ## 进度记录
+### 2026-10-24 20:10 CST — 同步 develop（#307/#308/#309）与 readiness 双哈希适配
+
+- 状态：进行中（代码/文档已同步；部署与开窗未执行）
+- 已完成：
+  - 合并 `origin/develop`：#307 统一策略基础（`StrategySpec`、legacy/spec 双哈希、
+    研究模拟账本、共享执行/风控）、#308 trading paper/halt 基座、#309 不可变研究
+    发布。唯一冲突为 `openspec/README.md` 索引，已解决（40 changes / 124 open tasks）。
+  - `paper readiness` 对齐 #307 的 `classify_evidence_kind`：FORWARD 计数同时匹配
+    `config_hash` 与 `hash_kind`（legacy 窗口兼容缺字段的历史行），窗口详情输出
+    `hash_kind`/`spec_hash`/`legacy_config_hash`；新增 2 个测试（共 14 个）。
+  - 文档同步：`docs/operations/paper-live-readiness.md` §3 改为“#307 已合并”，说明
+    legacy/spec 二选一、不得中途迁移命名空间；`strategy-paper-readiness` 的
+    proposal/tasks/spec 同步双哈希语义与测试。
+  - 修正实施口径：统一研究账本契约已支持 `DIVIDEND`/`SPLIT` 事件，但 research NAV
+    路径尚未从 `fq_factor` 推导并应用它们，paper 分红缺口仍在；limitation 文案不再
+    写成“pre-#307/由 #307 退休”，并补充候选模型手工评分验证命令。
+  - 新增默认 suspend 的候选模型评分 CronJob 模板（`caifubao-datahub-scoring-shadow`，
+    只写 pinned model），并在 runbook 增加“运维授权”定义（谁能批、批什么、
+    可逆性、最小授权请求模板）；说明私有 overlay 尚需补 ETF/shadow 的 suspend 开关。
+- 验证：datahub 1,542 passed；OpenSpec strict 40/40；ruff `E4,E7,E9,F` + format
+  （303 files）；三个 kustomize overlay；`bash -n scripts/caifubao`。
+- 下一步：部署含 #307 与 ETF 能力的新镜像到 research → `etf universe` → 抽样
+  `etf backfill` → `etf daily`；为候选模型补每日评分；readiness 无 FAIL 后由人工
+  授权开窗。
+- 阻塞：research/dev 仍运行 `sha-f3f29c8`（未部署 #307/ETF）；候选
+  `flip_wide_shadow_v1` 评分仍停在 2026-09-10。
+### 2026-10-24 01:45 CST — 除复权审计 + tushare ETF 能力 + 模拟盘就绪门禁
+
+- 状态：进行中（实现与本地校验完成；评审门禁与部署未完成）
+- 已完成：
+  - FQ/HFQ 链路只读审计（`datahub/scripts/fq_chain_audit.py` + handler）：
+    research 2026-10-23 实测活跃支持域 5,225 只、当日有行情 5,217（99.85%）、
+    缺 `fq_factor` 0；4 只样本 19,089 行逐日对 tushare `adj_factor`，最大差
+    0.0004（容差 5e-4）；90 天跳变扫描 16 个除权日各 1–2 只。判定 WARN，唯一
+    残留是 1 只退市整理期股票的最新行无 FQ。报告：
+    `docs/operations/fq-chain-audit.md`。
+  - tushare ETF 正式能力（`datahub-tushare-etf` / `datahub-etf-market-data`）：
+    独立集合 `exchange_traded_fund`/`etf_daily_quote` 模型、`fund_basic/fund_daily/fund_adj` 接口、`.OF` 过滤、
+    `fund_adj` 10 年分页 + 截断拒绝（实测单调用上限 2,600 行，18 年窗口会丢掉
+    510300 的 2016 前历史）、`EtfFQFactorService`、`EtfMarketService`、
+    `etf_sync_runner`、`scripts/caifubao etf …`、research 挂起 CronJob。
+  - 模拟盘就绪门禁（`strategy-paper-readiness`）：只读 `paper readiness`
+    检查行情/复权/评分/信号/窗口缺口/halt/ETF，输出 READY/DEGRADED/NOT_READY；
+    research 实测 NOT_READY（`flip_wide_shadow_v1` 评分停在 2026-09-10，且无
+    ACTIVE 窗口、halt 路径、ETF 数据）。runbook：
+    `docs/operations/paper-live-readiness.md`，含与 PR #307 的先后关系。
+  - 文档同步：能力清单、CLI 参考、文档索引、OpenSpec 索引、环境模型（ETF 数据
+    所有权/复权职责）、前瞻窗口 runbook。
+- 验证：新增 40 个单测通过；ruff（CI 规则）通过；`openspec validate --all
+  --strict` 39/39；`kubectl kustomize k8s/overlays/example-research` 通过；
+  research pod 内只读跑通审计与 readiness（未写库，pod 内临时文件已清理）。
+- 下一步：spec-guardian / contract-reviewer / qa-reviewer；与
+  `feature/strategy-engine-unification`（PR #307）做 merge-tree 冲突检查；
+  部署镜像到 research 后执行 `etf universe → 抽样 backfill → etf daily`；
+  为候选模型补每日评分后再考虑开窗。
+- 阻塞：PR #307 未合并且 S0–S3 未完成——不建议在此之前开启 120 日窗口；
+  research 评分调度只覆盖 `score_v2_202605b`。
 ### 2026-10-21 09:45 CST — 周频/月频审计：撤回旧结论，开始 P0 账本
 
 - 状态：进行中（P0 账本与数据已完成，目标待定）

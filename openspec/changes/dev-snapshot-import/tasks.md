@@ -78,3 +78,8 @@
   https://github.com/univic/caifubao/pull/256 、private
   https://github.com/univic/caifubao-private/pull/83
 - [x] 4.5 `docs/agent-progress.md` 记录本轮进度（含 PR 链接）
+
+> Archive order: `datahub-tushare-etf` modifies this change's allow-list
+> requirement (adds `exchange_traded_fund` / `etf_daily_quote`). Archive this
+> change first so the target requirement exists in `openspec/specs/` before the
+> ETF change is archived.

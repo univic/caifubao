@@ -24,6 +24,13 @@
 
 ## 2. 开窗前置检查（全部满足才开窗）
 
+> **先跑只读就绪门禁**：`./scripts/caifubao paper readiness --model-version <V> --horizon 20`
+> 覆盖行情/复权/评分/信号/窗口缺口/halt/ETF，`NOT_READY` 时不要开窗。完整清单与
+> 2026-10-23 实测见 [`paper-live-readiness.md`](paper-live-readiness.md)。
+> 另注意：research 的每日评分调度只跑 `DEFAULT_MODEL_VERSION=score_v2_202605b`；
+> 影子候选（如 `flip_wide_shadow_v1`）是按需计算，实测最新只到 2026-09-10。
+> **候选模型没有每日评分就不要开窗**——先补调度或改用每日评分的模型。
+
 - [ ] 影子版本已注册且 ACTIVE：`./scripts/caifubao strategy report <DATE> --model-version flip_wide_shadow_v1`
       能读到 run（注册用 `model_registry_runner register`，见 task-3.3 runbook）。
 - [ ] 全市场 replay 与校准对比已执行、结论已回填 `manual-experiments-ledger.md`。
@@ -118,5 +125,9 @@
   会以异常结束（fail loud，不是静默跳过）——决定"优雅跳过"还是"接受告警"之前不要挂调度。
 - **缺口不可补**：漏一天就是少一天，只能用 `forward progress` 如实记录。
 - **paper 不等于真实账户**：目标权重不是你的持仓；卖出定量与对账属 roadmap 1.1/2.3。
+- **paper NAV 不计现金分红**：`nav.py` 用原始 open/close 估值，除息日会假跌，
+  总收益被低估。统一研究账本契约已支持 `DIVIDEND`/`SPLIT` 事件，但当前 NAV 路径
+  尚未从 `fq_factor` 推导并应用它们；在修好之前不要把 paper 收益当作可上钱的
+  实盘有效性证据。
 - **风控仍有缺口**：换手/再平衡预算未落地（roadmap 1.3 后续切片）。宽书下
   `max_single_stock_pct` 通常不 binding，真正的集中度护栏是 `max_industry_pct`。
