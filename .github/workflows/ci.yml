@@ -29,6 +29,7 @@ jobs:
       k8s: ${{ steps.filter.outputs.k8s }}
       openspec: ${{ steps.filter.outputs.openspec }}
       ci: ${{ steps.filter.outputs.ci }}
+      deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
 
     steps:
       - name: Checkout repository
@@ -80,6 +81,8 @@ jobs:
           set_output k8s '^(k8s/|\.github/workflows/ci\.yml$)'
           set_output openspec '^(openspec/|\.github/workflows/ci\.yml$)'
           set_output ci '^\.github/workflows/.*\.yml$'
+          # Deploy-sensitive changes only; ordinary app code still runs tests/lint.
+          set_output deploy_contract '^(k8s/|backend/Dockerfile$|datahub/Dockerfile$|frontend/Dockerfile$|compute-worker/Dockerfile$|tools/mongodb-tools/Dockerfile$|\.github/workflows/ci\.yml$|\.github/workflows/.*deploy.*\.yml$)'
 
   backend-test:
     name: Backend Tests (Python 3.12)
@@ -386,14 +389,7 @@ jobs:
     needs: changes
     if: >-
       ${{
-        (
-          needs.changes.outputs.backend == 'true' ||
-          needs.changes.outputs.frontend == 'true' ||
-          needs.changes.outputs.datahub == 'true' ||
-          needs.changes.outputs.docker == 'true' ||
-          needs.changes.outputs.k8s == 'true' ||
-          needs.changes.outputs.ci == 'true'
-        ) &&
+        needs.changes.outputs.deploy_contract == 'true' &&
         (
           github.event_name != 'pull_request' ||
           github.event.pull_request.head.repo.full_name == github.repository
@@ -411,7 +407,10 @@ jobs:
           set -euo pipefail
           : "${GH_TOKEN:?Missing PRIVATE_REPO_DISPATCH_TOKEN secret}"
 
-          started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          request_id="public-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          expected_title="Deploy dry-run [${request_id}] for ${PUBLIC_REF}"
+          echo "Dispatching correlated private dry-run ${request_id}"
+
           curl --fail-with-body -L \
             -X POST \
             -H "Accept: application/vnd.github+json" \
@@ -423,38 +422,38 @@ jobs:
             "event_type": "deploy_dry_run",
             "client_payload": {
               "public_repository": "${PUBLIC_REPOSITORY}",
-              "public_ref": "${PUBLIC_REF}"
+              "public_ref": "${PUBLIC_REF}",
+              "request_id": "${request_id}"
             }
           }
           EOF
 
-          echo "Waiting for private deploy dry-run created after ${started_at}"
-          sleep 10
+          # repository_dispatch does not return a run ID. Use our unique
+          # run-name marker so concurrent PRs cannot cross-match.
           run_id=""
-          for _ in {1..18}; do
-            run_list_output="$(gh run list \
-              --repo "${PRIVATE_REPOSITORY}" \
-              --workflow deploy-dry-run.yml \
-              --limit 20 \
-              --json databaseId,createdAt \
-              --jq ".[] | select(.createdAt >= \"${started_at}\") | .databaseId" \
-              2>/tmp/private-dry-run-list.err)" || {
-              cat /tmp/private-dry-run-list.err >&2
-              echo "::warning title=Private dry-run not watched::Dispatch succeeded, but PRIVATE_REPO_DISPATCH_TOKEN cannot read private Actions runs. Grant Actions read permission to make this check blocking."
-              exit 0
-            }
-            run_id="$(printf '%s\n' "$run_list_output" | head -n 1)"
-            if [ -n "$run_id" ]; then
+          for _ in {1..24}; do
+            if ! run_list_output="$(gh run list --repo "${PRIVATE_REPOSITORY}" --workflow deploy-dry-run.yml --limit 100 --json databaseId,displayTitle)"; then
+              echo "::error title=Private dry-run not verified::Cannot list private Actions runs; grant PRIVATE_REPO_DISPATCH_TOKEN Actions read permission."
+              exit 1
+            fi
+            matching_ids="$(jq -r --arg expected "${expected_title}" '.[] | select(.displayTitle == $expected) | .databaseId' <<< "${run_list_output}")"
+            if [[ "${matching_ids}" == *$'\n'* ]]; then
+              echo "::error title=Ambiguous private dry-run::Multiple private runs match ${request_id}."
+              exit 1
+            fi
+            if [[ -n "${matching_ids}" ]]; then
+              run_id="${matching_ids}"
               break
             fi
             sleep 5
           done
 
-          if [ -z "$run_id" ]; then
-            echo "Timed out waiting for private dry-run workflow to start."
+          if [[ -z "${run_id}" ]]; then
+            echo "::error title=Missing private dry-run::No matching run for ${request_id}; merge private run-name support first."
             exit 1
           fi
 
+          echo "Watching matched private dry-run ${run_id}"
           gh run watch "${run_id}" --repo "${PRIVATE_REPOSITORY}" --exit-status
 
   openspec-check:
