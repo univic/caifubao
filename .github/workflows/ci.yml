@@ -385,6 +385,7 @@ jobs:
 
   private-deploy-dry-run:
     name: Private Deploy Dry Run
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     needs: changes
     if: >-
