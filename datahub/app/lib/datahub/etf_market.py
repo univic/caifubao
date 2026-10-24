@@ -237,7 +237,11 @@ class EtfMarketService:
         start = fund.list_date or datetime.datetime(1990, 1, 1)
         start_date = pandas.Timestamp(start).strftime("%Y%m%d")
         end_date = beijing_now_naive().date().strftime("%Y%m%d")
-        raw = tushare_interface.tushare_fund_daily(code, start_date, end_date)
+        # tushare history endpoints take a ts_code (510300.SH), not our
+        # internal sh510300 code.
+        raw = tushare_interface.tushare_fund_daily(
+            tushare_interface.to_tushare_ts_code(code), start_date, end_date
+        )
         rows = zh_etf_daily.normalize_tushare_fund_history(raw, code)
         if rows is None or rows.empty:
             raise RuntimeError(f"fund_daily returned no history for {code}")
