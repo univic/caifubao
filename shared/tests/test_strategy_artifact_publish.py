@@ -1,7 +1,6 @@
 """Pure artifact publisher tests; no research database or broker needed."""
 
 import copy
-import datetime as dt
 from pathlib import Path
 import tempfile
 import unittest
