@@ -31,6 +31,7 @@ def _contract(monkeypatch, *, grade="RESEARCH", points=None, generated_at=None):
         payload={"nav_cents": 100001 if points is None else points},
         field_manifest={
             "asserted_fields": ["nav_cents"],
+            "numeric_units": {"nav_cents": "cny_cent"},
             "fields": {
                 "nav_cents": {
                     "kind": "payload", "derived": False,
