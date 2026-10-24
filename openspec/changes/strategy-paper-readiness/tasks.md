@@ -20,8 +20,8 @@
 - [x] 2.4 Emit `READY`/`DEGRADED`/`NOT_READY` plus the limitations list.
 - [x] 2.5 Add `app.jobs.paper_readiness` and `scripts/caifubao paper readiness`
   (non-zero only for NOT_READY).
-- [x] 2.6 Add suspended-by-default research CronJobs for the readiness check
-  and the daily ETF sync.
+- [x] 2.6 Add suspended-by-default research CronJobs for the readiness check,
+  the daily ETF sync and an optional candidate-model scoring job.
 - [x] 2.7 Mirror `classify_evidence_kind`'s dual-hash rule: filter FORWARD runs
   by `config_hash` + `hash_kind` (legacy matches the missing field) and report
   `hash_kind` / `spec_hash` / `legacy_config_hash`.

@@ -982,3 +982,117 @@ spec:
                 cpu: "200m"
           imagePullSecrets:
           - name: ccr-secret
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: caifubao-datahub-scoring-shadow
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: scoring-shadow
+spec:
+  # Optional candidate-model scoring for a certified forward-window candidate
+  # (for example flip_wide_shadow_v1). The scheduled `caifubao-datahub-scoring`
+  # job only scores DEFAULT_MODEL_VERSION (score_v2_202605b); a shadow model
+  # that is never scored cannot produce FORWARD days, and `paper readiness`
+  # reports that as a FAIL.
+  #
+  # This job writes ONLY the candidate model's stock_score_predictions; it does
+  # not replace or re-score the default model. Validate one manual
+  # `scoring_runner run --model-version <candidate> --date <date>` first, then
+  # add a matching suspend switch in the private overlay and enable it there
+  # (one writer at a time). This public template keeps `suspend: true`; the
+  # model version below is an example placeholder, so pin the candidate that
+  # will actually be certified.
+  schedule: "0 19 * * 1-5"
+  suspend: true
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 10800
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: caifubao-datahub
+            job.caifubao.io/type: scoring-shadow
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: scoring-shadow-runner
+            image: caifubao-datahub:latest
+            imagePullPolicy: Always
+            command: ["python", "-m", "app.jobs.scoring_runner"]
+            args:
+            - run
+            - --model-version
+            - flip_wide_shadow_v1
+            - --job-name
+            - datahub_scoring_shadow_daily
+            - --job-family
+            - scoring_daily
+            - --trigger
+            - cron
+            - --source
+            - k8s-cronjob
+            - --scheduled-hour
+            - "19"
+            - --scheduled-minute
+            - "0"
+            env:
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_HOST
+            - name: MONGODB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_PORT
+            - name: MONGODB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_NAME
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_USER
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: MONGODB_PASSWORD
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: ENVIRONMENT
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: PYMONGO_LOG_LEVEL
+              value: "INFO"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            resources:
+              requests:
+                memory: "1Gi"
+                cpu: "500m"
+              limits:
+                memory: "2Gi"
+                cpu: "1000m"
+          imagePullSecrets:
+          - name: ccr-secret

@@ -45,6 +45,9 @@
   - 修正实施口径：统一研究账本契约已支持 `DIVIDEND`/`SPLIT` 事件，但 research NAV
     路径尚未从 `fq_factor` 推导并应用它们，paper 分红缺口仍在；limitation 文案不再
     写成“pre-#307/由 #307 退休”，并补充候选模型手工评分验证命令。
+  - 新增默认 suspend 的候选模型评分 CronJob 模板（`caifubao-datahub-scoring-shadow`，
+    只写 pinned model），并在 runbook 增加“运维授权”定义（谁能批、批什么、
+    可逆性、最小授权请求模板）；说明私有 overlay 尚需补 ETF/shadow 的 suspend 开关。
 - 验证：datahub 1,542 passed；OpenSpec strict 40/40；ruff `E4,E7,E9,F` + format
   （303 files）；三个 kustomize overlay；`bash -n scripts/caifubao`。
 - 下一步：部署含 #307 与 ETF 能力的新镜像到 research → `etf universe` → 抽样

@@ -152,8 +152,48 @@ trading paper/LIVE 部署；随后合并的 #308/#309 分别补了 trading 侧�
 ## 7. 授权与调度
 
 - 开窗、每日写库、任何 promote 都需要**显式人工授权**；readiness 不构成授权。
-- 公共 research overlay 提供两个 **默认 suspend** 的 CronJob：
+- 公共 research overlay 提供三个 **默认 suspend** 的 CronJob：
   - `caifubao-datahub-etf-daily`（18:40）
+  - `caifubao-datahub-scoring-shadow`（19:00，可选；只写指定候选模型）
   - `caifubao-datahub-paper-readiness`（19:30，只读）
-  私有 overlay 按 one-writer 规则启用；启用前先手工验证一天。
+  私有 overlay 按 one-writer 规则启用；启用前先手工验证一天。注意：ETF daily 与
+  shadow scoring 是本次新增的公开模板，**私有 overlay 里还没有对应的 suspend
+  开关**——启用时需先在私有仓库补 `DATAHUB_ETF_DAILY_SUSPEND` /
+  `DATAHUB_SCORING_SHADOW_SUSPEND` 一类的 patch；在那之前它们始终保持模板里的
+  `suspend: true`。
 - readiness 只读：它不会开窗、不会写 run、不会改状态，也不计入 120 日证据。
+
+## 8. “运维授权”具体指什么
+
+这里的授权**不是技术权限**：有 kubeconfig、数据库密码或集群 exec 能力，不等于被授权
+执行写操作。`RULES.md` 要求对影响运行环境、权威数据或不可逆证据的动作做**显式人工
+批准**；本 runbook、readiness 报告和 CI 绿都不构成授权。
+
+| 动作 | 典型命令/位置 | 谁来批准 | 为什么需要 | 可逆性 |
+|:---|:---|:---|:---|:---|
+| 构建/推送 datahub 镜像 | 私有 publish workflow → 私有 registry | 仓库维护者/运维 | 决定 research/dev 实际运行哪份代码 | 可重构建、可回滚 tag |
+| 部署 research / dev | `caifubao-private/scripts/deploy.sh research --ref <sha>` | 私有部署负责人 + `research` GitHub Environment 保护 | 改运行环境；可能启用/停用 writer | 回滚到上一镜像 tag |
+| 启用数据 writer | 私有 overlay 的 `DATAHUB_*_SUSPEND=false` | 运维，按 one-writer-at-a-time | 写入权威库、影响 freshness 与证据 | 置回 `true` |
+| 首次 ETF universe/backfill | `scripts/caifubao etf universe/backfill` | 数据 owner | 写入大量历史行情/因子 | 可重跑；删除需单独授权 |
+| 候选模型补评分 | `scoring_runner run --model-version <V>` | 研究 owner | 写评分，改变 readiness 结果 | 可重算 |
+| 开前瞻窗口 | `strategy forward certify --yes` | 策略 owner/授权人 | 120 个交易日时钟**不可回填** | **不可逆**：只能 close 后重开、计数重来 |
+| promote / 对外声明可交易 | roadmap gate | 授权人 | 影响对外结论与合规 | 需审计记录 |
+
+- **谁能批准**：本仓库维护者或私有部署负责人；在当前会话里就是你（用户）。
+- **怎样算批准**：明确写出“授权在 `<环境>` 执行 `<动作>`，范围/时间窗/回滚方案”。
+  一句“继续”或一次代码评审通过都**不算**对部署/写库/开窗的授权。
+- **批准后谁执行**：部署与 writer 开关走私有仓库流程；数据/窗口命令可由我按批准范围
+  执行，并在 `datahub_job_runs`/进度日志留下记录。
+- **不需要授权的动作**（本分支已做）：只读审计、代码/测试/文档、`kubectl kustomize`
+  渲染、readiness 只读检查、`--dry-run`。
+
+最小授权请求模板：
+
+```text
+授权：在 research 环境
+1) 部署 public <sha>（含 #307 + ETF 能力），回滚 tag <old-sha>
+2) 执行 etf universe、etf backfill <代码列表>、etf daily <日期>
+3) 对 <候选模型> 补 <日期> 评分
+4) 以上验证通过后，开窗 <模型>/<horizon>/<legacy|spec>，配置 <config/spec 路径>
+不授权：prod、真实券商、promote、任何真实资金动作
+```

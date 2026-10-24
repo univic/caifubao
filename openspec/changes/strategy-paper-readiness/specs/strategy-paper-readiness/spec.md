@@ -150,13 +150,16 @@ authorization required to open a window.
 
 ### Requirement: Research scheduling is explicit and suspended by default
 
-The public research overlay SHALL provide the daily ETF sync and the readiness
-assessment as CronJobs, and both SHALL be suspended by default so an operator
-enables them deliberately after validating one manual run.
+The public research overlay SHALL provide the daily ETF sync, the readiness
+assessment and an optional candidate-model scoring job as CronJobs, and all
+three SHALL be suspended by default so an operator enables them deliberately
+after validating one manual run.
 
 #### Scenario: Public manifest renders suspended
 
 - GIVEN the example research overlay
 - WHEN it is rendered with kustomize
-- THEN both jobs exist with `suspend: true`
+- THEN all three jobs exist with `suspend: true`
 - AND the readiness job has no write-capable command
+- AND the candidate-scoring job targets only its pinned model version and does
+  not replace the default model's predictions
