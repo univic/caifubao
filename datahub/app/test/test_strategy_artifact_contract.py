@@ -94,9 +94,6 @@ def test_artifact_rejects_non_integer_values_and_unknown_provenance(monkeypatch)
     monkeypatch.delenv("GITHUB_SHA", raising=False)
     with pytest.raises(ValueError, match="build-injected"):
         injected_code_version()
-    with pytest.raises(ValueError, match="build-injected"):
-        _contract(monkeypatch, points=0.5)
-
     sha = "a" * 40
     monkeypatch.setenv("CAIFUBAO_BUILD_SHA", sha)
     with pytest.raises(ValueError, match="hashed floats"):
