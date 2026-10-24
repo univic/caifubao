@@ -196,6 +196,10 @@ trading paper/LIVE 部署；随后合并的 #308/#309 分别补了 trading 侧�
   - 私有 overlay 的 datahub 目标镜像 tag 仍指向旧 tag，下一次私有部署会把 research
     回滚到旧镜像，除非同步成当前 `sha-<commit>`。
   这两项必须在私有仓库收口，否则“集群已启用”不等于“可重复部署”。
+- 直接 apply 公共模板到集群时，三个 CronJob 的 `image` 必须固定为当前私有 registry
+  的 `sha-<commit>`：模板里的 `caifubao-datahub:latest` 在集群内不可拉取。
+  2026-10-25 已把 `etf-daily` / `scoring-shadow` / `paper-readiness` 三个 CronJob
+  的镜像固定为当前部署的 `sha-62ab25490950`。
 - readiness 只读：它不会开窗、不会写 run、不会改状态，也不计入 120 日证据。
 
 ## 8. “运维授权”具体指什么
