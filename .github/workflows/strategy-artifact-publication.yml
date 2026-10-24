@@ -29,6 +29,7 @@ jobs:
       - name: Lint and format
         run: |
           ruff check shared/ datahub/app/jobs/strategy_artifact_publish.py
+          ruff format --diff shared/ datahub/app/jobs/strategy_artifact_publish.py || true
           ruff format --check shared/ datahub/app/jobs/strategy_artifact_publish.py
       - name: Test deterministic publication and immutable storage
         run: |
