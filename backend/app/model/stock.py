@@ -14,6 +14,8 @@ from caifubao_contracts.models.stock import (  # noqa: F401
     DailyQuote,
     StockDataCapabilities,
     BasicStock,
+    ExchangeTradedFund,
+    EtfDailyQuote,
     IndividualStock,
     StockIndex,
     ValuationIndicator,
