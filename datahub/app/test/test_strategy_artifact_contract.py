@@ -84,9 +84,7 @@ def test_utc_normalization_preserves_subsecond_data_cutoffs():
     assert utc_instant("2026-10-23T15:00:00.123+08:00") == (
         "2026-10-23T07:00:00.123000Z"
     )
-    assert utc_instant("2026-10-23T07:00:00.123000Z") == (
-        "2026-10-23T07:00:00.123000Z"
-    )
+    assert utc_instant("2026-10-23T07:00:00.123000Z") == ("2026-10-23T07:00:00.123000Z")
 
 
 def test_artifact_grade_payload_and_manifest_changes_are_detected(monkeypatch):
