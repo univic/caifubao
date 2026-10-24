@@ -96,3 +96,22 @@ def test_shared_trading_conformance_vector_is_pure_and_side_correct(side):
     )} == execution_fees(price, 100, side, profile)
     assert quote["value"] == pytest.approx(price * 100)
     assert (quote["stamp_duty"] > 0) is (side == "SELL")
+
+
+def test_pinned_shared_conformance_vectors_are_reusable_by_trading():
+    from caifubao_contracts.friction import DEFAULT_COST_PROFILE
+    from caifubao_contracts.strategy_conformance import GOLDEN_EXECUTION_V1
+    from caifubao_contracts.strategy_execution import board_lot_rule
+
+    for row in GOLDEN_EXECUTION_V1:
+        minimum, step = board_lot_rule(row["code"])
+        assert (minimum, step) == (row["board_minimum"], row["board_step"])
+        price = adjusted_price(
+            row["open"], row["side"], DEFAULT_COST_PROFILE.slippage_per_side
+        )
+        assert price == pytest.approx(row["price"])
+        fees = execution_fees(
+            price, row["quantity"], row["side"], DEFAULT_COST_PROFILE
+        )
+        for key in ("commission", "transfer_fee", "stamp_duty"):
+            assert fees[key] == pytest.approx(row[key])
