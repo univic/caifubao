@@ -188,6 +188,7 @@ def classify_evidence_kind(
     config_hash: str,
     existing_status: str | None,
     replace: bool,
+    hash_kind: str = "legacy",
 ) -> str:
     """Certify a strategy run record as FORWARD or REPLAY (NEXT.1).
 
@@ -205,6 +206,10 @@ def classify_evidence_kind(
     if window is None or getattr(window, "status", None) != "ACTIVE":
         return "REPLAY"
     if getattr(window, "config_hash", None) != config_hash:
+        return "REPLAY"
+    # Missing kind on historical Mongo rows identifies legacy config hashes.
+    # A matching raw sha256 value alone cannot cross the two namespaces.
+    if (getattr(window, "hash_kind", None) or "legacy") != hash_kind:
         return "REPLAY"
     if _date_key(date) < _date_key(window.start_date):
         return "REPLAY"

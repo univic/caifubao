@@ -23,6 +23,8 @@ import json
 import math
 import sys
 
+from caifubao_contracts.trading_projection import require_trading_projection
+
 #: Default tolerances: exact match. Drift is measured in shares and CNY, so any
 #: non-zero difference is a break unless the operator explicitly widens it.
 DEFAULT_TOLERANCES = {
@@ -101,6 +103,30 @@ def _as_of_text(value) -> str | None:
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return str(value)
+
+
+def reconcile_trading_projection(
+    trading_projection: dict,
+    account_snapshot: dict,
+    *,
+    tolerances: dict | None = None,
+) -> dict:
+    """Strict, read-only adapter for future trading-owned reconciliation.
+
+    The caller MUST inject a frozen authoritative TradingPortfolioLedger
+    projection. Research target weights and simulation ledgers are never
+    accepted as a substitute for actual filled positions.
+    """
+    trading_projection = require_trading_projection(trading_projection)
+    if not isinstance(account_snapshot, dict):
+        raise ValueError("account snapshot must be an object")
+    planned_cash = _as_float(trading_projection["cash"], "trading ledger cash")
+    targets = _position_rows(trading_projection)
+    if any(row["quantity"] is None for row in targets):
+        raise ValueError("trading ledger projected quantities are required")
+    # Never let an account-supplied 'planned_cash' override the ledger.
+    observed = {**account_snapshot, "planned_cash": planned_cash}
+    return reconcile_plan_vs_account(targets, observed, tolerances=tolerances)
 
 
 def reconcile_plan_vs_account(

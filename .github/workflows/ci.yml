@@ -157,6 +157,7 @@ jobs:
       - name: Run Ruff
         run: |
           ruff check backend/ shared/
+          ruff format --diff backend/ shared/ || true
           ruff format --check backend/ shared/
 
   frontend-check:
@@ -216,6 +217,8 @@ jobs:
       - name: Run Ruff
         run: |
           ruff check datahub/
+          # Show an actionable diff when format verification fails.
+          ruff format --diff datahub/ || true
           ruff format --check datahub/
 
   compute-worker-check:

@@ -451,3 +451,81 @@ def test_pair_is_deterministic_for_reordered_evidence():
     )
 
     assert first == second
+
+
+def test_timing_replay_shared_lot_and_cost_conformance():
+    from caifubao_contracts.friction import CostProfile
+    from caifubao_contracts.strategy_execution import (
+        adjusted_price,
+        execution_fees,
+        fit_buy_quantity,
+    )
+    from app.lib.strategy_engine.timing_replay import (
+        _filled_trade,
+        _max_buy_quantity,
+    )
+
+    friction = {
+        "commission_rate": 0.00025,
+        "minimum_commission": 5.0,
+        "stamp_duty_rate": 0.0005,
+        "slippage_rate": 0.001,
+    }
+    profile = CostProfile(
+        commission_rate=friction["commission_rate"],
+        minimum_commission_cny=friction["minimum_commission"],
+        sell_stamp_duty_rate=friction["stamp_duty_rate"],
+        slippage_per_side=friction["slippage_rate"],
+        transfer_fee_rate=0.0,
+    )
+    price = adjusted_price(10.0, "BUY", 0.001)
+    assert _max_buy_quantity(
+        5000, 10, 100, friction, stock_code="sh688001"
+    ) == fit_buy_quantity(5000, price, 200, 1, profile)
+    assert _max_buy_quantity(
+        1500, 10, 100, friction, stock_code="sh600001"
+    ) == fit_buy_quantity(1500, price, 100, 100, profile)
+    trade, cash_change = _filled_trade("2026-01-05", "SELL", 100, 10, friction)
+    expected = execution_fees(adjusted_price(10, "SELL", 0.001), 100, "SELL", profile)
+    assert trade["commission"] == pytest.approx(round(expected["commission"], 4))
+    assert trade["stamp_duty"] == pytest.approx(round(expected["stamp_duty"], 4))
+    assert cash_change == pytest.approx(
+        100 * 9.99 - expected["commission"] - expected["stamp_duty"]
+    )
+
+
+def test_versioned_timing_manifest_opt_in_transfer_fee_uses_shared_arithmetic():
+    from caifubao_contracts.friction import CostProfile
+    from caifubao_contracts.strategy_execution import (
+        adjusted_price,
+        execution_fees,
+    )
+    from app.lib.strategy_engine.timing_replay import (
+        _filled_trade,
+        validate_replay_manifest,
+    )
+
+    manifest = _manifest()
+    manifest["friction"]["transfer_fee_rate"] = 0.00001
+    resolved = validate_replay_manifest(manifest)
+    assert resolved["friction"]["transfer_fee_rate"] == 0.00001
+    profile = CostProfile(
+        commission_rate=resolved["friction"]["commission_rate"],
+        minimum_commission_cny=resolved["friction"]["minimum_commission"],
+        sell_stamp_duty_rate=resolved["friction"]["stamp_duty_rate"],
+        transfer_fee_rate=0.00001,
+        slippage_per_side=resolved["friction"]["slippage_rate"],
+    )
+    trade, cash_delta = _filled_trade(
+        "2026-01-06", "BUY", 100, 10, resolved["friction"]
+    )
+    exec_price = adjusted_price(10, "BUY", profile.slippage_per_side)
+    fees = execution_fees(exec_price, 100, "BUY", profile)
+    assert trade["transfer_fee"] == pytest.approx(round(fees["transfer_fee"], 4))
+    assert cash_delta == pytest.approx(
+        -(100 * exec_price + fees["commission"] + fees["transfer_fee"])
+    )
+    with pytest.raises(ValueError, match="transfer_fee_rate"):
+        bad = _manifest()
+        bad["friction"]["transfer_fee_rate"] = -0.01
+        validate_replay_manifest(bad)
