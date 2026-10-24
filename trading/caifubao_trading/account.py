@@ -7,6 +7,7 @@ Order approval is NOT a fill. This implementation has no live/broker route.
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import hashlib
 import json
 import math
@@ -39,6 +40,8 @@ class TradingPaperAccount:
         self.positions: dict[str, int] = {}
         self.events: list[dict] = []
         self._by_id: dict[str, str] = {}
+        self._lots: dict[str, list[tuple[str, int]]] = {}
+        self._last_execution_date: str | None = None
 
     def risk_preview(
         self,
@@ -87,6 +90,13 @@ class TradingPaperAccount:
             if existing != fingerprint:
                 raise ValueError("conflicting fill event_id")
             return self.projection()
+        session = dt.date.fromisoformat(str(filled["execution_date"])[:10]).isoformat()
+        if (
+            self._last_execution_date is not None
+            and session < self._last_execution_date
+        ):
+            raise ValueError("paper fills must be chronological")
+        next_lots = copy.deepcopy(self._lots)
         code = filled["stock_code"]
         side = filled["side"]
         qty = filled["quantity"]
@@ -103,9 +113,27 @@ class TradingPaperAccount:
             next_cash = self.cash - required
             next_positions = dict(self.positions)
             next_positions[code] = next_positions.get(code, 0) + qty
+            next_lots.setdefault(code, []).append((session, qty))
         else:
             if qty > self.positions.get(code, 0):
                 raise ValueError("insufficient paper shares")
+            lots = next_lots.get(code, [])
+            available = sum(
+                quantity for acquired, quantity in lots if acquired < session
+            )
+            if qty > available:
+                raise ValueError("T+1: cannot sell shares acquired in this session")
+            to_sell = qty
+            remaining_lots = []
+            for acquired, quantity in lots:
+                sold = min(quantity, to_sell) if acquired < session else 0
+                to_sell -= sold
+                if quantity > sold:
+                    remaining_lots.append((acquired, quantity - sold))
+            if remaining_lots:
+                next_lots[code] = remaining_lots
+            else:
+                next_lots.pop(code, None)
             next_cash = (
                 self.cash
                 + gross
@@ -119,26 +147,33 @@ class TradingPaperAccount:
                 next_positions[code] = remain
             else:
                 next_positions.pop(code)
-        # Commit only after all checks and arithmetic succeeded.
+        # Validate the complete next projection before changing any account state.
+        projection = self._projection(next_cash, next_positions)
+        next_events = [*self.events, copy.deepcopy(filled)]
+        next_by_id = {**self._by_id, filled["event_id"]: fingerprint}
         self.cash = next_cash
         self.positions = next_positions
-        self.events.append(copy.deepcopy(filled))
-        self._by_id[filled["event_id"]] = fingerprint
-        return self.projection()
+        self._lots = next_lots
+        self._last_execution_date = session
+        self.events = next_events
+        self._by_id = next_by_id
+        return projection
 
-    def projection(self) -> dict:
+    def _projection(self, cash: float, positions: dict[str, int]) -> dict:
         return require_trading_projection(
             {
                 "source_domain": "trading",
                 "account_id": self.account_id,
                 "currency": "CNY",
-                "cash": self.cash,
+                "cash": cash,
                 "positions": {
-                    code: {"quantity": qty}
-                    for code, qty in sorted(self.positions.items())
+                    code: {"quantity": qty} for code, qty in sorted(positions.items())
                 },
             }
         )
+
+    def projection(self) -> dict:
+        return self._projection(self.cash, self.positions)
 
     @classmethod
     def rebuild(

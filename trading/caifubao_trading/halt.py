@@ -32,8 +32,34 @@ class TradingHaltStore:
             not isinstance(state, dict)
             or type(state.get("halted")) is not bool
             or not isinstance(state.get("history"), list)
+            or not state["history"]
         ):
             raise ValueError("trading halt state malformed: FAIL_CLOSED")
+        previous_at = None
+        for transition in state["history"]:
+            if (
+                not isinstance(transition, dict)
+                or type(transition.get("halted")) is not bool
+                or not all(
+                    isinstance(transition.get(k), str) and transition[k].strip()
+                    for k in ("actor", "reason", "at")
+                )
+            ):
+                raise ValueError("trading halt history malformed: FAIL_CLOSED")
+            try:
+                at = dt.datetime.fromisoformat(transition["at"])
+                if at.tzinfo is None or at.utcoffset() is None:
+                    raise ValueError("naive halt timestamp")
+                if previous_at is not None and at < previous_at:
+                    raise ValueError("nonchronological halt history")
+            except (ValueError, TypeError) as exc:
+                raise ValueError("trading halt history malformed: FAIL_CLOSED") from exc
+            previous_at = at
+        if state["history"][0]["halted"] is not True or any(
+            state.get(key) != state["history"][-1][key]
+            for key in ("halted", "actor", "reason", "at")
+        ):
+            raise ValueError("trading halt state/history mismatch: FAIL_CLOSED")
         return copy.deepcopy(state)
 
     def change(self, *, halted: bool, actor: str, reason: str, at: dt.datetime) -> dict:
@@ -51,6 +77,10 @@ class TradingHaltStore:
             if not halted:
                 raise ValueError("initialize trading halt as engaged first")
             prior = {"halted": True, "history": []}
+        if prior["history"] and at < dt.datetime.fromisoformat(
+            prior["history"][-1]["at"]
+        ):
+            raise ValueError("halt transitions must be chronological")
         transition = {
             "halted": halted,
             "actor": actor.strip(),

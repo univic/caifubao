@@ -1,6 +1,8 @@
 """Offline Trading-domain tests; no datahub, Mongo or broker dependencies."""
 
+import copy
 import datetime as dt
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -69,7 +71,10 @@ class TradingDomainTests(unittest.TestCase):
             self.account.apply_fill(
                 {**fill("a", "BUY"), "price": 11}, halt_store=self.halt
             )
-        self.account.apply_fill(fill("b", "SELL"), halt_store=self.halt)
+        self.account.apply_fill(
+            {**fill("b", "SELL"), "execution_date": "2026-10-27"},
+            halt_store=self.halt,
+        )
         self.assertEqual(self.account.positions, {})
         rebuilt = TradingPaperAccount.rebuild(
             account_id="paper-test",
@@ -102,6 +107,92 @@ class TradingDomainTests(unittest.TestCase):
             halt_store=self.halt,
         )
         self.assertEqual(self.account.positions["sh688001"], 201)
+
+    def test_same_day_shares_are_locked_but_settled_lots_can_sell(self):
+        self.arm()
+        self.account.apply_fill(fill("old", "BUY"), halt_store=self.halt)
+        before = copy.deepcopy(self.account.__dict__)
+        with self.assertRaisesRegex(ValueError, "T\\+1"):
+            self.account.apply_fill(fill("same-day", "SELL"), halt_store=self.halt)
+        self.assertEqual(before, self.account.__dict__)
+        self.account.apply_fill(
+            {**fill("new", "BUY"), "execution_date": "2026-10-27"},
+            halt_store=self.halt,
+        )
+        self.account.apply_fill(
+            {**fill("settled", "SELL"), "execution_date": "2026-10-27"},
+            halt_store=self.halt,
+        )
+        before = copy.deepcopy(self.account.__dict__)
+        with self.assertRaisesRegex(ValueError, "T\\+1"):
+            self.account.apply_fill(
+                {**fill("locked", "SELL"), "execution_date": "2026-10-27"},
+                halt_store=self.halt,
+            )
+        self.assertEqual(before, self.account.__dict__)
+        rebuilt = TradingPaperAccount.rebuild(
+            account_id="paper-test",
+            initial_cash=10000,
+            events=self.account.events,
+            halt_store=self.halt,
+        )
+        self.assertEqual(rebuilt.__dict__, self.account.__dict__)
+
+    def test_negative_cash_after_sell_fee_does_not_mutate_any_state(self):
+        self.arm()
+        account = TradingPaperAccount(account_id="paper-test", initial_cash=1006)
+        account.apply_fill(fill("buy", "BUY"), halt_store=self.halt)
+        before = copy.deepcopy(account.__dict__)
+        with self.assertRaises(ValueError):
+            account.apply_fill(
+                {
+                    **fill("fee", "SELL", qty=1, price=0.001),
+                    "execution_date": "2026-10-27",
+                },
+                halt_store=self.halt,
+            )
+        self.assertEqual(before, account.__dict__)
+        account.apply_fill(
+            {**fill("fee", "SELL", qty=1, price=10), "execution_date": "2026-10-27"},
+            halt_store=self.halt,
+        )
+        self.assertEqual(account.positions["sh600000"], 99)
+
+    def test_new_fill_cannot_rewrite_past_but_old_duplicate_is_idempotent(self):
+        self.arm()
+        event = fill("first", "BUY")
+        self.account.apply_fill(event, halt_store=self.halt)
+        self.account.apply_fill(
+            {**fill("next", "BUY"), "execution_date": "2026-10-28"},
+            halt_store=self.halt,
+        )
+        before = copy.deepcopy(self.account.__dict__)
+        self.account.apply_fill(event, halt_store=self.halt)
+        with self.assertRaisesRegex(ValueError, "chronological"):
+            self.account.apply_fill(
+                {**fill("past", "BUY"), "execution_date": "2026-10-27"},
+                halt_store=self.halt,
+            )
+        self.assertEqual(before, self.account.__dict__)
+
+    def test_malformed_halt_history_never_arms_paper_account(self):
+        self.arm()
+        valid = self.halt.snapshot()
+        cases = [
+            {"halted": False, "history": []},
+            {**valid, "actor": ""},
+            {**valid, "halted": True},
+            {**valid, "history": [valid["history"][-1]]},
+            {
+                **valid,
+                "history": [{**valid["history"][0], "at": "bad"}, valid["history"][-1]],
+            },
+        ]
+        for malformed in cases:
+            with self.subTest(malformed=malformed):
+                self.halt.path.write_text(json.dumps(malformed))
+                with self.assertRaisesRegex(ValueError, "FAIL_CLOSED"):
+                    self.halt.assert_orders_allowed()
 
     def test_operational_halt_priority_before_risk(self):
         intents = [

@@ -13,7 +13,11 @@ fills consult halt first. In contrast the old datahub halt file is only
 legacy order-plan operations and research replay consumes frozen snapshots.
 
 `TradingPaperAccount` consumes the pure shared cost, board-lot, T+1, ledger
-event and risk contracts. It is an **in-memory state core** for testing, not a
+event and risk contracts. Acquisition-session lots prevent selling same-session
+buys; fresh fills must be chronological while old duplicates remain idempotent.
+A complete next projection is validated before account state is committed.
+Halt snapshots require an attributed, ordered history beginning with an engaged
+halt and ending in the current state. It is an **in-memory state core** for testing, not a
 durable authoritative account book. In particular it does not issue orders,
 observe broker acknowledgments, model live order state, reconcile with custody,
 or persist fills after process restarts. That work requires an explicit
