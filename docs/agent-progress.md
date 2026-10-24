@@ -29,6 +29,28 @@
 ```
 
 ## 进度记录
+### 2026-10-25 01:10 CST — research halt 配置 + 每日 ETF/候选评分启用
+
+- 状态：进行中（数据、评分、halt 已就绪；只剩开窗授权）
+- 已完成：
+  - halt：`CAIFUBAO_STRATEGY_HALT_FILE` 已指向持久化卷；完成
+    `engage → status → resume` 全链路验证，最终 OFF、历史 2 条。
+  - 启用 research `caifubao-datahub-etf-daily`（18:40）与
+    `caifubao-datahub-scoring-shadow`（19:00，`flip_wide_shadow_v1`）；
+    `caifubao-datahub-paper-readiness` 仍 suspend，等开窗后再启用。
+  - readiness 复跑 **DEGRADED**：quote/fq/scoring/signal/halt/ETF 全 PASS，
+    仅 `forward_window`（尚未开窗）WARN。
+- 基础设施发现：
+  - `main` 的 datahub-publish 仍是旧 `context: ./datahub`；**不能单独向 main 发
+    workflow-only hotfix**——会触发旧 prod 镜像构建并自动部署 research，回滚现有
+    能力。应随下一次 develop→main release 一并修复；当前 develop 发布继续用
+    `workflow_dispatch --ref develop`。
+  - 私有部署 runner 仍无法完成 tailnet preflight（容器 `sudo` 受限）；本次升级用
+    受控 `kubectl set image`。
+  - 私有 overlay 尚未同步 datahub 镜像 tag 与新 CronJob/挂载，下一次私有部署
+    可能回滚镜像或移除调度；需私有仓库收口。
+- 下一步：下一交易日观察 18:40/19:00 自动运行与 readiness；开窗仍需单独授权。
+- 阻塞：开窗口令。
 ### 2026-10-25 00:55 CST — research 上线：ETF 数据 + #307 + readiness（DEGRADED）
 
 - 状态：进行中（数据/评分/ETF 已就绪；开窗与 halt 未授权）

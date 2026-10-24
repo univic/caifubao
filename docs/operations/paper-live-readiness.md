@@ -89,10 +89,22 @@ etf_market_data  WARN  尚无 ETF 数据
 | signal_freshness | PASS（2026-10-23） |
 | etf_market_data | PASS（2,329 只活跃 ETF，2,176 条当日行情 + FQ） |
 | forward_window | WARN（尚无 ACTIVE 窗口；未授权开窗） |
-| halt_switch | WARN（未配置 halt 文件路径） |
+| halt_switch | 当时 WARN（未配置 halt 文件路径；2026-10-25 已配置，见下） |
 
-因此“数据链/评分/ETF”已就绪；**只剩开窗与 halt 配置**，两者都需要单独授权。
-候选模型当前只补了 2026-10-23 一天评分，若要连续开窗必须先挂每日评分任务。
+因此“数据链/评分/ETF”已就绪；当时只剩开窗与 halt 配置。候选模型当时只补了
+2026-10-23 一天评分，连续开窗前必须先挂每日评分任务（已于 2026-10-25 启用）。
+
+### 2026-10-25 halt 与每日评分启用后的实测
+
+- 配置 `CAIFUBAO_STRATEGY_HALT_FILE` 指向持久化卷，并完成
+  `halt engage → status → resume` 全链路验证；最终状态 **OFF**，历史保留。
+- 启用 research 的 `caifubao-datahub-etf-daily`（18:40）与
+  `caifubao-datahub-scoring-shadow`（19:00，写 `flip_wide_shadow_v1`）；
+  `caifubao-datahub-paper-readiness` 仍暂停，开窗后再启用。
+- readiness 复跑仍为 **DEGRADED**，但只剩 `forward_window` 一个 WARN；
+  quote/fq/scoring/signal/halt/ETF 全部 PASS。
+- 下一交易日（2026-10-26）起 ETF 行情与候选评分会自动更新；首次自动运行后应检查
+  `datahub_job_runs` 与 readiness，确认 18:40/19:00 的调度确实按预期执行。
 
 ## 3. 与已合并 #307 的关系（重要）
 
@@ -175,11 +187,15 @@ trading paper/LIVE 部署；随后合并的 #308/#309 分别补了 trading 侧�
   - `caifubao-datahub-etf-daily`（18:40）
   - `caifubao-datahub-scoring-shadow`（19:00，可选；只写指定候选模型）
   - `caifubao-datahub-paper-readiness`（19:30，只读）
-  私有 overlay 按 one-writer 规则启用；启用前先手工验证一天。注意：ETF daily 与
-  shadow scoring 是本次新增的公开模板，**私有 overlay 里还没有对应的 suspend
-  开关**——启用时需先在私有仓库补 `DATAHUB_ETF_DAILY_SUSPEND` /
-  `DATAHUB_SCORING_SHADOW_SUSPEND` 一类的 patch；在那之前它们始终保持模板里的
-  `suspend: true`。
+  私有 overlay 按 one-writer 规则启用；启用前先手工验证一天。
+- **2026-10-25 research 实际状态**：`etf-daily` 与 `scoring-shadow` 已直接 patch
+  为 `suspend: false` 并由调度器接管；`paper-readiness` 仍为 `suspend: true`。
+  注意这是**直接集群状态**，私有 overlay 尚未同步：
+  - 私有 overlay 还缺这两个新 CronJob 的 suspend 开关与清单，后续 18:40/19:00
+    的调度不会随私有仓库自动重建；
+  - 私有 overlay 的 datahub 目标镜像 tag 仍指向旧 tag，下一次私有部署会把 research
+    回滚到旧镜像，除非同步成当前 `sha-<commit>`。
+  这两项必须在私有仓库收口，否则“集群已启用”不等于“可重复部署”。
 - readiness 只读：它不会开窗、不会写 run、不会改状态，也不计入 120 日证据。
 
 ## 8. “运维授权”具体指什么
