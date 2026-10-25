@@ -58,7 +58,11 @@ def test_cash_receivable_offsets_ex_date_raw_price_drop_until_payment():
     kinds = [event["type"] for event in events]
     assert kinds.count("DIVIDEND_ENTITLEMENT") == 1
     assert kinds.count("DIVIDEND_SETTLEMENT") == 1
-    assert all(event["source_domain"] == "research" for event in events if event["type"] == "FILL")
+    assert all(
+        event["source_domain"] == "research"
+        for event in events
+        if event["type"] == "FILL"
+    )
     replay = ResearchSimulationLedger.rebuild(events, initial_cash=10_000)
     assert replay.cash == pytest.approx(5250)
     assert replay.receivables == {}
@@ -72,7 +76,9 @@ def test_ex_date_receivable_not_spendable_before_later_pay_date():
     assert "DIVIDEND_SETTLEMENT" not in [
         event["type"] for event in result["ledger_events"]
     ]
-    account = ResearchSimulationLedger.rebuild(result["ledger_events"], initial_cash=10000)
+    account = ResearchSimulationLedger.rebuild(
+        result["ledger_events"], initial_cash=10000
+    )
     assert account.cash == pytest.approx(5000)
     assert account.nav == pytest.approx(10000)
     assert sum(x["amount"] for x in account.receivables.values()) == pytest.approx(250)
@@ -88,7 +94,9 @@ def test_split_uses_record_date_quantity_before_ex_open_and_marks_raw_close():
     }
     result = _run(_action(cash_per_share=0, share_multiplier=2), prices=market)
     assert [p["nav"] for p in result["curve"]] == [10000, 10000, 10000]
-    ledger = ResearchSimulationLedger.rebuild(result["ledger_events"], initial_cash=10000)
+    ledger = ResearchSimulationLedger.rebuild(
+        result["ledger_events"], initial_cash=10000
+    )
     assert ledger.positions["sh600000"]["quantity"] == 1000
     assert ledger.positions["sh600000"]["cost_basis"] == pytest.approx(5000)
 
