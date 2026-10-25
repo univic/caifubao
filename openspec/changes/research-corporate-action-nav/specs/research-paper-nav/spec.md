@@ -2,11 +2,12 @@
 
 ### Requirement: Research NAV SHALL accrue distributions on ex-date but spend cash only on payable date
 
-An explicitly supplied complete corporate-action input and explicit daily
-valuation sessions SHALL apply a cash entitlement on ex-date based on held
-record-date quantity. NAV SHALL include the receivable before settlement,
-while available order cash SHALL increase only on or after payable date.
-Split events SHALL adjust actual share quantities before the ex-date open.
+The Research NAV engine SHALL apply supplied, explicitly dated corporate
+actions only alongside an explicit daily valuation calendar. It SHALL accrue
+cash entitlement on the ex-date using record-date holdings, include unpaid
+receivables in NAV while excluding them from spendable order cash, and move
+those receivables to cash no earlier than the payment date. It SHALL adjust
+held share quantities for splits before ex-date opening fills.
 
 #### Scenario: Ex-dividend raw-price drop
 
