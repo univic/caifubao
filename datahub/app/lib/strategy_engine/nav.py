@@ -18,6 +18,7 @@ universe (subset supplied by the caller).
 
 from __future__ import annotations
 
+import datetime
 import math
 
 from caifubao_contracts.friction import CostProfile
@@ -179,6 +180,7 @@ def simulate_paper_nav(
     board_lot: int | None = None,
     spec_hash: str | None = None,
     valuation_dates: list[str] | None = None,
+    corporate_actions: list[dict] | None = None,
     mode: str = "RESEARCH_SIMULATION",
 ) -> dict:
     """Simulate a paper portfolio over a rebalance schedule.
@@ -214,6 +216,76 @@ def simulate_paper_nav(
     else:
         sessions = schedule
 
+    # Corporate action application is opt-in until PIT sourcing and full
+    # universe/ETF coverage is certified. Never assume an absent action feed
+    # is proof that no distribution occurred.
+    actions_by_ex: dict[str, list[dict]] = {}
+    actions_by_payment: dict[str, list[dict]] = {}
+    if corporate_actions is not None:
+        if valuation_dates is None:
+            raise ValueError("corporate actions require explicit daily valuation dates")
+        days = sorted(valuation_dates)
+        seen_actions: set[tuple[str, str]] = set()
+        for action in corporate_actions:
+            if not isinstance(action, dict):
+                raise ValueError("corporate action must be a dictionary")
+            code = action.get("stock_code")
+            record = action.get("record_date")
+            ex_date = action.get("ex_date")
+            pay_date = action.get("pay_date")
+            if not all(isinstance(v, str) for v in (code, record, ex_date, pay_date)):
+                raise ValueError("corporate action needs stock_code and ISO dates")
+            try:
+                record_dt = datetime.date.fromisoformat(record)
+                ex_dt = datetime.date.fromisoformat(ex_date)
+                pay_dt = datetime.date.fromisoformat(pay_date)
+            except ValueError as exc:
+                raise ValueError("invalid corporate-action ISO date") from exc
+            if not (record_dt < ex_dt <= pay_dt):
+                raise ValueError("corporate action requires record < ex <= pay")
+            if (code, ex_date) in seen_actions:
+                raise ValueError("duplicate code/ex-date corporate action")
+            seen_actions.add((code, ex_date))
+            cash_per_share = action.get("cash_per_share", 0.0)
+            share_multiplier = action.get("share_multiplier", 1.0)
+            if (
+                not isinstance(cash_per_share, (int, float))
+                or isinstance(cash_per_share, bool)
+                or not math.isfinite(cash_per_share)
+                or cash_per_share < 0
+            ):
+                raise ValueError("cash_per_share must be finite and nonnegative")
+            if (
+                not isinstance(share_multiplier, (int, float))
+                or isinstance(share_multiplier, bool)
+                or not math.isfinite(share_multiplier)
+                or share_multiplier <= 0
+            ):
+                raise ValueError("share_multiplier must be finite and positive")
+            if ex_date > days[-1]:
+                continue  # outside this explicit projection horizon
+            if record not in days or ex_date not in days:
+                raise ValueError("record/ex action dates need valuation sessions")
+            if pay_date <= days[-1] and not any(d >= pay_date for d in days):
+                raise ValueError("cannot settle payable event without session")
+            stable_id = f"corporate:{code}:{ex_date}"
+            normalized = {
+                "stock_code": code,
+                "record_date": record,
+                "ex_date": ex_date,
+                "pay_date": pay_date,
+                "cash_per_share": float(cash_per_share),
+                "share_multiplier": float(share_multiplier),
+                "event_id": stable_id,
+            }
+            actions_by_ex.setdefault(ex_date, []).append(normalized)
+            if cash_per_share > 0:
+                settlement_session = next((d for d in days if d >= pay_date), None)
+                if settlement_session is not None:
+                    actions_by_payment.setdefault(settlement_session, []).append(
+                        normalized
+                    )
+
     cfg = dict(PAPER_EXECUTION)
     if execution:
         cfg.update(execution)
@@ -232,6 +304,8 @@ def simulate_paper_nav(
     # Target weights never create holdings: every position and cash mutation
     # is recorded as a fill event in a research-only, rebuildable ledger.
     ledger = ResearchSimulationLedger(initial_cash=start_nav)
+    record_holdings: dict[str, dict[str, int]] = {}
+    entitled: set[str] = set()
 
     def _mark(date) -> float:
         marks = {}
@@ -336,6 +410,51 @@ def simulate_paper_nav(
         )
 
     for decision in sessions:
+        date = decision["date"]
+        # On ex-date, recognize record-date shares before opening trades; on
+        # payable date transfer outstanding receivables to spendable cash.
+        for action in actions_by_ex.get(date, []):
+            code = action["stock_code"]
+            quantity = record_holdings.get(action["record_date"], {}).get(code, 0)
+            if quantity <= 0:
+                continue  # not held at the record-date close
+            current = ledger.positions.get(code)
+            if current is None or current["quantity"] != quantity:
+                raise ValueError("corporate action position changed after record date")
+            if action["cash_per_share"] > 0:
+                ledger.apply(
+                    {
+                        "type": "DIVIDEND_ENTITLEMENT",
+                        "event_id": action["event_id"] + ":entitlement",
+                        "stock_code": code,
+                        "quantity": quantity,
+                        "cash_per_share": action["cash_per_share"],
+                        "record_date": action["record_date"],
+                        "ex_date": date,
+                        "pay_date": action["pay_date"],
+                    }
+                )
+                entitled.add(action["event_id"])
+            if action["share_multiplier"] != 1.0:
+                ledger.apply(
+                    {
+                        "type": "SPLIT",
+                        "event_id": action["event_id"] + ":split",
+                        "stock_code": code,
+                        "share_multiplier": action["share_multiplier"],
+                    }
+                )
+        for action in actions_by_payment.get(date, []):
+            if action["event_id"] not in entitled:
+                continue
+            ledger.apply(
+                {
+                    "type": "DIVIDEND_SETTLEMENT",
+                    "event_id": action["event_id"] + ":settlement",
+                    "entitlement_id": action["event_id"] + ":entitlement",
+                    "pay_date": date,
+                }
+            )
         # Ledger is authoritative across sessions. The legacy-shaped scratch
         # book exists only for this session's sizing and NAV golden parity;
         # it is rebuilt from the event projection before every decision.
@@ -372,6 +491,10 @@ def simulate_paper_nav(
             if date in benchmark:
                 point["benchmark_return"] = round(benchmark[date], 6)
             curve.append(point)
+            record_holdings[date] = {
+                code: position["quantity"]
+                for code, position in ledger.positions.items()
+            }
             continue
         targets = decision.get("holdings") or {}
         target_codes = set(targets)
@@ -519,6 +642,9 @@ def simulate_paper_nav(
         if date in benchmark:
             point["benchmark_return"] = round(benchmark[date], 6)
         curve.append(point)
+        record_holdings[date] = {
+            code: position["quantity"] for code, position in ledger.positions.items()
+        }
 
     return {
         "initial_nav": round(start_nav, 2),
