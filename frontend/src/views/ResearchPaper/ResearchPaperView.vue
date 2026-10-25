@@ -179,7 +179,7 @@ let requestId = 0
 
 const latest = computed<ResearchPaperNavPoint | null>(() => {
   const points = overview.value?.curve || []
-  return points.at(-1) ?? null
+  return points.length ? (points[points.length - 1] ?? null) : null
 })
 
 function money(value: number | null | undefined) {
