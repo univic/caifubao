@@ -60,13 +60,18 @@ jobs:
           username: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
           password: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
 
+      - name: Resolve standard immutable source image tag
+        id: tag
+        run: |
+          echo "value=sha-${RESEARCH_SOURCE_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
       - name: Publish immutable image only
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./datahub/Dockerfile
           push: true
-          tags: ${{ secrets.CONTAINER_REGISTRY_HOST }}/${{ secrets.CONTAINER_REGISTRY_NAMESPACE }}/caifubao-datahub:sha-${{ env.RESEARCH_SOURCE_SHA }}
+          tags: ${{ secrets.CONTAINER_REGISTRY_HOST }}/${{ secrets.CONTAINER_REGISTRY_NAMESPACE }}/caifubao-datahub:${{ steps.tag.outputs.value }}
           build-args: |
             CAIFUBAO_BUILD_REVISION=${{ env.RESEARCH_SOURCE_SHA }}
 
