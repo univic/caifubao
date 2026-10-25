@@ -129,7 +129,7 @@
       </div>
     </template>
 
-    <el-dialog v-model="decisionVisible" title="策略决策详情 · 只读" width="680px">
+    <el-dialog v-model="decisionVisible" title="策略决策详情 · 只读" width="min(980px, 96vw)">
       <template v-if="decision">
         <p>决策日 {{ decision.date }} · 计划执行日 {{ decision.execution_date || '--' }}</p>
         <p>证据 {{ decision.evidence_kind }} · 哈希类型 {{ decision.hash_kind }}</p>
@@ -144,7 +144,45 @@
         </el-table>
         <h3>调仓差异</h3>
         <pre class="json-block">{{ JSON.stringify(decision.rebalance, null, 2) }}</pre>
-        <el-alert type="warning" :closable="false" title="此决策没有已关联的成交/风险事件；不得把目标持仓视为已成交。" />
+        <h3>研究模拟执行溯源</h3>
+        <p v-if="trace?.artifact_hash">不可变模拟工件 SHA-256：<code>{{ trace.artifact_hash }}</code></p>
+        <el-alert
+          :type="trace?.status === 'LINKED_SIMULATION' ? 'info' : 'warning'"
+          :closable="false"
+          :title="traceStatusLabel"
+          :description="trace?.explanation || '缺少可验证工件'"
+        />
+        <template v-if="trace?.status === 'LINKED_SIMULATION'">
+          <p>以下均为 Research 模拟事件，**不是券商订单或 Trading Paper 成交**。</p>
+          <h3>模拟成交（{{ trace.fills.length }} 笔）</h3>
+          <el-table :data="trace.fills" size="small" empty-text="此信号没有明确关联的模拟成交">
+            <el-table-column prop="stock_code" label="代码" min-width="115" />
+            <el-table-column prop="side" label="方向" width="75" />
+            <el-table-column prop="quantity" label="股数" width="90" />
+            <el-table-column prop="price" label="模拟成交价" width="105" />
+            <el-table-column label="佣金" width="90">
+              <template #default="{ row }">{{ money(row.fees?.commission) }}</template>
+            </el-table-column>
+            <el-table-column prop="fill_id" label="模拟成交 ID" min-width="170" />
+          </el-table>
+          <h3>受阻委托（{{ trace.rejections.length }} 笔）</h3>
+          <el-table :data="trace.rejections" size="small" empty-text="没有明确关联的拒单事件">
+            <el-table-column prop="stock_code" label="代码" min-width="130" />
+            <el-table-column prop="side" label="方向" width="80" />
+            <el-table-column prop="reason_code" label="研究风控／交易受阻原因" min-width="180" />
+            <el-table-column prop="order_id" label="模拟委托 ID" min-width="170" />
+          </el-table>
+          <h3>执行日账本事件（{{ trace.session_events.length }} 项）</h3>
+          <el-table :data="trace.session_events" size="small" empty-text="无可归属到执行日的账本事件">
+            <el-table-column prop="type" label="事件" min-width="140" />
+            <el-table-column prop="stock_code" label="代码" min-width="125" />
+            <el-table-column prop="event_id" label="事件 ID" min-width="210" />
+          </el-table>
+          <p v-if="trace.undated_corporate_events" class="warning">
+            工件还包含 {{ trace.undated_corporate_events }} 项缺少生效日期的送转事件，未强行归入本次决策。
+          </p>
+          <p v-if="trace.truncated" class="warning">单类事件超过 100 条，结果已截断；此页面不提供完整审计导出。</p>
+        </template>
       </template>
       <template #footer>
         <el-button @click="decisionVisible = false">关闭</el-button>
@@ -163,7 +201,8 @@ import {
   type ResearchPaperCohort,
   type ResearchPaperDecision,
   type ResearchPaperOverview,
-  type ResearchPaperNavPoint
+  type ResearchPaperNavPoint,
+  type ResearchSimulationTrace
 } from '@/api/researchPaper'
 
 const loading = ref(false)
@@ -172,6 +211,15 @@ const cohorts = ref<ResearchPaperCohort[]>([])
 const selected = ref('')
 const overview = ref<ResearchPaperOverview | null>(null)
 const decision = ref<ResearchPaperDecision | null>(null)
+const trace = ref<ResearchSimulationTrace | null>(null)
+const traceStatusLabel = computed(() => {
+  switch (trace.value?.status) {
+    case 'LINKED_SIMULATION': return '已验证研究模拟工件，但不代表真实成交或已核验 NAV'
+    case 'AMBIGUOUS_ARTIFACT': return '发现重叠工件：拒绝挑选最新记录冒充权威'
+    case 'INVALID_PROVENANCE': return '模拟工件哈希／决策归属校验失败，已拒绝事件展示'
+    default: return '暂未关联可验证的研究模拟成交／风险事件'
+  }
+})
 const decisionVisible = ref(false)
 const chartEl = ref<HTMLElement | null>(null)
 let chart: echarts.ECharts | null = null
@@ -289,7 +337,9 @@ async function openDecision(row: ResearchPaperDecision) {
   const item = cohorts.value[Number(selected.value)]
   if (!item) return
   try {
-    decision.value = await getResearchPaperDecision(item, row.date)
+    const details = await getResearchPaperDecision(item, row.date)
+    decision.value = details.decision
+    trace.value = details.trace
     decisionVisible.value = true
   } catch {
     errorMessage.value = '决策详情读取失败'
