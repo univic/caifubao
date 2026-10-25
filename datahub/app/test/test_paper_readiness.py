@@ -156,7 +156,6 @@ def test_evaluate_warns_when_halt_file_is_missing():
     assert check["detail"]["state_verified"] is False
 
 
-
 def test_readiness_rejects_malformed_halt_state():
     for state in ({}, {"halted": 0}, {"halted": "false"}):
         report = paper_readiness.evaluate(
