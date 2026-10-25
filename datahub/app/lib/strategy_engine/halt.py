@@ -94,7 +94,6 @@ def read_halt_state(path: str | None = None) -> dict:
     return state
 
 
-
 def assert_persisted_forward_halt_off(path: str | None = None) -> None:
     """FORWARD-only gate: missing/unreadable halt state is never default OFF.
 
@@ -122,7 +121,6 @@ def assert_persisted_forward_halt_off(path: str | None = None) -> None:
         raise ValueError("FORWARD halt state requires an explicit boolean")
     if state["halted"]:
         raise HaltError("FORWARD writer refused: persistent halt is engaged")
-
 
 
 def _write_state(path: str, state: dict) -> None:
