@@ -268,6 +268,13 @@ def _halt_check(inputs: ReadinessInputs) -> dict:
             {"path_configured": True, "state_verified": False},
         )
     state = inputs.halt_state
+    if not isinstance(state, dict) or type(state.get("halted")) is not bool:
+        return _check(
+            "halt_switch",
+            "WARN",
+            "halt state is malformed; verify the durable halt file",
+            {"path_configured": True, "state_verified": False},
+        )
     detail = {
         "path_configured": True,
         "halted": bool(state.get("halted")),
@@ -469,7 +476,10 @@ def load_inputs(
     if inputs.halt_path and os.path.exists(inputs.halt_path):
         try:
             with open(inputs.halt_path, encoding="utf-8") as handle:
-                inputs.halt_state = json.load(handle)
+                state = json.load(handle)
+            if not isinstance(state, dict) or type(state.get("halted")) is not bool:
+                raise ValueError("halted must be an explicit boolean")
+            inputs.halt_state = state
         except (OSError, ValueError):
             inputs.halt_state = {"halted": True, "reason": "unreadable halt file"}
 
