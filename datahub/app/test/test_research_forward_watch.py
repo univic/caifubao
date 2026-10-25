@@ -76,7 +76,10 @@ def test_replay_and_wrong_spec_never_count_as_forward_evidence():
 def test_matching_job_success_is_reported_but_not_required_for_manual_smoke():
     result = _check(
         job_runs=[
-            {"status": "SUCCESS", "summary": {"target": "2026-10-27", "config_hash": "abc123"}}
+            {
+                "status": "SUCCESS",
+                "summary": {"target": "2026-10-27", "config_hash": "abc123"},
+            }
         ]
     )
     assert result["automated_job_success_today"] is True
