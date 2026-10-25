@@ -483,7 +483,12 @@ jobs:
       # spec-gated change is created — that change MUST include a proposal.md
       # (validate silently skips changes without one).
       - name: Validate OpenSpec changes
-        run: openspec validate --all --strict
+        run: |
+          if ! openspec validate --all --strict; then
+            # Print per-change diagnostics instead of only the --all summary.
+            openspec validate research-corporate-action-nav --strict || true
+            exit 1
+          fi
 
   required-checks:
     name: Required Checks
