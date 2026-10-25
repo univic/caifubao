@@ -42,7 +42,11 @@ def evaluate_forward_gap(
     today = now.astimezone(BEIJING).date()
     sessions = sorted({_date(s) for s in calendar})
     if not sessions or max(sessions) <= today:
-        return {"healthy": False, "status": "CALENDAR_MISSING_FUTURE", "date": str(today)}
+        return {
+            "healthy": False,
+            "status": "CALENDAR_MISSING_FUTURE",
+            "date": str(today),
+        }
     # Mon-Fri scheduled cron may hit an exchange holiday. Nothing is due.
     if today not in sessions:
         return {"healthy": True, "status": "NON_TRADING_DAY", "date": str(today)}
@@ -54,7 +58,11 @@ def evaluate_forward_gap(
     if start_date > today:
         return {"healthy": False, "status": "FUTURE_WINDOW", "date": str(today)}
     if window.get("hash_kind") != "spec" or not window.get("config_hash"):
-        return {"healthy": False, "status": "INVALID_WINDOW_IDENTITY", "date": str(today)}
+        return {
+            "healthy": False,
+            "status": "INVALID_WINDOW_IDENTITY",
+            "date": str(today),
+        }
     expected = [date for date in sessions if start_date <= date <= today]
     seen: set[dt.date] = set()
     invalid = 0
