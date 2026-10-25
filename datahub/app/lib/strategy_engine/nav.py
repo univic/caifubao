@@ -235,7 +235,9 @@ def simulate_paper_nav(
 
     def _mark(date) -> float:
         marks = {}
-        legacy_total = cash
+        legacy_total = cash + sum(
+            item["amount"] for item in ledger.receivables.values()
+        )
         for code, pos in positions.items():
             quote = (prices.get(code) or {}).get(date)
             if _tradable(quote) and _valid_price(quote.close):
@@ -375,7 +377,9 @@ def simulate_paper_nav(
         target_codes = set(targets)
         # Only information observable at execution is available for sizing.
         # Do not mutate the prior close carried for missing/suspended quotes.
-        total_before = cash
+        total_before = cash + sum(
+            item["amount"] for item in ledger.receivables.values()
+        )
         for code, pos in positions.items():
             quote = (prices.get(code) or {}).get(date)
             # A mark is not a fill: a limit-locked session still marks to the
