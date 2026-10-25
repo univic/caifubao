@@ -58,8 +58,8 @@ def _iso(value, name):
 
 def _nonnegative(row, key):
     raw = row.get(key)
-    if raw is None:
-        raise ValueError(f"{key} missing: cannot silently substitute zero")
+    if raw is None or isinstance(raw, bool):
+        raise ValueError(f"{key} missing or boolean: cannot substitute a numeric zero")
     try:
         value = float(raw)
     except (ValueError, TypeError):
@@ -136,7 +136,6 @@ def capture_replay_inventory(*, pro, codes, from_date, to_date, as_of, source="t
     failures = []
     for code in sorted(codes):
         ts_code = to_tushare_ts_code(code)
-        timestamp = datetime.datetime.now(datetime.UTC).isoformat()
         try:
             frame = pro.dividend(ts_code=ts_code, fields=DIVIDEND_FIELDS)
             if frame is None:
@@ -156,7 +155,7 @@ def capture_replay_inventory(*, pro, codes, from_date, to_date, as_of, source="t
                 {
                     "code": code,
                     "provider_code": ts_code,
-                    "queried_at": timestamp,
+                    "queried_at": datetime.datetime.now(datetime.UTC).isoformat(),
                     "status": "SUCCESS",
                     "raw_rows": len(batch),
                     "included_events": len(events),
