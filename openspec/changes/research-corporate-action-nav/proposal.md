@@ -16,7 +16,7 @@ independent ledger NAV parity assertions and rebuildability.
 
 ## Capabilities
 
-### Modified Capabilities
+### New Capabilities
 
 - research-paper-nav: cash dividend accrual and split integration with
   realistic cash timing and explicit valuation sessions.
