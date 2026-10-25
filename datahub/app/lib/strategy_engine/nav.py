@@ -178,6 +178,7 @@ def simulate_paper_nav(
     initial_nav: float | None = None,
     board_lot: int | None = None,
     spec_hash: str | None = None,
+    valuation_dates: list[str] | None = None,
     mode: str = "RESEARCH_SIMULATION",
 ) -> dict:
     """Simulate a paper portfolio over a rebalance schedule.
@@ -191,6 +192,27 @@ def simulate_paper_nav(
     require_research_mode(mode)
     if not schedule:
         raise ValueError("schedule must contain at least one rebalance decision")
+    # Explicit valuation sessions are an opt-in research projection. The old
+    # schedule-only path preserves existing curve/evidence behaviour.
+    if valuation_dates is not None:
+        dates = [item["date"] for item in schedule]
+        if len(set(dates)) != len(dates):
+            raise ValueError("duplicate rebalance execution date")
+        if not valuation_dates or len(set(valuation_dates)) != len(valuation_dates):
+            raise ValueError("valuation_dates must be nonempty and unique")
+        if not set(dates).issubset(valuation_dates):
+            raise ValueError("valuation_dates must include every rebalance date")
+        if any(day < min(dates) for day in valuation_dates):
+            raise ValueError("valuation dates cannot precede first rebalance")
+        # Preserve the date's actual decision unchanged; non-rebalance dates
+        # are explicit MARK-only sessions, never empty-target SELL commands.
+        by_date = {item["date"]: item for item in schedule}
+        sessions = [
+            by_date.get(day, {"date": day, "_mark_only": True})
+            for day in sorted(valuation_dates)
+        ]
+    else:
+        sessions = schedule
 
     cfg = dict(PAPER_EXECUTION)
     if execution:
@@ -213,7 +235,9 @@ def simulate_paper_nav(
 
     def _mark(date) -> float:
         marks = {}
-        legacy_total = cash
+        legacy_total = cash + sum(
+            item["amount"] for item in ledger.receivables.values()
+        )
         for code, pos in positions.items():
             quote = (prices.get(code) or {}).get(date)
             if _tradable(quote) and _valid_price(quote.close):
@@ -311,7 +335,7 @@ def simulate_paper_nav(
             }
         )
 
-    for decision in schedule:
+    for decision in sessions:
         # Ledger is authoritative across sessions. The legacy-shaped scratch
         # book exists only for this session's sizing and NAV golden parity;
         # it is rebuilt from the event projection before every decision.
@@ -324,11 +348,38 @@ def simulate_paper_nav(
             for code, position in ledger.positions.items()
         }
         date = decision["date"]
+        if decision.get("_mark_only"):
+            # No fills on valuation-only dates. Carry actual holdings, mark
+            # with today's observed close and explicitly surface missing marks.
+            nav = _mark(date)
+            prior = curve[-1]["nav"] if curve else start_nav
+            daily_return = (nav / prior - 1.0) if prior else None
+            peak = max(peak, nav)
+            point = {
+                "date": date,
+                "nav": round(nav, 2),
+                "daily_return": (
+                    round(daily_return, 6) if daily_return is not None else None
+                ),
+                "turnover": 0.0,
+                "drawdown": round(nav / peak - 1.0, 6) if peak else None,
+                "positions_count": len(ledger.positions),
+                "stale_positions_count": sum(
+                    bool(p["stale"]) for p in ledger.positions.values()
+                ),
+                "valuation_only": True,
+            }
+            if date in benchmark:
+                point["benchmark_return"] = round(benchmark[date], 6)
+            curve.append(point)
+            continue
         targets = decision.get("holdings") or {}
         target_codes = set(targets)
         # Only information observable at execution is available for sizing.
         # Do not mutate the prior close carried for missing/suspended quotes.
-        total_before = cash
+        total_before = cash + sum(
+            item["amount"] for item in ledger.receivables.values()
+        )
         for code, pos in positions.items():
             quote = (prices.get(code) or {}).get(date)
             # A mark is not a fill: a limit-locked session still marks to the
@@ -460,6 +511,11 @@ def simulate_paper_nav(
             "drawdown": round(drawdown, 6) if drawdown is not None else None,
             "positions_count": len(positions),
         }
+        if valuation_dates is not None:
+            point["stale_positions_count"] = sum(
+                bool(p["stale"]) for p in ledger.positions.values()
+            )
+            point["valuation_only"] = False
         if date in benchmark:
             point["benchmark_return"] = round(benchmark[date], 6)
         curve.append(point)
