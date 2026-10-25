@@ -492,7 +492,8 @@ def simulate_paper_nav(
                 point["benchmark_return"] = round(benchmark[date], 6)
             curve.append(point)
             record_holdings[date] = {
-                code: position["quantity"] for code, position in ledger.positions.items()
+                code: position["quantity"]
+                for code, position in ledger.positions.items()
             }
             continue
         targets = decision.get("holdings") or {}
