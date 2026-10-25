@@ -211,3 +211,62 @@ def test_identities_reports_distinct_pinned_cohorts(app, client, monkeypatch):
     assert len(body["items"]) == 1
     assert body["items"][0]["config_hash"] == "hash123"
     assert body["items"][0]["latest_date"] == "2026-10-26"
+
+
+def test_detail_attribution_uses_only_pinned_artifact_and_bounded_queries(
+    app, client, monkeypatch
+):
+    from app.lib.research_paper_lineage import _digest
+
+    event = {
+        "type": "FILL",
+        "event_id": "fill-1",
+        "fill_id": "fill-1",
+        "order_id": "order-1",
+        "decision_date": "2026-10-23",
+        "execution_date": "2026-10-26",
+        "source_domain": "research",
+        "account_id": "research-simulation",
+        "spec_hash": "hash123",
+        "stock_code": "sh600000",
+        "side": "BUY",
+        "quantity": 100,
+        "price": 10,
+    }
+    payload = {
+        "schema_version": "research-simulation-v1",
+        "hash_kind": "spec",
+        "config_hash": "hash123",
+        "run_dates": ["2026-10-23"],
+        "schedule": [
+            {"date": "2026-10-26", "decision_date": "2026-10-23"}
+        ],
+        "events": [event],
+    }
+    artifact = {
+        "strategy_name": "flip_wide_paper",
+        "hash_kind": "spec",
+        "config_hash": "hash123",
+        "artifact_hash": _digest(payload),
+        "execution_from": datetime.datetime(2026, 10, 26),
+        "execution_to": datetime.datetime(2026, 10, 26),
+        "payload": payload,
+    }
+    _setup(monkeypatch, runs=[_data()], artifacts=[artifact])
+    response = client.get(
+        "/api/strategy/paper/decisions/2026-10-23" + Q,
+        headers=_auth(app),
+    )
+    assert response.status_code == 200
+    trace = response.get_json()["data"]["trace"]
+    assert trace["status"] == "LINKED_SIMULATION"
+    assert trace["fills"][0]["quantity"] == 100
+    assert trace["artifact_hash"] == artifact["artifact_hash"]
+
+    other = {**artifact, "config_hash": "different"}
+    _setup(monkeypatch, runs=[_data()], artifacts=[other])
+    response = client.get(
+        "/api/strategy/paper/decisions/2026-10-23" + Q,
+        headers=_auth(app),
+    )
+    assert response.get_json()["data"]["trace"]["status"] == "NOT_LINKED"
