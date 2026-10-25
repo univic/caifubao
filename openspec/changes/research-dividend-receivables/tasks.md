@@ -6,7 +6,8 @@
 - [x] Add cash conservation, early settlement, sale-after-ex and rebuild tests.
 - [ ] CI checks; independent code review of corporate action accounting.
 - [ ] PIT authoritative stock/ETF corporate-action feed with durable identities, tax treatment, announced/record/ex/pay availability and completeness.
-- [ ] Rework the NAV simulator to apply corporate events on ALL affected trading days, including non-rebalance days.
+- [x] Add opt-in per-trading-session NAV marks (including non-rebalance days) with stale quote counters and no phantom rebalance fills.
+- [ ] Load/apply corporate actions to the NAV simulator at ex-date/pay-date in chronological order, using a verified record-date position snapshot.
 - [ ] Validate shares-split/bonus stock fractional/cash-in-lieu paths and delisting/write-offs.
 - [ ] Persist daily NAV/receivables provenance without changing immutable FORWARD plans.
 - [ ] Test missing data/holiday/cross-account contamination and daily replay/restore.
