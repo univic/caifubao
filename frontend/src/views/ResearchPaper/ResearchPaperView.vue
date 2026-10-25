@@ -153,7 +153,7 @@
           :description="trace?.explanation || '缺少可验证工件'"
         />
         <template v-if="trace?.status === 'LINKED_SIMULATION'">
-          <p>以下均为 Research 模拟事件，**不是券商订单或 Trading Paper 成交**。</p>
+          <p>以下均为 Research 模拟事件，不是券商订单，也不代表 Trading Paper 成交。</p>
           <h3>模拟成交（{{ trace.fills.length }} 笔）</h3>
           <el-table :data="trace.fills" size="small" empty-text="此信号没有明确关联的模拟成交">
             <el-table-column prop="stock_code" label="代码" min-width="115" />
