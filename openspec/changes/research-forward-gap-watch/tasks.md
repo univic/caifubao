@@ -1,0 +1,12 @@
+## Research Milestone A monitoring
+- [x] Implement read-only certified-window session reconciliation.
+- [x] Exclude REPLAY, old hash kind, incorrect config/model/horizon, non-completed records.
+- [x] Distinguish holiday, pre-monitor cutoff and missing future calendar from genuine gaps.
+- [x] Include an optional webhook notification and nonzero exit code for unhealthy states.
+- [x] Add suspended-by-default example CronJob scheduled after daily capture.
+- [x] Add focused pure tests.
+- [ ] Verify public CI, Ruff, OpenSpec and Kustomize.
+- [ ] Add private opt-in monitor switch and provision webhook only through approved secret configuration.
+- [ ] Verify Research live calendar, immutable image and actual certified window.
+- [ ] Prove alert routing, missing-job detection, restart/retry and supervised rollback.
+- [ ] Record first operational sample; no pretend-forward backfills.
