@@ -85,16 +85,29 @@ def evaluate_forward_gap(
     # A matching plan might come from an authorized manual smoke, so its
     # evidence is valid even without a corresponding automatic job record.
     # Surface the source separately rather than silently inventing a CronJob.
+    failed_job_attempts = sum(
+        1
+        for run in job_runs
+        if run.get("status") in ("FAILED", "DEGRADED")
+        and (run.get("summary") or {}).get("target") == today.isoformat()
+    )
     recent_job = any(
         run.get("status") == "SUCCESS"
         and (run.get("summary") or {}).get("target") == today.isoformat()
         and (run.get("summary") or {}).get("config_hash") == window["config_hash"]
         for run in job_runs
     )
-    healthy = not missing
+    healthy = not missing and not failed_job_attempts
+    status = (
+        "MISSING_FORWARD_SESSIONS"
+        if missing
+        else "CAPTURE_JOB_FAILURE"
+        if failed_job_attempts
+        else "COMPLETE"
+    )
     return {
         "healthy": healthy,
-        "status": "COMPLETE" if healthy else "MISSING_FORWARD_SESSIONS",
+        "status": status,
         "date": today.isoformat(),
         "model_version": window.get("model_version"),
         "horizon": window.get("horizon"),
@@ -105,6 +118,7 @@ def evaluate_forward_gap(
         "missing_dates": missing,
         "invalid_runs_excluded": invalid,
         "automated_job_success_today": recent_job,
+        "failed_capture_jobs_today": failed_job_attempts,
         "forward_target_sessions": 120,
     }
 
