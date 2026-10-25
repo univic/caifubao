@@ -24,7 +24,7 @@ jobs:
     env:
       # Independent, CI-green public develop source; NEVER checkout HEAD.
       # Pinned to merge commit of PR #329 before this workflow is merged.
-      RESEARCH_SOURCE_SHA: 3a1a8650bb520e2d97e1305d839bae194a755c55
+      RESEARCH_SOURCE_SHA: d9d8cfee2b7da32e210cbdbdad28c5c3b48c72ad
       IMAGE_NAME: caifubao-datahub
     steps:
       - name: Checkout pinned Research source
