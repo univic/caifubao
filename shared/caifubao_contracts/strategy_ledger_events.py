@@ -13,8 +13,14 @@ import math
 EVENT_SCHEMA_VERSION = 1
 EVENT_TYPES = frozenset(
     {
-        "FILL", "REJECTED", "MARK", "DIVIDEND", "SPLIT", "WRITE_OFF",
-        "DIVIDEND_ENTITLEMENT", "DIVIDEND_SETTLEMENT",
+        "FILL",
+        "REJECTED",
+        "MARK",
+        "DIVIDEND",
+        "SPLIT",
+        "WRITE_OFF",
+        "DIVIDEND_ENTITLEMENT",
+        "DIVIDEND_SETTLEMENT",
     }
 )
 
