@@ -79,6 +79,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Backtest/BacktestResultView.vue')
       },
       {
+        path: 'research-paper',
+        name: 'ResearchPaper',
+        component: () => import('@/views/ResearchPaper/ResearchPaperView.vue')
+      },
+      {
         path: 'strategy-replays',
         name: 'StrategyReplayList',
         component: () => import('@/views/StrategyReplay/StrategyReplayListView.vue')
