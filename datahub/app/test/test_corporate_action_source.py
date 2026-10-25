@@ -114,7 +114,7 @@ def test_manifest_incompleteness_rejected(change, problem):
     [
         ({"ann_date": "2026-10-24"}, "future-only"),
         ({"record_date": "2026-10-23"}, "future-only"),
-        ({"cash_per_share": float("inf")}, "invalid"),
+        ({"cash_per_share": -1.0}, "invalid"),
         ({"share_multiplier": 0}, "invalid"),
         ({"div_proc": "预案"}, "implemented"),
     ],
