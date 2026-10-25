@@ -29,6 +29,7 @@ from app.api.v1.decisions import decisions_bp
 from app.api.v1.factor_eval import factor_eval_bp
 from app.api.v1.score_strategies import score_strategies_bp
 from app.api.v1.strategy_replays import strategy_replays_bp
+from app.api.v1.research_paper import research_paper_bp
 
 
 def register_blueprint(app: Flask):
@@ -51,6 +52,7 @@ def register_blueprint(app: Flask):
     app.register_blueprint(factor_eval_bp)
     app.register_blueprint(score_strategies_bp)
     app.register_blueprint(strategy_replays_bp)
+    app.register_blueprint(research_paper_bp)
     register_openclaw_routes()
     app.register_blueprint(openclaw_bp)
     app.register_blueprint(system_bp)
