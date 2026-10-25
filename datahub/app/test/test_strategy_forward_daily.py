@@ -153,3 +153,40 @@ def test_missing_halt_check_fails():
     report = {"overall": "READY", "expected_session": TODAY.isoformat(), "checks": []}
     with pytest.raises(ValueError, match="quote_freshness"):
         _gate(report=report)
+
+def test_forward_halt_requires_real_persisted_file(tmp_path):
+    import json
+
+    from app.lib.strategy_engine.halt import (
+        HaltError,
+        assert_persisted_forward_halt_off,
+    )
+
+    state = tmp_path / "strategy-halt.json"
+    with pytest.raises(ValueError, match="missing"):
+        assert_persisted_forward_halt_off(str(state))
+    state.write_text(json.dumps({"halted": False}), encoding="utf-8")
+    assert_persisted_forward_halt_off(str(state)) is None
+    state.write_text(json.dumps({"halted": True}), encoding="utf-8")
+    with pytest.raises(HaltError, match="engaged"):
+        assert_persisted_forward_halt_off(str(state))
+    state.write_text(json.dumps({"halted": "false"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="explicit boolean"):
+        assert_persisted_forward_halt_off(str(state))
+    state.write_text("not-json", encoding="utf-8")
+    with pytest.raises(ValueError, match="cannot be parsed"):
+        assert_persisted_forward_halt_off(str(state))
+    state.write_text(json.dumps({"halted": False}), encoding="utf-8")
+    alias = tmp_path / "link.json"
+    alias.symlink_to(state)
+    with pytest.raises(ValueError, match="real regular file"):
+        assert_persisted_forward_halt_off(str(alias))
+
+
+def test_forward_halt_rejects_relative_file(tmp_path, monkeypatch):
+    from app.lib.strategy_engine.halt import assert_persisted_forward_halt_off
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "halt.json").write_text('{"halted":false}', encoding="utf-8")
+    with pytest.raises(ValueError, match="absolute"):
+        assert_persisted_forward_halt_off("halt.json")
