@@ -24,9 +24,7 @@ from app.lib.strategy_engine.corporate_action_publication import (  # noqa: E402
 
 
 def _canonical(value):
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def write_archive(root: Path, bundle: dict) -> Path:
@@ -60,15 +58,20 @@ def write_archive(root: Path, bundle: dict) -> Path:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--codes-file", required=True, help="UTF-8, one stock code per line")
-    parser.add_argument("--output-dir", required=True, help="Offline immutable archive parent")
+    parser.add_argument(
+        "--codes-file", required=True, help="UTF-8, one stock code per line"
+    )
+    parser.add_argument(
+        "--output-dir", required=True, help="Offline immutable archive parent"
+    )
     parser.add_argument("--from-date", required=True, help="YYYY-MM-DD")
     parser.add_argument("--to-date", required=True, help="YYYY-MM-DD")
     parser.add_argument("--as-of", required=True, help="YYYY-MM-DD")
     args = parser.parse_args(argv)
 
     codes = [
-        c.strip() for c in Path(args.codes_file).read_text(encoding="utf-8").splitlines()
+        c.strip()
+        for c in Path(args.codes_file).read_text(encoding="utf-8").splitlines()
         if c.strip()
     ]
     token = os.environ.get("TUSHARE_TOKEN")
