@@ -258,6 +258,7 @@ def test_detail_attribution_uses_only_pinned_artifact_and_bounded_queries(
     assert response.status_code == 200
     trace = response.get_json()["data"]["trace"]
     assert trace["status"] == "LINKED_SIMULATION"
+    assert response.get_json()["data"]["decision"]["execution_trace"] == "LINKED_SIMULATION"
     assert trace["fills"][0]["quantity"] == 100
     assert trace["artifact_hash"] == artifact["artifact_hash"]
 
@@ -268,3 +269,4 @@ def test_detail_attribution_uses_only_pinned_artifact_and_bounded_queries(
         headers=_auth(app),
     )
     assert response.get_json()["data"]["trace"]["status"] == "NOT_LINKED"
+    assert response.get_json()["data"]["decision"]["execution_trace"] == "NOT_LINKED"
