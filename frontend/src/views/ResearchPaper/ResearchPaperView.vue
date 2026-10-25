@@ -179,7 +179,7 @@ let requestId = 0
 
 const latest = computed<ResearchPaperNavPoint | null>(() => {
   const points = overview.value?.curve || []
-  return points.length ? points[points.length - 1] : null
+  return points.at(-1) ?? null
 })
 
 function money(value: number | null | undefined) {
@@ -240,6 +240,7 @@ async function loadCohorts() {
   try {
     const list = await listResearchPaperCohorts()
     if (id !== requestId) return
+    const previous = cohorts.value[Number(selected.value)]
     cohorts.value = list
     if (!list.length) {
       overview.value = null
@@ -247,8 +248,8 @@ async function loadCohorts() {
       chart?.dispose()
       chart = null
     } else {
-      const oldKey = cohorts.value[Number(selected.value)]
-      selected.value = String(list.findIndex(item => keyFor(item) === keyFor(oldKey || list[0])))
+      const desiredKey = keyFor(previous || list[0]!)
+      selected.value = String(list.findIndex(item => keyFor(item) === desiredKey))
       if (selected.value === '-1') selected.value = '0'
       await loadOverview()
     }
