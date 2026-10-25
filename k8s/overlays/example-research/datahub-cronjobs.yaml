@@ -1192,3 +1192,79 @@ spec:
                 path: strategy.json
           imagePullSecrets:
           - name: ccr-secret
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: caifubao-datahub-research-forward-watch
+  labels:
+    app: caifubao-datahub
+    job.caifubao.io/type: research-forward-watch
+spec:
+  # Read-only, never creates/replaces a FORWARD record; runs after the 22:15
+  # capture slot. Leave suspended until the operator-certified window exists.
+  schedule: "10 23 * * 1-5"
+  timeZone: Asia/Shanghai
+  suspend: true
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 900
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app: caifubao-datahub
+            job.caifubao.io/type: research-forward-watch
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: research-forward-watch
+            image: caifubao-datahub:latest
+            imagePullPolicy: Always
+            command: ["python", "-m", "app.jobs.research_forward_watch"]
+            args:
+            - --model-version
+            - flip_wide_shadow_v1
+            - --horizon
+            - "20"
+            env:
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_HOST
+            - name: MONGODB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_PORT
+            - name: MONGODB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_NAME
+            - name: MONGODB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: MONGODB_USER
+            - name: MONGODB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: MONGODB_PASSWORD
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "200m"
+          imagePullSecrets:
+          - name: ccr-secret
