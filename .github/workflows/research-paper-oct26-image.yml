@@ -1,5 +1,7 @@
 name: Research Paper Oct 26 Immutable Image Build (no deploy)
 
+# Isolated image-only bridge from CI-green develop; no Kubernetes operations.
+
 on:
   push:
     branches: [main]
