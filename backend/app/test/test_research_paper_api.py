@@ -163,10 +163,13 @@ def test_bad_identity_never_performs_implicit_cross_strategy_scan(
         "?model_version=flip_wide_shadow_v1&horizon=7&config_hash=hash123",
         "?model_version=flip_wide_shadow_v1&horizon=20",
     ):
-        assert client.get(
-            "/api/strategy/paper/overview" + query,
-            headers=_auth(app),
-        ).status_code == 400
+        assert (
+            client.get(
+                "/api/strategy/paper/overview" + query,
+                headers=_auth(app),
+            ).status_code
+            == 400
+        )
 
 
 def test_decision_detail_exact_date_and_hash(app, client, monkeypatch):
@@ -176,19 +179,23 @@ def test_decision_detail_exact_date_and_hash(app, client, monkeypatch):
     )
     assert good.status_code == 200
     assert good.get_json()["data"]["decision"]["target_holdings"][0]["weight"] == 0.5
-    assert client.get(
-        "/api/strategy/paper/decisions/2026-10-24" + Q, headers=_auth(app)
-    ).status_code == 404
-    assert client.get(
-        "/api/strategy/paper/decisions/2026-10-99" + Q, headers=_auth(app)
-    ).status_code == 400
+    assert (
+        client.get(
+            "/api/strategy/paper/decisions/2026-10-24" + Q, headers=_auth(app)
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            "/api/strategy/paper/decisions/2026-10-99" + Q, headers=_auth(app)
+        ).status_code
+        == 400
+    )
 
 
 def test_identities_reports_distinct_pinned_cohorts(app, client, monkeypatch):
     _setup(monkeypatch, runs=[_data(), _data(date="2026-10-26")])
-    response = client.get(
-        "/api/strategy/paper/identities", headers=_auth(app)
-    )
+    response = client.get("/api/strategy/paper/identities", headers=_auth(app))
     body = response.get_json()["data"]
     assert len(body["items"]) == 1
     assert body["items"][0]["config_hash"] == "hash123"
