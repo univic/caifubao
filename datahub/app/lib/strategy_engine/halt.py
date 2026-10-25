@@ -94,6 +94,37 @@ def read_halt_state(path: str | None = None) -> dict:
     return state
 
 
+
+def assert_persisted_forward_halt_off(path: str | None = None) -> None:
+    """FORWARD-only gate: missing/unreadable halt state is never default OFF.
+
+    Legacy read_halt_state retains its default-OFF semantics for other
+    callers; a Research scheduled FORWARD write requires existing durable
+    state whose explicit boolean has been verified.
+    """
+    import stat
+
+    resolved = resolve_halt_path(path)
+    if not os.path.isabs(resolved):
+        raise ValueError("FORWARD halt file must have an absolute path")
+    try:
+        info = os.lstat(resolved)
+    except OSError:
+        raise ValueError("FORWARD halt file missing or unreadable") from None
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("FORWARD halt state must be a real regular file")
+    try:
+        with open(resolved, encoding="utf-8") as handle:
+            state = json.load(handle)
+    except (OSError, ValueError):
+        raise ValueError("FORWARD halt file cannot be parsed") from None
+    if not isinstance(state, dict) or type(state.get("halted")) is not bool:
+        raise ValueError("FORWARD halt state requires an explicit boolean")
+    if state["halted"]:
+        raise HaltError("FORWARD writer refused: persistent halt is engaged")
+
+
+
 def _write_state(path: str, state: dict) -> None:
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
