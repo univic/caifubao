@@ -16,6 +16,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 
 from app.lib.auth_decorators import block_service_tokens
+from app.lib.research_paper_lineage import inspect_research_trace
 
 logger = logging.getLogger(__name__)
 research_paper_bp = Blueprint(
@@ -262,6 +263,34 @@ def research_paper_overview():
     )
 
 
+def _simulation_candidates(db, run):
+    """Fetch at most two matching derivations to detect ambiguous provenance."""
+    execution = run.get("execution_date")
+    if not isinstance(execution, datetime.datetime):
+        return []
+    return list(
+        db["strategy_simulation_artifacts"]
+        .find(
+            {
+                "strategy_name": run.get("strategy_name"),
+                "config_hash": run.get("config_hash"),
+                "hash_kind": run.get("hash_kind") or "legacy",
+                "execution_from": {"$lte": execution},
+                "execution_to": {"$gte": execution},
+            },
+            {
+                "_id": 0,
+                "strategy_name": 1,
+                "config_hash": 1,
+                "hash_kind": 1,
+                "artifact_hash": 1,
+                "payload": 1,
+            },
+        )
+        .limit(2)
+    )
+
+
 @research_paper_bp.route("/decisions/<date>", methods=["GET"])
 @jwt_required()
 def research_paper_decision(date):
@@ -284,4 +313,15 @@ def research_paper_decision(date):
         return _fail("Failed to load research decision", 500)
     if row is None:
         return _fail("Research strategy decision not found", 404)
-    return _ok({"identity": identity, "decision": _run_projection(row)})
+    try:
+        candidates = _simulation_candidates(_db(), row)
+    except Exception:  # noqa: BLE001 - lineage DB failures must not suggest fills
+        logger.exception("Research artifact read failed for decision %s", date)
+        return _fail("Failed to verify research simulation lineage", 500)
+    return _ok(
+        {
+            "identity": identity,
+            "decision": _run_projection(row),
+            "trace": inspect_research_trace(row, candidates),
+        }
+    )
