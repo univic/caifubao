@@ -37,7 +37,7 @@ export interface ResearchPaperDecision {
   target_holdings: Array<{ stock_code: string; weight: number }>
   rebalance: Record<string, unknown>
   nav_snapshot: ResearchPaperNavPoint | null
-  execution_trace: 'NOT_LINKED'
+  execution_trace: ResearchSimulationTrace['status']
   accounting_status: 'UNVERIFIED'
 }
 
