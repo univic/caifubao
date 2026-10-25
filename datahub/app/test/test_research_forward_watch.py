@@ -85,7 +85,6 @@ def test_matching_job_success_is_reported_but_not_required_for_manual_smoke():
     assert result["automated_job_success_today"] is True
 
 
-
 def test_failed_capture_job_is_visible_even_if_operator_capture_succeeded():
     result = _check(
         job_runs=[
