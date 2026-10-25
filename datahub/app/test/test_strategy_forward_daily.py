@@ -154,6 +154,7 @@ def test_missing_halt_check_fails():
     with pytest.raises(ValueError, match="quote_freshness"):
         _gate(report=report)
 
+
 def test_forward_halt_requires_real_persisted_file(tmp_path):
     import json
 
