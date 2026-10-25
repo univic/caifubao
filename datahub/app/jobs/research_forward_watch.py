@@ -82,6 +82,7 @@ def evaluate_forward_gap(
             continue
         seen.add(run_date)
     missing = [date.isoformat() for date in expected if date not in seen]
+
     # A matching plan might come from an authorized manual smoke, so its
     # evidence is valid even without a corresponding automatic job record.
     # Surface the source separately rather than silently inventing a CronJob.
