@@ -318,10 +318,9 @@ def research_paper_decision(date):
     except Exception:  # noqa: BLE001 - lineage DB failures must not suggest fills
         logger.exception("Research artifact read failed for decision %s", date)
         return _fail("Failed to verify research simulation lineage", 500)
-    return _ok(
-        {
-            "identity": identity,
-            "decision": _run_projection(row),
-            "trace": inspect_research_trace(row, candidates),
-        }
-    )
+    trace = inspect_research_trace(row, candidates)
+    decision = _run_projection(row)
+    # The list endpoint has no event-link verification, so shows NOT_LINKED.
+    # The exact detail endpoint can truthfully report verified/failed lineage.
+    decision["execution_trace"] = trace["status"]
+    return _ok({"identity": identity, "decision": decision, "trace": trace})

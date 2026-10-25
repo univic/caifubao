@@ -107,8 +107,8 @@
           <el-table-column prop="execution_date" label="计划执行日" width="125" />
           <el-table-column label="证据" width="110">
             <template #default="{ row }">
-              <el-tag :type="row.evidence_kind === 'FORWARD' && overview.window ? 'success' : 'info'">
-                {{ row.evidence_kind }}
+              <el-tag :type="row.evidence_kind === 'FORWARD' && overview.window ? 'warning' : 'info'">
+                {{ row.evidence_kind === 'FORWARD' && overview.window ? 'FORWARD · 未认证' : row.evidence_kind }}
               </el-tag>
             </template>
           </el-table-column>
