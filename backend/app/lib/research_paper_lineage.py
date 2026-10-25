@@ -62,14 +62,32 @@ def _event_date(item: dict):
 
 def _snapshot_event(item: dict) -> dict:
     allowed = (
-        "type", "event_id", "order_id", "fill_id", "intent_id",
-        "stock_code", "side", "quantity", "price", "reference_price",
-        "fees", "reason_code", "execution_date", "decision_date", "as_of",
-        "ex_date", "pay_date", "record_date", "cash_per_share",
-        "share_multiplier", "entitlement_id",
+        "type",
+        "event_id",
+        "order_id",
+        "fill_id",
+        "intent_id",
+        "stock_code",
+        "side",
+        "quantity",
+        "price",
+        "reference_price",
+        "fees",
+        "reason_code",
+        "execution_date",
+        "decision_date",
+        "as_of",
+        "ex_date",
+        "pay_date",
+        "record_date",
+        "cash_per_share",
+        "share_multiplier",
+        "entitlement_id",
     )
     return {
-        key: (_date(item[key]) if key.endswith("_date") or key == "as_of" else item[key])
+        key: (
+            _date(item[key]) if key.endswith("_date") or key == "as_of" else item[key]
+        )
         for key in allowed
         if key in item
     }
@@ -101,7 +119,9 @@ def inspect_research_trace(run: dict, candidates: list[dict]) -> dict:
         return result
     if len(candidates) > 1:
         result["status"] = "AMBIGUOUS_ARTIFACT"
-        result["explanation"] = "Multiple overlapping derivations; no latest-wins selection."
+        result["explanation"] = (
+            "Multiple overlapping derivations; no latest-wins selection."
+        )
         return result
     if not candidates:
         return result
