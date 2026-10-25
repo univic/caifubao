@@ -273,3 +273,35 @@ This runner records plan-capture job statuses in \`datahub_job_runs\`, but
 research NAV's current dividend/split/distribution gap remains a blocking
 milestone-A accounting item, and automated NAV projection should be enabled
 only after the corresponding ledger reconciliation tests pass.
+
+
+
+## Milestone A: source-query receipts (offline REPLAY, never a forward NAV gate)
+
+The retrospective corporate-action archive can now record exactly which Tushare
+stock codes were queried successfully, including a verified empty response.
+It cannot establish when the vendor first made a historical event available,
+nor whether the latest action revisions were observable at the ex-date.
+Therefore this output is **always REPLAY**, rejected by the
+`research-corporate-actions-v1` FORWARD input gate, and must never be used to
+certify a forward session or to enable automated NAV materialization.
+
+For an explicitly authorized **offline, local research** run only:
+
+```bash
+# UTF-8 file: one internal stock code per line (sh600000, sz000001, ...)
+# TUSHARE_TOKEN is supplied securely outside of source control.
+python datahub/scripts/research_capture_corporate_actions.py \
+  --codes-file /path/to/codes.txt \
+  --from-date 2026-09-01 --to-date 2026-09-30 \
+  --as-of 2026-09-30 --output-dir /path/to/research-archives
+```
+
+A successful archive has a content-addressed directory containing
+`events.json` plus `manifest.json`. The manifest includes `covered_codes`,
+per-code `query_receipts`, `events_sha256`, `receipts_sha256`, and a
+`coverage_claim_status=UNVERIFIED_UPSTREAM` label. Any failed or null
+per-stock query, malformed implemented event or inconsistent action aborts
+the entire archive; a partial result is not published. Source availability
+and revision history, ETF distributions, ex/pay date security identity and
+real Research daily NAV parity remain independently blocking.
