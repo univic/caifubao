@@ -42,7 +42,16 @@ class Collection:
 
     @staticmethod
     def _matches(doc, filters):
-        return all(doc.get(k) == v for k, v in filters.items())
+        for key, value in filters.items():
+            actual = doc.get(key)
+            if isinstance(value, dict):
+                if "$lte" in value and not (actual <= value["$lte"]):
+                    return False
+                if "$gte" in value and not (actual >= value["$gte"]):
+                    return False
+            elif actual != value:
+                return False
+        return True
 
 
 def _data(date="2026-10-23", evidence_kind="FORWARD", hash_kind="spec"):
@@ -68,7 +77,7 @@ def _data(date="2026-10-23", evidence_kind="FORWARD", hash_kind="spec"):
     }
 
 
-def _setup(monkeypatch, *, runs, window=True):
+def _setup(monkeypatch, *, runs, window=True, artifacts=None):
     windows = (
         [
             {
@@ -86,6 +95,7 @@ def _setup(monkeypatch, *, runs, window=True):
     db = {
         "strategy_paper_runs": Collection(runs),
         "strategy_forward_windows": Collection(windows),
+        "strategy_simulation_artifacts": Collection(artifacts or []),
     }
     monkeypatch.setattr(api, "_db", lambda: db)
 
@@ -179,6 +189,7 @@ def test_decision_detail_exact_date_and_hash(app, client, monkeypatch):
     )
     assert good.status_code == 200
     assert good.get_json()["data"]["decision"]["target_holdings"][0]["weight"] == 0.5
+    assert good.get_json()["data"]["trace"]["status"] == "NOT_LINKED"
     assert (
         client.get(
             "/api/strategy/paper/decisions/2026-10-24" + Q, headers=_auth(app)
