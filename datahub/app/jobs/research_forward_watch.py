@@ -85,11 +85,20 @@ def evaluate_forward_gap(
     # A matching plan might come from an authorized manual smoke, so its
     # evidence is valid even without a corresponding automatic job record.
     # Surface the source separately rather than silently inventing a CronJob.
+    def _attempt_today(run: dict) -> bool:
+        if (run.get("summary") or {}).get("target") == today.isoformat():
+            return True
+        started_at = run.get("started_at")
+        if not isinstance(started_at, dt.datetime):
+            return False
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=dt.timezone.utc)
+        return started_at.astimezone(BEIJING).date() == today
+
     failed_job_attempts = sum(
         1
         for run in job_runs
-        if run.get("status") in ("FAILED", "DEGRADED")
-        and (run.get("summary") or {}).get("target") == today.isoformat()
+        if run.get("status") in ("FAILED", "DEGRADED") and _attempt_today(run)
     )
     recent_job = any(
         run.get("status") == "SUCCESS"
@@ -170,7 +179,7 @@ def load_report(*, model_version: str, horizon: int) -> dict:
         hour=0, minute=0, second=0, microsecond=0
     )
     job_runs = [
-        {"status": x.status, "summary": x.summary}
+        {"status": x.status, "summary": x.summary, "started_at": x.started_at}
         for x in job_run_helper.DatahubJobRun.objects(
             job_name=WATCHED_JOB_NAME,
             started_at__gte=(utc_today - dt.timedelta(days=1)).replace(tzinfo=None),
