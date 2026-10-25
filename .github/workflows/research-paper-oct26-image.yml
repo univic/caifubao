@@ -1,0 +1,83 @@
+name: Research Paper Oct 26 Immutable Image Build (no deploy)
+
+# Isolated image-only bridge from CI-green develop; no Kubernetes operations.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/research-paper-oct26-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oct26-research-only-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    name: Publish pinned Research Datahub image, without deployment
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 75
+    env:
+      # Independent, CI-green public develop source; NEVER checkout HEAD.
+      # Pinned to merge commit of PR #329 before this workflow is merged.
+      RESEARCH_SOURCE_SHA: d9d8cfee2b7da32e210cbdbdad28c5c3b48c72ad
+      IMAGE_NAME: caifubao-datahub
+    steps:
+      - name: Checkout pinned Research source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RESEARCH_SOURCE_SHA }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check immutable source and paper-only image contract
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$RESEARCH_SOURCE_SHA" ]]
+          test -f datahub/app/jobs/strategy_forward_daily.py
+          test -f datahub/app/jobs/research_forward_watch.py
+          test -f datahub/app/lib/strategy_engine/halt.py
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path("datahub/app/jobs/strategy_forward_daily.py").read_text()
+          assert "assert_persisted_forward_halt_off()" in s
+          assert "verify_daily_gate" in s
+          PY
+          mkdir -p datahub/app/utilities datahub/app/model datahub/app/services
+          cp -r backend/app/utilities/* datahub/app/utilities/
+          cp -r backend/app/model/* datahub/app/model/
+          touch datahub/app/services/__init__.py
+          cp backend/app/services/timing_evaluator.py datahub/app/services/timing_evaluator.py
+
+      - name: Login to existing private TCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.CONTAINER_REGISTRY_HOST }}
+          username: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+          password: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+
+      - name: Resolve standard immutable source image tag
+        id: tag
+        run: |
+          echo "value=sha-${RESEARCH_SOURCE_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish immutable image only
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./datahub/Dockerfile
+          push: true
+          tags: ${{ secrets.CONTAINER_REGISTRY_HOST }}/${{ secrets.CONTAINER_REGISTRY_NAMESPACE }}/caifubao-datahub:${{ steps.tag.outputs.value }}
+          build-args: |
+            CAIFUBAO_BUILD_REVISION=${{ env.RESEARCH_SOURCE_SHA }}
+
+      - name: Explain subsequent deployment boundary
+        run: |
+          echo "Immutable Datahub image built and pushed; no research cluster changes."
+          echo "An operator-reviewed, separately gated deploy is required."
