@@ -125,6 +125,13 @@ def main(argv: list[str] | None = None) -> int:
     now = dt.datetime.now(BEIJING)
     today = now.date()
 
+    # A configured path is not sufficient: the actual persistent file must
+    # already exist, be an ordinary readable JSON file with explicit bool OFF.
+    # No job-run DB write (or strategy plan) may precede this safety gate.
+    from app.lib.strategy_engine.halt import assert_persisted_forward_halt_off
+
+    assert_persisted_forward_halt_off()
+
     # No schema fallback, implicit strategy, unsafe --replace or backdate flag.
     strategy_runner._init_db()
     context = job_run_helper.JobRunContext(
