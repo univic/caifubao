@@ -1,7 +1,6 @@
 """Milestone-B paper read API never fabricates forward evidence or fills."""
 
 import datetime
-from types import SimpleNamespace
 
 from flask_jwt_extended import create_access_token
 
@@ -13,7 +12,10 @@ class Cursor:
         self.docs = list(docs)
 
     def sort(self, name, direction):
-        self.docs.sort(key=lambda d: d.get(name) or datetime.datetime.min, reverse=direction == -1)
+        self.docs.sort(
+            key=lambda d: d.get(name) or datetime.datetime.min,
+            reverse=direction == -1,
+        )
         return self
 
     def limit(self, count):
