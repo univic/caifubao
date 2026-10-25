@@ -47,6 +47,11 @@
             <span>回测</span>
           </el-menu-item>
 
+          <el-menu-item index="/research-paper">
+            <el-icon><DataLine /></el-icon>
+            <span>研究模拟盘</span>
+          </el-menu-item>
+
           <el-menu-item index="/strategy-replays">
             <el-icon><RefreshRight /></el-icon>
             <span>策略重放</span>
@@ -273,6 +278,7 @@ const activeMenu = computed(() => {
   if (route.path.startsWith('/decisions')) return '/decisions'
   if (route.path.startsWith('/portfolio')) return '/portfolio'
   if (route.path.startsWith('/backtest')) return '/backtest'
+  if (route.path.startsWith('/research-paper')) return '/research-paper'
   if (route.path.startsWith('/strategy-replays')) return '/strategy-replays'
   if (route.path.startsWith('/discovery')) return '/discovery'
   if (route.path.startsWith('/watchlists')) return '/watchlists'
