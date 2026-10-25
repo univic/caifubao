@@ -238,9 +238,7 @@ def test_detail_attribution_uses_only_pinned_artifact_and_bounded_queries(
         "hash_kind": "spec",
         "config_hash": "hash123",
         "run_dates": ["2026-10-23"],
-        "schedule": [
-            {"date": "2026-10-26", "decision_date": "2026-10-23"}
-        ],
+        "schedule": [{"date": "2026-10-26", "decision_date": "2026-10-23"}],
         "events": [event],
     }
     artifact = {
