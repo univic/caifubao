@@ -85,6 +85,22 @@ def test_matching_job_success_is_reported_but_not_required_for_manual_smoke():
     assert result["automated_job_success_today"] is True
 
 
+
+def test_failed_capture_job_is_visible_even_if_operator_capture_succeeded():
+    result = _check(
+        job_runs=[
+            {
+                "status": "FAILED",
+                "summary": {"target": "2026-10-27", "config_hash": "abc123"},
+            }
+        ]
+    )
+    assert result["status"] == "CAPTURE_JOB_FAILURE"
+    assert result["forward_count"] == 3
+    assert result["failed_capture_jobs_today"] == 1
+    assert result["healthy"] is False
+
+
 def test_holiday_does_not_create_false_missing_session():
     today = dt.datetime(2026, 10, 25, 23, 10, tzinfo=CST)
     result = _check(now=today)
