@@ -111,7 +111,9 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def capture_replay_inventory(*, pro, codes, from_date, to_date, as_of, source="tushare.dividend"):
+def capture_replay_inventory(
+    *, pro, codes, from_date, to_date, as_of, source="tushare.dividend"
+):
     """Query each symbol exactly once and package auditable, non-forward input.
 
     Missing response (None), exceptions, malformed implemented events, duplicate
@@ -149,7 +151,9 @@ def capture_replay_inventory(*, pro, codes, from_date, to_date, as_of, source="t
                 if item is not None:
                     events.append(item)
             if len({e["ex_date"] for e in events}) != len(events):
-                raise ValueError("duplicate ex-date action requires manual reconciliation")
+                raise ValueError(
+                    "duplicate ex-date action requires manual reconciliation"
+                )
             rows.extend(events)
             receipts.append(
                 {
