@@ -71,7 +71,12 @@ def _artifact():
                 "cash_per_share": 0.5,
                 "quantity": 100,
             },
-            {"type": "SPLIT", "event_id": "split1", "stock_code": "sh600000", "share_multiplier": 2},
+            {
+                "type": "SPLIT",
+                "event_id": "split1",
+                "stock_code": "sh600000",
+                "share_multiplier": 2,
+            },
         ],
         "ledger_snapshot": {},
         "curve": [],
@@ -97,7 +102,8 @@ def test_full_immutable_trace_with_unattributable_split():
     assert len(result["rejections"]) == 1
     assert result["rejections"][0]["reason_code"] == "LIMIT_UP"
     assert {x["type"] for x in result["session_events"]} == {
-        "MARK", "DIVIDEND_ENTITLEMENT"
+        "MARK",
+        "DIVIDEND_ENTITLEMENT",
     }
     assert result["undated_corporate_events"] == 1
     assert "marks" not in result["session_events"][0]
@@ -140,7 +146,10 @@ def test_no_artifact_and_two_candidates_never_pick_latest():
     run = _run()
     art = _artifact()
     assert inspect_research_trace(run, [])["status"] == "NOT_LINKED"
-    assert inspect_research_trace(run, [art, deepcopy(art)])["status"] == "AMBIGUOUS_ARTIFACT"
+    assert (
+        inspect_research_trace(run, [art, deepcopy(art)])["status"]
+        == "AMBIGUOUS_ARTIFACT"
+    )
 
 
 def test_unattributed_old_fill_must_not_be_presented_as_decision_fill():
@@ -171,8 +180,7 @@ def test_executing_wrong_date_cannot_share_simulated_fill():
 def test_events_are_capped():
     art = _artifact()
     art["payload"]["events"] = [
-        {**art["payload"]["events"][0], "event_id": f"unique{i}"}
-        for i in range(115)
+        {**art["payload"]["events"][0], "event_id": f"unique{i}"} for i in range(115)
     ]
     art["artifact_hash"] = _digest(art["payload"])
     result = inspect_research_trace(_run(), [art])
