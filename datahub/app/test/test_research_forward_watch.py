@@ -91,7 +91,8 @@ def test_failed_capture_job_is_visible_even_if_operator_capture_succeeded():
         job_runs=[
             {
                 "status": "FAILED",
-                "summary": {"target": "2026-10-27", "config_hash": "abc123"},
+                "summary": {},
+                "started_at": dt.datetime(2026, 10, 27, 15, 15),
             }
         ]
     )
