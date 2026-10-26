@@ -92,9 +92,11 @@ def evaluate_forward_gap(
     )
     missing = [date.isoformat() for date in expected if date not in seen]
 
-    # A matching plan might come from an authorized manual smoke, so its
-    # evidence is valid even without a corresponding automatic job record.
-    # Surface the source separately rather than silently inventing a CronJob.
+    # DatahubJobRun has the name/summary of the app, NOT the Kubernetes Job's
+    # controller ownerReference. A manually created Job cloned from a CronJob
+    # produces the SAME app-level job name, trigger and SUCCESS summary.
+    # Never call that evidence a verified unattended CronJob execution; only
+    # a Kubernetes observer checking the Job->CronJob owner UID can attest it.
     def _attempt_today(run: dict) -> bool:
         if (run.get("summary") or {}).get("target") == today.isoformat():
             return True
@@ -129,7 +131,7 @@ def evaluate_forward_gap(
     # A legitimate, independently certified operator rescue keeps the
     # evidence complete, but is NOT proof the unattended CronJob worked.
     # Reports need both dimensions to avoid greenwashing a manual rescue.
-    automation_healthy = bool(healthy and recent_job)
+    automation_healthy = False  # Kubernetes ownerRef proof is unavailable here.
     return {
         "healthy": healthy,
         "status": status,
@@ -143,10 +145,14 @@ def evaluate_forward_gap(
         "missing_dates": missing,
         "duplicate_forward_dates": duplicate_dates,
         "invalid_runs_excluded": invalid,
-        "automated_job_success_today": recent_job,
+        # Retain the old key but refuse to claim an automated success without
+        # trusted CronJob ownerRef; expose the actual JobRun status separately.
+        "automated_job_success_today": False,
+        "job_run_success_today": recent_job,
         "automation_healthy": automation_healthy,
+        "scheduler_attestation": "NOT_VERIFIED_BY_KUBERNETES",
         "capture_source_today": (
-            "AUTOMATED_CONFIRMED" if recent_job else "MANUAL_OR_UNVERIFIED"
+            "JOB_RUN_ORIGIN_UNVERIFIED" if recent_job else "MANUAL_OR_UNVERIFIED"
         ),
         "failed_capture_jobs_today": failed_job_attempts,
         "forward_target_sessions": 120,

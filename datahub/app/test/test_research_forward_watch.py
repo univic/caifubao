@@ -92,9 +92,13 @@ def test_matching_job_success_is_reported_but_not_required_for_manual_smoke():
             }
         ]
     )
-    assert result["automated_job_success_today"] is True
-    assert result["automation_healthy"] is True
-    assert result["capture_source_today"] == "AUTOMATED_CONFIRMED"
+    assert result["automated_job_success_today"] is False
+    # JobRun from a manually cloned CronJob is indistinguishable from cron
+    # without trusted Kubernetes ownerReference verification.
+    assert result["automation_healthy"] is False
+    assert result["scheduler_attestation"] == "NOT_VERIFIED_BY_KUBERNETES"
+    assert result["job_run_success_today"] is True
+    assert result["capture_source_today"] == "JOB_RUN_ORIGIN_UNVERIFIED"
 
 
 def test_failed_capture_job_is_visible_even_if_operator_capture_succeeded():
@@ -130,3 +134,20 @@ def test_no_alert_before_monitor_slot():
     t = dt.datetime(2026, 10, 27, 22, 30, tzinfo=CST)
     assert _check(now=t)["status"] == "NOT_DUE"
     assert _check(now=t)["healthy"] is False
+
+
+def test_cloned_manual_cronjob_success_cannot_claim_unattended_run():
+    result = _check(
+        job_runs=[
+            {
+                "status": "SUCCESS",
+                "trigger": "cron",
+                "source": "k8s-cronjob",
+                "summary": {"target": "2026-10-27", "config_hash": "abc123"},
+            }
+        ]
+    )
+    assert result["healthy"] is True
+    assert result["automated_job_success_today"] is False
+    assert result["automation_healthy"] is False
+    assert result["scheduler_attestation"] == "NOT_VERIFIED_BY_KUBERNETES"
