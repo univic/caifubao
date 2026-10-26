@@ -164,7 +164,13 @@ def audit_simulation_account(result: dict, *, expected_initial_nav: float) -> di
         _equal_money(
             point.get("legacy_nav"), expected_points[date], "parity legacy NAV"
         )
-        delta = abs(_number_signed(point.get("delta")))
+        stated_delta = _number_signed(point.get("delta"))
+        actual_delta = _number_signed(point["ledger_nav"]) - _number_signed(
+            point["legacy_nav"]
+        )
+        if not math.isclose(stated_delta, actual_delta, rel_tol=0, abs_tol=1e-6):
+            raise ValueError(f"NAV parity delta is inconsistent for {date}")
+        delta = abs(actual_delta)
         if delta > TOLERANCE_CNY:
             raise ValueError(f"NAV parity drift exceeds tolerance for {date}")
         max_delta = max(max_delta, delta)
