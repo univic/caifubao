@@ -50,9 +50,7 @@ def _mark_date(event: dict) -> str | None:
     return date
 
 
-def audit_simulation_account(
-    result: dict, *, expected_initial_nav: float
-) -> dict:
+def audit_simulation_account(result: dict, *, expected_initial_nav: float) -> dict:
     """Replay FILL/MARK/events, reconcile cash, holdings, receivables and NAV.
 
     Each reported daily curve point requires a matching MARK event, including
@@ -147,10 +145,7 @@ def audit_simulation_account(
     check = (
         projection["cash"]
         + projection["receivable_balance"]
-        + sum(
-            p["quantity"] * p["last_price"]
-            for p in projection["positions"].values()
-        )
+        + sum(p["quantity"] * p["last_price"] for p in projection["positions"].values())
     )
     _equal_money(check, projection["nav"], "cash plus marked holdings and receivables")
     points = parity.get("points")
@@ -163,8 +158,12 @@ def audit_simulation_account(
         if not isinstance(point, dict):
             raise ValueError("invalid NAV parity point")
         date = point["date"]
-        _equal_money(point.get("ledger_nav"), expected_points[date], "parity ledger NAV")
-        _equal_money(point.get("legacy_nav"), expected_points[date], "parity legacy NAV")
+        _equal_money(
+            point.get("ledger_nav"), expected_points[date], "parity ledger NAV"
+        )
+        _equal_money(
+            point.get("legacy_nav"), expected_points[date], "parity legacy NAV"
+        )
         delta = abs(_number_signed(point.get("delta")))
         if delta > TOLERANCE_CNY:
             raise ValueError(f"NAV parity drift exceeds tolerance for {date}")
@@ -208,9 +207,7 @@ def main(argv=None) -> int:
         sys.stdin if args.input == "-" else open(args.input, encoding="utf-8")
     ) as stream:
         result = json.load(stream)
-    report = audit_simulation_account(
-        result, expected_initial_nav=args.initial_nav
-    )
+    report = audit_simulation_account(result, expected_initial_nav=args.initial_nav)
     print(json.dumps(report, sort_keys=True, ensure_ascii=False))
     return 0
 
