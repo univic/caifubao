@@ -237,8 +237,7 @@ def test_forward_rejects_warned_accounting_data_checks(failed):
         "overall": "DEGRADED",
         "expected_session": TODAY.isoformat(),
         "checks": [
-            {"id": key, "status": "WARN" if key == failed else "PASS"}
-            for key in checks
+            {"id": key, "status": "WARN" if key == failed else "PASS"} for key in checks
         ],
     }
     with pytest.raises(ValueError, match=failed):
