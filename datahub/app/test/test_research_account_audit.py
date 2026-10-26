@@ -234,3 +234,11 @@ def test_stale_intermediate_mark_is_not_erased_by_later_fresh_mark():
     assert audit["stale_positions_count"] == 0
     assert audit["stale_valuation_dates"] == ["2026-10-27"]
     assert audit["fresh_price_certification"] == "UNVERIFIED"
+
+
+def test_out_of_order_daily_mark_events_fail_even_when_values_match():
+    payload = _fixture(stale=True)
+    payload["ledger_events"][-1]["marks"] = {"sh600000": 11.0}
+    payload["ledger_events"][-2:] = list(reversed(payload["ledger_events"][-2:]))
+    with pytest.raises(ValueError, match="chronological order"):
+        audit_simulation_account(payload, expected_initial_nav=100_000)
