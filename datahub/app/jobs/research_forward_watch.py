@@ -145,9 +145,9 @@ def evaluate_forward_gap(
         "missing_dates": missing,
         "duplicate_forward_dates": duplicate_dates,
         "invalid_runs_excluded": invalid,
-        # Backwards compatible field: observed JobRun SUCCESS only; despite
-        # its old name it does NOT prove scheduler ownership.
-        "automated_job_success_today": recent_job,
+        # Retain the old key but refuse to claim an automated success without
+        # trusted CronJob ownerRef; expose the actual JobRun status separately.
+        "automated_job_success_today": False,
         "job_run_success_today": recent_job,
         "automation_healthy": automation_healthy,
         "scheduler_attestation": "NOT_VERIFIED_BY_KUBERNETES",
