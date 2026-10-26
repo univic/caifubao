@@ -45,12 +45,22 @@ def _check(*, now=None, calendar=None, window=None, runs=None, job_runs=None):
     )
 
 
-def test_complete_unique_sessions_ignore_duplicate_attempts():
+def test_duplicate_completed_forward_sessions_fail_closed():
     result = _check(runs=[_run(D1), _run(D2), _run(D3), _run(D3)])
-    assert result["healthy"]
+    assert not result["healthy"]
     assert result["forward_count"] == 3
+    assert result["status"] == "DUPLICATE_FORWARD_SESSIONS"
+    assert result["duplicate_forward_dates"] == ["2026-10-27"]
+    assert result["automation_healthy"] is False
+
+
+def test_manual_recovery_preserves_evidence_without_automation_credit():
+    result = _check()
+    assert result["healthy"]
     assert result["status"] == "COMPLETE"
     assert result["automated_job_success_today"] is False
+    assert result["automation_healthy"] is False
+    assert result["capture_source_today"] == "MANUAL_OR_UNVERIFIED"
 
 
 def test_missing_forward_day_reported_as_permanent_gap():
@@ -83,6 +93,8 @@ def test_matching_job_success_is_reported_but_not_required_for_manual_smoke():
         ]
     )
     assert result["automated_job_success_today"] is True
+    assert result["automation_healthy"] is True
+    assert result["capture_source_today"] == "AUTOMATED_CONFIRMED"
 
 
 def test_failed_capture_job_is_visible_even_if_operator_capture_succeeded():
@@ -99,6 +111,7 @@ def test_failed_capture_job_is_visible_even_if_operator_capture_succeeded():
     assert result["forward_count"] == 3
     assert result["failed_capture_jobs_today"] == 1
     assert result["healthy"] is False
+    assert result["automation_healthy"] is False
 
 
 def test_holiday_does_not_create_false_missing_session():

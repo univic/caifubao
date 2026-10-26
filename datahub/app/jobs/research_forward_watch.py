@@ -65,6 +65,7 @@ def evaluate_forward_gap(
         }
     expected = [date for date in sessions if start_date <= date <= today]
     seen: set[dt.date] = set()
+    valid_session_occurrences: dict[dt.date, int] = {}
     invalid = 0
     for run in runs:
         run_date = _date(run["date"])
@@ -81,6 +82,14 @@ def evaluate_forward_gap(
             invalid += 1
             continue
         seen.add(run_date)
+        valid_session_occurrences[run_date] = (
+            valid_session_occurrences.get(run_date, 0) + 1
+        )
+    duplicate_dates = sorted(
+        date.isoformat()
+        for date, count in valid_session_occurrences.items()
+        if count > 1
+    )
     missing = [date.isoformat() for date in expected if date not in seen]
 
     # A matching plan might come from an authorized manual smoke, so its
@@ -107,14 +116,20 @@ def evaluate_forward_gap(
         and (run.get("summary") or {}).get("config_hash") == window["config_hash"]
         for run in job_runs
     )
-    healthy = not missing and not failed_job_attempts
+    healthy = not missing and not duplicate_dates and not failed_job_attempts
     status = (
         "MISSING_FORWARD_SESSIONS"
         if missing
+        else "DUPLICATE_FORWARD_SESSIONS"
+        if duplicate_dates
         else "CAPTURE_JOB_FAILURE"
         if failed_job_attempts
         else "COMPLETE"
     )
+    # A legitimate, independently certified operator rescue keeps the
+    # evidence complete, but is NOT proof the unattended CronJob worked.
+    # Reports need both dimensions to avoid greenwashing a manual rescue.
+    automation_healthy = bool(healthy and recent_job)
     return {
         "healthy": healthy,
         "status": status,
@@ -126,8 +141,13 @@ def evaluate_forward_gap(
         "expected_count": len(expected),
         "forward_count": len(seen),
         "missing_dates": missing,
+        "duplicate_forward_dates": duplicate_dates,
         "invalid_runs_excluded": invalid,
         "automated_job_success_today": recent_job,
+        "automation_healthy": automation_healthy,
+        "capture_source_today": (
+            "AUTOMATED_CONFIRMED" if recent_job else "MANUAL_OR_UNVERIFIED"
+        ),
         "failed_capture_jobs_today": failed_job_attempts,
         "forward_target_sessions": 120,
     }
