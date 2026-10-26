@@ -29,8 +29,8 @@ def _number(value, label: str, *, positive: bool = False) -> float:
 
 
 def _equal_money(value, expected, label: str) -> None:
-    a = _number(value, label)
-    b = _number(expected, f"computed {label}")
+    a = _number_signed(value)
+    b = _number_signed(expected)
     if not math.isclose(a, b, rel_tol=0, abs_tol=TOLERANCE_CNY):
         raise ValueError(f"{label} does not reconcile with replayed ledger")
 
@@ -165,7 +165,7 @@ def audit_simulation_account(
         date = point["date"]
         _equal_money(point.get("ledger_nav"), expected_points[date], "parity ledger NAV")
         _equal_money(point.get("legacy_nav"), expected_points[date], "parity legacy NAV")
-        delta = _number(abs(_number_signed(point.get("delta"))), "parity delta")
+        delta = abs(_number_signed(point.get("delta")))
         if delta > TOLERANCE_CNY:
             raise ValueError(f"NAV parity drift exceeds tolerance for {date}")
         max_delta = max(max_delta, delta)
