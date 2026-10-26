@@ -697,6 +697,18 @@ def run_nav(
         initial_nav=float(resolved.get("initial_nav", 1_000_000.0)),
         spec_hash=strategy_spec_hash,
     )
+    # A spec-backed Research derivation must pass independent event-journal
+    # cash/positions/receivables/mark parity BEFORE any immutable artifact or
+    # nav_snapshot can be published. This is accounting-only, not PIT approval.
+    account_audit = None
+    if strategy_spec_hash is not None:
+        from app.lib.strategy_engine.research_account_audit import (
+            audit_simulation_account,
+        )
+
+        account_audit = audit_simulation_account(
+            result, expected_initial_nav=float(resolved.get("initial_nav", 1_000_000.0))
+        )
     attached = attach_nav_points(runs, result["curve"])
 
     artifact_hash = None
@@ -735,6 +747,7 @@ def run_nav(
         "hash_kind": "spec" if strategy_spec_hash is not None else "legacy",
         "research_artifact_hash": artifact_hash,
         "nav_parity_max_abs_delta_cny": result["nav_parity"]["max_abs_delta_cny"],
+        **({"research_account_audit": account_audit} if account_audit else {}),
         "evidence_kinds": sorted(
             {getattr(r, "evidence_kind", "REPLAY") or "REPLAY" for r in runs}
         ),
