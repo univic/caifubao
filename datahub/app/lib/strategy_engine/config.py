@@ -184,6 +184,7 @@ _KNOWN_CONSTRAINT_KEYS = {
     "exclude_st",
     "exclude_bse",
     "exclude_suspended",
+    "exclude_infeasible_buys",
     "max_single_stock_pct",
     "max_industry_pct",
     "min_trade_amount_cny",
@@ -308,7 +309,12 @@ def validate_strategy_config(config: dict) -> dict:
     constraints = normalized.get("constraints") or {}
     if not isinstance(constraints, dict):
         raise ValueError("constraints must be a dict")
-    for flag in ("exclude_st", "exclude_bse", "exclude_suspended"):
+    for flag in (
+        "exclude_st",
+        "exclude_bse",
+        "exclude_suspended",
+        "exclude_infeasible_buys",
+    ):
         if flag in constraints and not isinstance(constraints[flag], bool):
             raise ValueError(f"constraints.{flag} must be a bool")
     max_pct = constraints.get("max_single_stock_pct")
