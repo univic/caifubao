@@ -30,9 +30,7 @@ def _fixture(*, stale=False):
     account = ResearchSimulationLedger(initial_cash=100_000)
     account.apply(_fill())
     account.mark({"sh600000": 11.0}, as_of="2026-10-27")
-    points = [
-        {"date": "2026-10-27", "nav": round(account.nav, 2)}
-    ]
+    points = [{"date": "2026-10-27", "nav": round(account.nav, 2)}]
     parity = [
         {
             "date": "2026-10-27",
