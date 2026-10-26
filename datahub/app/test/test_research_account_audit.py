@@ -94,6 +94,7 @@ def test_stale_price_is_not_promoted_to_fresh_market_certification():
         lambda x: x.update(terminal_nav=99_999),
         lambda x: x["curve"][0].update(nav=99_999),
         lambda x: x["nav_parity"]["points"][0].update(legacy_nav=99_999),
+        lambda x: x["nav_parity"]["points"][0].update(delta=0.005),
         lambda x: x["ledger_events"].pop(),
         lambda x: x["ledger_events"].append(deepcopy(x["ledger_events"][-1])),
         lambda x: x["ledger_snapshot"].update(event_count=999),
