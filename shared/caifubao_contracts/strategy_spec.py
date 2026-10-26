@@ -55,6 +55,7 @@ _ALLOWED = {
         "exclude_st",
         "exclude_bse",
         "exclude_suspended",
+        "exclude_infeasible_buys",
         "max_single_stock_pct",
         "max_industry_pct",
         "min_trade_amount_cny",
@@ -168,7 +169,12 @@ def validate_strategy_spec(spec: dict) -> dict:
     if sizing["cash_reserve_pct"] >= 1:
         raise ValueError("sizing.cash_reserve_pct must be < 1")
     for key, value in normalized["constraints"].items():
-        if key in ("exclude_st", "exclude_bse", "exclude_suspended"):
+        if key in (
+            "exclude_st",
+            "exclude_bse",
+            "exclude_suspended",
+            "exclude_infeasible_buys",
+        ):
             if type(value) is not bool:
                 raise ValueError(f"constraints.{key} must be boolean")
         elif value is not None:
@@ -355,6 +361,14 @@ def to_legacy_config(spec: dict) -> dict:
     }
 
 
+class OpeningTradeInfeasible(ValueError):
+    """A valid decision-time quote cannot meet an opening execution constraint."""
+
+    def __init__(self, message: str, *, reason_code: str):
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
 def preflight_execution_feasibility(
     spec: dict,
     *,
@@ -429,14 +443,16 @@ def preflight_execution_feasibility(
         minimum_spend = price * minimum + fees["commission"] + fees["transfer_fee"]
         minimum_share = fees["commission"] / (price * minimum)
         if minimum_spend > name_budget:
-            raise ValueError(
+            raise OpeningTradeInfeasible(
                 f"initial_nav/portfolio_size cannot buy board minimum for {code}: "
-                f"budget={name_budget:.2f}, needed={minimum_spend:.2f}"
+                f"budget={name_budget:.2f}, needed={minimum_spend:.2f}",
+                reason_code="board_minimum_over_budget",
             )
         if minimum_share > max_minimum_commission_pct:
-            raise ValueError(
+            raise OpeningTradeInfeasible(
                 f"minimum_commission_cny makes trade uneconomic for {code}: "
-                f"share={minimum_share:.6f}, maximum={max_minimum_commission_pct:.6f}"
+                f"share={minimum_share:.6f}, maximum={max_minimum_commission_pct:.6f}",
+                reason_code="minimum_commission_ratio",
             )
         details.append(
             {

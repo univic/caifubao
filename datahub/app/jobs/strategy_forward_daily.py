@@ -217,6 +217,11 @@ def main(argv: list[str] | None = None) -> int:
                 "hash_kind": "spec",
                 "evidence_kind": "FORWARD",
                 "written_total": 1,
+                **(
+                    {"eligibility": result["eligibility"]}
+                    if "eligibility" in result
+                    else {}
+                ),
             },
         )
         print(json.dumps(result, ensure_ascii=False, default=str))

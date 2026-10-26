@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 import math
+from collections import Counter
 
 from app.lib.strategy_engine.config import (
     DEFAULT_HORIZON,
@@ -27,6 +28,8 @@ STOCK_FLAG_KEYS = ("is_st", "is_bse", "trade_status")
 def eligible_codes_from_flags(
     flags: dict[str, dict],  # stock_code -> {is_st?, is_bse?, trade_status?}
     config: dict,
+    *,
+    exclusion_reasons: dict[str, str] | None = None,
 ) -> set[str]:
     """Return stock codes that pass the configured eligibility constraints.
 
@@ -38,6 +41,15 @@ def eligible_codes_from_flags(
     """
     config = validate_strategy_config(config)
     constraints = config["constraints"]
+    affordability_spec = None
+    if constraints.get("exclude_infeasible_buys"):
+        from app.lib.strategy_engine.spec import legacy_to_spec
+        from caifubao_contracts.strategy_spec import (
+            OpeningTradeInfeasible,
+            preflight_execution_feasibility,
+        )
+
+        affordability_spec = legacy_to_spec(config)["spec"]
 
     def _truthy(value) -> bool:
         if value is None:
@@ -70,6 +82,27 @@ def eligible_codes_from_flags(
                 or float(traded) < min_trade_amount
             ):
                 continue
+        if affordability_spec is not None:
+            price = row.get("reference_close")
+            reason = None
+            if (
+                isinstance(price, bool)
+                or not isinstance(price, (int, float))
+                or not math.isfinite(float(price))
+                or price < 0.000001
+            ):
+                reason = "invalid_signal_close"
+            else:
+                try:
+                    preflight_execution_feasibility(
+                        affordability_spec, reference_prices={code: price}
+                    )
+                except OpeningTradeInfeasible as exc:
+                    reason = exc.reason_code
+            if reason:
+                if exclusion_reasons is not None:
+                    exclusion_reasons[code] = reason
+                continue
         eligible.add(code)
     return eligible
 
@@ -79,7 +112,12 @@ def _has_active_eligibility_constraint(config: dict) -> bool:
     constraints = config.get("constraints") or {}
     if any(
         constraints.get(flag)
-        for flag in ("exclude_st", "exclude_bse", "exclude_suspended")
+        for flag in (
+            "exclude_st",
+            "exclude_bse",
+            "exclude_suspended",
+            "exclude_infeasible_buys",
+        )
     ):
         return True
     try:
@@ -129,7 +167,23 @@ def assemble_daily_plan(
             "prediction set with the constraint silently skipped"
         )
 
-    eligible = eligible_codes_from_flags(flags, config) if flags is not None else None
+    excluded = {}
+    eligible = (
+        eligible_codes_from_flags(flags, config, exclusion_reasons=excluded)
+        if flags is not None
+        else None
+    )
+    diagnostics = {}
+    if config["constraints"].get("exclude_infeasible_buys"):
+        diagnostics["eligibility"] = {
+            "price_date": date.date().isoformat(),
+            "excluded_count": len(excluded),
+            "reason_counts": dict(Counter(excluded.values())),
+            "excluded_examples": [
+                {"stock_code": code, "reason": excluded[code]}
+                for code in sorted(excluded)[:20]
+            ],
+        }
     target = select_target_holdings(
         prediction_list,
         config,
@@ -140,12 +194,14 @@ def assemble_daily_plan(
         return {
             "skipped": True,
             "reason": "selection produced no eligible holdings",
+            **diagnostics,
             "date": date,
             "horizon": horizon,
         }
 
     return {
         "skipped": False,
+        **diagnostics,
         "date": date,
         "horizon": horizon,
         "target_holdings": target,

@@ -412,6 +412,7 @@ def run_strategy(
         "skip_reason": run.skip_reason,
         "target_holdings_count": len(run.target_holdings or []),
         "rebalance": run.rebalance,
+        **({"eligibility": plan["eligibility"]} if "eligibility" in plan else {}),
     }
 
 
