@@ -161,3 +161,33 @@ def test_ledger_can_reconcile_negative_realized_pnl():
     report = audit_simulation_account(payload, expected_initial_nav=100_000)
     assert report["positions_count"] == 0
     assert report["terminal_nav_cny"] < 100_000
+
+
+def test_audits_actual_daily_research_nav_engine_without_any_db():
+    from app.lib.strategy_engine.nav import QuoteView, simulate_paper_nav
+
+    prices = {
+        "sh600000": {
+            "2026-10-27": QuoteView(10, 11, previous_close=10),
+            "2026-10-28": QuoteView(11, 12, previous_close=11),
+        }
+    }
+    result = simulate_paper_nav(
+        prices=prices,
+        schedule=[
+            {
+                "date": "2026-10-27",
+                "decision_date": "2026-10-26",
+                "holdings": {"sh600000": 0.5},
+            }
+        ],
+        initial_nav=100_000,
+        valuation_dates=["2026-10-27", "2026-10-28"],
+    )
+    audit = audit_simulation_account(result, expected_initial_nav=100_000)
+    assert audit["status"] == "ACCOUNTING_RECONCILED_RESEARCH_ONLY"
+    assert audit["valuation_sessions"] == 2
+    assert audit["fills_count"] == 1
+    assert audit["stale_positions_count"] == 0
+    assert audit["terminal_nav_cny"] == result["terminal_nav"]
+    assert audit["forward_certification"] == "NOT_EVALUATED"
