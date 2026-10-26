@@ -29,6 +29,8 @@ def _gate(**overrides):
                 "scoring_freshness",
                 "signal_freshness",
                 "halt_switch",
+                "fq_coverage",
+                "etf_market_data",
             )
         ],
     }
@@ -104,6 +106,8 @@ def test_requires_current_session_readiness():
                 "scoring_freshness",
                 "signal_freshness",
                 "halt_switch",
+                "fq_coverage",
+                "etf_market_data",
             )
         ],
     }
@@ -120,6 +124,8 @@ def test_warned_critical_freshness_not_accepted():
             {"id": "scoring_freshness", "status": "WARN"},
             {"id": "signal_freshness", "status": "PASS"},
             {"id": "halt_switch", "status": "PASS"},
+            {"id": "fq_coverage", "status": "PASS"},
+            {"id": "etf_market_data", "status": "PASS"},
         ],
     }
     with pytest.raises(ValueError, match="scoring_freshness"):
@@ -137,6 +143,8 @@ def test_allows_noncritical_gap_warn_once_window_active():
                 "scoring_freshness",
                 "signal_freshness",
                 "halt_switch",
+                "fq_coverage",
+                "etf_market_data",
             )
         ]
         + [{"id": "forward_window", "status": "WARN"}],
@@ -191,3 +199,47 @@ def test_forward_halt_rejects_relative_file(tmp_path, monkeypatch):
     (tmp_path / "halt.json").write_text('{"halted":false}', encoding="utf-8")
     with pytest.raises(ValueError, match="absolute"):
         assert_persisted_forward_halt_off("halt.json")
+
+
+@pytest.mark.parametrize("missing", ["fq_coverage", "etf_market_data"])
+def test_forward_rejects_missing_accounting_data_checks(missing):
+    report = {
+        "overall": "DEGRADED",
+        "expected_session": TODAY.isoformat(),
+        "checks": [
+            {"id": key, "status": "PASS"}
+            for key in (
+                "quote_freshness",
+                "fq_coverage",
+                "scoring_freshness",
+                "signal_freshness",
+                "halt_switch",
+                "etf_market_data",
+            )
+            if key != missing
+        ],
+    }
+    with pytest.raises(ValueError, match=missing):
+        _gate(report=report)
+
+
+@pytest.mark.parametrize("failed", ["fq_coverage", "etf_market_data"])
+def test_forward_rejects_warned_accounting_data_checks(failed):
+    checks = (
+        "quote_freshness",
+        "fq_coverage",
+        "scoring_freshness",
+        "signal_freshness",
+        "halt_switch",
+        "etf_market_data",
+    )
+    report = {
+        "overall": "DEGRADED",
+        "expected_session": TODAY.isoformat(),
+        "checks": [
+            {"id": key, "status": "WARN" if key == failed else "PASS"}
+            for key in checks
+        ],
+    }
+    with pytest.raises(ValueError, match=failed):
+        _gate(report=report)
