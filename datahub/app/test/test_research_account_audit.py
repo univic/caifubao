@@ -215,8 +215,18 @@ def test_stale_intermediate_mark_is_not_erased_by_later_fresh_mark():
         "nav_parity": {
             "max_abs_delta_cny": 0,
             "points": [
-                {"date": "2026-10-27", "legacy_nav": first, "ledger_nav": first, "delta": 0},
-                {"date": "2026-10-28", "legacy_nav": last, "ledger_nav": last, "delta": 0},
+                {
+                    "date": "2026-10-27",
+                    "legacy_nav": first,
+                    "ledger_nav": first,
+                    "delta": 0,
+                },
+                {
+                    "date": "2026-10-28",
+                    "legacy_nav": last,
+                    "ledger_nav": last,
+                    "delta": 0,
+                },
             ],
         },
     }
