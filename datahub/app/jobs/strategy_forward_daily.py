@@ -65,9 +65,11 @@ def verify_daily_gate(
     # WARN on one of these is not sufficient to record a new strategy plan.
     for check in (
         "quote_freshness",
+        "fq_coverage",
         "scoring_freshness",
         "signal_freshness",
         "halt_switch",
+        "etf_market_data",
     ):
         if checks.get(check) != "PASS":
             raise ValueError(f"critical readiness check is not PASS: {check}")
