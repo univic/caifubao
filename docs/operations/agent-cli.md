@@ -109,10 +109,13 @@ build with full-collection statistics on memory-constrained MongoDB nodes.
 Run `data refresh-status` after syncing.
 
 #### `data snapshot-export [COLLECTIONS] [FROM_DATE] [TO_DATE] [OUT_DIR]`
-Export a checksummed dev-import snapshot (manifest v1 + sidecar sha256) from
+Export a checksummed dev-import snapshot (manifest v2 + sidecar sha256) from
 the local environment's data domain: per-collection JSONL.gz files with BSON
--safe encoding, verified before the manifest is written. Optional
-`--upload-uri s3://<bucket>/<prefix>` pushes the snapshot under
+-safe encoding, verified before the manifest is written. Manifest v2 adds the
+`__bson_ref` marker so MongoEngine reference fields (DBRefs) round-trip
+losslessly; the importer still accepts v1 manifests, and an importer that
+predates v2 refuses the snapshot instead of storing an unencoded marker.
+Optional `--upload-uri s3://<bucket>/<prefix>` pushes the snapshot under
 `<prefix>/<snapshot_id>/` using the parquet exporter's object-storage env.
 See [`openspec/changes/dev-snapshot-import`](../../openspec/changes/dev-snapshot-import/proposal.md).
 

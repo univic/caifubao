@@ -8,14 +8,14 @@ producing environment.
 
 Snapshot layout (``<out_dir>/<snapshot_id>/``)::
 
-    manifest.json            manifest v1 (SNAPSHOT_MANIFEST_VERSION)
+    manifest.json            manifest v2 (SNAPSHOT_MANIFEST_VERSION)
     manifest.json.sha256     sha256 of manifest.json, ``sha256sum`` format
     <collection>.jsonl.gz    newline-delimited JSON, BSON-safe encoding
 
-Manifest v1 schema::
+Manifest v2 schema (v1 manifests are still importable)::
 
     {
-      "manifest_version": 1,
+      "manifest_version": 2,
       "snapshot_id": "<dir name>",
       "created_at": "<ISO8601 UTC>",
       "producer_db": "<exporting database name>",
@@ -40,6 +40,15 @@ BSON-safe JSON line encoding (strict, fail-closed):
   Naive datetimes are treated as UTC (pymongo's default representation) and
   decode back to naive UTC datetimes.
 * ``bson.ObjectId`` -> ``{"__bson_oid": "<24-char hex>"}``.
+* ``bson.DBRef`` -> ``{"__bson_ref": {"collection": "<name>", "id": <id>,
+  "database": "<db>"?}}``; ``database`` is omitted when the reference has none
+  and ``id`` uses the same ObjectId/string encoding as any other value. Only
+  those three standard parts are representable: a reference carrying extra
+  ``$ref`` keys fails closed instead of losing them. The exported research
+  collections carry MongoEngine reference fields both bare
+  (``stock_factor_daily.stock``, ``stock_signal_daily.stock``) and in the
+  nested ``{"_ref": DBRef}`` shape (``stock_daily_quote.stock._ref``), so
+  without this marker a real snapshot could never be exported at all.
 * ``bson.decimal128.Decimal128`` -> plain string (the one documented lossy
   case: it decodes back as ``str``).
 * every other non-JSON-native BSON type (bytes, ``datetime.date``, ...) makes
@@ -96,7 +105,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from bson import ObjectId
+from bson import DBRef, ObjectId
 from bson.decimal128 import Decimal128
 from bson.errors import BSONError
 from pymongo import ReplaceOne
@@ -122,7 +131,12 @@ class SnapshotTransferError(ValueError):
     """
 
 
-SNAPSHOT_MANIFEST_VERSION = 1
+SNAPSHOT_MANIFEST_VERSION = 2
+# Import accepts the pre-DBRef v1 manifests as well; export always writes the
+# current version, so an older importer rejects a DBRef-bearing snapshot
+# loudly instead of storing an unencoded marker document. Bump by appending the
+# previous version explicitly: this tuple is the whole compatibility surface.
+SNAPSHOT_MANIFEST_SUPPORTED_VERSIONS = (1, 2)
 SNAPSHOT_IMPORT_STATE_COLLECTION = "snapshot_import_state"
 
 # Snapshot-class collections use explicit replace/drop semantics instead of
@@ -242,12 +256,67 @@ def _as_naive_utc(value: datetime.datetime) -> datetime.datetime:
     return value.astimezone(datetime.timezone.utc).replace(tzinfo=None)
 
 
+_DBREF_STANDARD_KEYS = frozenset({"collection", "id", "database"})
+_DBREF_DOC_STANDARD_KEYS = frozenset({"$ref", "$id", "$db"})
+
+
+def _dbref_payload(ref: DBRef) -> dict[str, Any]:
+    """Encode a DBRef as the lossless ``__bson_ref`` payload.
+
+    Only the three standard DBRef parts are representable. A reference carrying
+    extra positional/keyword keys (a ``$ref`` document with additional fields)
+    would lose them, so it fails closed instead of decoding back as a different
+    object.
+    """
+    extras = set(ref.as_doc()) - _DBREF_DOC_STANDARD_KEYS
+    if extras:
+        raise SnapshotTransferError(
+            "cannot encode DBRef with non-standard keys "
+            f"{sorted(extras)}: the __bson_ref marker only carries "
+            f"{sorted(_DBREF_STANDARD_KEYS)}"
+        )
+    payload: dict[str, Any] = {"collection": ref.collection, "id": ref.id}
+    if ref.database is not None:
+        payload["database"] = ref.database
+    return payload
+
+
+def _dbref_from_payload(payload: Any) -> DBRef:
+    """Restore a DBRef from an ``__bson_ref`` payload (fail-closed)."""
+    if not isinstance(payload, dict):
+        raise SnapshotTransferError(
+            f"malformed __bson_ref marker: expected an object, got {payload!r}"
+        )
+    unknown = set(payload) - _DBREF_STANDARD_KEYS
+    if unknown:
+        raise SnapshotTransferError(
+            f"malformed __bson_ref marker: unknown keys {sorted(unknown)} in {payload!r}"
+        )
+    collection = payload.get("collection")
+    if not isinstance(collection, str) or not collection:
+        raise SnapshotTransferError(
+            f"malformed __bson_ref marker: missing collection in {payload!r}"
+        )
+    if "id" not in payload:
+        raise SnapshotTransferError(
+            f"malformed __bson_ref marker: missing id in {payload!r}"
+        )
+    database = payload.get("database")
+    if database is not None and not isinstance(database, str):
+        raise SnapshotTransferError(
+            f"malformed __bson_ref marker: invalid database in {payload!r}"
+        )
+    return DBRef(collection, payload["id"], database)
+
+
 def _bson_json_default(obj: Any) -> Any:
     """json.dumps default() implementing the strict BSON-safe encoding."""
     if isinstance(obj, datetime.datetime):
         return {"__bson_date": _datetime_to_epoch_ms(obj)}
     if isinstance(obj, ObjectId):
         return {"__bson_oid": str(obj)}
+    if isinstance(obj, DBRef):
+        return {"__bson_ref": _dbref_payload(obj)}
     if isinstance(obj, Decimal128):
         return str(obj)
     raise SnapshotTransferError(
@@ -263,6 +332,8 @@ def _bson_json_object_hook(obj: dict[str, Any]) -> Any:
             return _epoch_ms_to_datetime(obj["__bson_date"])
         if "__bson_oid" in obj:
             return ObjectId(obj["__bson_oid"])
+        if "__bson_ref" in obj:
+            return _dbref_from_payload(obj["__bson_ref"])
     return obj
 
 
@@ -621,11 +692,11 @@ def _load_manifest(snapshot_dir: Path) -> tuple[dict[str, Any], str]:
         )
 
     manifest_version = manifest.get("manifest_version")
-    if manifest_version != SNAPSHOT_MANIFEST_VERSION:
+    if manifest_version not in SNAPSHOT_MANIFEST_SUPPORTED_VERSIONS:
         raise SnapshotTransferError(
             "unsupported snapshot manifest_version "
             f"{manifest_version!r} in {manifest_path}; "
-            f"supported version: {SNAPSHOT_MANIFEST_VERSION}"
+            f"supported versions: {SNAPSHOT_MANIFEST_SUPPORTED_VERSIONS}"
         )
     for key in ("snapshot_id", "created_at", "producer_db", "producer_image"):
         if not isinstance(manifest.get(key), str) or not manifest.get(key):

@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from bson import ObjectId
+from bson import DBRef, ObjectId
 from bson.decimal128 import Decimal128
 
 from app.lib.datahub import snapshot_transfer as st
@@ -249,6 +249,55 @@ def test_bson_encoder_fails_closed_on_unsupported_types():
         st.encode_bson_json({"day": datetime.date(2026, 9, 4)})
 
 
+def test_bson_json_round_trips_dbref_references():
+    ref = DBRef("basic_stock", ObjectId("650a1b2c3d4e5f60718293a4"))
+    qualified = DBRef("basic_stock", "code-sh600000", "caifubao_research")
+    doc = {
+        "_id": ObjectId("650a1b2c3d4e5f60718293a5"),
+        # stock_factor_daily / stock_signal_daily store a plain DBRef
+        "stock": ref,
+        # stock_daily_quote stores the nested shape stock._ref (with _cls)
+        "nested": {"_cls": "StockBasic", "_ref": ref},
+        "qualified": qualified,
+    }
+
+    encoded = st.encode_bson_json(doc)
+    assert '"__bson_ref"' in encoded
+    assert '"collection": "basic_stock"' in encoded
+
+    decoded = st.decode_bson_json(encoded)
+    assert decoded["_id"] == doc["_id"]
+    assert decoded["stock"] == ref
+    assert decoded["nested"]["_ref"] == ref
+    assert decoded["qualified"] == qualified
+    # no DBRef is downgraded to a bare ObjectId marker
+    assert isinstance(decoded["stock"], DBRef)
+
+
+def test_bson_decoder_rejects_malformed_dbref_marker():
+    with pytest.raises(st.SnapshotTransferError, match="malformed __bson_ref"):
+        st.decode_bson_json(
+            '{"stock": {"__bson_ref": {"id": {"__bson_oid": "650a1b2c3d4e5f60718293a4"}}}}'
+        )
+    with pytest.raises(st.SnapshotTransferError, match="malformed __bson_ref"):
+        st.decode_bson_json('{"stock": {"__bson_ref": {"collection": "basic_stock"}}}')
+    with pytest.raises(st.SnapshotTransferError, match="malformed __bson_ref"):
+        st.decode_bson_json('{"stock": {"__bson_ref": "basic_stock"}}')
+    # an unknown key must not be dropped silently
+    with pytest.raises(st.SnapshotTransferError, match="unknown keys"):
+        st.decode_bson_json(
+            '{"stock": {"__bson_ref": {"collection": "basic_stock",'
+            ' "id": {"__bson_oid": "650a1b2c3d4e5f60718293a4"}, "bogus": 1}}}'
+        )
+
+
+def test_bson_encoder_fails_closed_on_dbref_extra_keys():
+    # DBRef(..., foo="bar") carries a non-standard $ref key that the marker
+    # cannot represent, so the encoder refuses instead of dropping it.
+    with pytest.raises(st.SnapshotTransferError, match="non-standard keys"):
+        st.encode_bson_json({"stock": DBRef("basic_stock", 1, foo="bar")})
+
+
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
@@ -274,7 +323,8 @@ def test_export_writes_files_manifest_and_checksum(tmp_path):
     declared_sha = checksum_path.read_text(encoding="utf-8").split()[0]
     assert declared_sha == hashlib.sha256(manifest_path.read_bytes()).hexdigest()
 
-    assert manifest["manifest_version"] == 1
+    # pinned on purpose: a manifest bump must revisit this test
+    assert manifest["manifest_version"] == 2
     assert manifest["snapshot_id"] == snapshot_dir.name
     assert manifest["producer_db"] == "caifubao_data"
     assert manifest["producer_image"] == "img@sha256:abc"
@@ -305,6 +355,24 @@ def test_export_writes_files_manifest_and_checksum(tmp_path):
     assert decoded[0]["code"] == "sz000001"
     assert decoded[0]["date"] == QUOTE_DATE
     assert decoded[0]["_id"] == ObjectId("650a1b2c3d4e5f60718293a4")
+
+
+def test_export_encodes_mongoengine_reference_fields(tmp_path):
+    """The real research collections carry DBRefs; export must not refuse them."""
+    stock_ref = DBRef("basic_stock", ObjectId("650a1b2c3d4e5f60718293a6"))
+    doc = {**_quote_doc(), "stock": stock_ref, "legacy": {"_ref": stock_ref}}
+    db, _cols = _export_db({"stock_daily_quote": [doc]})
+
+    result = st.run_export(db=db, out_dir=tmp_path, producer_image="img@sha256:abc")
+
+    assert result["status"] == "GOOD"
+    snapshot_dir = Path(result["snapshot_dir"])
+    with gzip.open(
+        snapshot_dir / "stock_daily_quote.jsonl.gz", "rt", encoding="utf-8"
+    ) as fh:
+        decoded = [st.decode_bson_json(line) for line in fh]
+    assert decoded[0]["stock"] == stock_ref
+    assert decoded[0]["legacy"]["_ref"] == stock_ref
 
 
 def test_export_resolves_aliases_and_refuses_unknown_collections(tmp_path):
@@ -559,14 +627,28 @@ def test_import_rejects_unsupported_manifest_version(tmp_path):
     snapshot_dir, _sha = _write_snapshot(
         tmp_path, {"stock_daily_quote": [_quote_doc()]}
     )
-    _rewrite_manifest(snapshot_dir, lambda m: m.update(manifest_version=2))
+    _rewrite_manifest(snapshot_dir, lambda m: m.update(manifest_version=3))
 
     db, cols = _import_db()
     with pytest.raises(
-        st.SnapshotTransferError, match="unsupported snapshot manifest_version 2"
+        st.SnapshotTransferError, match="unsupported snapshot manifest_version 3"
     ):
         st.run_import(db=db, snapshot_dir=snapshot_dir)
     _assert_no_writes(db, cols)
+
+
+def test_import_still_accepts_a_v1_manifest(tmp_path, monkeypatch):
+    """Pre-DBRef snapshots stay importable; only export moved to v2."""
+    snapshot_dir, _sha = _write_snapshot(
+        tmp_path, {"stock_daily_quote": [_quote_doc()]}
+    )
+    _rewrite_manifest(snapshot_dir, lambda m: m.update(manifest_version=1))
+    _stub_asset_status_refresh(monkeypatch)
+
+    db, _cols = _import_db()
+    summary = st.run_import(db=db, snapshot_dir=snapshot_dir)
+
+    assert summary["status"] == "GOOD"
 
 
 def test_import_rejects_missing_manifest(tmp_path):
