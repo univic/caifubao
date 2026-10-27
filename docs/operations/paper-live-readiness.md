@@ -106,6 +106,36 @@ etf_market_data  WARN  尚无 ETF 数据
 - 下一交易日（2026-10-26）起 ETF 行情与候选评分会自动更新；首次自动运行后应检查
   `datahub_job_runs` 与 readiness，确认 18:40/19:00 的调度确实按预期执行。
 
+### 2026-10-27：候选评分断档的修复与窗口连续计数
+
+- **窗口**：`97d4b6f0…`（10-26 21:45 认证）于 10-26 22:30 关闭，同一天用新 spec
+  `c1310492…` 重开，`start_date` 仍是 10-26（已写入的计划不追溯改写）。10-26、10-27
+  两天均为 FORWARD，`strategy forward progress` 显示 `count=2/120`、
+  `contiguous_leading_span=2`、`gap_dates=[]`。
+- **故障**：10-26 19:00 的 `caifubao-datahub-scoring-shadow` Job 在排障时被
+  `kubectl patch job … suspend`，之后**一直留在 CronJob 的 `status.active`**；
+  `concurrencyPolicy: Forbid` 因此不再生成新 Job，候选模型 10-27 无评分。19:55 的
+  `paper readiness --model-version flip_wide_shadow_v1 --horizon 20` 为
+  **NOT_READY**（只有 `scoring_freshness` FAIL，其余全 PASS），22:15 的自动跑单会
+  fail-closed 跳过。
+- **处理**：删除该挂起 Job 释放 Forbid 槽位；用一次性 Job
+  `research-scoring-recovery-20261027` 执行
+  `scoring_runner run --model-version flip_wide_shadow_v1 --date 2026-10-27`
+  （5,578 行：5,215 PENDING + 363 BLOCKED）。随后 readiness 全 PASS / **READY**，
+  22:15 `caifubao-datahub-strategy-forward-daily` 正常写入 10-27 的 FORWARD 计划
+  （20 只，新增 11 / 移除 11 / 不变 9），`decision_at` 22:15、`execution_date` 10-28。
+  另用同一 CronJob 模板起一次性 Job `research-scoring-shadow-verify-20261027`
+  复跑同一天（**不带 `--date`**，与 19:00 调度完全相同的命令），结果为
+  `skipped_complete_horizons`、`pulled_total=0`、`written_total=0`：调度路径本身
+  可用且幂等，次一交易日的 19:00 会照常计算新日期。
+- **两条可复用教训**：
+  1. **被 suspend 的历史 Job 会卡住 `Forbid` 调度**。排查时看 CronJob 的
+     `status.active`，不要只看 `LAST SCHEDULE`；停用的历史 Job 要删除，不能留着。
+  2. **19:30 的 `caifubao-datahub-paper-readiness` CronJob 不带 `--model-version`**，
+     按默认 `score_v2_202605b` 判定，候选模型断档时它仍会打印 `READY`。开窗与当日
+     跑单前的判定必须带 `--model-version` 与 `--horizon`（`strategy_forward_daily`
+     自身按 spec 钉死的模型校验，所以那边会正确 fail-closed）。
+
 ## 3. 与已合并 #307 的关系（重要）
 
 PR #307（`7464d6b`）已合并：统一 `StrategySpec`、legacy/spec 双哈希、研究模拟账本、
@@ -189,7 +219,8 @@ trading paper/LIVE 部署；随后合并的 #308/#309 分别补了 trading 侧�
   - `caifubao-datahub-paper-readiness`（19:30，只读）
   私有 overlay 按 one-writer 规则启用；启用前先手工验证一天。
 - **2026-10-25 research 实际状态**：`etf-daily` 与 `scoring-shadow` 已直接 patch
-  为 `suspend: false` 并由调度器接管；`paper-readiness` 仍为 `suspend: true`。
+  为 `suspend: false` 并由调度器接管；`paper-readiness` 当时仍为 `suspend: true`
+  （**2026-10-27 已改为 `false`**，19:30 只读巡检由调度器接管，见上文实测）。
   注意这是**直接集群状态**，私有 overlay 尚未同步：
   - 私有 overlay 还缺这两个新 CronJob 的 suspend 开关与清单，后续 18:40/19:00
     的调度不会随私有仓库自动重建；
@@ -200,6 +231,17 @@ trading paper/LIVE 部署；随后合并的 #308/#309 分别补了 trading 侧�
   的 `sha-<commit>`：模板里的 `caifubao-datahub:latest` 在集群内不可拉取。
   2026-10-25 已把 `etf-daily` / `scoring-shadow` / `paper-readiness` 三个 CronJob
   的镜像固定为当前部署的 `sha-62ab25490950`。
+- 集群上还有两个 Milestone A 的 CronJob，公共模板已包含且**默认 `suspend: true`**
+  （[`k8s/overlays/example-research/datahub-cronjobs.yaml`](../../k8s/overlays/example-research/datahub-cronjobs.yaml)，
+  见 §9）：
+  - `caifubao-datahub-strategy-forward-daily`（22:15，`--spec
+    /etc/caifubao/research/strategy.json`）：唯一的自动 FORWARD 采集入口，按 spec
+    钉死的模型/哈希校验 readiness，任一关键项非 PASS 或 time < 19:30 即 fail-closed；
+  - `caifubao-datahub-research-forward-watch`（23:10，只读）：对账当日 FORWARD 计划、
+    缺口与自动化任务状态。
+  research 已把两者 patch 成 `suspend: false`（与 18:40/19:00 两个 writer 是同一种
+  直接集群状态）；私有 overlay 仍需同步开关、spec ConfigMap 与镜像 tag，否则
+  “集群已启用”不等于“可重复部署”。
 - readiness 只读：它不会开窗、不会写 run、不会改状态，也不计入 120 日证据。
 
 ## 8. “运维授权”具体指什么
