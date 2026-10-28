@@ -6,11 +6,11 @@
 
 ## 1. Spec + 失败测试
 
-- [ ] 1.1 spec-guardian 审阅本 change 的 requirements/scenarios
-- [ ] 1.2 失败测试先行：无策略时行为/形状不变；出口带保留；最短持有保护；
+- [x] 1.1 spec-guardian 审阅（GATE_FAIL 首轮：change record 不完整 → 已补 FORWARD/回放/身份场景）
+- [x] 1.2 失败测试先行：无策略时行为/形状不变；出口带保留；最短持有保护；
       失格强制卖出；原因标签；`hold_count` 递增；spec hash 与 legacy 投影不变；
       非法字段拒绝
-- [ ] 1.3 确认新增字段**不注入** normalized spec 与 legacy config（哈希安全）
+- [x] 1.3 确认新增字段**不注入** normalized spec 与 legacy config（哈希安全）
 
 ## 2. 实现
 
@@ -27,5 +27,5 @@
 
 - [x] 3.1 focused + full datahub pytest 全绿（1684）
 - [x] 3.2 Ruff check/format（CI 规则集）
-- [ ] 3.3 `openspec validate --all --strict`
-- [ ] 3.4 qa-reviewer 审阅；branch-conflict vs develop；Draft PR CI green
+- [x] 3.3 `openspec validate --all --strict`（CI OpenSpec Validate 通过）
+- [x] 3.4 qa-reviewer 首轮 REQUEST CHANGES（P1 身份回挂缺失）→ 已修；branch-conflict vs develop；Draft PR CI green

@@ -8,7 +8,7 @@ bought names at 0.995–1.000. With a 0.302% round-trip cost model that is payin
 round trip to move a tenth of a percentile — measured friction ≈ 42%/year at the
 observed turnover.
 
-A 2026-10-27 research scan (`docs/autoresearch/runs/small-book/holding-scan-and-convertible-bonds-2026-10-27.md`)
+A 2026-10-27 research scan ([`docs/autoresearch/runs/small-book/holding-scan-and-convertible-bonds-2026-10-27.md`](../../../docs/autoresearch/runs/small-book/holding-scan-and-convertible-bonds-2026-10-27.md))
 on the frozen 2020–2026 panel shows the exit band is the lever that matters: going
 from a daily full re-sort to quarterly + a 2× exit band cuts annual turnover
 11.8 → 2.25, friction 3.6% → 0.7%/yr and narrows excess drawdown −25.8% → −11.4%
@@ -17,6 +17,11 @@ from a daily full re-sort to quarterly + a 2× exit band cuts annual turnover
 The spec can currently not express any of this: `rebalance.cadence_days` is validated
 but never consumed (documented in `docs/capability-inventory.md`), and there is no
 exit band, no minimum holding period and no recorded reason for a sale.
+
+## Capabilities
+
+- `openspec/changes/strategy-exit-hysteresis/specs/strategy-engine/spec.md`
+  (ADDED requirements on the strategy engine's selection/rebalance semantics).
 
 ## What Changes
 

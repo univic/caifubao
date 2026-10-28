@@ -117,9 +117,7 @@ def test_exit_buffer_keeps_a_held_name_inside_the_wider_band():
     assert "sh600004" in _codes(wide["holdings"])
     assert wide["reasons"]["sh600004"] == "held_in_exit_band"
     # the wider band displaces the weakest newcomer, not the held name
-    assert _codes(wide["holdings"]) == ["sh600001", "sh600002", "sh600003"][:2] + [
-        "sh600004"
-    ] or set(_codes(wide["holdings"])) == {"sh600001", "sh600002", "sh600004"}
+    assert _codes(wide["holdings"]) == ["sh600001", "sh600002", "sh600004"]
 
 
 def test_min_hold_keeps_a_young_position_that_left_the_band():
@@ -154,7 +152,9 @@ def test_hold_meta_counts_sessions_and_records_entry_reason():
     )
     assert planned["hold_meta"]["sh600004"] == {
         "hold_count": 5,
-        "entry_reason": "held_in_exit_band",
+        # the opening reason survives for the whole holding period; this run's
+        # outcome is recorded in `reasons`, not overwritten here
+        "entry_reason": "added_by_rank",
     }
     newcomer = [code for code in _codes(planned["holdings"]) if code != "sh600004"]
     for code in newcomer:
@@ -211,3 +211,80 @@ def test_spec_rejects_invalid_hysteresis(rebalance, message):
     spec["rebalance"] = rebalance
     with pytest.raises(ValueError, match=message):
         validate_strategy_spec(spec)
+
+
+def test_hysteresis_spec_round_trips_through_the_legacy_projection():
+    """P1 regression: a spec that declares the policy must still pass its own
+    identity check after the legacy projection strips the spec-only fields."""
+    from app.lib.strategy_engine.spec import legacy_to_spec
+
+    spec = json.loads(json.dumps(CERTIFIED_SPEC))
+    spec["rebalance"] = {
+        **spec["rebalance"],
+        "exit_buffer": 2.0,
+        "min_hold_sessions": 10,
+    }
+    identity = spec_hash(spec)
+    legacy = spec_to_legacy_config(spec)
+    reconstructed = legacy_to_spec(legacy)
+    identity_spec = {
+        **reconstructed["spec"],
+        "rebalance": {
+            **reconstructed["spec"]["rebalance"],
+            "exit_buffer": 2.0,
+            "min_hold_sessions": 10,
+        },
+    }
+    assert spec_hash(identity_spec) == identity
+    # without re-attaching the policy the reconstruction must NOT match: that is
+    # exactly the failure mode this test pins
+    assert reconstructed["spec_hash"] != identity
+
+
+def test_replay_and_paper_agree_under_hysteresis():
+    from app.lib.strategy_engine.replay import replay_strategy_spec_decision
+    from app.lib.strategy_engine.runner import assemble_daily_plan
+    from app.lib.strategy_engine.spec import spec_to_legacy_config
+
+    spec = json.loads(json.dumps(CERTIFIED_SPEC))
+    spec["rebalance"] = {
+        **spec["rebalance"],
+        "exit_buffer": 2.0,
+        "min_hold_sessions": 0,
+    }
+    spec["selection"] = {**spec["selection"], "portfolio_size": 3}
+    config = spec_to_legacy_config(spec)
+    preds = _preds()
+    held = [{"stock_code": "sh600004", "weight": 0.33}]
+    meta = {"sh600004": {"hold_count": 3, "entry_reason": "added_by_rank"}}
+    flags = {
+        pred.stock_code: {
+            "trade_status": 1,
+            "is_st": 0,
+            "is_bse": 0,
+            "trade_amount": 1e8,
+            "reference_close": 10.0,
+        }
+        for pred in preds
+    }
+
+    replay = replay_strategy_spec_decision(
+        spec=spec,
+        date=__import__("datetime").datetime(2026, 10, 27),
+        predictions=preds,
+        previous_holdings=held,
+        held_meta=meta,
+        flags=flags,
+    )
+    paper = assemble_daily_plan(
+        config=config,
+        date=__import__("datetime").datetime(2026, 10, 27),
+        predictions=preds,
+        previous_holdings=held,
+        held_meta=meta,
+        flags=flags,
+        exit_buffer=2.0,
+        min_hold_sessions=0,
+    )
+    assert replay["target_holdings"] == paper["target_holdings"]
+    assert "sh600004" in _codes(replay["target_holdings"])

@@ -308,6 +308,7 @@ def replay_strategy_spec_decision(
     previous_holdings: list[dict] | None,
     flags: dict[str, dict] | None = None,
     industry_by_code: dict[str, str] | None = None,
+    held_meta: dict[str, dict] | None = None,
 ) -> dict:
     """Replay one frozen decision with paper's exact pure decision builder.
 
@@ -319,6 +320,9 @@ def replay_strategy_spec_decision(
     from app.lib.strategy_engine.spec import spec_to_legacy_config
 
     config = spec_to_legacy_config(spec)
+    # Exit hysteresis is spec-only: read it from the same document the paper
+    # runner reads, so a replay can never full-re-sort a book the paper keeps.
+    rebalance = spec.get("rebalance") or {}
     return assemble_daily_plan(
         config=config,
         date=date,
@@ -327,4 +331,7 @@ def replay_strategy_spec_decision(
         flags=flags,
         industry_by_code=industry_by_code,
         horizon=config["horizon"],
+        held_meta=held_meta,
+        exit_buffer=float(rebalance.get("exit_buffer", 1.0)),
+        min_hold_sessions=rebalance.get("min_hold_sessions", 0),
     )

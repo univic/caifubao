@@ -211,6 +211,24 @@ def _active_window(model_version: str, horizon: int):
     ).first()
 
 
+def _policy_buffer(policy: dict) -> float:
+    """Validated exit buffer; a non-numeric policy fails loudly, never silently."""
+    value = policy.get("exit_buffer", 1.0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 1.0:
+        raise ValueError(f"exit_buffer must be a number >= 1.0, got {value!r}")
+    return float(value)
+
+
+def _policy_min_hold(policy: dict) -> int:
+    """Validated minimum holding period; a float must not be truncated."""
+    value = policy.get("min_hold_sessions", 0)
+    if type(value) is not int or value < 0:
+        raise ValueError(
+            f"min_hold_sessions must be a non-negative integer, got {value!r}"
+        )
+    return value
+
+
 def run_strategy(
     *,
     date: datetime.datetime,
@@ -338,17 +356,26 @@ def run_strategy(
         industry_by_code=industry_by_code,
         horizon=horizon,
         held_meta=held_meta,
-        exit_buffer=float(policy.get("exit_buffer", 1.0)),
-        min_hold_sessions=int(policy.get("min_hold_sessions", 0)),
+        exit_buffer=_policy_buffer(policy),
+        min_hold_sessions=_policy_min_hold(policy),
     )
     if strategy_spec_hash is not None and not plan["skipped"]:
         # Definition-time execution feasibility uses ONLY signal-date closes,
         # never future execution opens. An infeasible Spec is not certified.
         from caifubao_contracts.strategy_spec import preflight_execution_feasibility
-        from app.lib.strategy_engine.spec import legacy_to_spec
+        from app.lib.strategy_engine.spec import legacy_to_spec, spec_hash
 
         reconstructed = legacy_to_spec(resolved)
-        if reconstructed["spec_hash"] != strategy_spec_hash:
+        # Exit hysteresis is spec-only: the legacy projection cannot carry it,
+        # so it is re-attached before re-deriving the identity. Without this a
+        # spec that declares the policy could never pass its own identity check.
+        identity_spec = reconstructed["spec"]
+        if policy:
+            identity_spec = {
+                **identity_spec,
+                "rebalance": {**(identity_spec.get("rebalance") or {}), **policy},
+            }
+        if spec_hash(identity_spec) != strategy_spec_hash:
             raise ValueError("StrategySpec identity changed during legacy adaptation")
         targets = plan["target_holdings"]
         prices = {
@@ -356,7 +383,7 @@ def run_strategy(
             for item in targets
         }
         preflight_execution_feasibility(
-            reconstructed["spec"],
+            identity_spec,
             reference_prices=prices,
             target_weights={item["stock_code"]: item["weight"] for item in targets},
         )
@@ -1243,7 +1270,7 @@ def _run_with_tracking(args, config: dict | None, policy: dict | None = None) ->
         raise
 
 
-def _load_cli_spec(args) -> tuple[dict | None, str | None]:
+def _load_cli_spec(args) -> tuple[dict | None, str | None, dict | None]:
     """Resolve a spec file without silently changing legacy evidence."""
     if getattr(args, "spec", None) or getattr(args, "spec_json", None):
         from app.lib.strategy_engine.spec import spec_hash, spec_to_legacy_config

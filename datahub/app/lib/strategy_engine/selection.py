@@ -176,6 +176,8 @@ def plan_target_holdings(
     chosen: list[dict] = []
     chosen_codes: set[str] = set()
     for rank_index, cand in enumerate(candidates):
+        if len(chosen) >= size:
+            break
         code = cand["stock_code"]
         if code not in held:
             continue
@@ -205,9 +207,12 @@ def plan_target_holdings(
     for item in holdings:
         code = item["stock_code"]
         previous_count = int(meta.get(code, {}).get("hold_count") or 0)
+        previous_entry = (meta.get(code) or {}).get("entry_reason")
         hold_meta[code] = {
             "hold_count": previous_count + 1 if code in held else 1,
-            "entry_reason": reasons.get(code, "added_by_rank"),
+            # The opening reason is kept for the whole holding period; the
+            # per-run outcome lives in `reasons`.
+            "entry_reason": previous_entry or reasons.get(code, "added_by_rank"),
         }
 
     cash_reserve = float(config.get("cash_reserve_pct", 0.0))
