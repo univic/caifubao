@@ -61,20 +61,10 @@ def _get_pro():
     return ts.pro_api()
 
 
-def tushare_daily(ts_code, start_date=None, end_date=None):
-    """Return daily bars for one A-share via tushare pro daily.
-
-    Columns: ts_code, trade_date (YYYYMMDD), open, high, low, close,
-    pre_close, change, pct_chg, vol (手), amount (千元).
-    Paginates by calendar-year windows to stay under the per-call row cap.
-    """
-    pro = _get_pro()
-    start_date = start_date or "19900101"
-    end_date = end_date or beijing_now_naive().date().strftime("%Y%m%d")
+def _window_ranges(start_date: str, end_date: str):
+    """Yield (window_start, window_end) date strings of at most WINDOW_YEARS."""
     start_year = int(start_date[:4])
     end_year = int(end_date[:4])
-
-    frames = []
     for window_start in range(start_year, end_year + 1, WINDOW_YEARS):
         window_end = min(window_start + WINDOW_YEARS - 1, end_year)
         window_start_date = (
@@ -83,7 +73,14 @@ def tushare_daily(ts_code, start_date=None, end_date=None):
         window_end_date = end_date if window_end == end_year else f"{window_end}1231"
         if window_start_date > window_end_date:
             continue
-        df = pro.daily(
+        yield window_start_date, window_end_date
+
+
+def _fetch_windowed(fetch, ts_code, start_date, end_date):
+    """Paginate one tushare per-code endpoint and pace every call."""
+    frames = []
+    for window_start_date, window_end_date in _window_ranges(start_date, end_date):
+        df = fetch(
             ts_code=ts_code,
             start_date=window_start_date,
             end_date=window_end_date,
@@ -98,6 +95,33 @@ def tushare_daily(ts_code, start_date=None, end_date=None):
     if not frames:
         return pandas.DataFrame()
     return pandas.concat(frames, ignore_index=True)
+
+
+def tushare_daily(ts_code, start_date=None, end_date=None):
+    """Return daily bars for one A-share via tushare pro daily.
+
+    Columns: ts_code, trade_date (YYYYMMDD), open, high, low, close,
+    pre_close, change, pct_chg, vol (手), amount (千元).
+    Paginates by calendar-year windows to stay under the per-call row cap.
+    """
+    pro = _get_pro()
+    start_date = start_date or "19900101"
+    end_date = end_date or beijing_now_naive().date().strftime("%Y%m%d")
+    return _fetch_windowed(pro.daily, ts_code, start_date, end_date)
+
+
+def tushare_index_daily(ts_code, start_date=None, end_date=None):
+    """Return daily bars for one index via tushare pro index_daily.
+
+    Same columns, pagination and pacing contract as :func:`tushare_daily`.
+    The akshare/Sina index endpoint rate-limits a full index sweep after a few
+    hundred calls (the daily index job then trips the source-outage circuit
+    breaker); tushare serves the same bars under its documented per-minute cap.
+    """
+    pro = _get_pro()
+    start_date = start_date or "19900101"
+    end_date = end_date or beijing_now_naive().date().strftime("%Y%m%d")
+    return _fetch_windowed(pro.index_daily, ts_code, start_date, end_date)
 
 
 def adj_factor(ts_code, start_date=None, end_date=None):
