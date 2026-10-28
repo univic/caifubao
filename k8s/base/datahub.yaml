@@ -6,6 +6,11 @@ metadata:
     app: caifubao-datahub
 spec:
   replicas: 1
+  # A cold pull of a fresh immutable tag (the registry can take ~8 minutes)
+  # plus the previous pod's termination exceeds the 600s default progress
+  # deadline, which then reports a healthy rollout as failed. Research rolls
+  # with maxSurge 0, so the pull is serialised behind the old pod.
+  progressDeadlineSeconds: 1800
   selector:
     matchLabels:
       app: caifubao-datahub
