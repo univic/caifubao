@@ -83,7 +83,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 - **策略/执行**：`strategy-engine`、`strategy-nav-fee-budget`、`strategy-paper-timing`、`strategy-paper-readiness`、
   `strategy-forward-evidence`、`strategy-live-loop-minimal`、
   `strategy-paper-research-ledger`、`strategy-portfolio-risk-limits`、
-  `strategy-target-export`、`strategy-replay-artifact`、`backtest-mvp`、
+  `strategy-target-export`、`strategy-exit-hysteresis`（出口带/最短持有）、`strategy-replay-artifact`、`backtest-mvp`、
   `core-satellite-allocation`、`small-account-execution-plan`、
   `small-account-strategy-research`、`etf-benchmark-paper`、`stock-timing-*`
 - **治理**：`environment-model`、`artifact-contract`、`production-capability`、
@@ -150,6 +150,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 | `strategy-fee-aware-opening-budget` | 费用感知开盘买入预算 | `strategy-nav-fee-budget` | 0 |
 | `strategy-paper-causal-timing` | 因果 paper 时序与证据边界 | `strategy-paper-timing` | 0 |
 | `etf-benchmark-paper` | 单 ETF paper 基准 | `etf-benchmark-paper` | 0 |
+| `strategy-exit-hysteresis` | 可选出口带（`exit_buffer`）与最短持有（`min_hold_sessions`）+ 卖出原因留痕；默认行为与已认证窗口哈希不变 | `strategy-engine` | 0 |
 | `strategy-paper-readiness` | 模拟盘就绪门禁（只读）与 research 上线清单；readiness 已实测 DEGRADED | `strategy-paper-readiness` | 0 |
 | `stock-timing-evaluator-p0` | 单股择时评估器（成对证据） | `stock-timing-evaluator` | 0 |
 | `stock-timing-replay-p1` | 单股择时回放适配器 | `stock-timing-replay` | 0 |

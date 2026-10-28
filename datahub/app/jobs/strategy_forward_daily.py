@@ -199,8 +199,17 @@ def main(argv: list[str] | None = None) -> int:
 
         # run_strategy revalidates halt, scores, registry and causal timing;
         # no replace flag, no automatic certify, no trading account writes.
+        rebalance = spec.get("rebalance") or {}
+        policy = {
+            key: rebalance[key]
+            for key in ("exit_buffer", "min_hold_sessions")
+            if key in rebalance
+        }
         result = strategy_runner.run_strategy(
-            date=target, config=config, strategy_spec_hash=identity
+            date=target,
+            config=config,
+            strategy_spec_hash=identity,
+            rebalance_policy=policy or None,
         )
         if (
             result.get("status") != "COMPLETED"

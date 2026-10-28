@@ -20,6 +20,7 @@ import datetime
 import hashlib
 import json
 import logging
+import math
 import sys
 from pathlib import Path
 
@@ -211,6 +212,29 @@ def _active_window(model_version: str, horizon: int):
     ).first()
 
 
+def _policy_buffer(policy: dict) -> float:
+    """Validated exit buffer; a non-numeric policy fails loudly, never silently."""
+    value = policy.get("exit_buffer", 1.0)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) < 1.0
+    ):
+        raise ValueError(f"exit_buffer must be a finite number >= 1.0, got {value!r}")
+    return float(value)
+
+
+def _policy_min_hold(policy: dict) -> int:
+    """Validated minimum holding period; a float must not be truncated."""
+    value = policy.get("min_hold_sessions", 0)
+    if type(value) is not int or value < 0:
+        raise ValueError(
+            f"min_hold_sessions must be a non-negative integer, got {value!r}"
+        )
+    return value
+
+
 def run_strategy(
     *,
     date: datetime.datetime,
@@ -219,6 +243,7 @@ def run_strategy(
     replace: bool = False,
     halt_path: str | None = None,
     strategy_spec_hash: str | None = None,
+    rebalance_policy: dict | None = None,
 ) -> dict:
     from app.lib.strategy_engine.halt import assert_not_halted
     from app.lib.strategy_engine.runner import assemble_daily_plan
@@ -310,6 +335,12 @@ def run_strategy(
     previous_holdings = (
         previous_run.target_holdings if previous_run is not None else None
     )
+    held_meta = (
+        (getattr(previous_run, "hold_meta", None) or {})
+        if previous_run is not None
+        else {}
+    )
+    policy = rebalance_policy or {}
 
     predictions = _query_usable_predictions(model_version, date, horizon)
     flags = (
@@ -330,15 +361,27 @@ def run_strategy(
         flags=flags,
         industry_by_code=industry_by_code,
         horizon=horizon,
+        held_meta=held_meta,
+        exit_buffer=_policy_buffer(policy),
+        min_hold_sessions=_policy_min_hold(policy),
     )
     if strategy_spec_hash is not None and not plan["skipped"]:
         # Definition-time execution feasibility uses ONLY signal-date closes,
         # never future execution opens. An infeasible Spec is not certified.
         from caifubao_contracts.strategy_spec import preflight_execution_feasibility
-        from app.lib.strategy_engine.spec import legacy_to_spec
+        from app.lib.strategy_engine.spec import legacy_to_spec, spec_hash
 
         reconstructed = legacy_to_spec(resolved)
-        if reconstructed["spec_hash"] != strategy_spec_hash:
+        # Exit hysteresis is spec-only: the legacy projection cannot carry it,
+        # so it is re-attached before re-deriving the identity. Without this a
+        # spec that declares the policy could never pass its own identity check.
+        identity_spec = reconstructed["spec"]
+        if policy:
+            identity_spec = {
+                **identity_spec,
+                "rebalance": {**(identity_spec.get("rebalance") or {}), **policy},
+            }
+        if spec_hash(identity_spec) != strategy_spec_hash:
             raise ValueError("StrategySpec identity changed during legacy adaptation")
         targets = plan["target_holdings"]
         prices = {
@@ -346,7 +389,7 @@ def run_strategy(
             for item in targets
         }
         preflight_execution_feasibility(
-            reconstructed["spec"],
+            identity_spec,
             reference_prices=prices,
             target_weights={item["stock_code"]: item["weight"] for item in targets},
         )
@@ -393,6 +436,8 @@ def run_strategy(
         status="SKIPPED" if plan["skipped"] else "COMPLETED",
         skip_reason=plan.get("reason"),
         target_holdings=plan.get("target_holdings", []),
+        hold_meta=plan.get("hold_meta", {}),
+        exit_reasons=plan.get("exit_reasons", {}),
         rebalance=plan.get("rebalance", {}),
     )
     run.completed_at = datetime.datetime.now(datetime.UTC)
@@ -1156,7 +1201,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_with_tracking(args, config: dict | None) -> None:
+def _run_with_tracking(args, config: dict | None, policy: dict | None = None) -> None:
     """Run with a datahub_job_runs freshness record (scoring_runner pattern)."""
     from app.lib.strategy_engine.halt import HaltError
 
@@ -1181,6 +1226,8 @@ def _run_with_tracking(args, config: dict | None) -> None:
         }
         if getattr(args, "strategy_spec_hash", None) is not None:
             kwargs["strategy_spec_hash"] = args.strategy_spec_hash
+        if policy:
+            kwargs["rebalance_policy"] = policy
         result = run_strategy(**kwargs)
         if args.dry_run:
             # Preview only: nothing persisted -> record SKIPPED (not SUCCESS),
@@ -1229,7 +1276,7 @@ def _run_with_tracking(args, config: dict | None) -> None:
         raise
 
 
-def _load_cli_spec(args) -> tuple[dict | None, str | None]:
+def _load_cli_spec(args) -> tuple[dict | None, str | None, dict | None]:
     """Resolve a spec file without silently changing legacy evidence."""
     if getattr(args, "spec", None) or getattr(args, "spec_json", None):
         from app.lib.strategy_engine.spec import spec_hash, spec_to_legacy_config
@@ -1247,10 +1294,18 @@ def _load_cli_spec(args) -> tuple[dict | None, str | None]:
             raise ValueError("--model-version conflicts with --spec signal")
         if getattr(args, "horizon", None) and args.horizon != config["horizon"]:
             raise ValueError("--horizon conflicts with --spec signal")
-        return config, identity
+        # Optional exit hysteresis. Only keys the operator actually declared are
+        # forwarded, so an existing spec keeps its exact behaviour and hash.
+        rebalance = document.get("rebalance") or {}
+        policy = {
+            key: rebalance[key]
+            for key in ("exit_buffer", "min_hold_sessions")
+            if key in rebalance
+        }
+        return config, identity, (policy or None)
     if getattr(args, "config_json", None):
-        return json.loads(args.config_json), None
-    return None, None
+        return json.loads(args.config_json), None, None
+    return None, None, None
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1258,10 +1313,10 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     _init_db()
     if args.command == "run":
-        config, args.strategy_spec_hash = _load_cli_spec(args)
-        _run_with_tracking(args, config)
+        config, args.strategy_spec_hash, policy = _load_cli_spec(args)
+        _run_with_tracking(args, config, policy)
     elif args.command == "nav":
-        config, identity = _load_cli_spec(args)
+        config, identity, _policy = _load_cli_spec(args)
         result = run_nav(
             from_date=parse_date(args.from_date),
             to_date=parse_date(args.to_date),
@@ -1273,7 +1328,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     elif args.command == "forward":
-        config, identity = _load_cli_spec(args)
+        config, identity, _policy = _load_cli_spec(args)
         if args.forward_command == "certify":
             result = certify_forward_window(
                 model_version=args.model_version,

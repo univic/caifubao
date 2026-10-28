@@ -11,7 +11,7 @@ onto these shapes.
 from __future__ import annotations
 
 from collections import Counter, OrderedDict
-from math import floor
+from math import ceil, floor
 
 from app.lib.strategy_engine.config import (
     DEFAULT_HORIZON,
@@ -78,7 +78,41 @@ def select_target_holdings(
     eligible_codes: set[str] | None = None,
     max_size: int | None = None,
     industry_by_code: dict[str, str] | None = None,
+    previous_holdings: list[dict] | None = None,
+    held_meta: dict[str, dict] | None = None,
+    exit_buffer: float = 1.0,
+    min_hold_sessions: int = 0,
 ) -> list[dict]:
+    """Select the target book, honouring the optional exit hysteresis.
+
+    Kept as the historical entry point: callers that do not pass a previous book
+    or a policy get exactly the previous behaviour (full re-sort every run).
+    """
+    return plan_target_holdings(
+        predictions,
+        config,
+        eligible_codes=eligible_codes,
+        max_size=max_size,
+        industry_by_code=industry_by_code,
+        previous_holdings=previous_holdings,
+        held_meta=held_meta,
+        exit_buffer=exit_buffer,
+        min_hold_sessions=min_hold_sessions,
+    )["holdings"]
+
+
+def plan_target_holdings(
+    predictions,
+    config: dict,
+    *,
+    eligible_codes: set[str] | None = None,
+    max_size: int | None = None,
+    industry_by_code: dict[str, str] | None = None,
+    previous_holdings: list[dict] | None = None,
+    held_meta: dict[str, dict] | None = None,
+    exit_buffer: float = 1.0,
+    min_hold_sessions: int = 0,
+) -> dict:
     """Select a target holdings list for one date under the configured limits.
 
     Always "buys high": sorts by score descending (direction semantics live in
@@ -125,7 +159,61 @@ def select_target_holdings(
     # Rank by score desc (buy high). Stable tie-break by stock_code so runs
     # are deterministic.
     candidates.sort(key=lambda c: (-c["score"], c["stock_code"]))
-    holdings = candidates[:size]
+
+    # Exit hysteresis (research-proven: a wider exit band is what stops the
+    # book from paying a round trip to move 0.1 of a percentile). Held names
+    # stay while their rank is inside the exit band, and a position younger
+    # than min_hold_sessions is not churned out at all; a name that loses its
+    # eligibility or its score is still sold.
+    held = {
+        str(h["stock_code"]): h
+        for h in (previous_holdings or [])
+        if isinstance(h, dict) and h.get("stock_code")
+    }
+    meta = dict(held_meta or {})
+    exit_rank = max(size, int(ceil(size * float(exit_buffer))))
+    reasons: dict[str, str] = {}
+    chosen: list[dict] = []
+    chosen_codes: set[str] = set()
+    for rank_index, cand in enumerate(candidates):
+        if len(chosen) >= size:
+            break
+        code = cand["stock_code"]
+        if code not in held:
+            continue
+        hold_count = int(meta.get(code, {}).get("hold_count") or 0)
+        inside_band = rank_index < exit_rank
+        if inside_band or hold_count < int(min_hold_sessions):
+            chosen.append(cand)
+            chosen_codes.add(code)
+            reasons[code] = "held_in_exit_band" if inside_band else "held_min_period"
+        else:
+            reasons[code] = "sold_out_of_exit_band"
+    for cand in candidates:
+        if len(chosen) >= size:
+            break
+        if cand["stock_code"] in chosen_codes:
+            continue
+        chosen.append(cand)
+        chosen_codes.add(cand["stock_code"])
+        reasons[cand["stock_code"]] = "added_by_rank"
+    for code in held:
+        if code not in {c["stock_code"] for c in candidates}:
+            reasons[code] = "sold_ineligible"
+    chosen.sort(key=lambda c: (-c["score"], c["stock_code"]))
+    holdings = chosen[:size]
+
+    hold_meta = {}
+    for item in holdings:
+        code = item["stock_code"]
+        previous_count = int(meta.get(code, {}).get("hold_count") or 0)
+        previous_entry = (meta.get(code) or {}).get("entry_reason")
+        hold_meta[code] = {
+            "hold_count": previous_count + 1 if code in held else 1,
+            # The opening reason is kept for the whole holding period; the
+            # per-run outcome lives in `reasons`.
+            "entry_reason": previous_entry or reasons.get(code, "added_by_rank"),
+        }
 
     cash_reserve = float(config.get("cash_reserve_pct", 0.0))
     investable = 1.0 - cash_reserve
@@ -140,10 +228,14 @@ def select_target_holdings(
         if holdings
         else 0.0
     )
-    return [
-        {"stock_code": h["stock_code"], "weight": _emit_weight(per_stock)}
-        for h in holdings
-    ]
+    return {
+        "holdings": [
+            {"stock_code": h["stock_code"], "weight": _emit_weight(per_stock)}
+            for h in holdings
+        ],
+        "hold_meta": hold_meta,
+        "reasons": reasons,
+    }
 
 
 def compute_rebalance(
