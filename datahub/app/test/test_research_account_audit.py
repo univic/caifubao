@@ -91,6 +91,9 @@ def test_stale_price_is_not_promoted_to_fresh_market_certification():
     [
         lambda x: x["ledger_snapshot"].update(cash=99_999),
         lambda x: x["ledger_snapshot"]["positions"]["sh600000"].update(quantity=99),
+        lambda x: x["ledger_snapshot"]["positions"]["sh600000"].update(
+            quantity=100.001
+        ),
         lambda x: x.update(terminal_nav=99_999),
         lambda x: x["curve"][0].update(nav=99_999),
         lambda x: x["nav_parity"]["points"][0].update(legacy_nav=99_999),
@@ -191,3 +194,51 @@ def test_audits_actual_daily_research_nav_engine_without_any_db():
     assert audit["stale_positions_count"] == 0
     assert audit["terminal_nav_cny"] == result["terminal_nav"]
     assert audit["forward_certification"] == "NOT_EVALUATED"
+
+
+def test_stale_intermediate_mark_is_not_erased_by_later_fresh_mark():
+    account = ResearchSimulationLedger(initial_cash=100_000)
+    account.apply(_fill())
+    account.mark({}, as_of="2026-10-27")
+    first = round(account.nav, 2)
+    account.mark({"sh600000": 11.0}, as_of="2026-10-28")
+    last = round(account.nav, 2)
+    result = {
+        "initial_nav": 100_000,
+        "terminal_nav": last,
+        "curve": [
+            {"date": "2026-10-27", "nav": first},
+            {"date": "2026-10-28", "nav": last},
+        ],
+        "ledger_events": account.events,
+        "ledger_snapshot": account.snapshot(),
+        "nav_parity": {
+            "max_abs_delta_cny": 0,
+            "points": [
+                {
+                    "date": "2026-10-27",
+                    "legacy_nav": first,
+                    "ledger_nav": first,
+                    "delta": 0,
+                },
+                {
+                    "date": "2026-10-28",
+                    "legacy_nav": last,
+                    "ledger_nav": last,
+                    "delta": 0,
+                },
+            ],
+        },
+    }
+    audit = audit_simulation_account(result, expected_initial_nav=100_000)
+    assert audit["stale_positions_count"] == 0
+    assert audit["stale_valuation_dates"] == ["2026-10-27"]
+    assert audit["fresh_price_certification"] == "UNVERIFIED"
+
+
+def test_out_of_order_daily_mark_events_fail_even_when_values_match():
+    payload = _fixture(stale=True)
+    payload["ledger_events"][-1]["marks"] = {"sh600000": 11.0}
+    payload["ledger_events"][-2:] = list(reversed(payload["ledger_events"][-2:]))
+    with pytest.raises(ValueError, match="chronological order"):
+        audit_simulation_account(payload, expected_initial_nav=100_000)

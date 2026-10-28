@@ -95,6 +95,7 @@ def audit_simulation_account(result: dict, *, expected_initial_nav: float) -> di
 
     ledger = ResearchSimulationLedger(initial_cash=initial)
     seen_marks = {}
+    stale_valuation_dates = []
     fills = 0
     rejections = 0
     for event in events:
@@ -111,12 +112,16 @@ def audit_simulation_account(result: dict, *, expected_initial_nav: float) -> di
         if mark_date is not None:
             if mark_date in seen_marks:
                 raise ValueError("duplicate daily MARK")
+            if seen_marks and mark_date <= next(reversed(seen_marks)):
+                raise ValueError("daily MARK journal is out of chronological order")
             seen_marks[mark_date] = ledger.nav
             if mark_date not in expected_points:
                 raise ValueError("unreported daily MARK")
             _equal_money(
                 expected_points[mark_date], ledger.nav, f"daily NAV {mark_date}"
             )
+            if any(position["stale"] for position in ledger.positions.values()):
+                stale_valuation_dates.append(mark_date)
     if set(seen_marks) != set(expected_points):
         raise ValueError("missing daily MARK event for a valuation curve date")
 
@@ -137,7 +142,12 @@ def audit_simulation_account(result: dict, *, expected_initial_nav: float) -> di
                 raise ValueError(f"ledger {group}[{code}] fields differ")
             for field, value in expected[code].items():
                 item = row[field]
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                if field == "quantity":
+                    if type(item) is not int or item != value:
+                        raise ValueError(
+                            f"ledger {group}[{code}].quantity must match exactly"
+                        )
+                elif isinstance(value, (int, float)) and not isinstance(value, bool):
                     _equal_money(item, value, f"ledger {group}[{code}].{field}")
                 elif item != value or type(item) is not type(value):
                     raise ValueError(f"ledger {group}[{code}].{field} differs")
@@ -190,7 +200,10 @@ def audit_simulation_account(result: dict, *, expected_initial_nav: float) -> di
         "fills_count": fills,
         "rejections_count": rejections,
         "stale_positions_count": stale_count,
-        "fresh_price_certification": "UNVERIFIED" if stale_count else "NOT_EVALUATED",
+        "stale_valuation_dates": stale_valuation_dates,
+        "fresh_price_certification": (
+            "UNVERIFIED" if stale_valuation_dates else "NOT_EVALUATED"
+        ),
         "nav_parity_max_delta_cny": round(max_delta, 6),
     }
 
