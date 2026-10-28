@@ -35,15 +35,16 @@ keeps its exact normalized bytes, spec hash and legacy config hash.
 
 ### Requirement: Exit band and minimum holding period drive the target book
 
-Given the previous book (the latest COMPLETED run for the same strategy name,
-model version, horizon and `config_hash`; changing the config hash starts a fresh
-book with no carried hold counts), selection SHALL keep a held name while its rank
-is inside the exit band `ceil(portfolio_size × exit_buffer)`, SHALL keep a position
-whose recorded `hold_count` is below `min_hold_sessions`, and SHALL sell a held name
-that leaves the band once its minimum holding period has elapsed. A held name with
-no usable prediction for the decision date SHALL be sold regardless of the policy.
-Vacancies SHALL be filled from the remaining candidates by score, and the final book
-SHALL still be capped at `portfolio_size` and ordered by score then code.
+Selection SHALL keep a held name while its rank is inside the exit band
+`ceil(portfolio_size × exit_buffer)`, and SHALL keep a position whose recorded
+`hold_count` is below `min_hold_sessions`. The previous book SHALL be the latest
+COMPLETED run for the same strategy name, model version, horizon and `config_hash`;
+changing that config hash SHALL start a fresh book with no carried hold counts. A
+held name that leaves the band after its minimum holding period SHALL be sold, and a
+held name with no usable prediction for the decision date SHALL be sold regardless
+of the policy. Vacancies SHALL be filled from the remaining candidates by score, and
+the final book SHALL remain capped at `portfolio_size` and ordered by score then
+code.
 
 #### Scenario: Exit band keeps a slipping name
 
