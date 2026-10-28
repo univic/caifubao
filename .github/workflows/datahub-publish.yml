@@ -36,7 +36,7 @@ jobs:
 
           printf '%s\n' "$CHANGED_FILES"
 
-          if printf '%s\n' "$CHANGED_FILES" | grep -E -q '^(datahub/|backend/app/utilities/|backend/app/model/|backend/app/services/timing_evaluator\.py$|\.github/workflows/datahub-publish\.yml$)'; then
+          if printf '%s\n' "$CHANGED_FILES" | grep -E -q '^(datahub/|shared/|\.github/workflows/datahub-publish\.yml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -83,7 +83,9 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.changed == 'true'
         uses: docker/build-push-action@v5
         with:
-          context: ./datahub
+          # The image installs the shared contracts package, so the build
+          # context is the repository root.
+          context: .
           file: ./datahub/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
