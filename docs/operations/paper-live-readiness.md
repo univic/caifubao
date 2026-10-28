@@ -136,6 +136,33 @@ etf_market_data  WARN  尚无 ETF 数据
      跑单前的判定必须带 `--model-version` 与 `--horizon`（`strategy_forward_daily`
      自身按 spec 钉死的模型校验，所以那边会正确 fail-closed）。
 
+### 2026-10-28：镜像升级 + 出口带 spec 生效（新窗口 `01c196b8…`）
+
+- **镜像**：research Datahub Deployment 与全部 CronJob 固定到
+  `sha-b38588946198`（含 #340 DBRef 快照修复、#342 研究报告、#343 出口带/最短持有）。
+  这是自 2026-10-25 之后第一次**通过私有 overlay 正常部署**（不再是直接 patch 的
+  集群状态）。
+- **私有侧两个真 bug（已修，PR #122/#123）**：
+  1. `scripts/verify-rendered-manifest.sh` 用 `yq -r` 直接比较多文档流输出，值里带空行
+     与 `---`，导致**只要 readiness 处于启用状态，research 部署必然失败**；已改为丢弃
+     空行/分隔行后取首个值。
+  2. 私有 overlay 的 `snapshot-export` CronJob 没有显式 `suspend`，被 Research
+     CronJob 漂移守卫拒绝；按线上实际（启用）补 `suspend: false`。
+  修复后渲染契约与漂移守卫均通过，线上/渲染 15 个 CronJob 的 suspend 逐项一致。
+- **新 spec**：`rebalance = {"cadence_days": 5, "exit_buffer": 2.0}`
+  （`spec_hash=01c196b8…`，`legacy_config_hash` 仍是 `f9eeae…`，即 legacy 投影不含
+  新字段）。`exit_buffer=2.0` = 持仓在按分数排名前 40 内就不卖；`min_hold_sessions`
+  **未启用**（无回放证据，等实测换手后再决定）。
+- **窗口迁移**：`c1310492…`（start 10-26，2 个 FORWARD 会话）**已 CLOSED**；
+  新窗口 `01c196b8…` `start_date=2026-10-28`，`count=0/120`。10-26/10-27 两条
+  FORWARD 记录仍在库中作为历史，但不再计入 ACTIVE 窗口。
+- **验证**：`strategy run 2026-10-28 --dry-run --spec …` 产出 20 只目标、
+  `hold_meta`/`exit_reasons` 正常；`paper readiness` 全 PASS / **READY**；
+  `forward progress` 指向新窗口。首次真实会话由 22:15 的
+  `strategy-forward-daily` 写入（`decision_at` 需早于 10-29 09:30）。
+- **今晚要看的两个数**：`forward progress` 应为 `1/120`；当日 `datahub_job_runs`
+  里 strategy forward 记录应为 FORWARD，且换手明显低于旧 spec 的 ~55%/日。
+
 ## 3. 与已合并 #307 的关系（重要）
 
 PR #307（`7464d6b`）已合并：统一 `StrategySpec`、legacy/spec 双哈希、研究模拟账本、
@@ -240,8 +267,10 @@ trading paper/LIVE 部署；随后合并的 #308/#309 分别补了 trading 侧�
   - `caifubao-datahub-research-forward-watch`（23:10，只读）：对账当日 FORWARD 计划、
     缺口与自动化任务状态。
   research 已把两者 patch 成 `suspend: false`（与 18:40/19:00 两个 writer 是同一种
-  直接集群状态）；私有 overlay 仍需同步开关、spec ConfigMap 与镜像 tag，否则
-  “集群已启用”不等于“可重复部署”。
+  直接集群状态）。**2026-10-28 起私有 overlay 已同步**：`research` 环境的
+  `DATAHUB_*_SUSPEND` 变量与 `ACTIVE_WRITERS_ACK` 已覆盖 7 个活跃 writer，镜像固定到
+  `sha-b38588946198`，渲染契约与漂移守卫均可复现通过——research 现在可以按私有
+  overlay 重复部署，不必再手工 patch 集群。
 - readiness 只读：它不会开窗、不会写 run、不会改状态，也不计入 120 日证据。
 
 ## 8. “运维授权”具体指什么
