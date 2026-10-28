@@ -693,6 +693,41 @@ scoring). The snapshot export runs after them (18:50) and the dev import at
 does **not** include `stock_score_predictions`; dev scoring must be produced by
 running `scoring_runner` manually.
 
+### Index quotes: source, units and rollout notes (2026-10-29)
+
+- **Root cause of the daily `caifubao-datahub-quote-index` failure**: index
+  history always went through akshare's Sina endpoint
+  (`stock_zh_index_daily`) regardless of `DATAHUB_STOCK_HISTORY_SOURCE`. A
+  ~560-index sweep is rate-limited after a few hundred calls, so the run tripped
+  its own "25 consecutive failed history pulls" breaker at ~index 220
+  (`sz399017…`), even though each of those codes answers on a single request.
+- **Fix (public #345, image `sha-229f04cb5967`)**: index history comes from
+  tushare `index_daily` when the history source is pinned to tushare, with the
+  same per-year pagination and 0.25s/call pacing as the stock path, retries on a
+  rate-limit hit, and the same empty-frame contract. The `quote-index` CronJob
+  now pins `DATAHUB_STOCK_HISTORY_SOURCE=tushare` and mounts the
+  `TUSHARE_TOKEN` secret in all three public overlays — without that env the
+  engine change would never have been reached.
+- **Verified in research on 2026-10-28**: a full manual run finished
+  `status=SUCCESS`, `pulled_total=562`, `written_total=2065`,
+  365/365 validated, `coverage_rate=1.0`, no failed or skipped indices (5m45s).
+- **Units**: tushare index `vol` is in 手 (100 shares); the normaliser multiplies
+  by 100 so the stored `volume` keeps the share unit of the old Sina path
+  (checked on sh000300 / sz399001 / sh000905 / sz399017: ratio exactly 1.0000).
+- **Rollout deadline**: `caifubao-datahub` now sets
+  `progressDeadlineSeconds: 1800` (public #346). A cold pull of a fresh
+  immutable tag plus the previous pod's termination exceeded the 600s default,
+  which reported a healthy rollout as failed; research rolls with
+  `maxSurge: 0`, so the pull is serialised behind the old pod. The private
+  deploy job's readiness wait was raised accordingly (research 1500s,
+  development 1800s).
+- **Build trigger**: the public repository's default branch is now `develop`.
+  `workflow_run` executes the workflow file from the **default branch**, so
+  automatic `Build Datahub Image` runs used main's stale copy
+  (`context: ./datahub`) and failed; images had to be built with a manual
+  `workflow_dispatch --ref develop`. `main` keeps its release role and
+  protection.
+
 Dependency gates are data-aware, not just status-aware: a signal run proceeds
 when today's quote job has a SUCCESS record **or** its record (RUNNING or
 FAILED — the run may have been killed by `activeDeadlineSeconds` after writing
