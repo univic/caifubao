@@ -29,7 +29,7 @@ exit band, no minimum holding period and no recorded reason for a sale.
   - `rebalance.exit_buffer` (number ≥ 1.0): a held name stays while its rank is
     inside `ceil(portfolio_size × exit_buffer)`;
   - `rebalance.min_hold_sessions` (integer ≥ 0): a position younger than this is not
-    churned out while it still carries a usable score.
+    churned out while it stays in the candidate pool.
 - Every rebalance records a per-code reason (`held_in_exit_band`, `held_min_period`,
   `sold_out_of_exit_band`, `sold_ineligible`, `added_by_rank`) and every holding
   carries `{hold_count, entry_reason}` in a new `hold_meta` document field.

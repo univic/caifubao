@@ -41,8 +41,9 @@ Selection SHALL keep a held name while its rank is inside the exit band
 COMPLETED run for the same strategy name, model version, horizon and `config_hash`;
 changing that config hash SHALL start a fresh book with no carried hold counts. A
 held name that leaves the band after its minimum holding period SHALL be sold, and a
-held name with no usable prediction for the decision date SHALL be sold regardless
-of the policy. Vacancies SHALL be filled from the remaining candidates by score, and
+held name that is absent from the candidate pool for the decision date (no usable
+prediction, including outside the configured percentile band or eligibility set)
+SHALL be sold regardless of the policy. Vacancies SHALL be filled from the remaining candidates by score, and
 the final book SHALL remain capped at `portfolio_size` and ordered by score then
 code.
 
@@ -84,7 +85,8 @@ Every completed (non-skipped) plan SHALL record a per-code reason map
 `hold_count` SHALL increment for a held name and start at 1 for a new one.
 `entry_reason` SHALL be the reason the position was opened and SHALL be preserved
 for the whole holding period; the outcome of the current run SHALL live only in the
-reason map. The reason map SHALL be persisted as `exit_reasons` and the metadata as
+reason map. A held position with no previously stored metadata SHALL take this run's
+reason as its `entry_reason`. The reason map SHALL be persisted as `exit_reasons` and the metadata as
 `hold_meta`, while `rebalance` SHALL keep exactly the `added`/`removed`/`unchanged`
 shape it has today and target holdings SHALL keep exactly `{stock_code, weight}`.
 
