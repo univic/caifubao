@@ -287,4 +287,25 @@ def test_replay_and_paper_agree_under_hysteresis():
         min_hold_sessions=0,
     )
     assert replay["target_holdings"] == paper["target_holdings"]
+    assert replay["hold_meta"] == paper["hold_meta"]
+    assert replay["exit_reasons"] == paper["exit_reasons"]
     assert "sh600004" in _codes(replay["target_holdings"])
+
+
+def test_replay_refuses_min_hold_without_held_meta():
+    from app.lib.strategy_engine.replay import replay_strategy_spec_decision
+
+    spec = json.loads(json.dumps(CERTIFIED_SPEC))
+    spec["rebalance"] = {
+        **spec["rebalance"],
+        "exit_buffer": 1.0,
+        "min_hold_sessions": 5,
+    }
+    with pytest.raises(ValueError, match="requires the previous book"):
+        replay_strategy_spec_decision(
+            spec=spec,
+            date=__import__("datetime").datetime(2026, 10, 27),
+            predictions=_preds(),
+            previous_holdings=[{"stock_code": "sh600004", "weight": 0.33}],
+            held_meta=None,
+        )

@@ -20,6 +20,7 @@ import datetime
 import hashlib
 import json
 import logging
+import math
 import sys
 from pathlib import Path
 
@@ -214,8 +215,13 @@ def _active_window(model_version: str, horizon: int):
 def _policy_buffer(policy: dict) -> float:
     """Validated exit buffer; a non-numeric policy fails loudly, never silently."""
     value = policy.get("exit_buffer", 1.0)
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 1.0:
-        raise ValueError(f"exit_buffer must be a number >= 1.0, got {value!r}")
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) < 1.0
+    ):
+        raise ValueError(f"exit_buffer must be a finite number >= 1.0, got {value!r}")
     return float(value)
 
 

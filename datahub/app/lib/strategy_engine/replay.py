@@ -323,6 +323,13 @@ def replay_strategy_spec_decision(
     # Exit hysteresis is spec-only: read it from the same document the paper
     # runner reads, so a replay can never full-re-sort a book the paper keeps.
     rebalance = spec.get("rebalance") or {}
+    min_hold = rebalance.get("min_hold_sessions", 0)
+    if min_hold and held_meta is None:
+        # replaying without the real hold counts would silently protect every
+        # position (hold_count=0), which is not the paper book
+        raise ValueError(
+            "min_hold_sessions requires the previous book's hold_meta for replay"
+        )
     return assemble_daily_plan(
         config=config,
         date=date,
@@ -333,5 +340,5 @@ def replay_strategy_spec_decision(
         horizon=config["horizon"],
         held_meta=held_meta,
         exit_buffer=float(rebalance.get("exit_buffer", 1.0)),
-        min_hold_sessions=rebalance.get("min_hold_sessions", 0),
+        min_hold_sessions=min_hold,
     )
