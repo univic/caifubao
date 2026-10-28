@@ -60,7 +60,7 @@ _ALLOWED = {
         "max_industry_pct",
         "min_trade_amount_cny",
     },
-    "rebalance": {"cadence_days"},
+    "rebalance": {"cadence_days", "exit_buffer", "min_hold_sessions"},
     "risk": set(DEFAULT_RISK),
     "execution": set(DEFAULT_EXECUTION),
     "evidence": {"timing_version", "policy"},
@@ -184,6 +184,23 @@ def validate_strategy_spec(spec: dict) -> dict:
     cadence = normalized["rebalance"].get("cadence_days")
     if type(cadence) is not int or cadence <= 0:
         raise ValueError("rebalance.cadence_days must be positive integer")
+    # Optional exit hysteresis. Deliberately not defaulted: the normalized spec
+    # is hashed byte-for-byte, so injecting a default here would change the
+    # identity of every already-certified window.
+    rebalance = normalized["rebalance"]
+    if "exit_buffer" in rebalance:
+        buffer = _finite_number(
+            rebalance["exit_buffer"], "rebalance.exit_buffer", low=1.0
+        )
+        if buffer < 1.0:
+            raise ValueError("rebalance.exit_buffer must be >= 1.0")
+        rebalance["exit_buffer"] = buffer
+    if "min_hold_sessions" in rebalance:
+        value = rebalance["min_hold_sessions"]
+        if type(value) is not int or value < 0:
+            raise ValueError(
+                "rebalance.min_hold_sessions must be a non-negative integer"
+            )
 
     risk = {**DEFAULT_RISK, **normalized["risk"]}
     for key in (
@@ -347,6 +364,14 @@ def to_legacy_config(spec: dict) -> dict:
     execution = dict(resolved["execution"])
     execution.pop("unknown_limit_policy")
     execution["initial_nav"] = resolved["initial_nav"]
+    # Exit hysteresis is a spec-level execution semantic with no legacy
+    # counterpart: dropping it keeps the legacy config (and therefore
+    # legacy_config_hash) byte-identical for specs that declare it.
+    rebalance = {
+        key: value
+        for key, value in resolved["rebalance"].items()
+        if key == "cadence_days"
+    }
     return {
         "timing_version": resolved["evidence"]["timing_version"],
         "score_model_version": resolved["signal"]["score_model_version"],
@@ -354,7 +379,7 @@ def to_legacy_config(spec: dict) -> dict:
         "initial_nav": resolved["initial_nav"],
         "selection": copy.deepcopy(resolved["selection"]),
         "constraints": copy.deepcopy(resolved["constraints"]),
-        "rebalance": copy.deepcopy(resolved["rebalance"]),
+        "rebalance": rebalance,
         "weighting": resolved["sizing"]["weighting"],
         "cash_reserve_pct": resolved["sizing"]["cash_reserve_pct"],
         "execution": execution,

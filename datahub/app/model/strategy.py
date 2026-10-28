@@ -46,6 +46,12 @@ class StrategyPaperRun(Document):
     skip_reason = StringField()
 
     target_holdings = ListField(DictField())  # [{stock_code, weight}]
+    # Per-code holding state for the exit hysteresis: {code: {hold_count,
+    # entry_reason}}. Absent on legacy rows, which simply start a fresh count.
+    hold_meta = DictField()
+    # Per-code exit reason for this run's rebalance ({code: reason}); kept out
+    # of `rebalance` so that field's shape stays exactly added/removed/unchanged.
+    exit_reasons = DictField()
     rebalance = DictField()  # {added, removed, unchanged}
     # Single paper-NAV curve point for THIS run's execution_date, written by the `nav`
     # recompute command: {date, nav, daily_return, turnover, drawdown,

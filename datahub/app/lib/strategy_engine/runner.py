@@ -18,7 +18,7 @@ from app.lib.strategy_engine.config import (
     DEFAULT_HORIZON,
     validate_strategy_config,
 )
-from app.lib.strategy_engine.selection import compute_rebalance, select_target_holdings
+from app.lib.strategy_engine.selection import compute_rebalance, plan_target_holdings
 
 # Prediction record field for the eligibility source of truth. The runner maps
 # quote/stock rows onto this shape.
@@ -135,6 +135,9 @@ def assemble_daily_plan(
     flags: dict[str, dict] | None = None,
     industry_by_code: dict[str, str] | None = None,
     horizon: int | None = None,
+    held_meta: dict[str, dict] | None = None,
+    exit_buffer: float = 1.0,
+    min_hold_sessions: int = 0,
 ) -> dict:
     """Build one day's paper plan.
 
@@ -184,12 +187,17 @@ def assemble_daily_plan(
                 for code in sorted(excluded)[:20]
             ],
         }
-    target = select_target_holdings(
+    planned = plan_target_holdings(
         prediction_list,
         config,
         eligible_codes=eligible,
         industry_by_code=industry_by_code,
+        previous_holdings=previous_holdings,
+        held_meta=held_meta,
+        exit_buffer=exit_buffer,
+        min_hold_sessions=min_hold_sessions,
     )
+    target = planned["holdings"]
     if not target:
         return {
             "skipped": True,
@@ -205,6 +213,8 @@ def assemble_daily_plan(
         "date": date,
         "horizon": horizon,
         "target_holdings": target,
+        "hold_meta": planned["hold_meta"],
+        "exit_reasons": planned["reasons"],
         "rebalance": compute_rebalance(previous_holdings, target),
     }
 
