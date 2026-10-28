@@ -420,6 +420,12 @@ def _normalise_tushare_index_frame(frame):
     normalised = frame.rename(columns={"trade_date": "date", "vol": "volume"})[
         _TUSHARE_INDEX_COLUMNS
     ].copy()
+    # tushare reports index volume in 手 (100 shares); the stored/index frame
+    # contract (akshare/Sina) is shares. Verified against a stored row:
+    # stored 16,656,016,100 vs tushare vol 166,560,161 for sh000300 2026-10-28.
+    normalised["volume"] = (
+        pandas.to_numeric(normalised["volume"], errors="coerce") * 100
+    )
     # Match the akshare frame shape exactly: the caller compares `date` with
     # `datetime.date` bounds, which a datetime64 column cannot do.
     normalised["date"] = pandas.to_datetime(normalised["date"], format="%Y%m%d").dt.date
@@ -446,8 +452,12 @@ def get_zh_a_index_hist_daily_quote(
     if get_stock_history_source() == "tushare":
         # A full index sweep over the Sina endpoint (akshare) is rate-limited
         # after a few hundred calls, which trips the 25-consecutive-failure
-        # source-outage breaker in the daily index job.
-        raw_df = _tushare_index_history(code, start_date, end_date)
+        # source-outage breaker in the daily index job. A per-minute cap hit on
+        # this path is retryable exactly like the stock tushare path.
+        raw_df = _call_with_retry(
+            lambda: _tushare_index_history(code, start_date, end_date),
+            label=f"tushare_index_daily:{code}",
+        )
     else:
         raw_df = _call_with_retry(
             lambda: interface.akshare_interface.stock_zh_index_daily(code),

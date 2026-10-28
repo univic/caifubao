@@ -61,6 +61,8 @@ def test_pinned_tushare_source_serves_index_history(monkeypatch):
     assert set(frame.columns) == set(zh_a_daily._TUSHARE_INDEX_COLUMNS)
     assert frame["date"].is_monotonic_increasing
     assert frame["close"].iloc[-1] == pytest.approx(4644.6276)
+    # tushare index vol is in 手 (100 shares); the stored contract is shares
+    assert frame["volume"].iloc[-1] == pytest.approx(200.0 * 100)
 
 
 def test_default_source_still_uses_akshare(monkeypatch):
@@ -109,3 +111,16 @@ def test_tushare_frame_missing_columns_fails_loudly():
         zh_a_daily._normalise_tushare_index_frame(
             pandas.DataFrame({"trade_date": ["20261028"]})
         )
+
+
+def test_tushare_index_errors_stay_hard_failures(monkeypatch):
+    """A source outage must never be downgraded to a skipped index."""
+    monkeypatch.setenv("DATAHUB_STOCK_HISTORY_SOURCE", "tushare")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("tushare index_daily exploded")
+
+    monkeypatch.setattr(tushare_interface, "tushare_index_daily", boom)
+
+    with pytest.raises(RuntimeError, match="tushare index_daily exploded"):
+        zh_a_daily.get_zh_a_index_hist_daily_quote("sz399017")
