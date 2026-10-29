@@ -281,6 +281,7 @@ jobs:
           pip install -e ./shared
           cd datahub
           pip install -r requirements.txt
+          pip install -r requirements-test.txt
           pip install pytest pytest-mock
 
       # Datahub tests run against the datahub models — the same code the image
