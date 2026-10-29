@@ -18,10 +18,13 @@ One absence is refused rather than patched: a held name with no cost basis. Keep
 its mark and the stop would measure a loss from a price the book was never bought
 at (usually today's close, so no loss and the stop silently never fires).
 
-A held name with no decision-date close is *not* refused: it carries no mark, so
-``plan_from_state`` defers its stop for that session instead of inventing one.
-That is a deferral, not a reprieve - the name is still held, and the next session
-with a quote measures it against the same recorded basis.
+A held name with no decision-date close is *not* refused here: it carries no
+mark, and ``plan_from_state`` defers its stop for that session rather than
+inventing one. In the paper job a held name with no quote row is not eligible, so
+it leaves the book as ineligible; the run also refuses to *record* a target whose
+close is unknown, because the next session's stop would have no basis to measure
+against. The deferral is the planner's rule, not a promise that the runner keeps
+an unpriced name.
 
 The state is an input to a decision, not an account: it exists so a stop-loss has
 a cost basis to measure against, and nothing here may be read as a holding.

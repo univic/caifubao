@@ -62,6 +62,9 @@ class StrategyPaperRun(Document):
     #: stop-out or a reserved slot can be explained after the fact instead of
     #: being re-derived from a book that has since moved on.
     decision_state = DictField()
+    #: Content hash of that state, so two runs of one declaration can differ by
+    #: account state and have that difference be locatable.
+    decision_state_hash = StringField()
     rebalance = DictField()  # {added, removed, unchanged}
     # Single paper-NAV curve point for THIS run's execution_date, written by the `nav`
     # recompute command: {date, nav, daily_return, turnover, drawdown,

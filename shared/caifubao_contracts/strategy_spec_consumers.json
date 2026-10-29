@@ -491,13 +491,14 @@
     "family": {
       "status": "consumed",
       "consumers": [
-        "shared/caifubao_contracts/strategy_exit_policy.py"
+        "shared/caifubao_contracts/strategy_exit_policy.py",
+        "datahub/app/jobs/strategy_runner.py"
       ],
       "consumed_by_versions": [
         "2"
       ],
       "golden": [
-        "datahub/app/test/test_strategy_research_pipeline.py::test_confirmation_budget_is_per_family"
+        "datahub/app/test/test_strategy_exit_policy.py::test_the_declared_family_decides_which_exit_contract_is_legal"
       ]
     },
     "selection.exit.rank_below": {
@@ -509,7 +510,7 @@
         "2"
       ],
       "golden": [
-        "datahub/app/test/test_strategy_exit_policy.py::test_allocation_needs_only_the_per_asset_stop"
+        "datahub/app/test/test_strategy_exit_policy.py::test_rank_below_sells_a_name_the_exit_buffer_would_have_kept"
       ]
     },
     "selection.exit.stop_loss_pct": {
@@ -521,7 +522,7 @@
         "2"
       ],
       "golden": [
-        "datahub/app/test/test_strategy_exit_policy.py::test_allocation_needs_only_the_per_asset_stop"
+        "datahub/app/test/test_strategy_exit_policy.py::test_the_declared_stop_loss_sells_a_held_name"
       ]
     },
     "selection.exit.max_hold_sessions": {
@@ -545,7 +546,7 @@
         "2"
       ],
       "golden": [
-        "datahub/app/test/test_strategy_allocation.py::test_rank_family_rejects_an_allocation_block"
+        "datahub/app/test/test_strategy_exit_policy.py::test_an_ineligible_holding_is_sold_under_the_declared_action"
       ]
     },
     "selection.exit.min_hold_sessions": {
@@ -557,7 +558,7 @@
         "2"
       ],
       "golden": [
-        "datahub/app/test/test_strategy_v1_regression.py::test_fixture_records_its_provenance"
+        "datahub/app/test/test_strategy_exit_policy.py::test_min_hold_sessions_keeps_a_name_outside_the_declared_band"
       ]
     },
     "allocation.assets": {

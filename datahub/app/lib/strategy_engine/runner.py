@@ -241,6 +241,10 @@ def assemble_daily_plan(
         # Only the state-driven path produces a per-name reason map; surfacing it
         # keeps a stop-out explainable instead of merely absent.
         "reasons": dict(planned.get("reasons") or {}),
+        # The state is hashed into the plan so a divergence between two runs of
+        # the same declaration can be attributed to the account, not the decision.
+        # Absent on the legacy path, which decides from the previous target book.
+        "decision_state_hash": planned.get("state_hash"),
         "hold_meta": planned["hold_meta"],
         "exit_reasons": planned["reasons"],
         "rebalance": compute_rebalance(previous_holdings, target),

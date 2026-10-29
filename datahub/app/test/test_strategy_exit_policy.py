@@ -191,6 +191,43 @@ def test_declared_rank_replaces_the_derived_buffer():
 # --------------------------------------------------------------------------
 
 
+def test_the_declared_family_decides_which_exit_contract_is_legal():
+    """`family` is a dispatch, not a label: the same policy is legal in one family.
+
+    The manifest binds this field to the test that names its effect, so the
+    allocation family accepting a rank exit here would be a contract change.
+    """
+    policy = {
+        "rank_below": 20,
+        "stop_loss_pct": 0.15,
+        "max_hold_sessions": 40,
+        "on_ineligible": "sell_next_open",
+    }
+    family = "rank_selection"
+    assert validate_exit_policy(family, policy)["rank_below"] == 20
+    family = "asset_allocation"
+    with pytest.raises(ValueError, match="does not use rank exits"):
+        validate_exit_policy(family, policy)
+
+
+def test_the_declared_stop_loss_sells_a_held_name():
+    policy = {
+        "rank_below": 40,
+        "stop_loss_pct": 0.15,
+        "max_hold_sessions": 40,
+        "on_ineligible": "sell_next_open",
+    }
+    state = _state([("sh600000", 10.0, 3)])
+    plan = plan_from_state(
+        state=state,
+        predictions=_predictions(),
+        config=_config(),
+        exit_policy=policy,
+        marks={"sh600000": 8.0},
+    )
+    assert plan["reasons"]["sh600000"] == "sold_stop_loss"
+
+
 def test_stop_loss_sells_a_name_inside_the_band():
     state = _state([("sh600000", 10.0, 3)])
     plan = plan_from_state(
@@ -229,6 +266,66 @@ def test_band_keeps_a_name_when_no_mandatory_exit_fires():
     )
     assert plan["mandatory_exits"] == {}
     assert plan["reasons"]["sh600030"] == "held_in_exit_band"
+
+
+def test_rank_below_sells_a_name_the_exit_buffer_would_have_kept():
+    """The declared rank wins over the derived buffer: 25 here, 40 by buffer."""
+    policy = {
+        "rank_below": 25,
+        "stop_loss_pct": 0.15,
+        "max_hold_sessions": 40,
+        "on_ineligible": "sell_next_open",
+    }
+    state = _state([("sh600030", 10.0, 3)])  # rank ~31: inside 40, outside 25
+    plan = plan_from_state(
+        state=state,
+        predictions=_predictions(),
+        config=_config(),
+        exit_policy=policy,
+        marks={"sh600030": 10.0},
+    )
+    assert plan["reasons"]["sh600030"] == "sold_out_of_exit_band"
+    assert "sh600030" not in {holding["stock_code"] for holding in plan["holdings"]}
+
+
+def test_min_hold_sessions_keeps_a_name_outside_the_declared_band():
+    """The declared minimum holding period outranks the declared rank exit."""
+    policy = {
+        "rank_below": 25,
+        "stop_loss_pct": 0.15,
+        "max_hold_sessions": 40,
+        "on_ineligible": "sell_next_open",
+        "min_hold_sessions": 5,
+    }
+    state = _state([("sh600030", 10.0, 3)])  # held 3 sessions, minimum is 5
+    plan = plan_from_state(
+        state=state,
+        predictions=_predictions(),
+        config=_config(),
+        exit_policy=policy,
+        marks={"sh600030": 10.0},
+    )
+    assert plan["reasons"]["sh600030"] == "held_min_period"
+    assert "sh600030" in {holding["stock_code"] for holding in plan["holdings"]}
+
+
+def test_an_ineligible_holding_is_sold_under_the_declared_action():
+    """`on_ineligible` names what happens: sold at the next open, not held."""
+    policy = {
+        "rank_below": 40,
+        "stop_loss_pct": 0.15,
+        "max_hold_sessions": 40,
+        "on_ineligible": "sell_next_open",
+    }
+    state = _state([("sh600000", 10.0, 3)])
+    plan = plan_from_state(
+        state=state,
+        predictions=[p for p in _predictions() if p.stock_code != "sh600000"],
+        config=_config(),
+        exit_policy=policy,
+        marks={"sh600000": 10.0},
+    )
+    assert plan["reasons"]["sh600000"] == "sold_ineligible"
 
 
 def test_mandatory_reason_outranks_ineligibility():

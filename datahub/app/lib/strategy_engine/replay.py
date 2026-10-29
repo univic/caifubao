@@ -309,17 +309,33 @@ def replay_strategy_spec_decision(
     flags: dict[str, dict] | None = None,
     industry_by_code: dict[str, str] | None = None,
     held_meta: dict[str, dict] | None = None,
+    decision_state: dict | None = None,
+    marks: dict[str, float] | None = None,
 ) -> dict:
     """Replay one frozen decision with paper's exact pure decision builder.
 
     Research-only, no database/clock access or forward evidence. An unsupported
     non-default risk policy fails loudly rather than pretending that this
     legacy decision builder has applied the new gate.
+
+    A declaration that carries an exit contract needs the account state the paper
+    run decided from. Replaying from the previous target book alone would replay a
+    book with no stop-loss and no maximum holding period and call it the paper
+    decision, so the state is required rather than approximated.
     """
     from app.lib.strategy_engine.runner import assemble_daily_plan
     from app.lib.strategy_engine.spec import spec_to_legacy_config
 
     config = spec_to_legacy_config(spec)
+    family = spec.get("family") or "rank_selection"
+    exit_policy = (spec.get("selection") or {}).get("exit")
+    if exit_policy is not None and decision_state is None:
+        raise ValueError(
+            "a declaration with an exit contract cannot be replayed without the "
+            "account state: the previous target book does not record a cost basis "
+            "or a holding period, so the replay would silently drop every "
+            "mandatory exit"
+        )
     # Exit hysteresis is spec-only: read it from the same document the paper
     # runner reads, so a replay can never full-re-sort a book the paper keeps.
     rebalance = spec.get("rebalance") or {}
@@ -341,4 +357,8 @@ def replay_strategy_spec_decision(
         held_meta=held_meta,
         exit_buffer=float(rebalance.get("exit_buffer", 1.0)),
         min_hold_sessions=min_hold,
+        decision_state=decision_state,
+        exit_policy=exit_policy,
+        family=family,
+        marks=marks,
     )

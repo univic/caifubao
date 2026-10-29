@@ -97,6 +97,26 @@ def verify_daily_gate(
     return "RUN"
 
 
+def run_forward_plan(*, target, config, spec, identity, policy):
+    """Hand the declaration to the shared runner, not just its hash.
+
+    The legacy projection cannot carry v2-only semantics (family, exit contract),
+    so a runner that receives only the hash re-derives a v1 identity and refuses
+    the run. This is the automated FORWARD capture path: sending the declaration
+    is what makes a v2 declaration runnable in production rather than only from
+    the operator CLI.
+    """
+    from app.jobs import strategy_runner
+
+    return strategy_runner.run_strategy(
+        date=target,
+        config=config,
+        strategy_spec=spec,
+        strategy_spec_hash=identity,
+        rebalance_policy=policy or None,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Guarded, same-day, spec-pinned FORWARD research run"
@@ -113,13 +133,17 @@ def main(argv: list[str] | None = None) -> int:
     from app.jobs import strategy_runner
     from app.jobs.paper_readiness import _database
     from app.lib import paper_readiness
-    from app.lib.strategy_engine.spec import spec_hash, spec_to_legacy_config
+    from app.lib.strategy_engine.spec import (
+        spec_hash,
+        spec_to_legacy_config,
+        validate_strategy_spec,
+    )
     from app.lib.utilities import job_run_helper
     from app.model.strategy import StrategyPaperRun
 
     args = build_parser().parse_args(argv)
     with Path(args.spec).open(encoding="utf-8") as stream:
-        spec = json.load(stream)
+        spec = validate_strategy_spec(json.load(stream))
     config = spec_to_legacy_config(spec)
     identity = spec_hash(spec)
     model_version = config["score_model_version"]
@@ -205,11 +229,12 @@ def main(argv: list[str] | None = None) -> int:
             for key in ("exit_buffer", "min_hold_sessions")
             if key in rebalance
         }
-        result = strategy_runner.run_strategy(
-            date=target,
+        result = run_forward_plan(
+            target=target,
             config=config,
-            strategy_spec_hash=identity,
-            rebalance_policy=policy or None,
+            spec=spec,
+            identity=identity,
+            policy=policy,
         )
         if (
             result.get("status") != "COMPLETED"

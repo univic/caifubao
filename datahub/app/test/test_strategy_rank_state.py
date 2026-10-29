@@ -88,11 +88,11 @@ def test_a_held_name_without_a_cost_basis_is_refused():
 
 
 def test_a_held_name_without_a_close_keeps_its_basis_and_no_mark():
-    """A missing close defers the stop; it is not refused and not invented.
+    """A missing close carries no mark: the planner defers that stop.
 
-    The paper path assumes every exit executes, so a name that stops being
-    quoted leaves the book anyway. Refusing the whole session over it would fail
-    the daily run for a reason the decision cannot act on.
+    The paper job additionally refuses to *record* a target with no close, so
+    this is the library rule the planner relies on, not a promise that an
+    unpriced holding is kept.
     """
     state = _state(closes={"sh600000": 10.0})
     by_code = {p["stock_code"]: p for p in state["positions"]}

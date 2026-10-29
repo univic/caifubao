@@ -281,6 +281,14 @@ def run_strategy(
     # is created.
     assert_not_halted(halt_path)
 
+    if strategy_spec is not None and strategy_spec_hash is None:
+        # A declaration without its hash would be applied under a legacy identity:
+        # the run would record hash_kind="legacy" while a v2 exit contract decided
+        # the book, and nothing in the record would say so.
+        raise ValueError(
+            "strategy_spec requires the declaration hash: refusing to run a "
+            "declaration under an identity that does not name it"
+        )
     date = datetime.datetime.combine(date.date(), datetime.time())
     decision_at = datetime.datetime.now(datetime.UTC)
     execution_date = _execution_date(date)
@@ -419,22 +427,33 @@ def run_strategy(
         family=family,
         marks=marks,
     )
-    # The price recorded for each target on the decision date is the cost basis the
-    # next session's stop-loss is measured against. A book recorded without one
-    # would carry a stop that can never fire, so a declaration with an exit
-    # contract refuses to record an unpriceable target instead.
+    # The recorded price is the cost basis the next session's stop-loss measures
+    # against, so a CONTINUING position keeps the basis it was opened at: only a
+    # newly opened name takes today's close. Refreshing every position daily would
+    # reduce the declared stop to a one-session move, and on a +/-10% limit board
+    # a single session can never reach a 15% stop - the exit would be declared,
+    # recorded and permanently dead.
+    previous_prices = (
+        (getattr(previous_run, "reference_prices", None) or {})
+        if previous_run is not None
+        else {}
+    )
     reference_prices = {}
     for item in plan.get("target_holdings") or []:
         code = item["stock_code"]
         close = closes.get(code)
+        if close is not None and not (float(close) > 0):
+            # A zero/negative close is not a price; treating it as one would make
+            # the next session's basis falsy and every later run refuse.
+            close = None
         if close is None:
             if exit_policy is not None:
                 raise ValueError(
-                    f"no decision-date close for target {code}; refusing to record "
-                    "a cost basis the next stop-loss could not use"
+                    f"no usable decision-date close for target {code}; refusing to "
+                    "record a cost basis the next stop-loss could not use"
                 )
             continue
-        reference_prices[code] = float(close)
+        reference_prices[code] = float(previous_prices.get(code) or close)
 
     if strategy_spec_hash is not None and not plan["skipped"]:
         # Definition-time execution feasibility uses ONLY signal-date closes,
@@ -499,6 +518,7 @@ def run_strategy(
             ),
             "family": family,
             "reference_prices": reference_prices,
+            "decision_state_hash": plan.get("decision_state_hash"),
             "plan": plan,
         }
 
@@ -531,6 +551,7 @@ def run_strategy(
         rebalance=plan.get("rebalance", {}),
         reference_prices=reference_prices,
         decision_state=decision_state or {},
+        decision_state_hash=plan.get("decision_state_hash"),
     )
     run.completed_at = datetime.datetime.now(datetime.UTC)
     run.save()
@@ -548,6 +569,7 @@ def run_strategy(
         "evidence_kind": run.evidence_kind,
         "skip_reason": run.skip_reason,
         "target_holdings_count": len(run.target_holdings or []),
+        "decision_state_hash": run.decision_state_hash,
         "rebalance": run.rebalance,
         **({"eligibility": plan["eligibility"]} if "eligibility" in plan else {}),
     }

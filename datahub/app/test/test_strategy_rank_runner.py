@@ -280,7 +280,68 @@ def test_the_next_run_measures_against_the_recorded_basis(runner_env, monkeypatc
     assert run.exit_reasons["sh600002"] == "sold_stop_loss"
 
 
-def test_a_v1_run_keeps_the_legacy_path(runner_env, monkeypatch):
+def test_a_slow_decline_still_reaches_the_declared_stop(runner_env, monkeypatch):
+    """The basis is the entry price, not yesterday's close.
+
+    A 15% stop cannot fire on a single session of a +/-10% limit board, so a
+    basis refreshed every session would declare an exit that is permanently dead.
+    This decline never moves more than 10% in one session and still crosses the
+    stop in the third.
+    """
+    session_closes = [
+        ("2026-04-07", 10.0),
+        ("2026-04-08", 9.2),
+        ("2026-04-09", 8.4),
+    ]
+    seen = []
+    for date, close in session_closes:
+        _run(
+            runner_env,
+            monkeypatch,
+            document=_document(),
+            date=date,
+            predictions=[_pred("sh600002", 99.0), _pred("sh600001", 1.0)],
+            flags={
+                "sh600002": {"trade_status": 1, "reference_close": close},
+                "sh600001": {"trade_status": 1, "reference_close": 5.0},
+            },
+        )
+        seen.append(runner_env.runs[-1])
+
+    assert seen[0].reference_prices["sh600002"] == pytest.approx(10.0)
+    # Carried forward, not refreshed to 9.2 and then 8.4.
+    assert seen[1].reference_prices["sh600002"] == pytest.approx(10.0)
+    assert seen[2].decision_state["positions"][0]["average_cost"] == pytest.approx(10.0)
+    assert seen[0].exit_reasons["sh600002"] == "added_by_rank"
+    assert seen[1].exit_reasons["sh600002"] == "held_in_exit_band"
+    # 8.4 is 16% below the recorded 10.0 basis, so the third session exits; a
+    # basis refreshed to 9.2 would leave it at -8.7% and keep it.
+    assert seen[2].exit_reasons["sh600002"] == "sold_stop_loss"
+
+
+def test_a_declaration_without_a_hash_is_refused(runner_env, monkeypatch):
+    """A declaration must never be applied under a legacy identity."""
+    import app.jobs.strategy_runner as strategy_runner
+    from app.lib.strategy_engine.spec import validate_strategy_spec
+
+    _patch_market(
+        monkeypatch,
+        [_pred("sh600002", 99.0)],
+        {"sh600002": {"trade_status": 1, "reference_close": 10.0}},
+    )
+    with pytest.raises(ValueError, match="requires the declaration hash"):
+        strategy_runner.run_strategy(
+            date=datetime.datetime(2026, 4, 7),
+            config={
+                "score_model_version": "flip_wide_shadow_v1",
+                "horizon": 20,
+                "selection": {"mode": "top_n", "portfolio_size": 10},
+            },
+            strategy_spec=validate_strategy_spec(_document()),
+        )
+
+
+def test_a_v1_declaration_plans_without_a_decision_state(runner_env, monkeypatch):
     """A v1 declaration records no state, so its planning is unchanged."""
     result = _run(
         runner_env,
@@ -292,14 +353,62 @@ def test_a_v1_run_keeps_the_legacy_path(runner_env, monkeypatch):
     assert result["status"] == "COMPLETED"
     run = runner_env.runs[-1]
     assert run.decision_state == {}
+    assert run.decision_state_hash is None
     assert [item["stock_code"] for item in run.target_holdings] == ["sh600002"]
+
+
+def test_a_legacy_config_run_keeps_the_legacy_path(runner_env, monkeypatch):
+    """No declaration at all: the legacy identity, and no state is recorded."""
+    result = _run(
+        runner_env,
+        monkeypatch,
+        predictions=[_pred("sh600002", 99.0)],
+        flags={"sh600002": {"trade_status": 1, "reference_close": 10.0}},
+    )
+    assert result["status"] == "COMPLETED"
+    run = runner_env.runs[-1]
+    assert run.hash_kind == "legacy"
+    assert run.spec_hash is None
+    assert run.decision_state == {}
+    assert run.decision_state_hash is None
+
+
+def test_the_declared_maximum_holding_period_fires_through_the_runner(
+    runner_env, monkeypatch
+):
+    """`max_hold_sessions` is consumed, not merely declared."""
+    runner_env.runs.append(
+        _prior_run(
+            _document(),
+            datetime.datetime(2026, 4, 3),
+            [{"stock_code": "sh600002", "weight": 0.5}],
+            # One session past the declared maximum of 40.
+            {"sh600002": {"hold_count": 41, "entry_reason": "added_by_rank"}},
+            {"sh600002": 10.0},
+        )
+    )
+    result = _run(
+        runner_env,
+        monkeypatch,
+        document=_document(),
+        predictions=[_pred("sh600002", 99.0), _pred("sh600001", 1.0)],
+        flags={
+            # Slightly above the basis, so the stop cannot be the reason.
+            "sh600002": {"trade_status": 1, "reference_close": 10.1},
+            "sh600001": {"trade_status": 1, "reference_close": 5.0},
+        },
+    )
+    assert result["status"] == "COMPLETED"
+    run = runner_env.runs[-1]
+    assert run.exit_reasons["sh600002"] == "sold_max_hold"
+    assert "sh600002" not in [item["stock_code"] for item in run.target_holdings]
 
 
 def test_a_target_without_a_close_is_refused_under_an_exit_contract(
     runner_env, monkeypatch
 ):
     """A basis the next stop could not use is not recorded as if it were one."""
-    with pytest.raises(ValueError, match="no decision-date close for target"):
+    with pytest.raises(ValueError, match="no usable decision-date close for target"):
         _run(
             runner_env,
             monkeypatch,
@@ -352,3 +461,114 @@ def test_the_cli_loader_returns_the_declaration_alongside_the_projection():
     assert document["selection"]["exit"]["stop_loss_pct"] == 0.15
     assert identity is not None
     assert policy is None
+
+
+def test_main_runs_a_v2_declaration_end_to_end(runner_env, monkeypatch, tmp_path):
+    """The production entry point, not just the function it calls.
+
+    Everything above could stay green if `main` stopped handing the declaration
+    to the job layer, and production would silently plan from the legacy
+    projection again. This drives the real CLI path.
+    """
+    import json
+
+    import app.jobs.strategy_runner as strategy_runner
+    from app.lib.strategy_engine.spec import spec_hash, validate_strategy_spec
+    from app.lib.utilities import job_run_helper
+
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(json.dumps(_document()), encoding="utf-8")
+    validated = validate_strategy_spec(_document())
+    identity = spec_hash(validated)
+
+    finished = []
+    monkeypatch.setattr(strategy_runner, "_init_db", lambda: None)
+    monkeypatch.setattr(job_run_helper, "create_job_run", lambda context: object())
+    monkeypatch.setattr(
+        job_run_helper, "finish_job_run", lambda run, **kwargs: finished.append(kwargs)
+    )
+    _patch_market(
+        monkeypatch,
+        [_pred("sh600002", 99.0)],
+        {"sh600002": {"trade_status": 1, "reference_close": 10.0}},
+    )
+
+    strategy_runner.main(["run", "--spec", str(spec_path), "--date", "2026-04-07"])
+
+    run = runner_env.runs[-1]
+    assert run.hash_kind == "spec"
+    assert run.spec_hash == identity
+    # The exit contract is not in the legacy projection, so a run planned from the
+    # declaration carries it only through the state it built.
+    assert "exit" not in (run.config.get("selection") or {})
+    assert run.decision_state["schema"] == "decision-state-v1"
+    assert run.reference_prices == {"sh600002": 10.0}
+    assert run.decision_state_hash is not None
+    assert finished[-1]["summary"]["evidence_kind"] == "REPLAY"
+
+
+def test_replay_refuses_a_declaration_it_cannot_honour():
+    """Replay must not present a no-stop book as the paper decision."""
+    import datetime as dt
+
+    from app.lib.strategy_engine.replay import replay_strategy_spec_decision
+    from app.lib.strategy_engine.spec import validate_strategy_spec
+
+    spec = validate_strategy_spec(_document())
+    with pytest.raises(
+        ValueError, match="cannot be replayed without the account state"
+    ):
+        replay_strategy_spec_decision(
+            spec=spec,
+            date=dt.datetime(2026, 4, 7),
+            predictions=[_pred("sh600002", 99.0)],
+            previous_holdings=[{"stock_code": "sh600001", "weight": 0.5}],
+            flags={"sh600002": {"trade_status": 1, "reference_close": 10.0}},
+            held_meta={"sh600001": {"hold_count": 3, "entry_reason": "added_by_rank"}},
+        )
+
+
+def test_replay_applies_the_same_exit_contract_when_it_has_the_state():
+    """Given the state, replay and paper produce the same stopped-out book."""
+    import datetime as dt
+
+    from app.lib.strategy_engine.rank_state import build_decision_state
+    from app.lib.strategy_engine.replay import replay_strategy_spec_decision
+    from app.lib.strategy_engine.runner import assemble_daily_plan
+    from app.lib.strategy_engine.spec import (
+        spec_to_legacy_config,
+        validate_strategy_spec,
+    )
+
+    spec = validate_strategy_spec(_document())
+    date = dt.datetime(2026, 4, 7)
+    held = [{"stock_code": "sh600001", "weight": 0.5}]
+    meta = {"sh600001": {"hold_count": 3, "entry_reason": "added_by_rank"}}
+    state = build_decision_state(
+        as_of="2026-04-07",
+        previous_holdings=held,
+        held_meta=meta,
+        reference_prices={"sh600001": 10.0},
+        closes={"sh600001": 7.0},
+        initial_nav=100000.0,
+    )
+    kwargs = {
+        "date": date,
+        "predictions": [_pred("sh600001", 1.0), _pred("sh600002", 99.0)],
+        "previous_holdings": held,
+        "flags": {
+            "sh600001": {"trade_status": 1, "reference_close": 7.0},
+            "sh600002": {"trade_status": 1, "reference_close": 20.0},
+        },
+        "held_meta": meta,
+        "decision_state": state,
+        "marks": {"sh600001": 7.0},
+    }
+    replay = replay_strategy_spec_decision(spec=spec, **kwargs)
+    paper = assemble_daily_plan(
+        config=spec_to_legacy_config(spec),
+        exit_policy=spec["selection"]["exit"],
+        **kwargs,
+    )
+    assert replay["target_holdings"] == paper["target_holdings"]
+    assert replay["exit_reasons"]["sh600001"] == "sold_stop_loss"
