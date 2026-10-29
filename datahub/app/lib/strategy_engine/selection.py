@@ -112,6 +112,8 @@ def plan_target_holdings(
     held_meta: dict[str, dict] | None = None,
     exit_buffer: float = 1.0,
     min_hold_sessions: int = 0,
+    reserved_slots: int = 0,
+    sizing_basis: str = "actual",
 ) -> dict:
     """Select a target holdings list for one date under the configured limits.
 
@@ -124,6 +126,14 @@ def plan_target_holdings(
     predictions: iterable of objects with stock_code, score, percentile.
     industry_by_code: optional stock_code -> industry code map; required only
     when constraints.max_industry_pct is configured.
+    reserved_slots: slots the account still occupies with positions it could
+    not sell. They reduce how many *new* names may be opened, so an unsellable
+    holding cannot push the book past portfolio_size.
+    sizing_basis: "actual" divides the investable fraction by the number of
+    names actually chosen (v1 behaviour, byte-identical); "cap" divides by the
+    declared portfolio_size, so a reserved slot leaves the remaining names at
+    1/N and the tied-up value idle instead of inflating their weight.
+
     Returns list of {"stock_code", "weight"} entries; empty list when nothing is
     eligible.
     """
@@ -133,6 +143,12 @@ def plan_target_holdings(
     size = int(selection.get("portfolio_size"))
     if max_size is not None and max_size >= 1:
         size = min(size, max_size)
+    if type(reserved_slots) is not int or reserved_slots < 0:
+        raise ValueError("reserved_slots must be a non-negative integer")
+    if sizing_basis not in ("actual", "cap"):
+        raise ValueError("sizing_basis must be 'actual' or 'cap'")
+    # A reserved slot is held by the account; it can only reduce new entries.
+    entry_slots = max(0, size - reserved_slots)
 
     candidates = []
     for item in predictions:
@@ -176,7 +192,7 @@ def plan_target_holdings(
     chosen: list[dict] = []
     chosen_codes: set[str] = set()
     for rank_index, cand in enumerate(candidates):
-        if len(chosen) >= size:
+        if len(chosen) >= entry_slots:
             break
         code = cand["stock_code"]
         if code not in held:
@@ -190,7 +206,7 @@ def plan_target_holdings(
         else:
             reasons[code] = "sold_out_of_exit_band"
     for cand in candidates:
-        if len(chosen) >= size:
+        if len(chosen) >= entry_slots:
             break
         if cand["stock_code"] in chosen_codes:
             continue
@@ -217,10 +233,11 @@ def plan_target_holdings(
 
     cash_reserve = float(config.get("cash_reserve_pct", 0.0))
     investable = 1.0 - cash_reserve
+    weight_basis = size if sizing_basis == "cap" else len(holdings)
     per_stock = (
         _bounded_weight(
             investable,
-            len(holdings),
+            weight_basis,
             config["constraints"],
             holdings,
             industry_by_code,

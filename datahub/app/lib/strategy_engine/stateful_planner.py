@@ -1,0 +1,74 @@
+# -*- coding: utf-8 -*-
+"""Plan a target book from an account state instead of from the previous book.
+
+The current research path chains one target book into the next
+(``previous_run.target_holdings``), which silently assumes every exit executed.
+An account does not work that way: a suspended or limit-locked name cannot be
+sold, keeps occupying a slot, and must therefore shrink the number of names the
+next session may open.
+
+This entry point takes the account state as the source of truth for the previous
+book, the hold counts and the reserved slots. It is the v2 chaining mode; v1 keeps
+chaining target books so the certified window ``01c196b8…`` does not change
+behaviour.
+"""
+
+from __future__ import annotations
+
+from caifubao_contracts.strategy_decision_state import (
+    blocked_slots,
+    decision_state_hash,
+    validate_decision_state,
+)
+
+from app.lib.strategy_engine.selection import plan_target_holdings
+
+
+def plan_from_state(
+    *,
+    state: dict,
+    predictions,
+    config: dict,
+    eligible_codes: set[str] | None = None,
+    industry_by_code: dict[str, str] | None = None,
+    exit_buffer: float = 1.0,
+    min_hold_sessions: int = 0,
+) -> dict:
+    """Return the next target book computed from the account state.
+
+    Positions the account could not sell are reserved: they reduce new entries by
+    one slot each, and sizing divides by the declared cap so the remaining names
+    keep ``1/N`` instead of absorbing the reserved slot's weight.
+    """
+    state = validate_decision_state(state)
+    held = state.get("positions") or []
+    previous_holdings = [
+        {"stock_code": position["stock_code"], "weight": 0.0} for position in held
+    ]
+    held_meta = {
+        position["stock_code"]: {
+            "hold_count": position["hold_count"],
+            "entry_reason": position["entry_reason"],
+        }
+        for position in held
+    }
+    reserved = blocked_slots(state)
+
+    plan = plan_target_holdings(
+        predictions,
+        config,
+        eligible_codes=eligible_codes,
+        industry_by_code=industry_by_code,
+        previous_holdings=previous_holdings or None,
+        held_meta=held_meta,
+        exit_buffer=exit_buffer,
+        min_hold_sessions=min_hold_sessions,
+        reserved_slots=reserved,
+        sizing_basis="cap",
+    )
+    return {
+        **plan,
+        "reserved_slots": reserved,
+        "state_hash": decision_state_hash(state),
+        "entry_cap": max(0, int(config["selection"]["portfolio_size"]) - reserved),
+    }

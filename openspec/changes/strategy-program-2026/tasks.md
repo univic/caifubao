@@ -42,12 +42,16 @@
 - [ ] P0.8 `asset_allocation` 消费目标权重、再平衡带宽、cadence 与**单资产止损**，带宽内不交易回目标权重
 - [ ] P0.9 结构门禁：最小持仓数、年换手预算、集中簿必须有止损、回撤预算，并在开窗前评估
 - [ ] P0.10 把 `evaluate_risk` 接进每日链路，**仅对 v2 声明生效**（v1 保持不消费）
-- [ ] P0.11 定义 `DecisionState`（持仓/成本价/hold_count/峰值/现金/未完成订单）并记录 `decision_state_hash`
+- [x] P0.11 定义 `DecisionState`（持仓/成本价/hold_count/峰值/现金/未完成订单）并记录 `decision_state_hash`
+      —— `shared/caifubao_contracts/strategy_decision_state.py`（校验 + 内容哈希 + `blocked_slots`）；
+      在 run 文档中落字段随 v2 runner 接线（P0.16 剩余）
 - [x] P0.12 连续多日回归基线：`datahub/app/test/fixtures/strategy_v1_golden.json`（2026-08-03..08-07 生产分数，5 个连续交易日）+ `test_strategy_v1_regression.py` 断言目标组合与调仓 diff 逐字段不变；订单/账本投影部分随 P0.16 补
 - [ ] P0.13 跨模式 conformance 向量改为比对 `DecisionState` 链，分叉必须归因到具体成交
 - [ ] P0.14 回归测试钉住已认证窗口 `01c196b8…` 的 `spec_hash` 与 `legacy_config_hash`，并断言 v1 语义未变
 - [ ] P0.15 运行记录新增 `resolved_inputs`（当日快照 id + 解析后的模型工件 digest）与 `run_id`
 - [ ] P0.16 计划链改由账本/账户投影驱动（当前 research 读上一版 `target_holdings`），不可卖持仓占用名额，blocked 退出记录 reason 并进入下一期 `DecisionState`
+      —— **契约与规划器已落地**：`selection.plan_target_holdings` 新增 `reserved_slots` / `sizing_basis`（默认保持 v1 行为），
+      `strategy_engine/stateful_planner.plan_from_state` 从状态选股并按 cap 定权；**runner 接线待 v2 可表达后做**
 - [ ] P0.17 `openspec/README.md` 能力索引与本文档同步更新
 
 ## 2. P1 — 统一信号源（`strategy-signal-providers`）
