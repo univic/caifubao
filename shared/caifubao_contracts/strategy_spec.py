@@ -19,6 +19,10 @@ from caifubao_contracts.strategy_benchmark import (
     validate_benchmark,
     validate_kill_criteria,
 )
+from caifubao_contracts.strategy_sleeve import (
+    validate_horizon_claim,
+    validate_sleeves,
+)
 from caifubao_contracts.strategy_exit_policy import validate_exit_policy
 
 SPEC_VERSION = "1"
@@ -60,6 +64,8 @@ _ALLOWED = {
         "allocation",
         "accounting",
         "benchmark",
+        "sleeves",
+        "horizon_claim",
     },
     "universe": {"market", "as_of"},
     "signal": {"score_model_version", "horizon"},
@@ -67,6 +73,14 @@ _ALLOWED = {
     "allocation": {"assets", "band_pct"},
     "accounting": {"corporate_actions", "mark_price"},
     "benchmark": {"kind", "assets", "index"},
+    "sleeves": {
+        "name",
+        "capital_share",
+        "accounting_id",
+        "evidence_id",
+        "on_shortfall",
+    },
+    "horizon_claim": {"hypothesis_horizon", "evidence_horizon", "rationale"},
     "selection.exit": {
         "rank_below",
         "stop_loss_pct",
@@ -161,7 +175,14 @@ def validate_strategy_spec(spec: dict) -> dict:
     ):
         _object(_required(normalized, part, "spec"), part)
 
-    v2_only = ("family", "allocation", "accounting", "benchmark")
+    v2_only = (
+        "family",
+        "allocation",
+        "accounting",
+        "benchmark",
+        "sleeves",
+        "horizon_claim",
+    )
     if version == "1":
         # v1 must behave exactly as before: the v2-only fields are still unknown
         # to it, so a v1 declaration carrying one is rejected rather than
@@ -203,6 +224,17 @@ def validate_strategy_spec(spec: dict) -> dict:
         evidence_block["kill_criteria"] = validate_kill_criteria(
             evidence_block["kill_criteria"]
         )
+        # Sleeve isolation and horizon discipline are optional blocks, but when
+        # present they are enforced rather than recorded.
+        if "sleeves" in normalized:
+            raw = normalized["sleeves"]
+            if not isinstance(raw, list):
+                raise ValueError("sleeves must be a list of sleeve objects")
+            normalized["sleeves"] = validate_sleeves(raw)
+        if "horizon_claim" in normalized:
+            normalized["horizon_claim"] = validate_horizon_claim(
+                normalized["horizon_claim"]
+            )
         if normalized["family"] == "asset_allocation":
             if "allocation" not in normalized:
                 raise ValueError(

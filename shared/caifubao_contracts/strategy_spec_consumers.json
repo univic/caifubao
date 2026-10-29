@@ -465,6 +465,78 @@
       "consumed_by_versions": [
         "2"
       ]
+    },
+    "sleeves.name": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_sleeve.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "sleeves.capital_share": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_sleeve.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "sleeves.accounting_id": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_sleeve.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "sleeves.evidence_id": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_sleeve.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "sleeves.on_shortfall": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_sleeve.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "horizon_claim.hypothesis_horizon": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_sleeve.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "horizon_claim.evidence_horizon": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_sleeve.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "horizon_claim.rationale": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_sleeve.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
     }
   }
 }

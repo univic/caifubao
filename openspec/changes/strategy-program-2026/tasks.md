@@ -126,8 +126,11 @@
       `docs/autoresearch/runs/small-book/w0a-book-churn-recompute-2026-10-29.md`；
       旧「年化摩擦 42%」实测为 N=20 的 11.4%–16.9%，「窄簿最贵」被否定（中宽度 50–100 最高）。
       仍待重算：持有期 × 收益、各宽度收益/回撤、多资产基准数字。
-- [ ] P4.2 声明激进袖资金上限、独立会计身份与独立证据身份
-- [ ] P4.3 期限维度显式化：声明即评估，禁止跨期限借用结论
+- [x] P4.2 声明激进袖资金上限、独立会计身份与独立证据身份
+      —— `strategy_sleeve.py`：`validate_sleeves`（份额和 ≤ 1、身份唯一）、`allocate_sleeves`、
+      `apply_losses`（单个袖子的亏损只能吃自己的份额，超出记 shortfall 不外溢）
+- [x] P4.3 期限维度显式化：声明即评估，禁止跨期限借用结论
+      —— `validate_horizon_claim`：声明期限与证据期限不一致即拒绝（v2 声明层强制）
 - [ ] P4.4 事件数据源选型（业绩预告 / 龙虎榜 / 公告），评估可得性、PIT 性与成本
 - [ ] P4.5 事件数据按 datahub `fetch → normalize → validate → persist → publish` 落地
 - [ ] P4.6 事件信号的 PIT 证据：发布时间戳与可交易性（停牌/一字板）处理

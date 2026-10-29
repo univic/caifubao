@@ -146,7 +146,7 @@ CI 使用 `@fission-ai/openspec@1.1.1` 执行 `openspec validate --all --strict`
 | `strategy-paper-research-ledger` | REPLAY-only 研究账本 | `strategy-paper-research-ledger` | 1 |
 | `strategy-paper-runner` | paper-first 策略 runner | `strategy-engine` | 1 |
 | `strategy-portfolio-risk-limits` | 组合风控限制（单票/行业/流动性） | `strategy-portfolio-risk-limits` | 1 |
-| `strategy-program-2026` | **P0–P4 契约先行**：策略声明完备性、跨规则/ML/LLM 信号源、研究流水线、ETF 稳健半仓、激进袖；方案见 `docs/architecture/strategy-program.md` | `strategy-spec-completeness`、`strategy-signal-providers`、`strategy-research-pipeline`、`stable-multi-asset-sleeve`、`aggressive-sleeve-research` | 37 |
+| `strategy-program-2026` | **P0–P4 契约先行**：策略声明完备性、跨规则/ML/LLM 信号源、研究流水线、ETF 稳健半仓、激进袖；方案见 `docs/architecture/strategy-program.md` | `strategy-spec-completeness`、`strategy-signal-providers`、`strategy-research-pipeline`、`stable-multi-asset-sleeve`、`aggressive-sleeve-research` | 35 |
 | `strategy-target-export` | 目标组合导出（研究级） | `strategy-target-export` | 1 |
 | `strategy-fee-aware-opening-budget` | 费用感知开盘买入预算 | `strategy-nav-fee-budget` | 0 |
 | `strategy-paper-causal-timing` | 因果 paper 时序与证据边界 | `strategy-paper-timing` | 0 |
