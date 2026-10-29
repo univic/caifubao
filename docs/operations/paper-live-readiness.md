@@ -163,6 +163,31 @@ etf_market_data  WARN  尚无 ETF 数据
 - **今晚要看的两个数**：`forward progress` 应为 `1/120`；当日 `datahub_job_runs`
   里 strategy forward 记录应为 FORWARD，且换手明显低于旧 spec 的 ~55%/日。
 
+### 2026-10-29：镜像升级到 `sha-dcde45ecf9c8`，并修掉挂载声明滞后导致的抓取失败
+
+- **镜像**：research Datahub Deployment 固定到 `sha-dcde45ecf9c8`（PR #349 合并后的
+  `develop`，含策略方案 P0–P4 与作业层接线）。回滚目标 **`sha-229f04cb5967`**。
+  同一镜像先在 dev 自动部署成功，再手动派发 research（`environment=research`）。
+- **部署前发现的问题（比镜像本身更重要）**：`strategy-forward-daily` 在 10-29 失败，
+  报 `forward window hash differs from pinned StrategySpec`。原因是挂载的
+  `caifubao-research-strategy-spec` ConfigMap 仍是**滞后一版**的声明
+  `c1310492…`：私有 overlay 的 `research-paper-strategy.json` 从未带上 10-28 认证时
+  声明的 `rebalance.exit_buffer: 2.0`。fail-closed 的 hash 比较因此拒绝了每一场抓取。
+  - 修复（private PR #126）：给该声明补上 `exit_buffer: 2.0`，挂载声明 hash 恰为
+    **`01c196b8…`**，即当前 ACTIVE 窗口。**不改窗口、不重新认证**——已认证的窗口重新
+    找到它自己的输入。
+  - 部署后核对：挂载 ConfigMap `…-tbg657886g` 内容 hash = `01c196b8…`，
+    与 `forward progress` 报出的窗口 hash 一致；15 个 CronJob 的 `suspend` 与部署前
+    逐项一致（没有任何 writer 因本次部署被启用或停用）。
+- **代价（不可修复）**：`01c196b8…` 窗口 10-28 起算，10-28 抓到 1 场，**10-29 因上述
+  失败成为永久缺口**（`forward_count 1 / expected 2`，`missing_dates ["2026-10-29"]`）。
+  漏掉的 FORWARD 日期从不补写；120 会话窗口按日推进，缺口只能计入损失。
+- **验证**：部署即 `Available`，单 pod `Ready` 且 `restartCount=0`；`progressDeadlineSeconds`
+  随公开 #346 变为 1800；`quote-index` 的 `TUSHARE_TOKEN` / `DATAHUB_STOCK_HISTORY_SOURCE`
+  由公开清单提供（不再是手工 patch）。
+- **未做**：没有开窗、没有关窗、没有重新认证、没有补写任何 FORWARD 记录。下一次自动抓取是
+  10-30 22:15（Asia/Shanghai）。
+
 ## 3. 与已合并 #307 的关系（重要）
 
 PR #307（`7464d6b`）已合并：统一 `StrategySpec`、legacy/spec 双哈希、研究模拟账本、
