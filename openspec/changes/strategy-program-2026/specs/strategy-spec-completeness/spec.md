@@ -257,6 +257,44 @@ between modes can be attributed to a specific fill rather than to the decision l
 - **WHEN** each mode plans the session
 - **THEN** each mode SHALL apply the stop-loss from its own recorded cost basis
 
+### Requirement: Entries MUST NOT exceed the cap and unexecuted exits MUST reserve slots
+
+The planner MUST NOT emit a target book larger than the declared position cap. A held
+position whose exit did not execute — because the name was suspended, moved to a limit, had
+an unknown limit verdict, or its order remained unexecuted — MUST be carried into the next
+`DecisionState` and MUST occupy a slot, so the number of newly opened positions is reduced
+by the number of unsellable holdings. The plan chain SHALL be derived from the account
+projection rather than from the previous target book, so an unexecuted exit cannot become
+invisible to the next decision, and every blocked exit MUST be recorded as a rejection with
+a reason code.
+
+#### Scenario: A target book never exceeds the cap
+
+- **GIVEN** any decision state, including one holding positions that could not be sold
+- **WHEN** the target book is planned
+- **THEN** its size SHALL NOT exceed the declared position cap
+
+#### Scenario: An unexecuted exit reserves a slot
+
+- **GIVEN** a cap of twenty and one held name whose exit was blocked in the previous session
+- **WHEN** the next session is planned
+- **THEN** that name SHALL appear in the `DecisionState` as a held position
+- **AND** at most nineteen newly opened positions SHALL be planned
+
+#### Scenario: The plan chain follows the account projection
+
+- **GIVEN** a session whose exit was blocked
+- **WHEN** the next session loads its previous holdings
+- **THEN** they SHALL come from the account or ledger projection
+- **AND** they SHALL NOT be read from the previous target book alone
+
+#### Scenario: Blocked exits are recorded
+
+- **GIVEN** an exit refused by suspension, a limit move or an unknown limit verdict
+- **WHEN** the session is recorded
+- **THEN** the refusal SHALL appear as a rejection carrying a reason code
+- **AND** it SHALL be visible in the run output rather than silently skipped
+
 ### Requirement: Structural admission gate MUST reject doomed configurations
 
 Validation SHALL apply a structural admission gate that rejects declarations that cannot

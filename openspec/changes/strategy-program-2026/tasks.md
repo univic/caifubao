@@ -20,7 +20,8 @@
 - [ ] P0.13 跨模式 conformance 向量改为比对 `DecisionState` 链，分叉必须归因到具体成交
 - [ ] P0.14 回归测试钉住已认证窗口 `01c196b8…` 的 `spec_hash` 与 `legacy_config_hash`，并断言 v1 语义未变
 - [ ] P0.15 运行记录新增 `resolved_inputs`（当日快照 id + 解析后的模型工件 digest）与 `run_id`
-- [ ] P0.16 `openspec/README.md` 能力索引与本文档同步更新
+- [ ] P0.16 计划链改由账本/账户投影驱动（当前 research 读上一版 `target_holdings`），不可卖持仓占用名额，blocked 退出记录 reason 并进入下一期 `DecisionState`
+- [ ] P0.17 `openspec/README.md` 能力索引与本文档同步更新
 
 ## 2. P1 — 统一信号源（`strategy-signal-providers`）
 
