@@ -156,3 +156,6 @@ W5 的数据侧（需数据授权）与运维侧（需写库/开窗授权）。�
 - [ ] G.1 `spec-guardian` 审阅本 change 的 requirements/scenarios 与合规口径
 - [ ] G.2 每阶段独立 PR：按 `RULES.md` 触发对应 reviewer + 分支冲突检查 + Draft PR CI green
 - [ ] G.3 确认本 change 不触碰已认证窗口 `01c196b8…` 的任何字节，且 v1 执行语义不变
+- [ ] G.4 **跟进**：上游恢复发布 `posthog-node@5.60.0` 后，去掉 `.github/workflows/ci.yml`
+      中 `npm install -g --omit=optional @fission-ai/openspec@1.1.1` 的 `--omit=optional`
+      （操作者决定随本 PR 一并合入，触发 qa-reviewer；该 flag 只是上游 404 的临时绕过）
