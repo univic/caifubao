@@ -263,10 +263,12 @@ The planner MUST NOT emit a target book larger than the declared position cap. A
 position whose exit did not execute — because the name was suspended, moved to a limit, had
 an unknown limit verdict, or its order remained unexecuted — MUST be carried into the next
 `DecisionState` and MUST occupy a slot, so the number of newly opened positions is reduced
-by the number of unsellable holdings. The plan chain SHALL be derived from the account
-projection rather than from the previous target book, so an unexecuted exit cannot become
-invisible to the next decision, and every blocked exit MUST be recorded as a rejection with
-a reason code.
+by the number of unsellable holdings. Sizing MUST be computed against the declared position
+cap rather than against the number of available slots, so a blocked holding MUST NOT inflate
+the weight of the remaining names; the value tied up in it SHALL stay idle until the blocked
+exit executes. The plan chain SHALL be derived from the account projection rather than from
+the previous target book, so an unexecuted exit cannot become invisible to the next
+decision, and every blocked exit MUST be recorded as a rejection with a reason code.
 
 #### Scenario: A target book never exceeds the cap
 
@@ -280,6 +282,13 @@ a reason code.
 - **WHEN** the next session is planned
 - **THEN** that name SHALL appear in the `DecisionState` as a held position
 - **AND** at most nineteen newly opened positions SHALL be planned
+
+#### Scenario: A blocked holding does not inflate the other weights
+
+- **GIVEN** a cap of twenty and one unsellable holding
+- **WHEN** the nineteen remaining positions are planned
+- **THEN** each SHALL carry weight `1/20`, not `1/19`
+- **AND** the difference SHALL remain idle rather than being redistributed
 
 #### Scenario: The plan chain follows the account projection
 
