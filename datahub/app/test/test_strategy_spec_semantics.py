@@ -19,7 +19,6 @@ if str(REPO_ROOT / "shared") not in sys.path:
 
 from caifubao_contracts.strategy_spec_consumers import (  # noqa: E402
     CONSUMED,
-    UNCONSUMED,
     load_manifest,
 )
 from caifubao_contracts.strategy_spec_semantics import (  # noqa: E402
@@ -99,23 +98,25 @@ def test_v1_consumed_set_is_independent_of_the_manifest(manifest):
     assert not field_is_consumed("1", "rebalance.cadence_days", shrunk)
 
 
-def test_v2_refuses_unconsumed_fields(manifest):
+def test_v2_consumes_the_whole_shipped_manifest(manifest):
+    """Every declared field now has a v2 consumer; that is the goal state."""
+    assert consumed_fields("2", manifest) == frozenset(manifest["fields"])
+
+
+def test_v2_refuses_a_field_no_v2_consumer_reads(manifest):
+    """The rule still bites: drop the v2 attribution and v2 must refuse."""
+    broken = copy.deepcopy(manifest)
+    broken["fields"]["risk.max_drawdown_pct"]["consumed_by_versions"] = ["1"]
     with pytest.raises(ValueError, match="no v2 consumer reads"):
-        consumed_fields("2", manifest)
+        consumed_fields("2", broken)
 
 
-def test_v2_accepts_a_fully_consumed_manifest(manifest):
-    everything = copy.deepcopy(manifest)
-    for entry in everything["fields"].values():
-        if entry["status"] == UNCONSUMED:
-            entry["status"] = CONSUMED
-            entry.setdefault(
-                "consumers", ["shared/caifubao_contracts/strategy_spec.py"]
-            )
-        entry["consumed_by_versions"] = sorted(
-            set(entry.get("consumed_by_versions") or []) | {"2"}
-        )
-    assert consumed_fields("2", everything) == frozenset(everything["fields"])
+def test_the_manifest_has_no_unconsumed_fields(manifest):
+    """An unconsumed field is a defect; the shipped manifest has none."""
+    assert declared_but_unused(manifest) == frozenset()
+    assert consumed_by_version(manifest, "1") | consumed_by_version(
+        manifest, "2"
+    ) == frozenset(manifest["fields"])
 
 
 def test_unknown_version_is_rejected(manifest):

@@ -58,6 +58,12 @@ def _spec(**overrides):
         },
     }
     spec.update(overrides)
+    if spec.get("family") == "asset_allocation":
+        # The allocation family sizes by asset weights and declares only its
+        # exit contract; rank-selection blocks are rejected by validation.
+        spec["selection"] = {"exit": spec["selection"]["exit"]}
+        spec.pop("sizing", None)
+        spec.pop("constraints", None)
     return spec
 
 

@@ -36,7 +36,12 @@ W5 的数据侧（需数据授权）与运维侧（需写库/开窗授权）。�
 
 - [x] P0.1 定义 consumption manifest 的格式与校验语义（`shared/caifubao_contracts/strategy_spec_consumers.json`，纯 stdlib 校验器；golden 绑定见 P0.3 后续）
 - [x] P0.2 盘点 v1 全部允许字段的实际消费者：38 个字段，29 已消费、9 未消费（`cadence_days` + `risk.*` 6 项 + **`sizing.weighting`**）
-- [x] P0.3 CI 校验脚本 `scripts/check_strategy_consumers.py` + `Strategy Contract Check` job：双向一致、消费者文件必须存在且提及该字段、未消费必须指明 owner（13 个回归测试）
+- [x] P0.3 CI 校验脚本 `scripts/check_strategy_consumers.py` + `Strategy Contract Check` job：双向一致、消费者文件必须存在且提及该字段、
+      **每个字段必须绑定一个存在且引用它的 golden 测试**（按 AST 解析，改名/删除即失败）、未消费必须指明 owner
+- [x] **v2 读 manifest**：`validate_strategy_spec` 对 v2 校验「每个出现的字段都在 manifest 中且被 v2 消费者读取」，
+      manifest 从 CI 注释变成**加载即生效的契约**（`check_manifest_coverage`）
+- [x] **配置族收窄**：`asset_allocation` 不得声明排名语义（`selection.mode/lower/upper/portfolio_size`）、
+      `sizing`、`constraints`；已交付声明同步收窄（`spec_hash=6c31978e22c1b724`）
 - [ ] P0.4 定义 `spec_version: "2"` 字段集（identity / data 要求 / signal 引用 / family / accounting / benchmark / evidence.kill_criteria）
       —— **已落地 `family` + `selection.exit`**（v2 声明首次可被校验）；
       identity / data / accounting / benchmark / kill_criteria 待做，且必须先有消费者才允许进 v2

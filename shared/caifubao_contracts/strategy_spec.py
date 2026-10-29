@@ -24,6 +24,7 @@ from caifubao_contracts.strategy_sleeve import (
     validate_sleeves,
 )
 from caifubao_contracts.strategy_exit_policy import validate_exit_policy
+from caifubao_contracts.strategy_spec_consumers import leaf_paths
 
 SPEC_VERSION = "1"
 #: Declaration versions this validator accepts. 1 is frozen for replay; 2 adds
@@ -138,6 +139,75 @@ def _required(value: dict, field: str, path: str):
     return value[field]
 
 
+_MANIFEST: dict | None = None
+
+
+def _consumer_manifest() -> dict:
+    """The consumer manifest that ships beside this contract, read once."""
+    global _MANIFEST
+    if _MANIFEST is None:
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).with_name("strategy_spec_consumers.json")
+        _MANIFEST = json.loads(path.read_text(encoding="utf-8"))
+    return _MANIFEST
+
+
+def present_leaf_paths(spec: dict) -> list[str]:
+    """Leaf field paths that this declaration actually carries."""
+    present = []
+    for path in leaf_paths(_ALLOWED):
+        node = spec
+        found = True
+        for part in path.split("."):
+            if not isinstance(node, dict) or part not in node:
+                found = False
+                break
+            node = node[part]
+        if found:
+            present.append(path)
+    return present
+
+
+def check_manifest_coverage(spec: dict) -> None:
+    """Refuse a v2 declaration whose fields the manifest does not account for.
+
+    This is what makes the manifest load-bearing at validation time rather than a
+    CI comment: a field that no entry names, or that no v2 consumer reads, cannot
+    appear in a v2 declaration at all.
+    """
+    fields = _consumer_manifest().get("fields") or {}
+    for path in present_leaf_paths(spec):
+        entry = fields.get(path)
+        if entry is None:
+            raise ValueError(
+                f"spec_version 2 field {path!r} has no consumer manifest entry"
+            )
+        if "2" not in (entry.get("consumed_by_versions") or []):
+            raise ValueError(
+                f"spec_version 2 field {path!r} is not read by any v2 consumer"
+            )
+
+
+def _validate_rank_selection(selection: dict) -> None:
+    """Validate the rank-selection fields; the allocation family skips these."""
+    if selection.get("mode") not in ("top_n", "top_percentile"):
+        raise ValueError("selection.mode is unsupported")
+    size = _required(selection, "portfolio_size", "selection")
+    if type(size) is not int or size <= 0:
+        raise ValueError("selection.portfolio_size must be positive")
+    if selection["mode"] == "top_percentile":
+        for key in ("lower", "upper"):
+            selection[key] = _finite_number(
+                _required(selection, key, "selection"), f"selection.{key}", high=1
+            )
+        if selection["lower"] > selection["upper"]:
+            raise ValueError("selection.lower must be <= upper")
+    elif "lower" in selection or "upper" in selection:
+        raise ValueError("top_n must not declare percentile bounds")
+
+
 def canonical_json(value) -> str:
     """Stable hash input; refuse NaN/Inf rather than hashing invalid JSON."""
     return json.dumps(
@@ -166,16 +236,15 @@ def validate_strategy_spec(spec: dict) -> dict:
     # block becomes optional for that family and required for every other one;
     # there is no placeholder model version in between.
     allocation_family = normalized.get("family") == "asset_allocation"
-    required_parts = (
+    required_parts = [
         "universe",
-        "selection",
-        "sizing",
-        "constraints",
         "rebalance",
         "risk",
         "execution",
         "evidence",
-    )
+    ]
+    if not allocation_family:
+        required_parts += ["selection", "sizing", "constraints"]
     for part in required_parts:
         _object(_required(normalized, part, "spec"), part)
     if "signal" in normalized:
@@ -232,6 +301,7 @@ def validate_strategy_spec(spec: dict) -> dict:
         evidence_block["kill_criteria"] = validate_kill_criteria(
             evidence_block["kill_criteria"]
         )
+        check_manifest_coverage(normalized)
         # Sleeve isolation and horizon discipline are optional blocks, but when
         # present they are enforced rather than recorded.
         if "sleeves" in normalized:
@@ -271,33 +341,49 @@ def validate_strategy_spec(spec: dict) -> dict:
     elif not allocation_family:
         raise ValueError("signal is required unless the family is asset_allocation")
 
-    selection = normalized["selection"]
-    if selection.get("mode") not in ("top_n", "top_percentile"):
-        raise ValueError("selection.mode is unsupported")
-    size = _required(selection, "portfolio_size", "selection")
-    if type(size) is not int or size <= 0:
-        raise ValueError("selection.portfolio_size must be positive")
-    if selection["mode"] == "top_percentile":
-        for key in ("lower", "upper"):
-            selection[key] = _finite_number(
-                _required(selection, key, "selection"), f"selection.{key}", high=1
+    if allocation_family and version == "2":
+        selection_block = normalized.get("selection") or {}
+        # An allocation book sizes by declared weights and ranks nothing, so
+        # rank-selection semantics must not be declared where they mean nothing:
+        # they would be validated, hashed and never read.
+        rank_only = sorted(set(selection_block) - {"exit"})
+        if rank_only:
+            raise ValueError(
+                "asset_allocation must not declare rank-selection semantics: "
+                f"{rank_only}; the asset set and its weights are the book"
             )
-        if selection["lower"] > selection["upper"]:
-            raise ValueError("selection.lower must be <= upper")
-    elif "lower" in selection or "upper" in selection:
-        raise ValueError("top_n must not declare percentile bounds")
+        for block in ("sizing", "constraints"):
+            if normalized.get(block):
+                raise ValueError(
+                    f"asset_allocation must not declare {block}: "
+                    f"{sorted(normalized[block])} are rank-selection limits"
+                )
+        normalized.pop("sizing", None)
+        normalized.pop("constraints", None)
+    selection = normalized.get("selection") or {}
+    if allocation_family and version == "2":
+        # Nothing below applies: the allocation family declares only its exit
+        # contract, and sizing/constraints were already removed above.
+        selection_checked = selection
+    else:
+        _validate_rank_selection(selection)
+    selection = selection_checked if allocation_family and version == "2" else selection
 
-    sizing = normalized["sizing"]
-    if sizing.get("weighting") != "equal":
-        raise ValueError("sizing.weighting currently supports equal only")
-    sizing["cash_reserve_pct"] = _finite_number(
-        _required(sizing, "cash_reserve_pct", "sizing"),
-        "sizing.cash_reserve_pct",
-        high=1,
-    )
-    if sizing["cash_reserve_pct"] >= 1:
-        raise ValueError("sizing.cash_reserve_pct must be < 1")
-    for key, value in normalized["constraints"].items():
+    # The allocation family declares its sizing as asset weights, so the
+    # rank-selection sizing and eligibility blocks below do not apply to it.
+    skip_rank_blocks = allocation_family and version == "2"
+    if not skip_rank_blocks:
+        sizing = normalized["sizing"]
+        if sizing.get("weighting") != "equal":
+            raise ValueError("sizing.weighting currently supports equal only")
+        sizing["cash_reserve_pct"] = _finite_number(
+            _required(sizing, "cash_reserve_pct", "sizing"),
+            "sizing.cash_reserve_pct",
+            high=1,
+        )
+        if sizing["cash_reserve_pct"] >= 1:
+            raise ValueError("sizing.cash_reserve_pct must be < 1")
+    for key, value in (normalized.get("constraints") or {}).items():
         if key in (
             "exclude_st",
             "exclude_bse",
@@ -381,12 +467,17 @@ def validate_strategy_spec(spec: dict) -> dict:
     # Even without decision-time prices we can reject capital budgets that
     # cannot afford the *minimum commission itself*. Price/lot affordability
     # requires the separate snapshot-aware preflight before execution.
-    budget = (
-        normalized["initial_nav"]
-        * (1 - sizing["cash_reserve_pct"])
-        / selection["portfolio_size"]
-    )
-    cap = normalized["constraints"].get("max_single_stock_pct")
+    if skip_rank_blocks:
+        # The per-name budget check is a rank-selection concern: an allocation
+        # book's per-name budget comes from its declared weights.
+        names = max(1, len(normalized.get("allocation", {}).get("assets") or {}))
+        reserve = 0.0
+        cap = None
+    else:
+        names = selection["portfolio_size"]
+        reserve = sizing["cash_reserve_pct"]
+        cap = (normalized.get("constraints") or {}).get("max_single_stock_pct")
+    budget = normalized["initial_nav"] * (1 - reserve) / names
     if cap is not None:
         budget = min(budget, normalized["initial_nav"] * cap)
     if execution["minimum_commission_cny"] >= budget:

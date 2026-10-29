@@ -69,6 +69,12 @@ def _spec(**overrides):
         "benchmark": {"kind": "equal_weight_universe"},
     }
     spec.update(overrides)
+    if spec.get("family") == "asset_allocation":
+        # The allocation family sizes by asset weights and declares only its
+        # exit contract; rank-selection blocks are rejected by validation.
+        spec["selection"] = {"exit": spec["selection"]["exit"]}
+        spec.pop("sizing", None)
+        spec.pop("constraints", None)
     return spec
 
 
@@ -254,8 +260,7 @@ def _v1_from_v2(spec):
 
 
 def test_v1_rejects_accounting():
-    spec = _v1_from_v2(_spec())
-    spec.pop("selection")
+    spec = _v1_from_v2(_spec(family="rank_selection"))
     spec["selection"] = {"mode": "top_n", "portfolio_size": 3}
     spec["accounting"] = dict(PRICE)
     with pytest.raises(ValueError, match="does not support"):
@@ -263,7 +268,7 @@ def test_v1_rejects_accounting():
 
 
 def test_v1_rejects_benchmark():
-    spec = _v1_from_v2(_spec())
+    spec = _v1_from_v2(_spec(family="rank_selection"))
     spec["selection"] = {"mode": "top_n", "portfolio_size": 3}
     spec["benchmark"] = {"kind": "equal_weight_universe"}
     with pytest.raises(ValueError, match="does not support"):
@@ -271,7 +276,7 @@ def test_v1_rejects_benchmark():
 
 
 def test_v1_rejects_kill_criteria():
-    spec = _v1_from_v2(_spec())
+    spec = _v1_from_v2(_spec(family="rank_selection"))
     spec["selection"] = {"mode": "top_n", "portfolio_size": 3}
     spec["evidence"] = {
         "timing_version": "paper_causal_v1",
@@ -280,3 +285,38 @@ def test_v1_rejects_kill_criteria():
     }
     with pytest.raises(ValueError, match="does not support"):
         validate_strategy_spec(spec)
+
+
+def test_on_breach_action_is_validated_and_used():
+    """The retire/review choice is read, not decorative."""
+    from caifubao_contracts.strategy_benchmark import (
+        ON_BREACH_REVIEW,
+        evaluate_kill_criteria,
+    )
+
+    criteria = dict(KILL, on_breach=ON_BREACH_REVIEW)
+    result = evaluate_kill_criteria(
+        criteria, sessions=80, excess_per_period=-0.1, max_drawdown=0.05
+    )
+    assert result["status"] == STATUS_BREACH
+    assert result["recommendation"] == ON_BREACH_REVIEW
+    with pytest.raises(ValueError, match="on_breach"):
+        validate_kill_criteria(dict(KILL, on_breach="ignore"))
+
+
+def test_horizon_claim_rationale_is_carried():
+    """A rationale is optional but must survive validation when supplied."""
+    from caifubao_contracts.strategy_sleeve import validate_horizon_claim
+
+    claim = validate_horizon_claim(
+        {
+            "hypothesis_horizon": 60,
+            "evidence_horizon": 60,
+            "rationale": "trend claims need a long horizon",
+        }
+    )
+    assert claim["rationale"] == "trend claims need a long horizon"
+    with pytest.raises(ValueError, match="rationale"):
+        validate_horizon_claim(
+            {"hypothesis_horizon": 60, "evidence_horizon": 60, "rationale": 5}
+        )

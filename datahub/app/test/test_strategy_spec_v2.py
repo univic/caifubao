@@ -67,8 +67,12 @@ def _v2(family="rank_selection", exit_policy=None):
     spec["benchmark"] = dict(BENCHMARK)
     spec["evidence"] = dict(spec["evidence"], kill_criteria=dict(KILL))
     if family == "asset_allocation":
-        # The allocation family's book semantics are its fixed asset set.
+        # The allocation family's book semantics are its fixed asset set: it
+        # declares only its exit contract and no rank-selection blocks.
         spec["allocation"] = dict(ALLOCATION)
+        spec["selection"] = {"exit": dict(exit_policy or EXIT)}
+        spec.pop("sizing", None)
+        spec.pop("constraints", None)
     return spec
 
 

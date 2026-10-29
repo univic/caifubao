@@ -1,7 +1,7 @@
 {
   "schema": "strategy-spec-consumers-v2",
   "spec_module": "shared/caifubao_contracts/strategy_spec.py",
-  "note": "Every allowed declaration field is listed with the versions that actually read it. 'unconsumed' is a defect with an owner, not a limitation. A field consumed only by v2 must never be marked v1.",
+  "note": "Every allowed declaration field is listed with the versions whose consumers read it, and with at least one test that exercises it. 'consumed_by_versions' means the shared consumer implementations read the field for that version; it does not mean every strategy family may declare it. 'unconsumed' is a defect with an owner.",
   "fields": {
     "constraints.exclude_bse": {
       "status": "consumed",
@@ -9,7 +9,11 @@
         "datahub/app/lib/strategy_engine/runner.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_affordability.py::test_enabled_policy_requires_flags_even_with_other_exclusions_disabled"
       ]
     },
     "constraints.exclude_infeasible_buys": {
@@ -18,7 +22,11 @@
         "datahub/app/lib/strategy_engine/runner.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_affordability.py::test_new_policy_round_trip_and_hash_compatibility"
       ]
     },
     "constraints.exclude_st": {
@@ -27,7 +35,11 @@
         "datahub/app/lib/strategy_engine/runner.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_affordability.py::test_enabled_policy_requires_flags_even_with_other_exclusions_disabled"
       ]
     },
     "constraints.exclude_suspended": {
@@ -36,7 +48,11 @@
         "datahub/app/lib/strategy_engine/runner.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_affordability.py::test_enabled_policy_requires_flags_even_with_other_exclusions_disabled"
       ]
     },
     "constraints.max_industry_pct": {
@@ -45,7 +61,11 @@
         "datahub/app/lib/strategy_engine/selection.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_risk_limits.py::test_default_config_has_no_industry_cap"
       ]
     },
     "constraints.max_single_stock_pct": {
@@ -54,7 +74,11 @@
         "datahub/app/lib/strategy_engine/selection.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_risk_limits.py::test_equal_weight_at_or_below_the_cap_is_unchanged"
       ]
     },
     "constraints.min_trade_amount_cny": {
@@ -63,7 +87,11 @@
         "datahub/app/lib/strategy_engine/runner.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_risk_limits.py::test_illiquid_name_is_excluded"
       ]
     },
     "evidence.policy": {
@@ -72,7 +100,11 @@
         "shared/caifubao_contracts/strategy_spec.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_allocation_runner.py::test_a_regime_policy_is_refused_without_a_classifier"
       ]
     },
     "evidence.timing_version": {
@@ -81,7 +113,11 @@
         "datahub/app/lib/strategy_engine/config.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_causal_timing.py::test_config_pins_new_timing_semantics"
       ]
     },
     "execution.board_lot": {
@@ -90,7 +126,11 @@
         "datahub/app/lib/strategy_engine/config.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_ledger_unification.py::test_execution_rules_board_and_unknown_fail_closed"
       ]
     },
     "execution.commission_rate": {
@@ -99,7 +139,11 @@
         "datahub/app/lib/strategy_engine/config.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_spec_unification.py::test_fee_change_changes_hash"
       ]
     },
     "execution.minimum_commission_cny": {
@@ -108,7 +152,11 @@
         "datahub/app/lib/strategy_engine/config.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_cross_mode_conformance.py::test_shared_trading_conformance_vector_is_pure_and_side_correct"
       ]
     },
     "execution.sell_stamp_duty_rate": {
@@ -117,7 +165,11 @@
         "datahub/app/lib/strategy_engine/config.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_cross_mode_conformance.py::test_shared_trading_conformance_vector_is_pure_and_side_correct"
       ]
     },
     "execution.slippage_per_side": {
@@ -126,7 +178,11 @@
         "datahub/app/lib/strategy_engine/config.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_cross_mode_conformance.py::test_pinned_shared_conformance_vectors_are_reusable_by_trading"
       ]
     },
     "execution.transfer_fee_rate": {
@@ -135,7 +191,11 @@
         "datahub/app/lib/strategy_engine/config.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_account_plan.py::test_a_fee_change_changes_the_recorded_config_hash"
       ]
     },
     "execution.unknown_limit_policy": {
@@ -144,7 +204,11 @@
         "datahub/app/lib/strategy_engine/tradability.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_ledger_unification.py::test_execution_rules_board_and_unknown_fail_closed"
       ]
     },
     "initial_nav": {
@@ -153,7 +217,11 @@
         "datahub/app/lib/strategy_engine/config.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_target_export.py::test_base_nav_falls_back_to_config_initial_nav"
       ]
     },
     "rebalance.cadence_days": {
@@ -163,6 +231,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_v1_regression.py::test_cadence_days_does_not_skip_sessions"
       ]
     },
     "rebalance.exit_buffer": {
@@ -171,7 +242,11 @@
         "datahub/app/lib/strategy_engine/selection.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_exit_hysteresis.py::test_exit_buffer_keeps_a_held_name_inside_the_wider_band"
       ]
     },
     "rebalance.min_hold_sessions": {
@@ -180,7 +255,11 @@
         "datahub/app/lib/strategy_engine/selection.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_v1_regression.py::test_fixture_records_its_provenance"
       ]
     },
     "risk.cash_floor_pct": {
@@ -190,6 +269,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_risk_budget.py::test_budget_validates_and_defaults_regime"
       ]
     },
     "risk.max_drawdown_pct": {
@@ -199,6 +281,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_ledger_unification.py::test_risk_halt_and_drawdown_are_explainable"
       ]
     },
     "risk.max_gross_exposure_pct": {
@@ -208,6 +293,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_ledger_unification.py::test_shared_risk_priority_budget_regime_and_exposure"
       ]
     },
     "risk.max_positions": {
@@ -217,6 +305,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_spec_unification.py::test_non_default_risk_cannot_silently_run_on_legacy"
       ]
     },
     "risk.max_single_stock_pct": {
@@ -226,6 +317,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_risk_limits.py::test_risk_limits_change_the_config_hash"
       ]
     },
     "risk.max_turnover_pct": {
@@ -235,6 +329,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_ledger_unification.py::test_shared_risk_priority_budget_regime_and_exposure"
       ]
     },
     "risk.regime_policy": {
@@ -244,6 +341,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_allocation_runner.py::test_a_regime_policy_is_refused_without_a_classifier"
       ]
     },
     "selection.lower": {
@@ -252,7 +352,11 @@
         "datahub/app/lib/strategy_engine/selection.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_engine.py::test_config_rejects_bad_selection_bounds"
       ]
     },
     "selection.mode": {
@@ -261,7 +365,11 @@
         "datahub/app/lib/strategy_engine/selection.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_allocation_window.py::test_allocation_certification_needs_no_model_version"
       ]
     },
     "selection.portfolio_size": {
@@ -270,7 +378,11 @@
         "datahub/app/lib/strategy_engine/selection.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_engine.py::test_assemble_daily_plan_skips_when_selection_empty_after_flags"
       ]
     },
     "selection.upper": {
@@ -279,7 +391,11 @@
         "datahub/app/lib/strategy_engine/selection.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_engine.py::test_config_rejects_bad_selection_bounds"
       ]
     },
     "signal.horizon": {
@@ -288,7 +404,11 @@
         "datahub/app/jobs/strategy_runner.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_research_pipeline.py::test_cutoff_must_clear_label_horizon_and_embargo"
       ]
     },
     "signal.score_model_version": {
@@ -297,7 +417,11 @@
         "datahub/app/jobs/strategy_runner.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_engine.py::test_assemble_daily_plan_builds_target_and_rebalance"
       ]
     },
     "sizing.cash_reserve_pct": {
@@ -306,7 +430,11 @@
         "datahub/app/lib/strategy_engine/selection.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_account_plan.py::test_cash_below_the_configured_floor_fails_loudly"
       ]
     },
     "sizing.weighting": {
@@ -316,6 +444,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_risk_limits.py::test_no_industry_cap_leaves_weighting_untouched"
       ]
     },
     "spec_version": {
@@ -324,7 +455,11 @@
         "shared/caifubao_contracts/strategy_spec.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_affordability.py::test_historical_normalized_hash_is_unchanged"
       ]
     },
     "universe.as_of": {
@@ -333,7 +468,11 @@
         "shared/caifubao_contracts/strategy_spec.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_reconcile.py::test_as_of_datetime_is_normalised_to_an_iso_string"
       ]
     },
     "universe.market": {
@@ -342,7 +481,11 @@
         "shared/caifubao_contracts/strategy_spec.py"
       ],
       "consumed_by_versions": [
-        "1"
+        "1",
+        "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_risk_budget.py::test_bull_only_policy_stops_in_a_bear_market"
       ]
     },
     "family": {
@@ -352,6 +495,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_research_pipeline.py::test_confirmation_budget_is_per_family"
       ]
     },
     "selection.exit.rank_below": {
@@ -361,6 +507,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_exit_policy.py::test_allocation_needs_only_the_per_asset_stop"
       ]
     },
     "selection.exit.stop_loss_pct": {
@@ -370,6 +519,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_exit_policy.py::test_allocation_needs_only_the_per_asset_stop"
       ]
     },
     "selection.exit.max_hold_sessions": {
@@ -379,6 +531,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_exit_policy.py::test_max_hold_sells_even_while_inside_the_minimum_period"
       ]
     },
     "selection.exit.on_ineligible": {
@@ -388,6 +543,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_allocation.py::test_rank_family_rejects_an_allocation_block"
       ]
     },
     "selection.exit.min_hold_sessions": {
@@ -397,6 +555,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_v1_regression.py::test_fixture_records_its_provenance"
       ]
     },
     "allocation.assets": {
@@ -406,6 +567,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_allocation.py::test_allocation_band_is_bounded"
       ]
     },
     "allocation.band_pct": {
@@ -415,6 +579,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_allocation.py::test_allocation_band_is_bounded"
       ]
     },
     "accounting.corporate_actions": {
@@ -424,6 +591,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_corporate_action_projection.py::test_invalid_corporate_actions_fail_before_any_plan_simulation"
       ]
     },
     "accounting.mark_price": {
@@ -433,6 +603,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_accounting_benchmark.py::test_accounting_rejects_unknown_values"
       ]
     },
     "benchmark.kind": {
@@ -442,6 +615,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_accounting_benchmark.py::test_benchmark_kinds_validate"
       ]
     },
     "benchmark.assets": {
@@ -451,6 +627,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_accounting_benchmark.py::test_benchmark_kinds_validate"
       ]
     },
     "benchmark.index": {
@@ -460,6 +639,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_forward_capture.py::test_forward_window_active_unique_index_is_on_model_horizon_pair"
       ]
     },
     "evidence.kill_criteria.min_excess_per_period": {
@@ -469,6 +651,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_research_store.py::test_changing_criteria_after_registration_is_refused"
       ]
     },
     "evidence.kill_criteria.max_drawdown": {
@@ -478,6 +663,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_allocation_runner.py::test_a_configured_drawdown_stop_is_refused_not_ignored"
       ]
     },
     "evidence.kill_criteria.review_after_sessions": {
@@ -487,6 +675,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_accounting_benchmark.py::test_kill_criteria_require_all_three_thresholds"
       ]
     },
     "evidence.kill_criteria.on_breach": {
@@ -496,6 +687,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_accounting_benchmark.py::test_on_breach_action_is_validated_and_used"
       ]
     },
     "sleeves.name": {
@@ -505,6 +699,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_account_plan.py::test_a_held_bse_name_is_not_a_target_and_exits"
       ]
     },
     "sleeves.capital_share": {
@@ -514,6 +711,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_sleeve.py::test_sleeve_defaults_to_isolation"
       ]
     },
     "sleeves.accounting_id": {
@@ -523,6 +723,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_sleeve.py::test_v2_rejects_oversubscribed_sleeves"
       ]
     },
     "sleeves.evidence_id": {
@@ -532,6 +735,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_sleeve.py::test_v2_rejects_oversubscribed_sleeves"
       ]
     },
     "sleeves.on_shortfall": {
@@ -541,6 +747,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_sleeve.py::test_sleeve_defaults_to_isolation"
       ]
     },
     "horizon_claim.hypothesis_horizon": {
@@ -550,6 +759,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_accounting_benchmark.py::test_horizon_claim_rationale_is_carried"
       ]
     },
     "horizon_claim.evidence_horizon": {
@@ -559,6 +771,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_accounting_benchmark.py::test_horizon_claim_rationale_is_carried"
       ]
     },
     "horizon_claim.rationale": {
@@ -568,6 +783,9 @@
       ],
       "consumed_by_versions": [
         "2"
+      ],
+      "golden": [
+        "datahub/app/test/test_strategy_accounting_benchmark.py::test_horizon_claim_rationale_is_carried"
       ]
     }
   }

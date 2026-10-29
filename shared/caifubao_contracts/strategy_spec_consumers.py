@@ -20,15 +20,16 @@ datahub, Mongo or a broker.
 
 Known limitation
 ----------------
-The consumer check is textual: it requires the consuming module to mention the
-field name. It cannot prove the module *acts* on the value. Binding each field to
-a golden test that pins its effect is a separate work item
-(``strategy-program-2026`` P0.3); until then this gate catches the two cheap
-failures — a field with no owner and a claim with no code.
+Both checks are textual. The consumer check requires the consuming module to
+mention the field name; the golden check requires the named test to exist and to
+reference the field. Neither proves the code *acts* on the value or that the
+test's assertions are adequate. What they do prove is that a claim cannot be made
+without a file and a test that name the field, and that removing either fails CI.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -117,6 +118,7 @@ def check(manifest: dict, allowed: dict, root: Path) -> list[str]:
                 f"{path}: unknown consumed_by_versions {sorted(unknown_versions)}"
             )
             continue
+        problems.extend(_check_golden(path, entry, root))
         leaf = path.rsplit(".", 1)[-1]
         for reference in consumers:
             target = (root / reference).resolve()
@@ -127,4 +129,60 @@ def check(manifest: dict, allowed: dict, root: Path) -> list[str]:
                 problems.append(
                     f"{path}: consumer {reference!r} never mentions {leaf!r}"
                 )
+    return problems
+
+
+def _resolve_test(root: Path, node_id: str) -> tuple[Path, str]:
+    path_part, _, function = node_id.partition("::")
+    if not path_part or not function:
+        raise ValueError(f"golden node id must be '<path>::<test>' , got {node_id!r}")
+    return (root / path_part).resolve(), function
+
+
+def _check_golden(path: str, entry: dict, root: Path) -> list[str]:
+    """Every consumed field must name a test that exists and exercises it.
+
+    The node id is resolved by parsing the file, so a renamed or deleted test
+    fails the gate instead of passing on a stale reference.
+    """
+    golden = entry.get("golden")
+    if not golden:
+        return [f"{path}: consumed field must name a golden test"]
+    if isinstance(golden, str):
+        golden = [golden]
+    if not isinstance(golden, list):
+        return [f"{path}: golden must be a test node id or a list of them"]
+
+    leaf = path.rsplit(".", 1)[-1]
+    problems: list[str] = []
+    for node_id in golden:
+        try:
+            target, function = _resolve_test(root, node_id)
+        except ValueError as exc:
+            problems.append(f"{path}: {exc}")
+            continue
+        if not target.is_file():
+            problems.append(f"{path}: golden test file {node_id!r} does not exist")
+            continue
+        source = target.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as exc:  # pragma: no cover - defensive
+            problems.append(f"{path}: golden file {node_id!r} does not parse: {exc}")
+            continue
+        segments = [
+            ast.get_source_segment(source, node) or ""
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == function
+        ]
+        if not segments:
+            problems.append(
+                f"{path}: golden test {node_id!r} is not defined in that file"
+            )
+            continue
+        if not any(leaf in segment for segment in segments):
+            problems.append(
+                f"{path}: golden test {node_id!r} never references {leaf!r}"
+            )
     return problems

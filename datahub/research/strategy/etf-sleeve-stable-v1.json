@@ -1,10 +1,17 @@
 {
   "spec_version": "2",
-  "universe": {"market": "CN_A", "as_of": "PIT"},
-  "selection": {"mode": "top_n", "portfolio_size": 4, "exit": {"stop_loss_pct": 0.20}},
-  "sizing": {"weighting": "equal", "cash_reserve_pct": 0},
-  "constraints": {},
-  "rebalance": {"cadence_days": 5},
+  "universe": {
+    "market": "CN_A",
+    "as_of": "PIT"
+  },
+  "selection": {
+    "exit": {
+      "stop_loss_pct": 0.2
+    }
+  },
+  "rebalance": {
+    "cadence_days": 5
+  },
   "risk": {},
   "execution": {},
   "evidence": {
@@ -12,7 +19,7 @@
     "policy": "research",
     "kill_criteria": {
       "min_excess_per_period": 0.0,
-      "max_drawdown": 0.20,
+      "max_drawdown": 0.2,
       "review_after_sessions": 60,
       "on_breach": "retire"
     }
@@ -20,13 +27,26 @@
   "initial_nav": 50000,
   "family": "asset_allocation",
   "allocation": {
-    "assets": {"sh510300": 0.25, "sh518880": 0.25, "sh513100": 0.25, "sh511010": 0.25},
+    "assets": {
+      "sh510300": 0.25,
+      "sh518880": 0.25,
+      "sh513100": 0.25,
+      "sh511010": 0.25
+    },
     "band_pct": 0.02
   },
-  "accounting": {"corporate_actions": "price_only", "mark_price": "close_hfq"},
+  "accounting": {
+    "corporate_actions": "price_only",
+    "mark_price": "close_hfq"
+  },
   "benchmark": {
     "kind": "static_allocation",
-    "assets": {"sh510300": 0.25, "sh518880": 0.25, "sh513100": 0.25, "sh511010": 0.25}
+    "assets": {
+      "sh510300": 0.25,
+      "sh518880": 0.25,
+      "sh513100": 0.25,
+      "sh511010": 0.25
+    }
   },
   "sleeves": [
     {
