@@ -182,6 +182,7 @@ def simulate_paper_nav(
     valuation_dates: list[str] | None = None,
     corporate_actions: list[dict] | None = None,
     mode: str = "RESEARCH_SIMULATION",
+    unknown_limit_policy: str = "fail_closed",
 ) -> dict:
     """Simulate a paper portfolio over a rebalance schedule.
 
@@ -376,7 +377,12 @@ def simulate_paper_nav(
         rule). A refusal is reported, never silently dropped.
         """
         quote = (prices.get(code) or {}).get(date)
-        return tradeable_open(quote, side, stock_code=code)
+        return tradeable_open(
+            quote,
+            side,
+            stock_code=code,
+            unknown_limit_policy=unknown_limit_policy,
+        )
 
     def _record_block(date, code, side, reason):
         blocked.append(

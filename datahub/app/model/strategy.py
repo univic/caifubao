@@ -11,9 +11,11 @@ this document is written by jobs/strategy_runner.
 import datetime
 
 from mongoengine import (
+    BooleanField,
     DateTimeField,
     DictField,
     Document,
+    FloatField,
     IntField,
     ListField,
     StringField,
@@ -52,6 +54,17 @@ class StrategyPaperRun(Document):
     # Per-code exit reason for this run's rebalance ({code: reason}); kept out
     # of `rebalance` so that field's shape stays exactly added/removed/unchanged.
     exit_reasons = DictField()
+    #: Price recorded for each target name on the decision date. A v2 declaration
+    #: needs it: the per-asset stop is measured against a cost basis, and a basis
+    #: invented on the fly would make the stop unmeasurable.
+    reference_prices = DictField()
+    #: The account state the plan was actually decided from. Persisted so a
+    #: stop-out or a reserved slot can be explained after the fact instead of
+    #: being re-derived from a book that has since moved on.
+    decision_state = DictField()
+    #: Content hash of that state, so two runs of one declaration can differ by
+    #: account state and have that difference be locatable.
+    decision_state_hash = StringField()
     rebalance = DictField()  # {added, removed, unchanged}
     # Single paper-NAV curve point for THIS run's execution_date, written by the `nav`
     # recompute command: {date, nav, daily_return, turnover, drawdown,
@@ -122,6 +135,87 @@ class StrategyForwardWindow(Document):
                 "partialFilterExpression": {"status": "ACTIVE"},
             },
             ("model_version", "-start_date"),
+        ],
+    }
+
+
+class AllocationPlan(Document):
+    """One research plan for an allocation sleeve.
+
+    Target weights are not holdings: the record says what the declaration would
+    hold if executed, and it carries the accounting and benchmark identity the
+    sleeve is measured under. ``decision_at`` must precede the execution session
+    for the plan to count as forward evidence.
+    """
+
+    strategy_id = StringField(required=True)
+    spec_hash = StringField(required=True)
+    date = DateTimeField(required=True)  # decision session
+    execution_date = DateTimeField()
+    decision_at = DateTimeField()
+    targets = DictField(required=True)  # code -> weight
+    actions = DictField(required=True)  # code -> hold|rebalance|open|close|stop_out
+    cash_weight = FloatField()
+    reference_prices = DictField()  # code -> cost basis used for the stop
+    #: Close used on the decision date, so the next session can drift the book
+    #: by real returns instead of re-reading yesterday's target weights.
+    marks = DictField()
+    #: Last session on which the band actually rebalanced; the cadence is
+    #: measured from here, not from yesterday's plan date.
+    last_rebalance_date = DateTimeField()
+    rebalance_session = BooleanField()
+    status = StringField(choices=["PLANNED", "SKIPPED"], default="PLANNED")
+    reason = StringField()
+
+    created_at = DateTimeField(default=lambda: datetime.datetime.now(datetime.UTC))
+
+    meta = {
+        "collection": "allocation_plans",
+        "indexes": [
+            {"fields": ["strategy_id", "date"], "unique": True},
+            ("strategy_id", "-date"),
+        ],
+    }
+
+
+class AllocationForwardWindow(Document):
+    """Append-only forward-evidence window for an allocation strategy.
+
+    An allocation strategy builds target weights from a declared asset set and
+    band; it has no scoring model or horizon, so keying it by
+    ``(model_version, horizon)`` would need a placeholder version or make it
+    unrepresentable. It therefore lives in its own collection, keyed by
+    ``strategy_id``, and never appears in scoring-window progress.
+
+    Certification closes only a predecessor with the same ``strategy_id``;
+    ``start_date`` is the certification session and is never backdated. The
+    120-session clock is the only irreversible resource here, so a window is
+    refused when no plan path can fill it.
+    """
+
+    strategy_id = StringField(required=True)
+    spec_hash = StringField(required=True)
+    hash_kind = StringField(choices=["spec"], default="spec")
+    accounting_policy = DictField(required=True)
+    benchmark = DictField(required=True)
+    start_date = DateTimeField(required=True)  # first decision date allowed FORWARD
+    status = StringField(choices=["ACTIVE", "CLOSED"], default="ACTIVE")
+    decision_at = DateTimeField()
+    closed_at = DateTimeField()
+
+    created_at = DateTimeField(default=lambda: datetime.datetime.now(datetime.UTC))
+
+    meta = {
+        "collection": "allocation_forward_windows",
+        "indexes": [
+            # At most one ACTIVE window per strategy: a spec change closes the
+            # predecessor rather than letting two clocks run at once.
+            {
+                "fields": ["strategy_id"],
+                "unique": True,
+                "partialFilterExpression": {"status": "ACTIVE"},
+            },
+            ("strategy_id", "-start_date"),
         ],
     }
 

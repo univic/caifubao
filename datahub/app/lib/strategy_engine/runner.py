@@ -138,6 +138,10 @@ def assemble_daily_plan(
     held_meta: dict[str, dict] | None = None,
     exit_buffer: float = 1.0,
     min_hold_sessions: int = 0,
+    decision_state: dict | None = None,
+    exit_policy: dict | None = None,
+    family: str = "rank_selection",
+    marks: dict | None = None,
 ) -> dict:
     """Build one day's paper plan.
 
@@ -187,16 +191,37 @@ def assemble_daily_plan(
                 for code in sorted(excluded)[:20]
             ],
         }
-    planned = plan_target_holdings(
-        prediction_list,
-        config,
-        eligible_codes=eligible,
-        industry_by_code=industry_by_code,
-        previous_holdings=previous_holdings,
-        held_meta=held_meta,
-        exit_buffer=exit_buffer,
-        min_hold_sessions=min_hold_sessions,
-    )
+    if decision_state is not None:
+        # A v2 declaration carries its exit contract and is planned from the
+        # account state, so a stop-loss and a maximum holding period are read
+        # rather than approximated from the previous target book.
+        from app.lib.strategy_engine.stateful_planner import plan_from_state
+
+        planned = plan_from_state(
+            state=decision_state,
+            predictions=prediction_list,
+            config=config,
+            eligible_codes=eligible,
+            industry_by_code=industry_by_code,
+            exit_buffer=exit_buffer,
+            min_hold_sessions=min_hold_sessions,
+            family=family,
+            exit_policy=exit_policy,
+            # The stop-loss is measured against the decision-session close, so the
+            # planner needs it; the state only carries the cost basis.
+            marks=marks,
+        )
+    else:
+        planned = plan_target_holdings(
+            prediction_list,
+            config,
+            eligible_codes=eligible,
+            industry_by_code=industry_by_code,
+            previous_holdings=previous_holdings,
+            held_meta=held_meta,
+            exit_buffer=exit_buffer,
+            min_hold_sessions=min_hold_sessions,
+        )
     target = planned["holdings"]
     if not target:
         return {
@@ -213,6 +238,13 @@ def assemble_daily_plan(
         "date": date,
         "horizon": horizon,
         "target_holdings": target,
+        # Only the state-driven path produces a per-name reason map; surfacing it
+        # keeps a stop-out explainable instead of merely absent.
+        "reasons": dict(planned.get("reasons") or {}),
+        # The state is hashed into the plan so a divergence between two runs of
+        # the same declaration can be attributed to the account, not the decision.
+        # Absent on the legacy path, which decides from the previous target book.
+        "decision_state_hash": planned.get("state_hash"),
         "hold_meta": planned["hold_meta"],
         "exit_reasons": planned["reasons"],
         "rebalance": compute_rebalance(previous_holdings, target),

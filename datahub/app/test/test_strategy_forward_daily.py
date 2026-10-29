@@ -242,3 +242,36 @@ def test_forward_rejects_warned_accounting_data_checks(failed):
     }
     with pytest.raises(ValueError, match=failed):
         _gate(report=report)
+
+
+def test_the_daily_job_hands_the_declaration_to_the_runner(monkeypatch):
+    """The automated FORWARD capture must pass the declaration, not only its hash.
+
+    A hash alone makes the runner re-derive a v1 identity from the legacy
+    projection, which cannot match a v2 declaration: the only automated path
+    would refuse every v2 run while the operator CLI kept working.
+    """
+    from app.jobs import strategy_forward_daily, strategy_runner
+
+    captured = {}
+
+    def fake_run_strategy(**kwargs):
+        captured.update(kwargs)
+        return {"status": "COMPLETED", "evidence_kind": "FORWARD"}
+
+    monkeypatch.setattr(strategy_runner, "run_strategy", fake_run_strategy)
+    spec = {"spec_version": "2", "family": "rank_selection"}
+    target = dt.datetime(2026, 10, 26)
+
+    strategy_forward_daily.run_forward_plan(
+        target=target,
+        config={"score_model_version": "shadow_v1", "horizon": 20},
+        spec=spec,
+        identity="abc123",
+        policy=None,
+    )
+
+    assert captured["strategy_spec"] is spec
+    assert captured["strategy_spec_hash"] == "abc123"
+    assert captured["date"] == target
+    assert captured["rebalance_policy"] is None

@@ -235,6 +235,31 @@ def _policy_min_hold(policy: dict) -> int:
     return value
 
 
+def _build_rank_state(
+    *,
+    date: datetime.datetime,
+    previous_run,
+    previous_holdings: list[dict] | None,
+    held_meta: dict,
+    closes: dict,
+    config: dict,
+) -> tuple[dict, dict]:
+    """(decision state, marks) for a declaration that carries an exit contract."""
+    from app.lib.strategy_engine.rank_state import build_decision_state
+
+    execution = resolve_execution(config)
+    state = build_decision_state(
+        as_of=date.date().isoformat(),
+        previous_holdings=previous_holdings,
+        held_meta=held_meta,
+        reference_prices=getattr(previous_run, "reference_prices", None),
+        closes=closes,
+        initial_nav=float(execution["initial_nav"]),
+        board_lot=int(execution["board_lot"]),
+    )
+    return state, dict(closes)
+
+
 def run_strategy(
     *,
     date: datetime.datetime,
@@ -244,6 +269,7 @@ def run_strategy(
     halt_path: str | None = None,
     strategy_spec_hash: str | None = None,
     rebalance_policy: dict | None = None,
+    strategy_spec: dict | None = None,
 ) -> dict:
     from app.lib.strategy_engine.halt import assert_not_halted
     from app.lib.strategy_engine.runner import assemble_daily_plan
@@ -255,6 +281,14 @@ def run_strategy(
     # is created.
     assert_not_halted(halt_path)
 
+    if strategy_spec is not None and strategy_spec_hash is None:
+        # A declaration without its hash would be applied under a legacy identity:
+        # the run would record hash_kind="legacy" while a v2 exit contract decided
+        # the book, and nothing in the record would say so.
+        raise ValueError(
+            "strategy_spec requires the declaration hash: refusing to run a "
+            "declaration under an identity that does not name it"
+        )
     date = datetime.datetime.combine(date.date(), datetime.time())
     decision_at = datetime.datetime.now(datetime.UTC)
     execution_date = _execution_date(date)
@@ -341,6 +375,14 @@ def run_strategy(
         else {}
     )
     policy = rebalance_policy or {}
+    # A v2 declaration carries its exit contract, and every mandatory exit reads
+    # account state (cost basis, hold count) that only the previous run records.
+    # Without a state the rank family can only approximate an exit from the
+    # previous target book; with one, the declared stop-loss and maximum holding
+    # period are actually read. A legacy config-hash run keeps the legacy path
+    # byte-for-byte, so the certified v1 window cannot change behaviour.
+    family = (strategy_spec or {}).get("family") or "rank_selection"
+    exit_policy = ((strategy_spec or {}).get("selection") or {}).get("exit")
 
     predictions = _query_usable_predictions(model_version, date, horizon)
     flags = (
@@ -353,6 +395,22 @@ def run_strategy(
         industry_by_code = _query_industry_map(
             [p.stock_code for p in predictions], date
         )
+    closes = {
+        code: flag["reference_close"]
+        for code, flag in flags.items()
+        if flag.get("reference_close") is not None
+    }
+    decision_state = None
+    marks = None
+    if exit_policy is not None:
+        decision_state, marks = _build_rank_state(
+            date=date,
+            previous_run=previous_run,
+            previous_holdings=previous_holdings,
+            held_meta=held_meta,
+            closes=closes,
+            config=resolved,
+        )
     plan = assemble_daily_plan(
         config=resolved,
         date=date,
@@ -364,23 +422,72 @@ def run_strategy(
         held_meta=held_meta,
         exit_buffer=_policy_buffer(policy),
         min_hold_sessions=_policy_min_hold(policy),
+        decision_state=decision_state,
+        exit_policy=exit_policy,
+        family=family,
+        marks=marks,
     )
+    # The recorded price is the cost basis the next session's stop-loss measures
+    # against, so a CONTINUING position keeps the basis it was opened at: only a
+    # newly opened name takes today's close. Refreshing every position daily would
+    # reduce the declared stop to a one-session move, and on a +/-10% limit board
+    # a single session can never reach a 15% stop - the exit would be declared,
+    # recorded and permanently dead.
+    previous_prices = (
+        (getattr(previous_run, "reference_prices", None) or {})
+        if previous_run is not None
+        else {}
+    )
+    reference_prices = {}
+    for item in plan.get("target_holdings") or []:
+        code = item["stock_code"]
+        close = closes.get(code)
+        if close is not None and not (float(close) > 0):
+            # A zero/negative close is not a price; treating it as one would make
+            # the next session's basis falsy and every later run refuse.
+            close = None
+        if close is None:
+            if exit_policy is not None:
+                raise ValueError(
+                    f"no usable decision-date close for target {code}; refusing to "
+                    "record a cost basis the next stop-loss could not use"
+                )
+            continue
+        reference_prices[code] = float(previous_prices.get(code) or close)
+
     if strategy_spec_hash is not None and not plan["skipped"]:
         # Definition-time execution feasibility uses ONLY signal-date closes,
         # never future execution opens. An infeasible Spec is not certified.
         from caifubao_contracts.strategy_spec import preflight_execution_feasibility
         from app.lib.strategy_engine.spec import legacy_to_spec, spec_hash
 
-        reconstructed = legacy_to_spec(resolved)
-        # Exit hysteresis is spec-only: the legacy projection cannot carry it,
-        # so it is re-attached before re-deriving the identity. Without this a
-        # spec that declares the policy could never pass its own identity check.
-        identity_spec = reconstructed["spec"]
-        if policy:
-            identity_spec = {
-                **identity_spec,
-                "rebalance": {**(identity_spec.get("rebalance") or {}), **policy},
-            }
+        if strategy_spec is not None:
+            # The declaration is its own authority. Re-deriving the identity from
+            # the legacy projection cannot reproduce v2-only semantics (family,
+            # exit contract, accounting, benchmark, kill criteria), so a v2 spec
+            # would fail its own check. The projection is still verified against
+            # the config actually used, which is what the check is for.
+            from caifubao_contracts.strategy_spec import to_legacy_config
+
+            identity_spec = strategy_spec
+            declared_config = validate_strategy_config(to_legacy_config(strategy_spec))
+            if strategy_config_hash(declared_config) != legacy_hash:
+                raise ValueError(
+                    "legacy config does not match the supplied declaration: the "
+                    "run would be recorded under a semantics it does not use"
+                )
+        else:
+            reconstructed = legacy_to_spec(resolved)
+            # Exit hysteresis is spec-only: the legacy projection cannot carry
+            # it, so it is re-attached before re-deriving the identity. Without
+            # this a spec that declares the policy could never pass its own
+            # identity check.
+            identity_spec = reconstructed["spec"]
+            if policy:
+                identity_spec = {
+                    **identity_spec,
+                    "rebalance": {**(identity_spec.get("rebalance") or {}), **policy},
+                }
         if spec_hash(identity_spec) != strategy_spec_hash:
             raise ValueError("StrategySpec identity changed during legacy adaptation")
         targets = plan["target_holdings"]
@@ -409,6 +516,9 @@ def run_strategy(
             "previous_run_date": (
                 previous_run.date.date() if previous_run is not None else None
             ),
+            "family": family,
+            "reference_prices": reference_prices,
+            "decision_state_hash": plan.get("decision_state_hash"),
             "plan": plan,
         }
 
@@ -439,6 +549,9 @@ def run_strategy(
         hold_meta=plan.get("hold_meta", {}),
         exit_reasons=plan.get("exit_reasons", {}),
         rebalance=plan.get("rebalance", {}),
+        reference_prices=reference_prices,
+        decision_state=decision_state or {},
+        decision_state_hash=plan.get("decision_state_hash"),
     )
     run.completed_at = datetime.datetime.now(datetime.UTC)
     run.save()
@@ -456,6 +569,7 @@ def run_strategy(
         "evidence_kind": run.evidence_kind,
         "skip_reason": run.skip_reason,
         "target_holdings_count": len(run.target_holdings or []),
+        "decision_state_hash": run.decision_state_hash,
         "rebalance": run.rebalance,
         **({"eligibility": plan["eligibility"]} if "eligibility" in plan else {}),
     }
@@ -741,6 +855,11 @@ def run_nav(
         execution=resolve_execution(resolved),
         initial_nav=float(resolved.get("initial_nav", 1_000_000.0)),
         spec_hash=strategy_spec_hash,
+        # The declared policy decides whether an unknown limit verdict refuses the
+        # fill or is replayed; it used to be dropped here and forced to fail_closed.
+        unknown_limit_policy=resolve_execution(resolved).get(
+            "unknown_limit_policy", "fail_closed"
+        ),
     )
     # A spec-backed Research derivation must pass independent event-journal
     # cash/positions/receivables/mark parity BEFORE any immutable artifact or
@@ -1201,7 +1320,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_with_tracking(args, config: dict | None, policy: dict | None = None) -> None:
+def _run_with_tracking(
+    args,
+    config: dict | None,
+    policy: dict | None = None,
+    strategy_spec: dict | None = None,
+) -> None:
     """Run with a datahub_job_runs freshness record (scoring_runner pattern)."""
     from app.lib.strategy_engine.halt import HaltError
 
@@ -1228,6 +1352,8 @@ def _run_with_tracking(args, config: dict | None, policy: dict | None = None) ->
             kwargs["strategy_spec_hash"] = args.strategy_spec_hash
         if policy:
             kwargs["rebalance_policy"] = policy
+        if strategy_spec is not None:
+            kwargs["strategy_spec"] = strategy_spec
         result = run_strategy(**kwargs)
         if args.dry_run:
             # Preview only: nothing persisted -> record SKIPPED (not SUCCESS),
@@ -1276,16 +1402,28 @@ def _run_with_tracking(args, config: dict | None, policy: dict | None = None) ->
         raise
 
 
-def _load_cli_spec(args) -> tuple[dict | None, str | None, dict | None]:
-    """Resolve a spec file without silently changing legacy evidence."""
+def _load_cli_spec(
+    args,
+) -> tuple[dict | None, str | None, dict | None, dict | None]:
+    """Resolve a spec file without silently changing legacy evidence.
+
+    The validated declaration is returned alongside the legacy projection: the
+    exit contract and family it declares are what the runner needs to plan from
+    account state, and re-reading the file later would let the two disagree.
+    """
     if getattr(args, "spec", None) or getattr(args, "spec_json", None):
-        from app.lib.strategy_engine.spec import spec_hash, spec_to_legacy_config
+        from app.lib.strategy_engine.spec import (
+            spec_hash,
+            spec_to_legacy_config,
+            validate_strategy_spec,
+        )
 
         if getattr(args, "spec_json", None):
             document = json.loads(args.spec_json)
         else:
             with Path(args.spec).open(encoding="utf-8") as stream:
                 document = json.load(stream)
+        document = validate_strategy_spec(document)
         config = spec_to_legacy_config(document)
         identity = spec_hash(document)
         if getattr(args, "model_version", None) and (
@@ -1302,10 +1440,10 @@ def _load_cli_spec(args) -> tuple[dict | None, str | None, dict | None]:
             for key in ("exit_buffer", "min_hold_sessions")
             if key in rebalance
         }
-        return config, identity, (policy or None)
+        return config, identity, (policy or None), document
     if getattr(args, "config_json", None):
-        return json.loads(args.config_json), None, None
-    return None, None, None
+        return json.loads(args.config_json), None, None, None
+    return None, None, None, None
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1313,10 +1451,10 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     _init_db()
     if args.command == "run":
-        config, args.strategy_spec_hash, policy = _load_cli_spec(args)
-        _run_with_tracking(args, config, policy)
+        config, args.strategy_spec_hash, policy, document = _load_cli_spec(args)
+        _run_with_tracking(args, config, policy, document)
     elif args.command == "nav":
-        config, identity, _policy = _load_cli_spec(args)
+        config, identity, _policy, _document = _load_cli_spec(args)
         result = run_nav(
             from_date=parse_date(args.from_date),
             to_date=parse_date(args.to_date),
@@ -1328,7 +1466,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     elif args.command == "forward":
-        config, identity, _policy = _load_cli_spec(args)
+        config, identity, _policy, _document = _load_cli_spec(args)
         if args.forward_command == "certify":
             result = certify_forward_window(
                 model_version=args.model_version,

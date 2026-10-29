@@ -11,3 +11,9 @@ dependencies = ["mongoengine>=0.29"]
 
 [tool.setuptools.packages.find]
 include = ["caifubao_contracts*"]
+
+# The consumer manifest is a data file the contract reads at validation time.
+# Without this the wheel ships only .py files and every v2 declaration fails at
+# runtime with a missing manifest - which is exactly what happened once already.
+[tool.setuptools.package-data]
+caifubao_contracts = ["*.json"]
