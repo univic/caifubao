@@ -78,16 +78,22 @@
 
 ## 3. P2 — 研究流水线（`strategy-research-pipeline`）
 
-- [ ] P2.1 预注册 schema（假设/假设族/数据/程序/成功判据/失效判据/试验上限/确认集切片）与账本存储
-- [ ] P2.2 试验计数按**假设族**累计，新 registration 继承族内累计数；registration 级计数单独保留
+- [x] P2.1 预注册 schema（假设/假设族/数据/程序/成功判据/失效判据/试验上限/确认集切片）与账本存储
+      —— `shared/caifubao_contracts/strategy_research.py` + `strategy_engine/research_pipeline.py`（注入式 store，内存实现用于测试；
+      Mongo 适配器待授权后接）
+- [x] P2.2 试验计数按**假设族**累计，新 registration 继承族内累计数；registration 级计数单独保留
+      —— 换 registration 重置预算已被测试拦下（`test_trials_accumulate_per_family_across_registrations`）
 - [ ] P2.3 接入既有 Bonferroni/多重检验工具，输出按族计数调整后的阈值
-- [ ] P2.4 确认集数据隔离：探索期不可读确认区间的价格与结果，读取即标记污染
-- [ ] P2.5 cutoff = 确认起点 − 标签期限 − 1 − embargo；重叠即拒绝，负 embargo 直接拒绝
-- [ ] P2.6 确认次数上限按族强制，超限拒绝并留痕
+- [x] P2.4 确认集数据隔离：探索期不可读确认区间的价格与结果，读取即标记污染
+      —— `assert_exploration_range` 越界即 `ResearchError`
+- [x] P2.5 cutoff = 确认起点 − 标签期限 − 1 − embargo；重叠即拒绝，负 embargo 直接拒绝
+- [x] P2.6 确认次数上限按族强制，超限拒绝并留痕
 - [ ] P2.7 六阶段 runner：registration → feasibility → exploration → confirmation → structural → forward → verdict
-- [ ] P2.8 不可变 `verdict.json`：引用 registration、假设族、spec hash、`dataset_id`、代码 SHA、族级/registration 级试验数、确认次数、cutoff 与标签期限
+- [x] P2.8 不可变 `verdict.json`：引用 registration、假设族、spec hash、`dataset_id`、代码 SHA、族级/registration 级试验数、确认次数、cutoff 与标签期限
+      —— 内容寻址（`verdict_hash`），篡改即换地址
 - [ ] P2.9 结构与容量门禁：分散度/换手/回撤/止损存在性/资金×10 容量测试
-- [ ] P2.10 探索阶段禁止产出结论与晋级候选的强制校验
+- [x] P2.10 探索阶段禁止产出结论与晋级候选的强制校验
+      —— 契约层（stage/outcome 矩阵）与 runner 层双重拒绝
 - [ ] P2.11 用一个小样本 idea 端到端跑通并留下 verdict 样例
 
 ## 4. P3 — 稳健半仓（`stable-multi-asset-sleeve`）
