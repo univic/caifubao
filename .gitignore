@@ -58,3 +58,7 @@ datahub/research/**/*.tar.gz
 # datahub/research/ itself stays tracked for strategy declarations.
 datahub/research/**/data/
 datahub/research/**/*.parquet
+
+# build artefacts from local wheel builds
+shared/build/
+*.egg-info/
