@@ -102,29 +102,12 @@ def build_plan(
     # Drift the previous target weights by the actual returns since the previous
     # session. Passing the raw targets would make the band blind to drift, which
     # is the only thing it exists to measure.
-    previous_marks = {
-        code: float(price)
-        for code, price in (previous.get("marks") or {}).items()
-        if code in targets and price
-    }
-    if previous_marks and all(code in previous_marks for code in previous_targets):
-        gross = sum(
-            previous_targets[code] * quotes[code] / previous_marks[code]
-            for code in previous_targets
-        )
-        drifted = (
-            {
-                code: previous_targets[code]
-                * quotes[code]
-                / previous_marks[code]
-                / gross
-                for code in previous_targets
-            }
-            if gross > 0
-            else dict(previous_targets)
-        )
-    else:
-        drifted = dict(previous_targets)
+    drifted, previous_cash = drift_book(
+        targets=previous_targets,
+        previous_marks=previous.get("marks") or {},
+        quotes=quotes,
+        cash_weight=float(previous.get("cash_weight") or 0.0),
+    )
 
     # The cadence counts from the last session that actually rebalanced, not from
     # yesterday's plan date; otherwise a daily plan loop keeps the gap at one and
@@ -168,6 +151,37 @@ def build_plan(
         "risk_verdict": plan.get("risk_verdict"),
         "status": "PLANNED",
     }
+
+
+def drift_book(
+    *,
+    targets: dict,
+    previous_marks: dict,
+    quotes: dict,
+    cash_weight: float,
+) -> tuple[dict, float]:
+    """Grow the previous book by realised returns, cash included.
+
+    Dividing by the invested part alone would rescale a half-invested book to a
+    fully invested one and silently erase the reserve, so cash takes part in the
+    normalisation and comes back out as a weight.
+    """
+    marks = {code: float(previous_marks.get(code) or 0.0) for code in targets}
+    if not targets or any(not price for price in marks.values()):
+        return dict(targets), cash_weight
+    if any(not quotes.get(code) for code in targets):
+        return dict(targets), cash_weight
+    asset_growth = sum(
+        float(targets[code]) * float(quotes[code]) / marks[code] for code in targets
+    )
+    gross = asset_growth + max(0.0, float(cash_weight))
+    if gross <= 0:
+        return dict(targets), cash_weight
+    drifted = {
+        code: float(targets[code]) * float(quotes[code]) / marks[code] / gross
+        for code in targets
+    }
+    return drifted, max(0.0, float(cash_weight)) / gross
 
 
 def assert_risk_evaluable(risk: dict) -> None:
@@ -243,6 +257,32 @@ def apply_risk_budget(spec: dict, plan: dict, previous_weights: dict) -> dict:
         )
     plan["risk_verdict"] = verdict
     return plan
+
+
+MARKET_NAME = "ChinaAStock"
+
+
+def next_execution_date(decision_day) -> str:
+    """The next exchange session after the decision date.
+
+    It cannot be derived from the quotes: on the decision session the next
+    session has not been quoted yet, so a live plan would get ``None`` and never
+    count as forward evidence. The exchange calendar is the authority.
+    """
+    from app.model.stock import FinanceMarket
+
+    day = _session_date(decision_day)
+    market = FinanceMarket.objects(name=MARKET_NAME).only("trade_calendar").first()
+    calendar = sorted(
+        str(value)[:10] for value in (market.trade_calendar if market else [])
+    )
+    upcoming = next((value for value in calendar if value > day.isoformat()), None)
+    if upcoming is None:
+        raise AllocationRunError(
+            f"the exchange calendar has no session after {day.isoformat()}; refusing "
+            "to record a plan that could never be counted as forward evidence"
+        )
+    return upcoming
 
 
 def load_quotes(codes, session) -> dict[str, float]:
@@ -391,6 +431,7 @@ def _record_to_dict(record) -> dict | None:
         "targets": dict(record.targets or {}),
         "reference_prices": dict(record.reference_prices or {}),
         "marks": dict(record.marks or {}),
+        "cash_weight": record.cash_weight,
         "last_rebalance_date": (
             str(record.last_rebalance_date)[:10] if record.last_rebalance_date else None
         ),
@@ -406,6 +447,7 @@ def run(
     session_date=None,
     dry_run: bool = False,
     store: "PlanStore | None" = None,
+    execution_date_resolver=next_execution_date,
 ) -> dict:
     """Build one plan; write it unless ``dry_run``."""
     store = store or MongoPlanStore()
@@ -430,9 +472,7 @@ def run(
         trading_days=days,
         previous=previous,
     )
-    plan["execution_date"] = next(
-        (value for value in days if value > plan["date"]), None
-    )
+    plan["execution_date"] = execution_date_resolver(day)
     if dry_run:
         plan["dry_run"] = True
         return plan

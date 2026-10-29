@@ -48,6 +48,7 @@ class InMemoryResearchStore:
     family_trials_by_family: dict[str, int] = field(default_factory=dict)
     registration_trials_by_registration: dict[str, int] = field(default_factory=dict)
     confirmations: dict[str, int] = field(default_factory=dict)
+    confirmations_by_registration: dict[str, int] = field(default_factory=dict)
     verdicts: dict[str, dict] = field(default_factory=dict)
 
     def add_registration(self, registration: dict) -> None:
@@ -74,10 +75,17 @@ class InMemoryResearchStore:
     def add_confirmation(self, registration: dict) -> int:
         family = registration["family"]
         self.confirmations[family] = self.confirmations.get(family, 0) + 1
+        key = registration["registration_id"]
+        self.confirmations_by_registration[key] = (
+            self.confirmations_by_registration.get(key, 0) + 1
+        )
         return self.confirmations[family]
 
     def family_trials(self, family: str) -> int:
         return self.family_trials_by_family.get(family, 0)
+
+    def registration_confirmations(self, registration_id: str) -> int:
+        return self.confirmations_by_registration.get(registration_id, 0)
 
     def registration_trials(self, registration_id: str) -> int:
         return self.registration_trials_by_registration.get(registration_id, 0)
@@ -101,8 +109,8 @@ class ResearchPipeline:
     store: InMemoryResearchStore
     alpha: float = 0.05
 
-    def register(self, registration: dict) -> str:
-        validated = validate_registration(registration)
+    def register(self, registration: dict, *, trading_days=None) -> str:
+        validated = validate_registration(registration, trading_days=trading_days)
         existing = self.store.get_registration(validated["registration_id"])
         if existing is not None:
             # Compare only the declared fields: a persistent store also keeps
@@ -232,10 +240,12 @@ class ResearchPipeline:
                 raise ResearchError(f"stage {stage!r} cannot report {outcome!r}")
             # The stage label alone is not evidence: a caller could claim
             # 'forward' without ever confirming. Require a recorded confirmation.
-            if self.store.family_confirmations(registration["family"]) < 1:
+            # A sibling registration's confirmation must not lend this one its
+            # evidence: the count has to come from this registration.
+            if self.store.registration_confirmations(registration_id) < 1:
                 raise ResearchError(
-                    f"{outcome!r} needs at least one recorded confirmation for "
-                    f"family {registration['family']!r}"
+                    f"{outcome!r} needs a confirmation recorded for "
+                    f"{registration_id!r}, not one borrowed from its family"
                 )
         if outcome in (OUTCOME_EXPLORATORY,) and stage_index(stage) > stage_index(
             "exploration"

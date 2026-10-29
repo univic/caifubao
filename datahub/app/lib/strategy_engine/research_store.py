@@ -109,6 +109,11 @@ class MongoResearchStore:
     def family_confirmations(self, family: str) -> int:
         return self.db[CONFIRMATIONS].count_documents({"family": family})
 
+    def registration_confirmations(self, registration_id: str) -> int:
+        return self.db[CONFIRMATIONS].count_documents(
+            {"registration_id": registration_id}
+        )
+
     # -- verdicts --------------------------------------------------------
     def add_verdict(self, verdict: dict) -> str:
         validated = validate_verdict(verdict)

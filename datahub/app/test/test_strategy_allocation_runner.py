@@ -412,6 +412,7 @@ def test_run_writes_through_the_store(tmp_path):
             strategy_id="sleeve-stable",
             session_date="2026-10-29",
             store=store,
+            execution_date_resolver=lambda day: "2026-10-30",
         )
     finally:
         allocation_runner.load_quotes, allocation_runner.session_calendar = (
@@ -438,6 +439,7 @@ def test_a_retry_before_execution_updates_the_same_plan(tmp_path):
                 strategy_id="sleeve-stable",
                 session_date="2026-10-29",
                 store=store,
+                execution_date_resolver=lambda day: "2026-10-30",
             )
     finally:
         allocation_runner.load_quotes = allocation_runner.session_calendar = None
@@ -466,6 +468,7 @@ def test_a_plan_is_not_rewritten_after_its_execution_session():
                 strategy_id="sleeve-stable",
                 session_date="2026-10-29",
                 store=store,
+                execution_date_resolver=lambda day: "2026-10-30",
             )
     finally:
         allocation_runner.load_quotes = allocation_runner.session_calendar = None
@@ -488,3 +491,88 @@ def test_list_decided_ignores_late_plans():
         execution_date=dt.datetime(2026, 11, 2),
     )
     assert store.list_decided("sleeve-stable", "a" * 64) == ["2026-10-29"]
+
+
+# --------------------------------------------------------------------------
+# the execution session and the cash that must survive drift
+# --------------------------------------------------------------------------
+
+
+def test_the_execution_session_comes_from_the_calendar_not_the_quotes():
+    """On the decision session the next session has no quote yet."""
+    from app.jobs import allocation_runner
+
+    seen = {}
+
+    def resolver(day):
+        seen["day"] = day
+        return "2026-11-02"
+
+    allocation_runner.load_quotes = lambda codes, day: dict(QUOTES)
+    allocation_runner.session_calendar = lambda codes: list(DAYS)
+    try:
+        plan = allocation_runner.run(
+            spec=dict(SPEC, _spec_hash="a" * 64),
+            strategy_id="sleeve-stable",
+            session_date="2026-10-30",  # the last quoted session
+            dry_run=True,
+            store=_MemoryStore(),
+            execution_date_resolver=resolver,
+        )
+    finally:
+        allocation_runner.load_quotes = allocation_runner.session_calendar = None
+    assert plan["execution_date"] == "2026-11-02"
+    assert seen["day"].isoformat() == "2026-10-30"
+
+
+def test_a_missing_future_session_is_refused():
+    from app.jobs import allocation_runner
+
+    def resolver(day):
+        raise allocation_runner.AllocationRunError("no session after")
+
+    allocation_runner.load_quotes = lambda codes, day: dict(QUOTES)
+    allocation_runner.session_calendar = lambda codes: list(DAYS)
+    try:
+        with pytest.raises(allocation_runner.AllocationRunError, match="no session"):
+            allocation_runner.run(
+                spec=dict(SPEC, _spec_hash="a" * 64),
+                strategy_id="sleeve-stable",
+                session_date="2026-10-30",
+                dry_run=True,
+                store=_MemoryStore(),
+                execution_date_resolver=resolver,
+            )
+    finally:
+        allocation_runner.load_quotes = allocation_runner.session_calendar = None
+
+
+def test_drift_keeps_the_cash_reserve():
+    """A half-invested book must not normalise back to fully invested."""
+    from app.jobs.allocation_runner import drift_book
+
+    targets = {code: 0.125 for code in CODES}  # 50% invested
+    quotes = {"sh510300": 12.0, "sh518880": 10.0, "sh513100": 10.0, "sh511010": 10.0}
+    marks = {code: 10.0 for code in CODES}
+
+    drifted, cash = drift_book(
+        targets=targets, previous_marks=marks, quotes=quotes, cash_weight=0.5
+    )
+    # Invested 0.5 grows to 0.525 (sh510300 +20%), cash stays 0.5 -> gross 1.025.
+    assert cash == pytest.approx(0.5 / 1.025)
+    assert sum(drifted.values()) == pytest.approx(0.525 / 1.025)
+    assert sum(drifted.values()) + cash == pytest.approx(1.0)
+    # Dropping cash from the normalisation would have rescaled the book to fully
+    # invested (~0.286 for sh510300) instead of 0.146.
+    assert drifted["sh510300"] == pytest.approx(0.125 * 1.2 / 1.025)
+
+
+def test_drift_without_marks_falls_back_to_the_stored_book():
+    from app.jobs.allocation_runner import drift_book
+
+    targets = {code: 0.25 for code in CODES}
+    drifted, cash = drift_book(
+        targets=targets, previous_marks={}, quotes=dict(QUOTES), cash_weight=0.0
+    )
+    assert drifted == targets
+    assert cash == 0.0
