@@ -42,10 +42,20 @@ def _spec(**overrides):
         "rebalance": {"cadence_days": 60},
         "risk": {},
         "execution": {},
-        "evidence": {"timing_version": "paper_causal_v1", "policy": "research"},
         "initial_nav": 100000,
         "family": "asset_allocation",
         "allocation": {"assets": dict(TARGETS), "band_pct": 0.05},
+        "accounting": {"corporate_actions": "price_only", "mark_price": "close_raw"},
+        "benchmark": {"kind": "equal_weight_universe"},
+        "evidence": {
+            "timing_version": "paper_causal_v1",
+            "policy": "research",
+            "kill_criteria": {
+                "min_excess_per_period": 0.0,
+                "max_drawdown": 0.2,
+                "review_after_sessions": 60,
+            },
+        },
     }
     spec.update(overrides)
     return spec

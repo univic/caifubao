@@ -384,6 +384,87 @@
       "consumed_by_versions": [
         "2"
       ]
+    },
+    "accounting.corporate_actions": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_accounting.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "accounting.mark_price": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_accounting.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "benchmark.kind": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_benchmark.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "benchmark.assets": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_benchmark.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "benchmark.index": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_benchmark.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "evidence.kill_criteria.min_excess_per_period": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_benchmark.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "evidence.kill_criteria.max_drawdown": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_benchmark.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "evidence.kill_criteria.review_after_sessions": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_benchmark.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "evidence.kill_criteria.on_breach": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_benchmark.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
     }
   }
 }

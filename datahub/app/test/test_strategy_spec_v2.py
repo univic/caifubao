@@ -49,11 +49,23 @@ def _v1():
 ALLOCATION = {"assets": {"sh510300": 0.4, "sh510500": 0.3}, "band_pct": 0.05}
 
 
+ACCOUNTING = {"corporate_actions": "price_only", "mark_price": "close_raw"}
+BENCHMARK = {"kind": "equal_weight_universe"}
+KILL = {
+    "min_excess_per_period": 0.0,
+    "max_drawdown": 0.2,
+    "review_after_sessions": 60,
+}
+
+
 def _v2(family="rank_selection", exit_policy=None):
     spec = _v1()
     spec["spec_version"] = "2"
     spec["family"] = family
     spec["selection"] = dict(spec["selection"], exit=dict(exit_policy or EXIT))
+    spec["accounting"] = dict(ACCOUNTING)
+    spec["benchmark"] = dict(BENCHMARK)
+    spec["evidence"] = dict(spec["evidence"], kill_criteria=dict(KILL))
     if family == "asset_allocation":
         # The allocation family's book semantics are its fixed asset set.
         spec["allocation"] = dict(ALLOCATION)

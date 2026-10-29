@@ -13,7 +13,12 @@ import json
 import math
 
 from caifubao_contracts.friction import DEFAULT_COST_PROFILE
+from caifubao_contracts.strategy_accounting import validate_accounting
 from caifubao_contracts.strategy_allocation import validate_allocation
+from caifubao_contracts.strategy_benchmark import (
+    validate_benchmark,
+    validate_kill_criteria,
+)
 from caifubao_contracts.strategy_exit_policy import validate_exit_policy
 
 SPEC_VERSION = "1"
@@ -53,11 +58,15 @@ _ALLOWED = {
         "initial_nav",
         "family",
         "allocation",
+        "accounting",
+        "benchmark",
     },
     "universe": {"market", "as_of"},
     "signal": {"score_model_version", "horizon"},
     "selection": {"mode", "lower", "upper", "portfolio_size", "exit"},
     "allocation": {"assets", "band_pct"},
+    "accounting": {"corporate_actions", "mark_price"},
+    "benchmark": {"kind", "assets", "index"},
     "selection.exit": {
         "rank_below",
         "stop_loss_pct",
@@ -78,7 +87,13 @@ _ALLOWED = {
     "rebalance": {"cadence_days", "exit_buffer", "min_hold_sessions"},
     "risk": set(DEFAULT_RISK),
     "execution": set(DEFAULT_EXECUTION),
-    "evidence": {"timing_version", "policy"},
+    "evidence": {"timing_version", "policy", "kill_criteria"},
+    "evidence.kill_criteria": {
+        "min_excess_per_period",
+        "max_drawdown",
+        "review_after_sessions",
+        "on_breach",
+    },
 }
 
 
@@ -146,7 +161,7 @@ def validate_strategy_spec(spec: dict) -> dict:
     ):
         _object(_required(normalized, part, "spec"), part)
 
-    v2_only = ("family", "allocation")
+    v2_only = ("family", "allocation", "accounting", "benchmark")
     if version == "1":
         # v1 must behave exactly as before: the v2-only fields are still unknown
         # to it, so a v1 declaration carrying one is rejected rather than
@@ -154,6 +169,8 @@ def validate_strategy_spec(spec: dict) -> dict:
         present = [key for key in v2_only if key in normalized]
         if "exit" in (normalized.get("selection") or {}):
             present.append("selection.exit")
+        if "kill_criteria" in (normalized.get("evidence") or {}):
+            present.append("evidence.kill_criteria")
         if present:
             raise ValueError(
                 f"spec_version 1 does not support {sorted(present)}; use version 2"
@@ -169,6 +186,23 @@ def validate_strategy_spec(spec: dict) -> dict:
         )
         validate_exit_policy(normalized["family"], exit_block)
         normalized["selection"]["exit"] = exit_block
+        for key in ("accounting", "benchmark"):
+            if key not in normalized:
+                raise ValueError(
+                    f"spec_version 2 requires {key}: a strategy that cannot state "
+                    f"its {key} cannot be measured or compared"
+                )
+        normalized["accounting"] = validate_accounting(normalized["accounting"])
+        normalized["benchmark"] = validate_benchmark(normalized["benchmark"])
+        evidence_block = normalized["evidence"]
+        if "kill_criteria" not in evidence_block:
+            raise ValueError(
+                "spec_version 2 requires evidence.kill_criteria: a strategy with no "
+                "declared failure condition is never retired, only observed"
+            )
+        evidence_block["kill_criteria"] = validate_kill_criteria(
+            evidence_block["kill_criteria"]
+        )
         if normalized["family"] == "asset_allocation":
             if "allocation" not in normalized:
                 raise ValueError(
