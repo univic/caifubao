@@ -49,6 +49,21 @@ declared cadence that the implementation ignores MUST fail validation.
 - **WHEN** a rebalance session is planned
 - **THEN** the holding SHALL NOT be traded back to its exact target weight
 
+#### Scenario: Per-asset stop-loss is mandatory and independent
+
+- **GIVEN** the sleeve declaration
+- **WHEN** it is validated
+- **THEN** it SHALL declare a per-asset stop-loss
+- **AND** a declaration that declares only portfolio-level de-risking SHALL be rejected
+
+#### Scenario: Per-asset stop survives a de-risking session
+
+- **GIVEN** a sleeve where one asset breaches its stop while the portfolio drawdown rule
+  also triggers in the same session
+- **WHEN** the session is planned
+- **THEN** the breaching asset SHALL be reduced or closed with a stop reason
+- **AND** the portfolio rule SHALL NOT suppress that action
+
 ### Requirement: The asset set MUST be committed before evaluation
 
 The sleeve's asset set SHALL be fixed in the declaration before any evaluation, and the

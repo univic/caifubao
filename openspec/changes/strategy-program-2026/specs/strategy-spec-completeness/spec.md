@@ -95,21 +95,13 @@ the manifest declares.
 
 A declaration SHALL declare its strategy family, at least distinguishing rank-based
 selection from asset allocation. Each family MUST require the semantics it actually uses
-and MUST reject semantics that do not apply to it: a rank-selection declaration SHALL
-declare its ranking exit conditions, while an allocation declaration SHALL declare target
-weights, rebalance bands and a genuinely consumed rebalance cadence and MUST NOT be
-required to invent a rank-based exit. Risk, execution, accounting, ledger and evidence
-contracts SHALL be shared by all families.
+and MUST reject semantics that do not apply to it, and role semantics such as risk limits,
+execution assumptions, accounting policy, ledger events and evidence rules SHALL be shared
+by all families rather than forked per family.
 
-#### Scenario: Allocation is not forced to declare a rank exit
+#### Scenario: Family is mandatory
 
-- **GIVEN** an allocation declaration with a fixed asset set, target weights and bands
-- **WHEN** the declaration is validated
-- **THEN** it SHALL pass without declaring rank-based exit conditions
-
-#### Scenario: Rank selection must declare its exits
-
-- **GIVEN** a rank-selection declaration with no exit conditions
+- **GIVEN** a v2 declaration with no strategy family
 - **WHEN** the declaration is validated
 - **THEN** validation SHALL fail
 
@@ -119,6 +111,92 @@ contracts SHALL be shared by all families.
   declaration that declares allocation bands
 - **WHEN** the declaration is validated
 - **THEN** validation SHALL fail rather than silently ignore the field
+
+#### Scenario: Shared role contracts are not forked
+
+- **GIVEN** one rank-selection and one allocation declaration
+- **WHEN** each is planned
+- **THEN** both SHALL go through the same risk gate, execution model, accounting policy and
+  ledger event schema
+
+### Requirement: Rank-selection books MUST declare their full exit contract
+
+A rank-selection declaration SHALL declare, and the planner MUST consume, all of: the exit
+band expressed as the rank beyond which a held name is sold, a per-position stop-loss
+fraction, a maximum holding period in sessions, and the action taken when a held name loses
+eligibility. Each declared condition MUST produce a recorded sell reason, and no exit
+behaviour may depend on an implicit consequence of ranking order.
+
+#### Scenario: Omitted exit contract is rejected
+
+- **GIVEN** a rank-selection declaration missing any of the exit band, the stop-loss, the
+  maximum holding period or the ineligibility action
+- **WHEN** the declaration is validated
+- **THEN** validation SHALL fail naming the missing field
+
+#### Scenario: Maximum holding period is enforced
+
+- **GIVEN** a declaration with a maximum holding period and a held name whose recorded hold
+  count exceeds it while still ranking inside the entry band
+- **WHEN** the target book is planned
+- **THEN** the name SHALL be sold and the reason SHALL be recorded
+
+#### Scenario: Stop-loss uses the recorded cost basis
+
+- **GIVEN** a declaration with a stop-loss and a held name whose close is below its recorded
+  average cost by more than the declared fraction
+- **WHEN** the target book is planned
+- **THEN** the name SHALL be sold with a stop-loss reason
+- **AND** a declaration without the field SHALL NOT sell that name for that reason
+
+#### Scenario: Ineligible held name is sold regardless of the band
+
+- **GIVEN** a held name with no usable score on the decision date, for example because it is
+  suspended, suspended-then-ST, outside the eligibility set or missing a prediction
+- **WHEN** the target book is planned with any exit band
+- **THEN** the name SHALL be sold with an ineligibility reason
+- **AND** the exit band SHALL NOT keep it
+
+#### Scenario: Exit band keeps a slowing name
+
+- **GIVEN** a held name ranked beyond the entry band but inside the declared exit band
+- **WHEN** the target book is planned
+- **THEN** the name SHALL stay and the reason SHALL record that it was held inside the band
+
+### Requirement: Allocation books MUST declare weights, bands, cadence and a per-asset stop
+
+An allocation declaration SHALL declare its fixed asset set, target weights, rebalance
+bands, a rebalance cadence that a consumer genuinely reads, and a **single-asset
+stop-loss** that applies to every held asset. It MUST NOT be required to declare a
+rank-based exit, and the per-asset stop MUST NOT be satisfied by a portfolio-level
+de-risking rule alone.
+
+#### Scenario: Allocation needs no rank exit
+
+- **GIVEN** an allocation declaration with a fixed asset set, target weights, bands and a
+  per-asset stop-loss
+- **WHEN** the declaration is validated
+- **THEN** it SHALL pass without any rank-based exit field
+
+#### Scenario: Per-asset stop-loss is mandatory
+
+- **GIVEN** an allocation declaration with portfolio de-risking but no per-asset stop-loss
+- **WHEN** the declaration is validated
+- **THEN** validation SHALL fail
+
+#### Scenario: Per-asset stop is applied
+
+- **GIVEN** an allocation declaration with a per-asset stop and an asset below it relative
+  to its recorded cost basis
+- **WHEN** a rebalance session is planned
+- **THEN** that asset SHALL be reduced or closed with a recorded stop reason
+- **AND** a portfolio de-risking rule triggering in the same session SHALL NOT cancel it
+
+#### Scenario: Unconsumed cadence is rejected
+
+- **GIVEN** an allocation declaration whose rebalance cadence no consumer reads
+- **WHEN** the declaration is validated
+- **THEN** validation SHALL fail
 
 ### Requirement: Cross-mode conformance MUST compare decision state chains
 
