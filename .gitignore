@@ -61,4 +61,3 @@ datahub/research/**/*.parquet
 
 # build artefacts from local wheel builds
 shared/build/
-*.egg-info/
