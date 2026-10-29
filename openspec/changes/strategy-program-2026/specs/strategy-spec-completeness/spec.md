@@ -180,9 +180,14 @@ position that a mandatory exit condition has triggered.
 
 #### Scenario: Contradictory holding windows are rejected
 
-- **GIVEN** a declaration whose minimum holding period exceeds its maximum holding period
+- **GIVEN** a declaration that declares a maximum holding period and whose minimum holding
+  period exceeds it
 - **WHEN** the declaration is validated
-- **THEN** validation SHALL fail, because no position could satisfy both
+- **THEN** validation SHALL fail, because the mandatory exit would fire before the retention
+  floor could ever protect a position and the declared minimum would be silently clamped to
+  the maximum
+- **AND** a declared maximum that is absent, or a minimum equal to the maximum, SHALL remain
+  valid
 
 ### Requirement: Allocation books MUST declare weights, bands, cadence and a per-asset stop
 
