@@ -28,7 +28,9 @@ The stable sleeve SHALL declare the allocation strategy family. Its book semanti
 be expressed as a fixed asset set, target weights, rebalance bands and a rebalance cadence
 that is genuinely consumed, and it MUST NOT be required to declare rank-based exit
 conditions that have no meaning for it. The rebalance cadence SHALL be consumed, and a
-declared cadence that the implementation ignores MUST fail validation.
+declared cadence that the implementation ignores MUST fail validation. Band retention SHALL
+NOT override a per-asset stop: an asset that has breached its stop MUST be reduced or closed
+even while it sits inside its band.
 
 #### Scenario: No rank exit is required
 
@@ -45,9 +47,17 @@ declared cadence that the implementation ignores MUST fail validation.
 
 #### Scenario: Bands drive rebalancing
 
-- **GIVEN** a declaration with rebalance bands and a holding inside its band
+- **GIVEN** a declaration with rebalance bands and a holding inside its band that has not
+  breached its per-asset stop
 - **WHEN** a rebalance session is planned
 - **THEN** the holding SHALL NOT be traded back to its exact target weight
+
+#### Scenario: Band does not shield a stopped asset
+
+- **GIVEN** a holding inside its rebalance band that has breached its per-asset stop
+- **WHEN** the session is planned
+- **THEN** the asset SHALL be reduced or closed with a stop reason
+- **AND** the band SHALL NOT keep it at its target weight
 
 #### Scenario: Per-asset stop-loss is mandatory and independent
 

@@ -125,7 +125,10 @@ A rank-selection declaration SHALL declare, and the planner MUST consume, all of
 band expressed as the rank beyond which a held name is sold, a per-position stop-loss
 fraction, a maximum holding period in sessions, and the action taken when a held name loses
 eligibility. Each declared condition MUST produce a recorded sell reason, and no exit
-behaviour may depend on an implicit consequence of ranking order.
+behaviour may depend on an implicit consequence of ranking order. Mandatory exits — the
+stop-loss, the maximum holding period and the loss of eligibility — SHALL take precedence
+over every retention rule, so the exit band and the minimum holding period MUST NOT keep a
+position that a mandatory exit condition has triggered.
 
 #### Scenario: Omitted exit contract is rejected
 
@@ -159,9 +162,27 @@ behaviour may depend on an implicit consequence of ranking order.
 
 #### Scenario: Exit band keeps a slowing name
 
-- **GIVEN** a held name ranked beyond the entry band but inside the declared exit band
+- **GIVEN** a held name ranked beyond the entry band but inside the declared exit band, and
+  no mandatory exit condition — stop-loss, maximum holding period or loss of eligibility —
+  has been triggered
 - **WHEN** the target book is planned
 - **THEN** the name SHALL stay and the reason SHALL record that it was held inside the band
+
+#### Scenario: Mandatory exit overrides the band
+
+- **GIVEN** a held name ranked inside the declared exit band — and, where a minimum holding
+  period is declared, still inside it — whose recorded cost basis triggers the stop-loss or
+  whose hold count exceeds the maximum holding period
+- **WHEN** the target book is planned
+- **THEN** the name SHALL be sold with the mandatory exit reason
+- **AND** neither the exit band nor the minimum holding period SHALL keep it
+
+
+#### Scenario: Contradictory holding windows are rejected
+
+- **GIVEN** a declaration whose minimum holding period exceeds its maximum holding period
+- **WHEN** the declaration is validated
+- **THEN** validation SHALL fail, because no position could satisfy both
 
 ### Requirement: Allocation books MUST declare weights, bands, cadence and a per-asset stop
 
@@ -169,7 +190,8 @@ An allocation declaration SHALL declare its fixed asset set, target weights, reb
 bands, a rebalance cadence that a consumer genuinely reads, and a **single-asset
 stop-loss** that applies to every held asset. It MUST NOT be required to declare a
 rank-based exit, and the per-asset stop MUST NOT be satisfied by a portfolio-level
-de-risking rule alone.
+de-risking rule alone. The per-asset stop SHALL take precedence over the rebalance bands, so
+a band MUST NOT keep an asset that has breached its stop.
 
 #### Scenario: Allocation needs no rank exit
 
