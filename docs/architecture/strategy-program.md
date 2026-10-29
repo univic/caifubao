@@ -347,6 +347,7 @@ M3 之前，**任何「半数资金、稳健中等风险」的对外表述都不
 | 结构门禁阈值等 W0 结果 | 阈值仍由调用方传入 | W0-A 只测出换手与摩擦，没测收益，因此不能推导「最优持仓数」之类阈值 |
 | 计划里 `risk.*` 归 P0.10 | **挪到独立切片**（第 9 轮） | 七个字段 + `sizing.weighting` 需要一整套预算语义，塞进 P0 会让那一片无法评审 |
 | `sample_id` 固定在声明的数据里 | **拆成三层身份** | 声明只声明数据*要求*；快照由 `dataset_id` 钉住，每日运行由 `resolved_inputs` 记录 |
+| v2 声明"已能校验"即等于"已能运行" | **接线时才发现跑不起来** | `to_legacy_config` 把 `selection.exit` 原样投影进 legacy config，而 legacy 校验器拒绝该未知键 → 每次 `run --spec` 在加载阶段崩。投影改为丢出场契约，身份校验改为以声明为准 |
 
 ### 8.3 落地清单
 
@@ -354,7 +355,7 @@ M3 之前，**任何「半数资金、稳健中等风险」的对外表述都不
 |:---|:---|:---|
 | 声明完备性与消费者门禁 | `strategy_spec.py`、`strategy_spec_consumers.{py,json}` | `scripts/check_strategy_consumers.py` + CI job |
 | 版本分派 | `strategy_spec_semantics.py` | 测试 + v2 校验 |
-| 账户状态 | `strategy_decision_state.py` | `stateful_planner.py` |
+| 账户状态 | `strategy_decision_state.py` | `stateful_planner.py` + `strategy_runner._build_rank_state`（v2 排名族作业层：状态来自上一轮记录的价格与 hold_count，本轮再把 `reference_prices` / `decision_state` 落库） |
 | 出场契约 | `strategy_exit_policy.py` | `selection.py`（`mandatory_exits`） |
 | 配置族语义 | `strategy_allocation.py` | `plan_allocation`；`cadence_days` 由它与 `allocation_runner` 共同读取 |
 | 会计与基准 | `strategy_accounting.py`、`strategy_benchmark.py` | v2 校验 + `evaluate_kill_criteria` |

@@ -194,3 +194,25 @@ def test_allocation_has_no_legacy_projection():
                 _v2(family="asset_allocation", exit_policy={"stop_loss_pct": 0.1})
             )
         )
+
+
+def test_v2_rank_has_a_runnable_legacy_projection():
+    """A v2 declaration must project onto a config the runner can validate.
+
+    The exit contract is spec-level and has no legacy field; leaving it in the
+    projection made the legacy config validator reject every v2 declaration as
+    carrying an unknown `selection` key, so no v2 spec could be run at all.
+    """
+    from caifubao_contracts.strategy_spec import to_legacy_config
+
+    from app.lib.strategy_engine.spec import spec_to_legacy_config
+
+    validated = validate_strategy_spec(_v2())
+    projected = to_legacy_config(validated)
+    assert "exit" not in projected["selection"]
+    assert projected["selection"] == {"mode": "top_n", "portfolio_size": 20}
+    # The adapter validates what it produced, which is where the failure showed.
+    config = spec_to_legacy_config(validated)
+    assert config["selection"] == {"mode": "top_n", "portfolio_size": 20}
+    # Dropping the projection does not drop the declaration's own semantics.
+    assert validated["selection"]["exit"]["stop_loss_pct"] == 0.15

@@ -623,12 +623,21 @@ def _to_legacy_config(spec: dict) -> dict:
         for key, value in resolved["rebalance"].items()
         if key == "cadence_days"
     }
+    # The exit contract is spec-level in the same way: the legacy config has no
+    # field for it, and the runner reads it from the declaration. Leaving it in
+    # the projection made every v2 declaration unrunnable, because the legacy
+    # config validator rejects `selection.exit` as an unknown key.
+    selection = {
+        key: copy.deepcopy(value)
+        for key, value in resolved["selection"].items()
+        if key != "exit"
+    }
     return {
         "timing_version": resolved["evidence"]["timing_version"],
         "score_model_version": resolved["signal"]["score_model_version"],
         "horizon": resolved["signal"]["horizon"],
         "initial_nav": resolved["initial_nav"],
-        "selection": copy.deepcopy(resolved["selection"]),
+        "selection": selection,
         "constraints": copy.deepcopy(resolved["constraints"]),
         "rebalance": rebalance,
         "weighting": resolved["sizing"]["weighting"],

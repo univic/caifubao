@@ -61,10 +61,14 @@
 | `datahub/app/lib/strategy_engine/selection.py` | `mandatory_exits` 优先级高于出口带与最短持有；被强制退出的名字**不会在补空缺时被买回** |
 | `shared/caifubao_contracts/strategy_allocation.py` | 配置族语义：带宽内不交易；**cadence 的唯一读点之一**；止损与移出资产集每期评估 |
 | `datahub/app/lib/strategy_engine/stateful_planner.py` | `plan_from_state`：从账户状态出计划 |
-| `datahub/app/lib/strategy_engine/rank_state.py` | 排名族的账户状态构建器（**作业层尚未接线**） |
+| `datahub/app/lib/strategy_engine/rank_state.py` | 排名族的账户状态构建器（已由 `strategy_runner` 接线） |
 
 **最容易错的地方**：
-- 止损用**记录成本价**，不是当日价；没有 mark 时**不臆造**止损。
+- 止损用**记录成本价**，不是当日价；没有 mark 时**不臆造**止损（当日无收盘→该期延后，不拒绝整轮）。
+- 成本价只能来自**上一轮落库的价格**；缺失时拒绝构建状态，因为"用当日价兜底"会让止损永远不触发。
+- v2 声明曾经**根本跑不起来**：`to_legacy_config` 把 `selection.exit` 原样投影进 legacy config，
+  而 legacy 校验器拒绝未知 `selection` 键 → 每次 `run --spec` 在加载阶段就崩。投影必须丢出场契约
+  （作业层从声明里读，不从 config 读），身份校验也随之改为**以声明为准**而非从投影反推。
 - 强制退出必须**同时**排除于保留循环与补空缺循环（早期实现会先卖后买回来）。
 - `min_hold_sessions` 曾可在 `rebalance` 与 `selection.exit` 同时声明，后者静默胜出 → 已拒绝。
 
@@ -123,8 +127,8 @@
 
 | 缺口 | 原因 |
 |:---|:---|
-| 排名族作业层未接 `plan_from_state` | `_load_spec` 只返回 legacy 投影；需要穿 family/exit_policy、查决策日收盘、落 `reference_prices` |
-| 三个 Mongo 适配器无集成测试 | 计划用 mongomock（已验证可安装） |
+| 计划链仍读上一版 `target_holdings`，不读账本 | `plan_from_state` 只拿到"上一轮目标组合"构造的状态；真正不可卖持仓要等账本/账户投影（P0.16 剩余） |
+| `blocked_exits` 在排名族恒为空 | 研究规划路径观察不到"成交被拒"，把它算作已成交是既有简化；配置族由 `allocation_runner` 承担 |
 | `RuleScoreProvider` 未被 runner 使用 | 等第二个 provider 出现再切，避免过度抽象 |
-| `sizing.weighting` 的 score 分支只有测试可达 | v2 排名族作业层未接，故生产不可达 |
+| `sizing.weighting` 的 score 分支只有测试可达 | 作业层只用 `equal`；改声明即可到达，但尚无扫描结论支撑 |
 | 波动目标未可声明 | 需要真正按波动定仓的执行器，不能只加字段 |

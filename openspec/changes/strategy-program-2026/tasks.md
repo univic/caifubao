@@ -78,7 +78,10 @@ W5 的数据侧（需数据授权）与运维侧（需写库/开窗授权）。�
 - [ ] P0.15 运行记录新增 `resolved_inputs`（当日快照 id + 解析后的模型工件 digest）与 `run_id`
 - [ ] P0.16 计划链改由账本/账户投影驱动（当前 research 读上一版 `target_holdings`），不可卖持仓占用名额，blocked 退出记录 reason 并进入下一期 `DecisionState`
       —— **契约与规划器已落地**：`selection.plan_target_holdings` 新增 `reserved_slots` / `sizing_basis`（默认保持 v1 行为），
-      `strategy_engine/stateful_planner.plan_from_state` 从状态选股并按 cap 定权；**runner 接线待 v2 可表达后做**
+      `strategy_engine/stateful_planner.plan_from_state` 从状态选股并按 cap 定权；
+      **排名族 runner 已接线**（`strategy_runner._build_rank_state`：声明里的 `family`/`selection.exit` 穿到 `assemble_daily_plan`，
+      决策日收盘作为 marks，`reference_prices` / `decision_state` 落库供下一期测止损）；
+      剩余：计划链仍从上一版 `target_holdings` 起步而非账本/账户投影，`blocked_exits` 在排名族恒空
 - [ ] P0.17 `openspec/README.md` 能力索引与本文档同步更新
 
 ## 2. P1 — 统一信号源（`strategy-signal-providers`）

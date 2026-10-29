@@ -54,6 +54,14 @@ class StrategyPaperRun(Document):
     # Per-code exit reason for this run's rebalance ({code: reason}); kept out
     # of `rebalance` so that field's shape stays exactly added/removed/unchanged.
     exit_reasons = DictField()
+    #: Price recorded for each target name on the decision date. A v2 declaration
+    #: needs it: the per-asset stop is measured against a cost basis, and a basis
+    #: invented on the fly would make the stop unmeasurable.
+    reference_prices = DictField()
+    #: The account state the plan was actually decided from. Persisted so a
+    #: stop-out or a reserved slot can be explained after the fact instead of
+    #: being re-derived from a book that has since moved on.
+    decision_state = DictField()
     rebalance = DictField()  # {added, removed, unchanged}
     # Single paper-NAV curve point for THIS run's execution_date, written by the `nav`
     # recompute command: {date, nav, daily_return, turnover, drawdown,

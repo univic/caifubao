@@ -81,9 +81,25 @@ def test_no_open_date_is_invented():
         assert "opened_on" not in position
 
 
-def test_a_held_name_without_a_price_is_refused():
-    with pytest.raises(RankStateError, match="stop-loss unmeasurable"):
-        _state(closes={"sh600000": 10.0})
+def test_a_held_name_without_a_cost_basis_is_refused():
+    """Substituting today's close would leave the stop unable to ever fire."""
+    with pytest.raises(RankStateError, match="no recorded cost basis"):
+        _state(reference_prices={"sh600000": 9.0})
+
+
+def test_a_held_name_without_a_close_keeps_its_basis_and_no_mark():
+    """A missing close defers the stop; it is not refused and not invented.
+
+    The paper path assumes every exit executes, so a name that stops being
+    quoted leaves the book anyway. Refusing the whole session over it would fail
+    the daily run for a reason the decision cannot act on.
+    """
+    state = _state(closes={"sh600000": 10.0})
+    by_code = {p["stock_code"]: p for p in state["positions"]}
+    assert by_code["sh600001"]["average_cost"] == pytest.approx(20.0)
+    # Priced at the recorded basis because no decision-date close exists.
+    assert by_code["sh600001"]["quantity"] == 200
+    assert state["blocked_exits"] == {}
 
 
 def test_an_empty_book_is_a_valid_state():

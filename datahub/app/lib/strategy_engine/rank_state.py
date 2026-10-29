@@ -14,6 +14,15 @@ the state from what the paper path actually records, and refuses when it cannot:
 * no position is marked blocked, because the research plan path never observes a
   refused fill - that belongs to the simulated account, not to the plan.
 
+One absence is refused rather than patched: a held name with no cost basis. Keep
+its mark and the stop would measure a loss from a price the book was never bought
+at (usually today's close, so no loss and the stop silently never fires).
+
+A held name with no decision-date close is *not* refused: it carries no mark, so
+``plan_from_state`` defers its stop for that session instead of inventing one.
+That is a deferral, not a reprieve - the name is still held, and the next session
+with a quote measures it against the same recorded basis.
+
 The state is an input to a decision, not an account: it exists so a stop-loss has
 a cost basis to measure against, and nothing here may be read as a holding.
 """
@@ -60,15 +69,17 @@ def build_decision_state(
         weight = float(holding.get("weight") or 0.0)
         if not code or weight <= 0:
             continue
-        close = marks.get(code)
-        cost = prices.get(code) or close
-        if close is None or not cost:
+        cost = prices.get(code)
+        if not cost:
             raise RankStateError(
-                f"no price recorded for held name {code!r}; refusing to build a "
-                "state that would make its stop-loss unmeasurable"
+                f"no recorded cost basis for held name {code!r}; refusing to "
+                "build a state whose stop-loss could never fire"
             )
+        # No close means no mark: the position keeps its basis and its stop is
+        # deferred, never measured against a price nobody recorded.
+        price = marks.get(code) or cost
         budget = float(initial_nav) * weight
-        lots = int(budget // (float(close) * board_lot))
+        lots = int(budget // (float(price) * board_lot))
         quantity = lots * board_lot
         if quantity <= 0:
             # A position below one lot was never bought; keep it at one lot so the
