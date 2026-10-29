@@ -13,8 +13,12 @@ import json
 import math
 
 from caifubao_contracts.friction import DEFAULT_COST_PROFILE
+from caifubao_contracts.strategy_exit_policy import validate_exit_policy
 
 SPEC_VERSION = "1"
+#: Declaration versions this validator accepts. 1 is frozen for replay; 2 adds
+#: the strategy family and an explicit exit contract.
+SUPPORTED_SPEC_VERSIONS = ("1", "2")
 DEFAULT_RISK = {
     "max_turnover_pct": None,
     "max_positions": None,
@@ -46,10 +50,18 @@ _ALLOWED = {
         "execution",
         "evidence",
         "initial_nav",
+        "family",
     },
     "universe": {"market", "as_of"},
     "signal": {"score_model_version", "horizon"},
-    "selection": {"mode", "lower", "upper", "portfolio_size"},
+    "selection": {"mode", "lower", "upper", "portfolio_size", "exit"},
+    "selection.exit": {
+        "rank_below",
+        "stop_loss_pct",
+        "max_hold_sessions",
+        "on_ineligible",
+        "min_hold_sessions",
+    },
     "sizing": {"weighting", "cash_reserve_pct"},
     "constraints": {
         "exclude_st",
@@ -115,8 +127,9 @@ def validate_strategy_spec(spec: dict) -> dict:
     """Return a deep copy with explicit defaults; reject unsupported semantics."""
     data = _object(spec, "")
     normalized = copy.deepcopy(data)
-    if normalized.get("spec_version") != SPEC_VERSION:
-        raise ValueError(f"spec_version must be {SPEC_VERSION}")
+    version = normalized.get("spec_version")
+    if version not in SUPPORTED_SPEC_VERSIONS:
+        raise ValueError(f"spec_version must be one of {list(SUPPORTED_SPEC_VERSIONS)}")
     for part in (
         "universe",
         "signal",
@@ -129,6 +142,28 @@ def validate_strategy_spec(spec: dict) -> dict:
         "evidence",
     ):
         _object(_required(normalized, part, "spec"), part)
+
+    v2_only = ("family",)
+    if version == "1":
+        # v1 must behave exactly as before: the v2-only fields are still unknown
+        # to it, so a v1 declaration carrying one is rejected rather than
+        # silently accepted into a hash that later reads differently.
+        present = [key for key in v2_only if key in normalized]
+        if "exit" in (normalized.get("selection") or {}):
+            present.append("selection.exit")
+        if present:
+            raise ValueError(
+                f"spec_version 1 does not support {sorted(present)}; use version 2"
+            )
+    else:
+        for key in v2_only:
+            if key not in normalized:
+                raise ValueError(f"spec_version 2 requires {key}")
+        exit_block = _object(
+            _required(normalized["selection"], "exit", "selection"), "selection.exit"
+        )
+        validate_exit_policy(normalized["family"], exit_block)
+        normalized["selection"]["exit"] = exit_block
 
     universe = normalized["universe"]
     if universe != {"market": "CN_A", "as_of": "PIT"}:

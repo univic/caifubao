@@ -34,7 +34,12 @@
 - [x] P0.2 盘点 v1 全部允许字段的实际消费者：38 个字段，29 已消费、9 未消费（`cadence_days` + `risk.*` 6 项 + **`sizing.weighting`**）
 - [x] P0.3 CI 校验脚本 `scripts/check_strategy_consumers.py` + `Strategy Contract Check` job：双向一致、消费者文件必须存在且提及该字段、未消费必须指明 owner（13 个回归测试）
 - [ ] P0.4 定义 `spec_version: "2"` 字段集（identity / data 要求 / signal 引用 / family / accounting / benchmark / evidence.kill_criteria）
-- [ ] P0.5 校验器实现 v2 严格校验，并按 `spec_version` 分派执行语义（**不得按字段存在与否分派**）
+      —— **已落地 `family` + `selection.exit`**（v2 声明首次可被校验）；
+      identity / data / accounting / benchmark / kill_criteria 待做，且必须先有消费者才允许进 v2
+- [x] P0.5 校验器实现 v2 严格校验，并按 `spec_version` 分派执行语义（**不得按字段存在与否分派**）
+      —— `strategy_spec.py` 接受 `1|2`；v1 拒绝 v2-only 字段（保持旧严格度与旧 hash），
+      v2 必须声明 `family` + `selection.exit` 并委托 `strategy_exit_policy` 校验；
+      manifest 增加 `consumed_by_versions` 维度，v2 只允许被 v2 消费者读取的字段
       —— 分派原语已落地 `shared/caifubao_contracts/strategy_spec_semantics.py`
       （`V1_CONSUMED` 冻结 + `field_is_consumed`）；消费者接线仍待做
 - [ ] P0.6 策略族校验：`rank_selection` 必填排名出场语义，`asset_allocation` 必填目标权重/带宽/被真实消费的再平衡节奏；两族均拒绝不适用的语义

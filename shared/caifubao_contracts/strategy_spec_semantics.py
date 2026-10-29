@@ -80,6 +80,21 @@ V1_DECLARED_BUT_UNUSED = frozenset(
 SUPPORTED_VERSIONS = frozenset({"1", "2"})
 
 
+def consumed_by_version(manifest: dict, version: str) -> frozenset[str]:
+    """Fields a version consumes, read from the manifest's version dimension.
+
+    This is the *declared* answer used by the gate; ``consumed_fields`` returns
+    the v1 snapshot so wiring cannot silently follow a manifest edit.
+    """
+    fields = manifest.get("fields") or {}
+    return frozenset(
+        path
+        for path, entry in fields.items()
+        if entry.get("status") == CONSUMED
+        and version in (entry.get("consumed_by_versions") or [])
+    )
+
+
 def consumed_fields(spec_version: str, manifest: dict) -> frozenset[str]:
     """Return the fields a declaration of this version is allowed to consume.
 
@@ -91,12 +106,16 @@ def consumed_fields(spec_version: str, manifest: dict) -> frozenset[str]:
         return V1_CONSUMED
     if spec_version == "2":
         fields = manifest.get("fields") or {}
-        unconsumed = sorted(
-            path for path, entry in fields.items() if entry.get("status") != CONSUMED
+        missing = sorted(
+            path
+            for path, entry in fields.items()
+            if entry.get("status") != CONSUMED
+            or "2" not in (entry.get("consumed_by_versions") or [])
         )
-        if unconsumed:
+        if missing:
             raise ValueError(
-                "spec_version 2 forbids unconsumed fields: " + ", ".join(unconsumed)
+                "spec_version 2 forbids fields no v2 consumer reads: "
+                + ", ".join(missing)
             )
         return frozenset(fields)
     raise ValueError(

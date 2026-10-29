@@ -34,7 +34,9 @@ from pathlib import Path
 
 CONSUMED = "consumed"
 UNCONSUMED = "unconsumed"
-MANIFEST_SCHEMA = "strategy-spec-consumers-v1"
+MANIFEST_SCHEMA = "strategy-spec-consumers-v2"
+#: Declaration versions a field may be consumed by.
+KNOWN_VERSIONS = frozenset({"1", "2"})
 #: Statuses pinned by tests; changing one is a deliberate contract change.
 KNOWN_STATUSES = frozenset({CONSUMED, UNCONSUMED})
 
@@ -42,17 +44,22 @@ KNOWN_STATUSES = frozenset({CONSUMED, UNCONSUMED})
 def leaf_paths(allowed: dict) -> list[str]:
     """Expand a validator ``ALLOWED`` table into leaf field paths.
 
-    A top-level name whose entry is a set of members is a nested block and is
-    expanded to ``name.member``; any other top-level name is a leaf.
+    A name whose entry is a set of members is a block and is expanded
+    recursively, so a nested block such as ``selection.exit`` contributes its own
+    members rather than being treated as a leaf.
     """
-    leaves: list[str] = []
-    for name in sorted(allowed.get("", set())):
-        block = allowed.get(name)
-        if isinstance(block, set):
-            leaves.extend(f"{name}.{member}" for member in sorted(block))
-        else:
-            leaves.append(name)
-    return leaves
+
+    def walk(prefix: str) -> list[str]:
+        block = allowed.get(prefix)
+        if block is None:
+            return [prefix]
+        out: list[str] = []
+        for name in sorted(block):
+            child = f"{prefix}.{name}" if prefix else name
+            out.extend(walk(child))
+        return out
+
+    return walk("")
 
 
 def load_manifest(path: Path) -> dict:
@@ -96,6 +103,18 @@ def check(manifest: dict, allowed: dict, root: Path) -> list[str]:
         if not consumers:
             problems.append(
                 f"{path}: consumed field must name at least one consumer module"
+            )
+            continue
+        versions = entry.get("consumed_by_versions")
+        if not versions:
+            problems.append(
+                f"{path}: consumed field must name the declaration versions that read it"
+            )
+            continue
+        unknown_versions = set(versions) - KNOWN_VERSIONS
+        if unknown_versions:
+            problems.append(
+                f"{path}: unknown consumed_by_versions {sorted(unknown_versions)}"
             )
             continue
         leaf = path.rsplit(".", 1)[-1]

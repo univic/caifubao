@@ -1,108 +1,159 @@
 {
-  "schema": "strategy-spec-consumers-v1",
+  "schema": "strategy-spec-consumers-v2",
   "spec_module": "shared/caifubao_contracts/strategy_spec.py",
-  "note": "Every allowed declaration field is listed. 'unconsumed' is a defect with an owner, not a limitation.",
+  "note": "Every allowed declaration field is listed with the versions that actually read it. 'unconsumed' is a defect with an owner, not a limitation. A field consumed only by v2 must never be marked v1.",
   "fields": {
     "constraints.exclude_bse": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/runner.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "constraints.exclude_infeasible_buys": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/runner.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "constraints.exclude_st": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/runner.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "constraints.exclude_suspended": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/runner.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "constraints.max_industry_pct": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/selection.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "constraints.max_single_stock_pct": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/selection.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "constraints.min_trade_amount_cny": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/runner.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "evidence.policy": {
       "status": "consumed",
       "consumers": [
         "shared/caifubao_contracts/strategy_spec.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "evidence.timing_version": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/config.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "execution.board_lot": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/config.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "execution.commission_rate": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/config.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "execution.minimum_commission_cny": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/config.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "execution.sell_stamp_duty_rate": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/config.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "execution.slippage_per_side": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/config.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "execution.transfer_fee_rate": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/config.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "execution.unknown_limit_policy": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/tradability.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "initial_nav": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/config.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "rebalance.cadence_days": {
@@ -114,12 +165,18 @@
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/selection.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "rebalance.min_hold_sessions": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/selection.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "risk.cash_floor_pct": {
@@ -161,42 +218,63 @@
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/selection.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "selection.mode": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/selection.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "selection.portfolio_size": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/selection.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "selection.upper": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/selection.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "signal.horizon": {
       "status": "consumed",
       "consumers": [
         "datahub/app/jobs/strategy_runner.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "signal.score_model_version": {
       "status": "consumed",
       "consumers": [
         "datahub/app/jobs/strategy_runner.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "sizing.cash_reserve_pct": {
       "status": "consumed",
       "consumers": [
         "datahub/app/lib/strategy_engine/selection.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "sizing.weighting": {
@@ -208,18 +286,81 @@
       "status": "consumed",
       "consumers": [
         "shared/caifubao_contracts/strategy_spec.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "universe.as_of": {
       "status": "consumed",
       "consumers": [
         "shared/caifubao_contracts/strategy_spec.py"
+      ],
+      "consumed_by_versions": [
+        "1"
       ]
     },
     "universe.market": {
       "status": "consumed",
       "consumers": [
         "shared/caifubao_contracts/strategy_spec.py"
+      ],
+      "consumed_by_versions": [
+        "1"
+      ]
+    },
+    "family": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_exit_policy.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "selection.exit.rank_below": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_exit_policy.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "selection.exit.stop_loss_pct": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_exit_policy.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "selection.exit.max_hold_sessions": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_exit_policy.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "selection.exit.on_ineligible": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_exit_policy.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "selection.exit.min_hold_sessions": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_exit_policy.py"
+      ],
+      "consumed_by_versions": [
+        "2"
       ]
     }
   }

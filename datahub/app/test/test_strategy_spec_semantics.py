@@ -25,6 +25,7 @@ from caifubao_contracts.strategy_spec_consumers import (  # noqa: E402
 from caifubao_contracts.strategy_spec_semantics import (  # noqa: E402
     V1_CONSUMED,
     V1_DECLARED_BUT_UNUSED,
+    consumed_by_version,
     consumed_fields,
     declared_but_unused,
     field_is_consumed,
@@ -41,21 +42,36 @@ def manifest():
 
 
 def test_v1_consumed_set_matches_the_manifest(manifest):
-    """A newly wired consumer changes this answer and must be argued for."""
-    assert V1_CONSUMED == frozenset(
-        path
-        for path, entry in manifest["fields"].items()
-        if entry["status"] == CONSUMED
-    )
+    """A newly wired v1 consumer changes this answer and must be argued for."""
+    assert V1_CONSUMED == consumed_by_version(manifest, "1")
+
+
+def test_v2_only_consumer_does_not_leak_into_v1(manifest):
+    """A field consumed only by v2 must stay out of the v1 set."""
+    extended = copy.deepcopy(manifest)
+    extended["fields"]["rebalance.cadence_days"] = {
+        "status": CONSUMED,
+        "consumers": ["datahub/app/lib/strategy_engine/selection.py"],
+        "consumed_by_versions": ["2"],
+    }
+    assert "rebalance.cadence_days" in consumed_by_version(extended, "2")
+    assert "rebalance.cadence_days" not in consumed_by_version(extended, "1")
+    assert not field_is_consumed("1", "rebalance.cadence_days", extended)
 
 
 def test_v1_unused_set_matches_the_manifest(manifest):
     assert V1_DECLARED_BUT_UNUSED == declared_but_unused(manifest)
 
 
-def test_v1_sets_partition_the_manifest(manifest):
+def test_sets_partition_the_manifest(manifest):
+    """v1-consumed, v2-only, and unconsumed must be disjoint and cover everything."""
+    v2_only = consumed_by_version(manifest, "2") - V1_CONSUMED
     assert not (V1_CONSUMED & V1_DECLARED_BUT_UNUSED)
-    assert V1_CONSUMED | V1_DECLARED_BUT_UNUSED == frozenset(manifest["fields"])
+    assert not (V1_CONSUMED & v2_only)
+    assert not (v2_only & V1_DECLARED_BUT_UNUSED)
+    assert V1_CONSUMED | v2_only | V1_DECLARED_BUT_UNUSED == frozenset(
+        manifest["fields"]
+    )
 
 
 def test_v1_does_not_consume_the_cadence(manifest):
@@ -84,7 +100,7 @@ def test_v1_consumed_set_is_independent_of_the_manifest(manifest):
 
 
 def test_v2_refuses_unconsumed_fields(manifest):
-    with pytest.raises(ValueError, match="forbids unconsumed"):
+    with pytest.raises(ValueError, match="no v2 consumer reads"):
         consumed_fields("2", manifest)
 
 
@@ -96,6 +112,9 @@ def test_v2_accepts_a_fully_consumed_manifest(manifest):
             entry.setdefault(
                 "consumers", ["shared/caifubao_contracts/strategy_spec.py"]
             )
+        entry["consumed_by_versions"] = sorted(
+            set(entry.get("consumed_by_versions") or []) | {"2"}
+        )
     assert consumed_fields("2", everything) == frozenset(everything["fields"])
 
 
