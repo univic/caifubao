@@ -109,7 +109,11 @@ def validate_decision_state(state: dict) -> dict:
             f"positions[{index}].average_cost",
             allow_zero=False,
         )
-        _instant(position.get("opened_on"), f"positions[{index}].opened_on")
+        # ``opened_on`` is optional: no exit rule reads it, and requiring it would
+        # force the research plan path to invent a date it does not track. The
+        # holding period is carried by ``hold_count``, which is the authority.
+        if position.get("opened_on") is not None:
+            _instant(position.get("opened_on"), f"positions[{index}].opened_on")
         _positive_int(position.get("hold_count"), f"positions[{index}].hold_count")
         if not isinstance(position.get("entry_reason"), str):
             raise ValueError(f"positions[{index}].entry_reason must be a string")
