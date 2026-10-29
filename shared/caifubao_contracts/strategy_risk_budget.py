@@ -135,9 +135,12 @@ def check_budget(
         scale = min(scale, BEAR_REDUCTION)
 
     max_positions = considered["max_positions"]
+    truncate_to = None
     if max_positions is not None and position_count > max_positions:
         violations.append("max_positions")
-        scale = min(scale, max_positions / position_count if position_count else 1.0)
+        # Scaling every weight down leaves the *count* unchanged, so the cap
+        # cannot be met that way: the caller must drop the smallest names.
+        truncate_to = max_positions
 
     gross_cap = considered["max_gross_exposure_pct"]
     if gross_cap is not None and float(gross_exposure_pct) > gross_cap > 0:
@@ -159,5 +162,6 @@ def check_budget(
         "stops": stops,
         "violations": violations,
         "scale": round(scale, 6) if admissible else 0.0,
+        "truncate_to": truncate_to,
         "regime": regime,
     }

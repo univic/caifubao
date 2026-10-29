@@ -92,11 +92,48 @@ def test_first_plan_is_a_rebalance_session_and_opens_every_asset():
 def test_off_cadence_session_does_not_rebalance():
     previous = {
         "date": "2026-10-28",
+        "last_rebalance_date": "2026-10-28",  # cadence counts from here, not from date
         "targets": {code: 0.25 for code in CODES},
         "reference_prices": dict(QUOTES),
+        "marks": dict(QUOTES),
     }
     plan = _plan(previous=previous)
     assert plan["rebalance_session"] is False
+
+
+def test_the_cadence_fires_even_though_the_plan_runs_daily():
+    """A five-session cadence must not be starved by a daily plan loop."""
+    previous = {
+        "date": "2026-10-28",  # yesterday's plan: one session back
+        "last_rebalance_date": "2026-10-23",
+        "targets": {code: 0.25 for code in CODES},
+        "reference_prices": dict(QUOTES),
+        "marks": dict(QUOTES),
+    }
+    plan = _plan(session_date="2026-10-30", previous=previous)
+    assert plan["rebalance_session"] is True
+    assert plan["last_rebalance_date"] == "2026-10-30"
+
+
+def test_price_drift_alone_triggers_a_rebalance():
+    """The band must see drift, so the previous book is drifted by real returns."""
+    quotes = {"sh510300": 13.0, "sh518880": 10.0, "sh513100": 10.0, "sh511010": 10.0}
+    previous = {
+        "date": "2026-10-23",
+        "last_rebalance_date": "2026-10-23",  # due for a rebalance
+        "targets": {code: 0.25 for code in CODES},
+        "reference_prices": dict(QUOTES),
+        "marks": dict(QUOTES),  # all at 10.0 last session
+    }
+    plan = _plan(session_date="2026-10-30", quotes=quotes, previous=previous)
+    # 10.0 -> 13.0 is +30%: the drift takes sh510300 well past a 2% band.
+    assert plan["rebalance_session"] is True
+    assert plan["actions"]["sh510300"] == "rebalance"
+
+
+def test_a_plan_records_the_marks_the_next_session_needs():
+    plan = _plan()
+    assert plan["marks"] == pytest.approx(QUOTES)
 
 
 def test_on_cadence_session_rebalances_a_drifted_book():
@@ -283,8 +320,10 @@ def test_the_risk_verdict_is_recorded_on_the_plan():
         previous=None,
     )
     assert plan["risk_verdict"]["admissible"] is True
-    # Four assets against a two-position cap scales the book down, not up.
-    assert plan["risk_verdict"]["scale"] == pytest.approx(0.5)
+    # Four assets against a two-position cap: the book keeps the two largest and
+    # drops the rest, because shrinking weights would not change the count.
+    assert plan["risk_verdict"]["truncate_to"] == 2
+    assert len(plan["targets"]) == 2
     assert sum(plan["targets"].values()) == pytest.approx(0.5)
     assert plan["cash_weight"] == pytest.approx(0.5)
 

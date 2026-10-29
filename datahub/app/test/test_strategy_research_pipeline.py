@@ -46,7 +46,7 @@ def _registration(**overrides):
         "label_horizon": 20,
         "embargo_sessions": 0,
         "confirmation_start": "2026-09-01",
-        "train_cutoff": "2026-08-10",
+        "train_cutoff": "2026-08-03",
         "max_trials": 5,
         "max_confirmations": 1,
         "success_criteria": {"min_excess_per_period": 0.0},
@@ -85,14 +85,38 @@ def test_registration_normalises_dates_and_defaults_embargo():
 
 
 def test_cutoff_must_clear_label_horizon_and_embargo():
-    # 2026-09-01 minus (20 + 1 + 0) days = 2026-08-11, which is the latest
-    # allowed cutoff; one day later would let a label overlap.
-    validate_registration(_registration(train_cutoff="2026-08-11"))
+    # 21 *business* days before 2026-09-01 is 2026-08-03: sessions are not
+    # calendar days, so the old 21-calendar-day window leaked a week of labels.
+    validate_registration(_registration(train_cutoff="2026-08-03"))
     with pytest.raises(ValueError, match="overlapping labels"):
-        validate_registration(_registration(train_cutoff="2026-08-12"))
+        validate_registration(_registration(train_cutoff="2026-08-04"))
     with pytest.raises(ValueError, match="overlapping labels"):
         validate_registration(
-            _registration(train_cutoff="2026-08-11", embargo_sessions=1)
+            _registration(train_cutoff="2026-08-03", embargo_sessions=1)
+        )
+
+
+def test_cutoff_uses_the_real_calendar_when_supplied():
+    """Holidays make the business-day approximation optimistic; a calendar fixes it."""
+    from datetime import date, timedelta
+
+    sessions = []
+    cursor = date(2026, 7, 1)
+    while cursor < date(2026, 9, 1):
+        if cursor.weekday() < 5:
+            sessions.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+    allowed = sessions[-21]  # 20 label sessions + 1 + embargo 0
+    validate_registration(
+        dict(_registration(), train_cutoff=allowed), trading_days=sessions
+    )
+    with pytest.raises(ValueError, match="overlapping labels"):
+        validate_registration(
+            dict(_registration(), train_cutoff=sessions[-20]), trading_days=sessions
+        )
+    with pytest.raises(ValueError, match="at least"):
+        validate_registration(
+            dict(_registration(), train_cutoff=allowed), trading_days=sessions[-10:]
         )
 
 
@@ -203,6 +227,7 @@ def test_exploration_cannot_conclude():
 def test_confirmation_can_conclude_but_not_promote():
     pipeline = _pipeline()
     pipeline.register(_registration())
+    pipeline.record_confirmation("reg-flip-width-2026q4")
     concluded = _verdict(pipeline, stage="confirmation")
     assert concluded["outcome"] == OUTCOME_CONCLUSION
     # With both operational gates satisfied the contract still refuses: only a
@@ -219,6 +244,7 @@ def test_confirmation_can_conclude_but_not_promote():
 def test_forward_stage_can_promote_only_with_passed_gates():
     pipeline = _pipeline()
     pipeline.register(_registration())
+    pipeline.record_confirmation("reg-flip-width-2026q4")
     with pytest.raises(ResearchError, match="structural gate"):
         _verdict(pipeline, stage="forward", outcome=OUTCOME_PROMOTION_CANDIDATE)
     promoted = _verdict(
@@ -239,7 +265,7 @@ def test_verdict_records_counts_and_cutoff():
     assert verdict["family_trials"] == 1
     assert verdict["confirmations"] == 1
     assert verdict["cutoff"] == {
-        "train_cutoff": "2026-08-10",
+        "train_cutoff": "2026-08-03",
         "label_horizon": 20,
         "embargo_sessions": 0,
     }
@@ -248,6 +274,7 @@ def test_verdict_records_counts_and_cutoff():
 def test_verdict_is_content_addressed_and_immutable():
     pipeline = _pipeline()
     pipeline.register(_registration())
+    pipeline.record_confirmation("reg-flip-width-2026q4")
     first = _verdict(pipeline, stage="confirmation")
     digest = verdict_hash(first)
     assert pipeline.store.verdicts[digest] == first
@@ -263,6 +290,7 @@ def test_verdict_is_content_addressed_and_immutable():
 def test_verdict_requires_provenance():
     pipeline = _pipeline()
     pipeline.register(_registration())
+    pipeline.record_confirmation("reg-flip-width-2026q4")
     with pytest.raises(ValueError, match="dataset_id"):
         _verdict(pipeline, stage="confirmation", dataset_id="")
 
@@ -270,6 +298,7 @@ def test_verdict_requires_provenance():
 def test_verdict_schema_is_pinned():
     pipeline = _pipeline()
     pipeline.register(_registration())
+    pipeline.record_confirmation("reg-flip-width-2026q4")
     verdict = _verdict(pipeline, stage="confirmation")
     assert verdict["schema"] == SCHEMA_VERDICT
     assert verdict["registration_id"] == "reg-flip-width-2026q4"
@@ -305,7 +334,7 @@ def test_unknown_stage_is_rejected_by_the_contract():
                 "registration_trials": 1,
                 "confirmations": 1,
                 "cutoff": {
-                    "train_cutoff": "2026-08-10",
+                    "train_cutoff": "2026-08-03",
                     "label_horizon": 20,
                     "embargo_sessions": 0,
                 },

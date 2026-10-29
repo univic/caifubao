@@ -150,6 +150,12 @@ def _consumer_manifest() -> dict:
         from pathlib import Path
 
         path = Path(__file__).with_name("strategy_spec_consumers.json")
+        if not path.is_file():
+            raise ValueError(
+                f"consumer manifest is missing at {path}: the installed package must "
+                "ship strategy_spec_consumers.json, otherwise no v2 declaration can "
+                "be validated"
+            )
         _MANIFEST = json.loads(path.read_text(encoding="utf-8"))
     return _MANIFEST
 

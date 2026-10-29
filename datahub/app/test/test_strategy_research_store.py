@@ -73,7 +73,7 @@ def _registration(**overrides):
         "label_horizon": 20,
         "embargo_sessions": 0,
         "confirmation_start": "2026-09-01",
-        "train_cutoff": "2026-08-10",
+        "train_cutoff": "2026-08-03",
         "max_trials": 3,
         "max_confirmations": 1,
         "success_criteria": {"min_excess_per_period": 0.0},
@@ -167,7 +167,7 @@ def _verdict():
         "registration_trials": 3,
         "confirmations": 1,
         "cutoff": {
-            "train_cutoff": "2026-08-10",
+            "train_cutoff": "2026-08-03",
             "label_horizon": 20,
             "embargo_sessions": 0,
         },

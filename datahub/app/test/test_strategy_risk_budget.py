@@ -105,11 +105,13 @@ def test_drawdown_breach_is_a_stop():
     assert "max_drawdown_pct" in result["stops"]
 
 
-def test_position_count_scales_the_book():
+def test_position_count_truncates_instead_of_scaling():
+    """Shrinking every weight leaves the count unchanged; names must be dropped."""
     result = _check(position_count=40)
     assert result["admissible"] is True
     assert "max_positions" in result["violations"]
-    assert result["scale"] == pytest.approx(0.5)
+    assert result["truncate_to"] == 20
+    assert result["scale"] == 1.0
 
 
 def test_gross_exposure_scales_the_book():

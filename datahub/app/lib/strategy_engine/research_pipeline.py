@@ -105,7 +105,10 @@ class ResearchPipeline:
         validated = validate_registration(registration)
         existing = self.store.get_registration(validated["registration_id"])
         if existing is not None:
-            if registration_hash(existing) != registration_hash(validated):
+            # Compare only the declared fields: a persistent store also keeps
+            # bookkeeping (created_at), which validate_registration rejects.
+            stored = {key: existing.get(key) for key in validated}
+            if registration_hash(stored) != registration_hash(validated):
                 raise ResearchError(
                     "registration criteria are frozen; create a new registration id"
                 )
@@ -227,6 +230,13 @@ class ResearchPipeline:
         if outcome in (OUTCOME_CONCLUSION, OUTCOME_PROMOTION_CANDIDATE):
             if stage_index(stage) < stage_index("confirmation"):
                 raise ResearchError(f"stage {stage!r} cannot report {outcome!r}")
+            # The stage label alone is not evidence: a caller could claim
+            # 'forward' without ever confirming. Require a recorded confirmation.
+            if self.store.family_confirmations(registration["family"]) < 1:
+                raise ResearchError(
+                    f"{outcome!r} needs at least one recorded confirmation for "
+                    f"family {registration['family']!r}"
+                )
         if outcome in (OUTCOME_EXPLORATORY,) and stage_index(stage) > stage_index(
             "exploration"
         ):

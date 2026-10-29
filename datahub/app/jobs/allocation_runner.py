@@ -99,12 +99,42 @@ def build_plan(
     for code in targets:
         reference.setdefault(code, quotes[code])
 
-    since = sessions_between(trading_days, previous.get("date"), day)
+    # Drift the previous target weights by the actual returns since the previous
+    # session. Passing the raw targets would make the band blind to drift, which
+    # is the only thing it exists to measure.
+    previous_marks = {
+        code: float(price)
+        for code, price in (previous.get("marks") or {}).items()
+        if code in targets and price
+    }
+    if previous_marks and all(code in previous_marks for code in previous_targets):
+        gross = sum(
+            previous_targets[code] * quotes[code] / previous_marks[code]
+            for code in previous_targets
+        )
+        drifted = (
+            {
+                code: previous_targets[code]
+                * quotes[code]
+                / previous_marks[code]
+                / gross
+                for code in previous_targets
+            }
+            if gross > 0
+            else dict(previous_targets)
+        )
+    else:
+        drifted = dict(previous_targets)
+
+    # The cadence counts from the last session that actually rebalanced, not from
+    # yesterday's plan date; otherwise a daily plan loop keeps the gap at one and
+    # a five-session cadence can never fire.
+    since = sessions_between(trading_days, previous.get("last_rebalance_date"), day)
     rebalance_session = should_rebalance(since, cadence)
     plan = plan_allocation(
         targets=targets,
         band_pct=allocation["band_pct"],
-        current_weights=previous_targets,
+        current_weights=drifted,
         marks=quotes,
         cost_basis=reference,
         stop_loss_pct=exit_policy["stop_loss_pct"],
@@ -128,6 +158,12 @@ def build_plan(
         "actions": plan["actions"],
         "cash_weight": plan["cash_weight"],
         "reference_prices": reference,
+        "marks": {
+            code: float(quote) for code, quote in quotes.items() if code in targets
+        },
+        "last_rebalance_date": (
+            day if plan["rebalance_session"] else previous.get("last_rebalance_date")
+        ),
         "rebalance_session": plan["rebalance_session"],
         "risk_verdict": plan.get("risk_verdict"),
         "status": "PLANNED",
@@ -185,6 +221,18 @@ def apply_risk_budget(spec: dict, plan: dict, previous_weights: dict) -> dict:
         raise AllocationRunError(
             "risk budget refused the plan: "
             f"stops={verdict['stops']} violations={verdict['violations']}"
+        )
+    truncate_to = verdict.get("truncate_to")
+    if truncate_to is not None and len(weights) > truncate_to:
+        # Keep the largest positions; a count cap cannot be met by shrinking.
+        keep = sorted(weights.items(), key=lambda item: (-item[1], item[0]))[
+            :truncate_to
+        ]
+        weights = dict(keep)
+        # The dropped names release their weight to cash; keeping the old cash
+        # figure would claim a fully invested book that no longer exists.
+        plan = dict(
+            plan, targets=weights, cash_weight=max(0.0, 1.0 - sum(weights.values()))
         )
     if verdict["scale"] < 1.0:
         scaled = {code: weight * verdict["scale"] for code, weight in weights.items()}
@@ -253,6 +301,10 @@ def previous_plan(strategy_id: str, spec_hash: str, before) -> dict | None:
         "date": str(record.date)[:10],
         "targets": dict(record.targets or {}),
         "reference_prices": dict(record.reference_prices or {}),
+        "marks": dict(record.marks or {}),
+        "last_rebalance_date": (
+            str(record.last_rebalance_date)[:10] if record.last_rebalance_date else None
+        ),
     }
 
 
@@ -297,6 +349,16 @@ def run(
     existing = AllocationPlan.objects(
         strategy_id=plan["strategy_id"], date=record_date
     ).first()
+    now = dt.datetime.now(dt.timezone.utc)
+    if existing is not None and existing.execution_date is not None:
+        # A correction is allowed only before the execution session opens. After
+        # that the plan is history: rewriting it would let a late edit look like a
+        # timely decision and turn a backfill into forward evidence.
+        if now.date() >= existing.execution_date.date():
+            raise AllocationRunError(
+                f"plan for {plan['date']} already executed on "
+                f"{str(existing.execution_date)[:10]}; refusing to rewrite it"
+            )
     record = existing or AllocationPlan(
         strategy_id=plan["strategy_id"], date=record_date
     )
@@ -306,13 +368,19 @@ def run(
         if plan.get("execution_date")
         else None
     )
-    record.decision_at = dt.datetime.now(dt.timezone.utc)
+    record.decision_at = now
     record.targets = plan["targets"]
     record.actions = plan["actions"]
     record.cash_weight = float(plan["cash_weight"])
     record.reference_prices = {
         code: float(price) for code, price in plan["reference_prices"].items()
     }
+    record.marks = {code: float(price) for code, price in plan["marks"].items()}
+    record.last_rebalance_date = (
+        dt.datetime.fromisoformat(plan["last_rebalance_date"])
+        if plan.get("last_rebalance_date")
+        else None
+    )
     record.rebalance_session = bool(plan["rebalance_session"])
     record.status = "PLANNED"
     record.save()
@@ -364,9 +432,9 @@ def main(argv=None) -> int:
 
     if args.command == "progress":
         from app.lib.strategy_engine.allocation_window import (
-            AllocationForwardWindow,
             allocation_forward_progress,
         )
+        from app.model.strategy import AllocationForwardWindow
 
         window = AllocationForwardWindow.objects(
             strategy_id=args.strategy_id, status="ACTIVE"
@@ -387,14 +455,22 @@ def main(argv=None) -> int:
                 )
             )
             return 2
-        decided = [
-            str(value)[:10]
-            for value in AllocationPlan.objects(
-                strategy_id=args.strategy_id,
-                spec_hash=window.spec_hash,
-                status="PLANNED",
-            ).distinct("date")
-        ]
+        # A plan counts only when its decision was recorded before the execution
+        # session opens. A plan written or rewritten afterwards is a backfill and
+        # must never enter the evidence count.
+        decided = sorted(
+            {
+                str(plan.date)[:10]
+                for plan in AllocationPlan.objects(
+                    strategy_id=args.strategy_id,
+                    spec_hash=window.spec_hash,
+                    status="PLANNED",
+                )
+                if plan.decision_at
+                and plan.execution_date
+                and plan.decision_at.date() < plan.execution_date.date()
+            }
+        )
         report = allocation_forward_progress(
             window={
                 "strategy_id": window.strategy_id,

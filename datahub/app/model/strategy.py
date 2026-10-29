@@ -146,6 +146,12 @@ class AllocationPlan(Document):
     actions = DictField(required=True)  # code -> hold|rebalance|open|close|stop_out
     cash_weight = FloatField()
     reference_prices = DictField()  # code -> cost basis used for the stop
+    #: Close used on the decision date, so the next session can drift the book
+    #: by real returns instead of re-reading yesterday's target weights.
+    marks = DictField()
+    #: Last session on which the band actually rebalanced; the cadence is
+    #: measured from here, not from yesterday's plan date.
+    last_rebalance_date = DateTimeField()
     rebalance_session = BooleanField()
     status = StringField(choices=["PLANNED", "SKIPPED"], default="PLANNED")
     reason = StringField()

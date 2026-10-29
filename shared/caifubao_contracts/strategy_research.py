@@ -79,6 +79,26 @@ def content_hash(value) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def business_days_before(day: date, count: int) -> date:
+    """The date ``count`` business days before ``day``, weekends excluded.
+
+    A session-based horizon is not a calendar-day horizon: twenty sessions span
+    roughly four weeks, so subtracting twenty-one *calendar* days would leave the
+    label overlapping the confirmation slice. Weekends are handled here; exchange
+    holidays are not, which makes the result very slightly optimistic, so a caller
+    holding the real calendar should pass it and get exact arithmetic.
+    """
+    if type(count) is not int or count < 0:
+        raise ValueError("count must be a non-negative integer")
+    cursor = day
+    remaining = count
+    while remaining:
+        cursor -= timedelta(days=1)
+        if cursor.weekday() < 5:
+            remaining -= 1
+    return cursor
+
+
 def _as_date(value, field: str) -> date:
     if isinstance(value, date):
         return value
@@ -111,7 +131,7 @@ def _criteria(value, field: str) -> dict:
     return dict(value)
 
 
-def validate_registration(registration: dict) -> dict:
+def validate_registration(registration: dict, *, trading_days=None) -> dict:
     """Validate and normalise a registration; fail closed on anything vague."""
     if not isinstance(registration, dict):
         raise ValueError("registration must be an object")
@@ -166,10 +186,22 @@ def validate_registration(registration: dict) -> dict:
     result["train_cutoff"] = train_cutoff.isoformat()
 
     # The cutoff must clear the label horizon, one session and the embargo so no
-    # label used to fit or select reaches into the confirmation window.
-    latest_allowed = confirmation_start - timedelta(
-        days=result["label_horizon"] + 1 + result["embargo_sessions"]
-    )
+    # label used to fit or select reaches into the confirmation window. Sessions
+    # are not calendar days: with the real calendar supplied this is exact,
+    # otherwise it counts business days and treats exchange holidays as if they
+    # were sessions (slightly optimistic, never wildly wrong).
+    need = result["label_horizon"] + 1 + result["embargo_sessions"]
+    if trading_days:
+        sessions = sorted(_as_date(day, "trading_days") for day in trading_days)
+        before = [day for day in sessions if day < confirmation_start]
+        if len(before) < need:
+            raise ValueError(
+                f"trading_days must hold at least {need} sessions before the "
+                "confirmation start to place the causal cutoff"
+            )
+        latest_allowed = before[-need]
+    else:
+        latest_allowed = business_days_before(confirmation_start, need)
     if train_cutoff > latest_allowed:
         raise ValueError(
             "train_cutoff must be on or before "

@@ -61,7 +61,7 @@ def _registration():
         "label_horizon": 20,
         "embargo_sessions": 0,
         "confirmation_start": "2026-09-01",
-        "train_cutoff": "2026-08-10",
+        "train_cutoff": "2026-08-03",
         "max_trials": 12,
         "max_confirmations": 1,
         "success_criteria": {"absolute_turnover_error": 0.05},
@@ -244,6 +244,7 @@ def test_promotion_is_refused_when_capacity_collapsed():
     """The capacity gate is enforced, not advisory."""
     pipeline = ResearchPipeline(store=new_store())
     pipeline.register(_registration())
+    pipeline.record_confirmation("w0a-churn-flip-width")
     structural = pipeline.structural_gate(
         "w0a-churn-flip-width",
         holdings=20,
@@ -278,6 +279,7 @@ def test_promotion_is_refused_when_capacity_collapsed():
 def test_promotion_passes_when_both_gates_pass():
     pipeline = ResearchPipeline(store=new_store())
     pipeline.register(_registration())
+    pipeline.record_confirmation("w0a-churn-flip-width")
     structural = pipeline.structural_gate(
         "w0a-churn-flip-width",
         holdings=20,
