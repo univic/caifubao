@@ -130,6 +130,13 @@ W5 的数据侧（需数据授权）与运维侧（需写库/开窗授权）。�
 - [ ] P3.6 资产事后替换检测：替换资产即新声明与新证据身份
 - [ ] P3.7 不可负担宽度校验：拒绝依赖小资金买不到的宽度的单股信号
 - [ ] P3.8 拒绝配置族中的排名出场字段（不适用语义必须报错，不得静默忽略）
+      —— 已在 v2 校验实现（`allocation` 仅配置族可用，排名族拒绝）
+- [x] **窗口键方案 C**：为 allocation 族另建独立窗口机制（`strategy-allocation-window`）
+      —— `AllocationForwardWindow`（独立集合，按 `strategy_id` 键，不占用 `model_version`）+ `allocation_window.py`
+      （`validate_certification` / `plan_certification` / `allocation_forward_progress`，19 个测试）；
+      **开窗仍被拒**：`has_plan_path=False` 时拒绝——没有 runner 就开窗等于烧掉 120 日时钟
+- [ ] **下一步（开窗前必须完成）**：把 `plan_from_state` / `plan_allocation` 接进 allocation runner，
+      再用 `certify_allocation_window(has_plan_path=True)` 开窗
 - [ ] P3.9 `paper readiness` 无 FAIL 后由人工授权认证前瞻窗口
 
 ## 5. P4 — 激进袖研究（`aggressive-sleeve-research`）
