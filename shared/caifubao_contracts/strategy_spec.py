@@ -162,9 +162,12 @@ def validate_strategy_spec(spec: dict) -> dict:
     version = normalized.get("spec_version")
     if version not in SUPPORTED_SPEC_VERSIONS:
         raise ValueError(f"spec_version must be one of {list(SUPPORTED_SPEC_VERSIONS)}")
-    for part in (
+    # `signal` is a scoring source. An allocation declaration has none, so the
+    # block becomes optional for that family and required for every other one;
+    # there is no placeholder model version in between.
+    allocation_family = normalized.get("family") == "asset_allocation"
+    required_parts = (
         "universe",
-        "signal",
         "selection",
         "sizing",
         "constraints",
@@ -172,8 +175,13 @@ def validate_strategy_spec(spec: dict) -> dict:
         "risk",
         "execution",
         "evidence",
-    ):
+    )
+    for part in required_parts:
         _object(_required(normalized, part, "spec"), part)
+    if "signal" in normalized:
+        _object(normalized["signal"], "signal")
+    elif not allocation_family:
+        raise ValueError("signal is required unless the family is asset_allocation")
 
     v2_only = (
         "family",
@@ -251,14 +259,17 @@ def validate_strategy_spec(spec: dict) -> dict:
     universe = normalized["universe"]
     if universe != {"market": "CN_A", "as_of": "PIT"}:
         raise ValueError("universe requires market=CN_A and as_of=PIT")
-    signal = normalized["signal"]
-    name = _required(signal, "score_model_version", "signal")
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError("signal.score_model_version must be nonempty")
-    if type(_required(signal, "horizon", "signal")) is not int or signal[
-        "horizon"
-    ] not in (5, 20, 60):
-        raise ValueError("signal.horizon must be one of 5, 20, 60")
+    signal = normalized.get("signal")
+    if signal is not None:
+        name = _required(signal, "score_model_version", "signal")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("signal.score_model_version must be nonempty")
+        if type(_required(signal, "horizon", "signal")) is not int or signal[
+            "horizon"
+        ] not in (5, 20, 60):
+            raise ValueError("signal.horizon must be one of 5, 20, 60")
+    elif not allocation_family:
+        raise ValueError("signal is required unless the family is asset_allocation")
 
     selection = normalized["selection"]
     if selection.get("mode") not in ("top_n", "top_percentile"):

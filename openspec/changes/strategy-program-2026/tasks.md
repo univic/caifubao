@@ -144,8 +144,12 @@ W5 的数据侧（需数据授权）与运维侧（需写库/开窗授权）。�
       —— `AllocationForwardWindow`（独立集合，按 `strategy_id` 键，不占用 `model_version`）+ `allocation_window.py`
       （`validate_certification` / `plan_certification` / `allocation_forward_progress`，19 个测试）；
       **开窗仍被拒**：`has_plan_path=False` 时拒绝——没有 runner 就开窗等于烧掉 120 日时钟
-- [ ] **下一步（开窗前必须完成）**：把 `plan_from_state` / `plan_allocation` 接进 allocation runner，
-      再用 `certify_allocation_window(has_plan_path=True)` 开窗
+- [x] **allocation runner**：`jobs/allocation_runner.py`（`build_plan` / `run`）+ `AllocationPlan` 模型
+      —— 声明已入库 `datahub/research/strategy/etf-sleeve-stable-v1.json`（band 0.02 / cadence 5 / stop 0.20 /
+      资金 50% / 退役复核 60 日 / 回撤 20%），`spec_hash=f4f29aa7c816dbce`；
+      用真实行情 dry-run 通过（2026-10-29，四资产 open，cash 0）
+- [ ] **开窗前置（未完成）**：runner 必须进入运行镜像——当前 pod 里没有该模块，调度器无法产出计划；
+      在此之前认证窗口会立刻开始积累缺口
 - [ ] P3.9 `paper readiness` 无 FAIL 后由人工授权认证前瞻窗口
 
 ## 5. P4 — 激进袖研究（`aggressive-sleeve-research`）

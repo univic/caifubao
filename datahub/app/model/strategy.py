@@ -11,9 +11,11 @@ this document is written by jobs/strategy_runner.
 import datetime
 
 from mongoengine import (
+    BooleanField,
     DateTimeField,
     DictField,
     Document,
+    FloatField,
     IntField,
     ListField,
     StringField,
@@ -122,6 +124,39 @@ class StrategyForwardWindow(Document):
                 "partialFilterExpression": {"status": "ACTIVE"},
             },
             ("model_version", "-start_date"),
+        ],
+    }
+
+
+class AllocationPlan(Document):
+    """One research plan for an allocation sleeve.
+
+    Target weights are not holdings: the record says what the declaration would
+    hold if executed, and it carries the accounting and benchmark identity the
+    sleeve is measured under. ``decision_at`` must precede the execution session
+    for the plan to count as forward evidence.
+    """
+
+    strategy_id = StringField(required=True)
+    spec_hash = StringField(required=True)
+    date = DateTimeField(required=True)  # decision session
+    execution_date = DateTimeField()
+    decision_at = DateTimeField()
+    targets = DictField(required=True)  # code -> weight
+    actions = DictField(required=True)  # code -> hold|rebalance|open|close|stop_out
+    cash_weight = FloatField()
+    reference_prices = DictField()  # code -> cost basis used for the stop
+    rebalance_session = BooleanField()
+    status = StringField(choices=["PLANNED", "SKIPPED"], default="PLANNED")
+    reason = StringField()
+
+    created_at = DateTimeField(default=lambda: datetime.datetime.now(datetime.UTC))
+
+    meta = {
+        "collection": "allocation_plans",
+        "indexes": [
+            {"fields": ["strategy_id", "date"], "unique": True},
+            ("strategy_id", "-date"),
         ],
     }
 
