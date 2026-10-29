@@ -52,7 +52,10 @@
       —— `shared/caifubao_contracts/strategy_allocation.py`：`validate_allocation`（权重和 ≤ 1、带宽上界）、
       `should_rebalance`（**cadence 首次真正被读取**）、`plan_allocation`（带内不交易、止损与移出资产集每期评估）
 - [ ] P0.9 结构门禁：最小持仓数、年换手预算、集中簿必须有止损、回撤预算，并在开窗前评估
-- [ ] P0.10 把 `evaluate_risk` 接进每日链路，**仅对 v2 声明生效**（v1 保持不消费）
+- [x] P0.10 把风险预算接进 v2 链路（v1 保持不消费）
+      —— `shared/caifubao_contracts/strategy_risk_budget.py`：`check_budget` 消费全部 7 个 `risk.*` 字段
+      （现金下限/回撤/regime 是 stop，持仓数/总暴露/单票上限是 scale，换手超限直接拒绝）；
+      `sizing.weighting` 由 `selection` 消费（equal / score），**manifest 未消费字段归零**
 - [x] P0.11 定义 `DecisionState`（持仓/成本价/hold_count/峰值/现金/未完成订单）并记录 `decision_state_hash`
       —— `shared/caifubao_contracts/strategy_decision_state.py`（校验 + 内容哈希 + `blocked_slots`）；
       在 run 文档中落字段随 v2 runner 接线（P0.16 剩余）

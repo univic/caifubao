@@ -32,16 +32,7 @@ MANIFEST_PATH = (
 
 #: Fields that are validated and hashed but read by no consumer. Pinned so that a
 #: silent status flip (either direction) fails CI and has to be argued for.
-KNOWN_UNCONSUMED = {
-    "sizing.weighting",
-    "risk.max_turnover_pct",
-    "risk.max_positions",
-    "risk.cash_floor_pct",
-    "risk.max_drawdown_pct",
-    "risk.max_single_stock_pct",
-    "risk.max_gross_exposure_pct",
-    "risk.regime_policy",
-}
+KNOWN_UNCONSUMED: set[str] = set()
 
 
 @pytest.fixture(scope="module")

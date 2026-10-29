@@ -107,6 +107,7 @@ def plan_from_state(
         sizing_basis="cap",
         mandatory_exits=forced or None,
         exit_rank_override=rank_override,
+        weighting=config.get("weighting"),
     )
     return {
         **plan,

@@ -184,39 +184,67 @@
       ]
     },
     "risk.cash_floor_pct": {
-      "status": "unconsumed",
-      "tracked_by": "strategy-program-2026 P0.10",
-      "note": "risk block is validated, never evaluated on the daily path"
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_risk_budget.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
     },
     "risk.max_drawdown_pct": {
-      "status": "unconsumed",
-      "tracked_by": "strategy-program-2026 P0.10",
-      "note": "risk block is validated, never evaluated on the daily path"
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_risk_budget.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
     },
     "risk.max_gross_exposure_pct": {
-      "status": "unconsumed",
-      "tracked_by": "strategy-program-2026 P0.10",
-      "note": "risk block is validated, never evaluated on the daily path"
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_risk_budget.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
     },
     "risk.max_positions": {
-      "status": "unconsumed",
-      "tracked_by": "strategy-program-2026 P0.10",
-      "note": "risk block is validated, never evaluated on the daily path"
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_risk_budget.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
     },
     "risk.max_single_stock_pct": {
-      "status": "unconsumed",
-      "tracked_by": "strategy-program-2026 P0.10",
-      "note": "risk block is validated, never evaluated on the daily path"
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_risk_budget.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
     },
     "risk.max_turnover_pct": {
-      "status": "unconsumed",
-      "tracked_by": "strategy-program-2026 P0.10",
-      "note": "risk block is validated, never evaluated on the daily path"
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_risk_budget.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
     },
     "risk.regime_policy": {
-      "status": "unconsumed",
-      "tracked_by": "strategy-program-2026 P0.10",
-      "note": "risk block is validated, never evaluated on the daily path"
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_risk_budget.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
     },
     "selection.lower": {
       "status": "consumed",
@@ -282,9 +310,13 @@
       ]
     },
     "sizing.weighting": {
-      "status": "unconsumed",
-      "tracked_by": "strategy-program-2026 P0.8",
-      "note": "only validated to equal 'equal'; selection.py hard-codes an equal-weight book and reads no weighting field"
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/selection.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
     },
     "spec_version": {
       "status": "consumed",

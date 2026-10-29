@@ -63,17 +63,9 @@ V1_CONSUMED = frozenset(
 
 #: Fields v1 validates and hashes but never reads. Kept explicit so a test can
 #: assert they stay unconsumed for v1.
-V1_DECLARED_BUT_UNUSED = frozenset({"sizing.weighting"}) | frozenset(
-    {
-        "risk.max_turnover_pct",
-        "risk.max_positions",
-        "risk.cash_floor_pct",
-        "risk.max_drawdown_pct",
-        "risk.max_single_stock_pct",
-        "risk.max_gross_exposure_pct",
-        "risk.regime_policy",
-    }
-)
+#: Fields v1 validates and hashes but never reads. Empty since the risk budget
+#: and score weighting consumers landed: every declared field now has a reader.
+V1_DECLARED_BUT_UNUSED: frozenset[str] = frozenset()
 
 SUPPORTED_VERSIONS = frozenset({"1", "2"})
 
