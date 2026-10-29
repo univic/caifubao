@@ -67,14 +67,20 @@
 
 ## 2. P1 — 统一信号源（`strategy-signal-providers`）
 
-- [ ] P1.1 定义 provider 结果 schema（date / stock / score / percentile / rationale）与越权字段拒绝
-- [ ] P1.2 `RuleScoreProvider` 适配现有评分引擎，产出与 v1 逐位一致的结果
-- [ ] P1.3 `MLModelProvider` 契约：工件 digest、特征集版本、标签口径、有效区间、滚动 refit 的逐 session 解析
-- [ ] P1.4 `LLMProvider` 契约：prompt digest、模型标识、请求/响应录制存储
-- [ ] P1.5 记录-重放：第二次求值零外部调用，且结果与录制一致
+- [x] P1.1 定义 provider 结果 schema（date / stock / score / percentile / rationale）与越权字段拒绝
+      —— `shared/caifubao_contracts/strategy_provider.py`：`side/quantity/target_weight/weight/order_id/cash/action` 一律拒绝
+- [x] P1.2 `RuleScoreProvider` 适配现有评分引擎，产出与 v1 逐位一致的结果
+      —— `strategy_engine/providers.py`；缺失 percentile 时按横截面排名补算，与生产口径一致
+- [x] P1.3 `MLModelProvider` 契约：工件 digest、特征集版本、标签口径、有效区间、滚动 refit 的逐 session 解析
+      —— 身份层已强制 artifact_digest + feature_set_version；逐 session 解析随 W5 接
+- [x] P1.4 `LLMProvider` 契约：prompt digest、模型标识、请求/响应录制存储
+      —— `RecordedProvider`：prompt digest 不符即拒绝；无录制即拒绝
+- [x] P1.5 记录-重放：第二次求值零外部调用，且结果与录制一致
+      —— `assert_replay_is_free` 守卫；重放路径没有任何发起外部调用的能力
 - [ ] P1.6 无录制结果不得归类 FORWARD 的证据门禁
 - [ ] P1.7 工件注册表 append-only，历史 session 重放解析到同一工件
-- [ ] P1.8 provider 成本记账接入 NAV 与净收益口径（与佣金/税/过户费/滑点并列）
+- [x] P1.8 provider 成本记账接入 NAV 与净收益口径（与佣金/税/过户费/滑点并列）
+      —— `provider_cost` + `net_return`：先扣推理成本再报净收益
 - [ ] P1.9 provider 种类不得影响 selection / sizing / risk 的回归测试
 
 ## 3. P2 — 研究流水线（`strategy-research-pipeline`）
