@@ -301,6 +301,15 @@ def validate_strategy_spec(spec: dict) -> dict:
         evidence_block["kill_criteria"] = validate_kill_criteria(
             evidence_block["kill_criteria"]
         )
+        if (
+            normalized["family"] == "rank_selection"
+            and "min_hold_sessions" in (normalized.get("rebalance") or {})
+            and "min_hold_sessions" in exit_block
+        ):
+            raise ValueError(
+                "declare min_hold_sessions once: it appears in both "
+                "rebalance and selection.exit, and the exit block would silently win"
+            )
         check_manifest_coverage(normalized)
         # Sleeve isolation and horizon discipline are optional blocks, but when
         # present they are enforced rather than recorded.
@@ -374,8 +383,14 @@ def validate_strategy_spec(spec: dict) -> dict:
     skip_rank_blocks = allocation_family and version == "2"
     if not skip_rank_blocks:
         sizing = normalized["sizing"]
-        if sizing.get("weighting") != "equal":
-            raise ValueError("sizing.weighting currently supports equal only")
+        # v1 has one legal weighting; v2 adds score-proportional sizing, so the
+        # field is genuinely two-valued there instead of being a constant that
+        # nothing can vary.
+        allowed_weighting = ("equal",) if version == "1" else ("equal", "score")
+        if sizing.get("weighting") not in allowed_weighting:
+            raise ValueError(
+                f"sizing.weighting must be one of {list(allowed_weighting)}"
+            )
         sizing["cash_reserve_pct"] = _finite_number(
             _required(sizing, "cash_reserve_pct", "sizing"),
             "sizing.cash_reserve_pct",
@@ -569,6 +584,16 @@ def migrate_legacy_config(config: dict) -> dict:
 
 
 def to_legacy_config(spec: dict) -> dict:
+    """Project a spec onto the legacy config shape (v1 only)."""
+    if spec.get("family") == "asset_allocation":
+        raise ValueError(
+            "an allocation declaration has no legacy config projection: it has no "
+            "scoring signal, and its book is an asset set rather than a ranked list"
+        )
+    return _to_legacy_config(spec)
+
+
+def _to_legacy_config(spec: dict) -> dict:
     """Build a legacy config only when its semantics are representable.
 
     Use this as a compatibility adapter, never to certify a legacy forward

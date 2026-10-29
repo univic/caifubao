@@ -14,8 +14,10 @@ Three deliberate properties:
   the scoring pipeline.
 * **No order.** A plan records target weights; execution does not exist in this
   path, and the trading runtime is untouched.
-* **Refuses to guess.** A missing quote, a missing asset in the declaration, or a
-  session with no data produces SKIPPED rather than a plan built from stale marks.
+* **Refuses to guess.** A missing quote, a missing asset in the declaration or a
+  limit it cannot measure raises `AllocationRunError` and the job exits non-zero.
+  It does not write a SKIPPED plan: a skip that nobody acts on would let the
+  evidence clock accrue a gap silently, and the gap cannot be filled later.
 
 The plan carries the cost basis it used for the per-asset stop, because the stop
 is only reproducible if the reference price is recorded with it.
@@ -291,25 +293,28 @@ def run(
         plan["dry_run"] = True
         return plan
 
-    record = AllocationPlan(
-        strategy_id=plan["strategy_id"],
-        spec_hash=plan["spec_hash"],
-        date=dt.datetime.combine(day, dt.time.min, tzinfo=dt.timezone.utc),
-        execution_date=(
-            dt.datetime.fromisoformat(plan["execution_date"])
-            if plan.get("execution_date")
-            else None
-        ),
-        decision_at=dt.datetime.now(dt.timezone.utc),
-        targets=plan["targets"],
-        actions=plan["actions"],
-        cash_weight=float(plan["cash_weight"]),
-        reference_prices={
-            code: float(price) for code, price in plan["reference_prices"].items()
-        },
-        rebalance_session=bool(plan["rebalance_session"]),
-        status="PLANNED",
+    record_date = dt.datetime.combine(day, dt.time.min, tzinfo=dt.timezone.utc)
+    existing = AllocationPlan.objects(
+        strategy_id=plan["strategy_id"], date=record_date
+    ).first()
+    record = existing or AllocationPlan(
+        strategy_id=plan["strategy_id"], date=record_date
     )
+    record.spec_hash = plan["spec_hash"]
+    record.execution_date = (
+        dt.datetime.fromisoformat(plan["execution_date"])
+        if plan.get("execution_date")
+        else None
+    )
+    record.decision_at = dt.datetime.now(dt.timezone.utc)
+    record.targets = plan["targets"]
+    record.actions = plan["actions"]
+    record.cash_weight = float(plan["cash_weight"])
+    record.reference_prices = {
+        code: float(price) for code, price in plan["reference_prices"].items()
+    }
+    record.rebalance_session = bool(plan["rebalance_session"])
+    record.status = "PLANNED"
     record.save()
     plan["saved"] = True
     return plan

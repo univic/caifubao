@@ -218,7 +218,7 @@ decide(spec, provider_outputs, snapshot, session, decision_state) -> TargetBook
 |:---|:---|:---|
 | **(a) 精确算术 + 实测换手** | 一次往返摩擦 0.302%（佣金 0.025%×2 + 印花税 0.05% + 过户费 0.001%×2 + 滑点 0.1%×2，来自共享费用契约）；年摩擦 = 0.302% × 年换手。**换手已在 W0-A 用生产分数实测**：N=20 日频重排为 **11.4%–16.9%/年**（buffer 2.0/1.0），N=800+buffer 2.0 为 **8.3%/年**；中宽度（50–100）换手最高（15%–27%/年），窄簿反而较低 | ❌ 不依赖收益回测（换手与成本由生产分数直接测得） |
 | **(b) 结构风险** | 当前打分「越跌分越高」，且链路中没有任何止损——价格下行时分数上升、持仓被继续保留，尾部风险由构造决定 | ❌ 不依赖（读代码即可） |
-| **(c) 经验结论（待重算）** | 「edge 只在 800 只宽度为正」及各宽度收益/回撤曲线；多资产静态配置的 +10.8% / Sharpe 1.13 / 回撤 −13.6% | ✅ **依赖，且来源报告已发布失效声明** |
+| **(c) 经验结论（待重算）** | 「edge 只在 800 只宽度为正」及各宽度收益/回撤曲线；多资产静态配置的 +10.8% / Sharpe 1.13 / 回撤 −13.6% | ✅ **依赖，且来源报告记录的信号与面板与本策略不同，且同系列另有失效勘误** |
 
 **因此 D1 的表述必须是可复核的**：W0-A 已经把 (a) 的换手实测出来（N=20 为 11.4%–16.9%/年），
 成本逆风仍在但比旧报告低约 2.5 倍，(b) 的结构风险不受影响，二者合起来足以支持「flip 簿不适合
@@ -241,8 +241,8 @@ decide(spec, provider_outputs, snapshot, session, decision_state) -> TargetBook
 
 ### P4 — 激进袖
 
-**研究方向（保留），但结论尚未成立。** 以下数字来自研究记录，且引用它们的报告已发布失效
-声明，**必须视为待重算**，不得作为设计依据：
+**研究方向（保留），但结论尚未成立。** 以下数字来自研究记录：同系列报告另有失效勘误，
+而这一份记录用的信号与面板又与本策略不同，因此**必须视为待重算**，不得作为设计依据：
 
 - 持有期扫描中 h60 + 出口带 2.0 是全表最好的一行（+35.2%、超额回撤 −11.4%、年换手
   2.25）。**该方法用的是五因子合成信号、只改动了持有期与出口带**，与 `flip_wide` 不是
@@ -331,10 +331,10 @@ M3 之前，**任何「半数资金、稳健中等风险」的对外表述都不
 | 里程碑 | 状态 | 依据 |
 |:---|:---|:---|
 | M0 W0 重算基线 | **部分完成** | 换手与摩擦已用生产分数实测（W0-A）；持有期 × 收益、各宽度收益/回撤仍待 |
-| M1 P0 spec + manifest 100% | **完成** | 63 个声明字段，**63 已消费，0 未消费** |
-| M2 研究流水线可用 | **完成** | W0-A 的重算已作为第一个 idea 走完全流程并产出 verdict |
+| M1 P0 spec + manifest 100% | **部分完成** | 63 个字段均有消费者、版本归属与 golden 绑定；但「订单/账本投影」回归尚未落地（P0.16 剩余） |
+| M2 研究流水线可用 | **部分完成** | 预注册→试验计数→verdict 已跑通并留存样例；六阶段 runner 与 Mongo 适配器未接线（P2.7、内存/持久化 store 已分别实现） |
 | M3 稳健袖跑满窗口 | **未开始** | 需运维授权开窗；且稳健袖画像的波动目标尚无消费者 |
-| M4 provider 契约 | **完成** | 三类 provider 统一 schema；记录-重放测试通过 |
+| M4 provider 契约 | **完成** | 三类 provider 统一 schema；记录-重放测试通过；但 `strategy_runner` 仍直接读 Mongo，尚未改用 provider 抽象 |
 | M5 激进袖首轮回测 | **未开始** | 卡在事件数据源（需授权） |
 
 ### 8.2 与原计划的偏差
@@ -356,11 +356,11 @@ M3 之前，**任何「半数资金、稳健中等风险」的对外表述都不
 | 版本分派 | `strategy_spec_semantics.py` | 测试 + v2 校验 |
 | 账户状态 | `strategy_decision_state.py` | `stateful_planner.py` |
 | 出场契约 | `strategy_exit_policy.py` | `selection.py`（`mandatory_exits`） |
-| 配置族语义 | `strategy_allocation.py` | `plan_allocation`；**`cadence_days` 的唯一读点** |
+| 配置族语义 | `strategy_allocation.py` | `plan_allocation`；`cadence_days` 由它与 `allocation_runner` 共同读取 |
 | 会计与基准 | `strategy_accounting.py`、`strategy_benchmark.py` | v2 校验 + `evaluate_kill_criteria` |
 | 风险预算 | `strategy_risk_budget.py` | v2 链路（`risk.*` 七个字段） |
 | 信号源 | `strategy_provider.py` + `providers.py` | `RuleScoreProvider` / `RecordedProvider` |
-| 研究流水线 | `strategy_research.py` + `research_pipeline.py` | 预注册、族级试验预算、阶段机 |
+| 研究流水线 | `strategy_research.py` + `research_pipeline.py` + `research_store.py` | 预注册、族级试验预算、阶段机、Mongo 账本（写入已在 research 库实测） |
 | 结构与容量门禁 | `strategy_structure.py` | 晋级 verdict 的强制前置 |
 | 袖与期限 | `strategy_sleeve.py` | v2 可选块 |
 
@@ -371,7 +371,8 @@ M3 之前，**任何「半数资金、稳健中等风险」的对外表述都不
 | 事件数据源（业绩预告/龙虎榜/公告） | **数据授权** | 操作者确认可查询的 tushare 接口范围 |
 | 持有期 × 收益重算 | **数据可得性** | 需要更长的生产分数历史（当前 33 个会话） |
 | LLM 真实候选池 | 依赖上一项 | 有一个真实的候选池才有二次筛选的意义 |
-| Mongo 研究账本适配器 | **写库授权** | 操作者授权写入 research 库 |
+| Mongo 研究账本适配器的**自动化** | 未接线 | 适配器已实现并在 research 库实测写权限；
+尚未接进调度（写入仍是手工/测试触发） |
 | 稳健袖窗口认证 | **开窗授权** | `paper readiness` 无 FAIL + 显式人工授权 |
 | 波动目标执行器 | 设计未定 | 需要一个真正按波动定仓的执行器，不能只声明 |
 

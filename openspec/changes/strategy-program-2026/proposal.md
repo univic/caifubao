@@ -7,17 +7,17 @@
 
 1. **声明与行为脱节。** `rebalance.cadence_days` 通过校验、进入 `spec_hash`、写进文档，
    但没有任何代码消费它——名义周频、实际日频（`docs/capability-inventory.md` 与
-   `strategy-exit-hysteresis/proposal.md` 均已记录）。`risk.*` 的六个字段同样全部定义并
-   校验，但 `jobs/strategy_runner.py` 不调用 `shared/caifubao_contracts/strategy_risk.py`
-   的 `evaluate_risk`，因此每日链路一个都不生效。spec 在语义上撒谎，比缺字段更危险。
+   `strategy-exit-hysteresis/proposal.md` 均已记录）。`risk.*` 的**七个**字段同样全部定义并
+   校验，但每日策略链路从不读了它们的值——`strategy_risk.py` 的 `evaluate_risk` 只被
+   `strategy_risk_replay` 调用，`jobs/strategy_runner.py` 完全不用它。spec 在语义上撒谎，比缺字段更危险。
 2. **决策逻辑有多个副本。** research 与未来 trading 各写一套模拟器，靠
    `GOLDEN_EXECUTION_V1`（3 条费用向量）对齐；费用算术能对齐，选股与组合构建对齐不了。
    现有 `StrategySpec` 还用等值断言固定 `universe == {"market":"CN_A","as_of":"PIT"}`，
    连 ETF 与多资产都装不进去。
 3. **研究没有统一验证流程。** 同一个 idea 可从任一处发起，用不同标签口径、不同基准、
    不同窗口跑出不同数字。`docs/autoresearch/runs/small-book/` 记录过一次方向搞反与至少
-   两次结果整体作废。**这些报告已自行声明失效，其数值（包括持有期扫描里 h60 那一行与
-   各宽度的回撤）必须视为待重算，不得作为设计依据。**
+   两次结果整体作废。**同系列报告另有失效勘误，且持有期扫描用的是与本策略不同的信号与
+   面板，其数值（包括 h60 那一行与各宽度的回撤）必须视为待重算，不得作为设计依据。**
 
 同时有两项资金结构判断已经确定（见 `docs/architecture/strategy-program.md` §2）：稳健
 半仓改为 ETF 多资产；`flip` 簿维持现有窗口继续观察。前者要求新的能力契约，后者要求明确
@@ -54,7 +54,8 @@ W1 P0 契约 → W2 P2 流水线 → W3 P3 稳健袖 → W4 P1 信号源抽象 �
 
 **当前落地状态**（2026-10-29）见
 `docs/architecture/strategy-program.md` §8：W1/W2/W3 的契约与 W4 的 provider 抽象已实现并
-验证（策略相关测试 616 项、manifest 63 字段 0 未消费），W5 的数据侧与运维侧仍待授权。
+契约面已完成并经两轮只读评审复核（评审发现的两个 P1 已修复：风险预算无运行时消费者、
+allocation runner 无入口）。W5 的数据侧与运维侧仍待授权。
 
 ## Capabilities
 
@@ -65,6 +66,7 @@ W1 P0 契约 → W2 P2 流水线 → W3 P3 稳健袖 → W4 P1 信号源抽象 �
 - `strategy-research-pipeline` — 预注册、试验计数与六阶段判定
 - `stable-multi-asset-sleeve` — ETF 多资产稳健袖的画像、门禁与失效判据
 - `aggressive-sleeve-research` — 激进袖的期限纪律、数据前置与风险隔离
+- `strategy-allocation-window` — allocation 族的独立前瞻窗口（按 `strategy_id` 键，不占用评分模型）
 
 ### Modified Capabilities
 
@@ -82,15 +84,15 @@ W1 P0 契约 → W2 P2 流水线 → W3 P3 稳健袖 → W4 P1 信号源抽象 �
 ## Impact
 
 - 契约：`shared/caifubao_contracts/strategy_spec.py`（v2 字段、策略族与**按版本分派的执行
-  语义**）、新增 `strategy_provider.py`、`strategy_decision_state.py`、`strategy_verdict.py`；
-  `shared/caifubao_contracts/strategy_risk.py` 由「已定义」变为「被每日链路消费」——
+  语义**）、新增 `strategy_provider.py`、`strategy_decision_state.py`、`strategy_research.py`；
+  `strategy_risk_budget.py` 由 allocation runner 在出计划前消费——
   但**只对 v2 声明生效**。
 - 研究实现：`datahub/app/lib/strategy_engine/`（出场语义、配置族的权重与带宽）、
-  `datahub/app/jobs/strategy_runner.py`（RiskGate 接线、v1/v2 语义分派）。
+  `datahub/app/jobs/allocation_runner.py`（风险预算执行、计划落库）、`strategy_spec.py`（v2 读 manifest）。
 - 运行记录：每次运行新增 `decision_state_hash` 与 `resolved_inputs`（当日快照 id +
   解析后的模型工件 digest），使跨模式分叉可归因、前瞻每日新数据不改策略身份。
-- 门禁与工具：`openspec/specs/strategy-declaration/consumers.yaml`（新建）、CI 校验脚本、
-  连续多日回归基线、研究流水线 harness。
+- 门禁与工具：`shared/caifubao_contracts/strategy_spec_consumers.json`（消费者清单 + golden 绑定）、
+  `scripts/check_strategy_consumers.py` 与 CI job、五会话生产回归基线。
 - 数据：P4 需要新增事件类数据源，按 datahub `fetch → normalize → validate → persist →
   publish` 流程落地；不在本 change 内写入。研究 `dataset_id` 由数据快照独立寻址。
 - 不受影响：评分语义、`flip_wide_shadow_v1` 注册表内容、现有前瞻窗口计数与 v1 执行语义、

@@ -161,3 +161,36 @@ def test_v2_rejects_an_unknown_exit_key():
     """A typo must fail loudly, whichever validator catches it first."""
     with pytest.raises(ValueError, match="trailing_stop"):
         validate_strategy_spec(_v2(exit_policy=dict(EXIT, trailing_stop=0.05)))
+
+
+def test_v2_rank_family_allows_score_weighting():
+    """`sizing.weighting` is two-valued in v2, not a constant."""
+    spec = _v2()
+    spec["sizing"] = {"weighting": "score", "cash_reserve_pct": 0}
+    assert validate_strategy_spec(spec)["sizing"]["weighting"] == "score"
+
+
+def test_v1_still_allows_only_equal_weighting():
+    spec = _v1()
+    spec["sizing"] = {"weighting": "score", "cash_reserve_pct": 0}
+    with pytest.raises(ValueError, match="sizing.weighting"):
+        validate_strategy_spec(spec)
+
+
+def test_two_minimum_holding_periods_are_rejected():
+    spec = _v2()
+    spec["rebalance"] = {"cadence_days": 5, "min_hold_sessions": 5}
+    spec["selection"] = dict(spec["selection"], exit=dict(EXIT, min_hold_sessions=3))
+    with pytest.raises(ValueError, match="declare min_hold_sessions once"):
+        validate_strategy_spec(spec)
+
+
+def test_allocation_has_no_legacy_projection():
+    from caifubao_contracts.strategy_spec import to_legacy_config
+
+    with pytest.raises(ValueError, match="no legacy config projection"):
+        to_legacy_config(
+            validate_strategy_spec(
+                _v2(family="asset_allocation", exit_policy={"stop_loss_pct": 0.1})
+            )
+        )

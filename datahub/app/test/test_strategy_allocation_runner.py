@@ -183,9 +183,11 @@ def test_the_plan_records_the_cost_basis_it_used():
 
 
 def test_reopening_resets_the_cost_basis():
+    """A rebalance resets the basis the stop is measured against."""
     quotes = dict(QUOTES)
     quotes["sh510300"] = 12.0
     plan = _plan(
+        session_date="2026-10-30",  # far enough back to be a rebalance session
         quotes=quotes,
         previous={
             "date": "2026-10-23",
@@ -203,8 +205,11 @@ def test_reopening_resets_the_cost_basis():
             },
         },
     )
-    if plan["actions"]["sh510300"] == "rebalance":
-        assert plan["reference_prices"]["sh510300"] == pytest.approx(12.0)
+    assert plan["rebalance_session"] is True
+    assert plan["actions"]["sh510300"] == "rebalance"
+    assert plan["reference_prices"]["sh510300"] == pytest.approx(12.0)
+    # Assets that were only held keep their original basis.
+    assert plan["reference_prices"]["sh518880"] == pytest.approx(10.0)
 
 
 def test_plan_carries_the_strategy_and_spec_identity():
