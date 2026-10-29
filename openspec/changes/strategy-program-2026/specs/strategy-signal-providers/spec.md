@@ -53,6 +53,15 @@ a different digest under the same identity MUST fail closed instead of overwriti
 - **THEN** its identity SHALL change
 - **AND** the previous identity SHALL NOT be reused
 
+#### Scenario: Rolling artifact resolution is recorded per session
+
+- **GIVEN** a model provider whose declaration allows periodic refitting
+- **WHEN** a session is evaluated
+- **THEN** the artifact digest actually resolved for that session SHALL be recorded with
+  the result set
+- **AND** the registration of artifacts SHALL be append-only so that replaying an earlier
+  session resolves the same artifact
+
 ### Requirement: Non-deterministic providers MUST be replayable
 
 A provider whose output cannot be reproduced exactly SHALL record every external request

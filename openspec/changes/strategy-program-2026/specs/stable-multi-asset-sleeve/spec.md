@@ -22,6 +22,33 @@ forward window MUST NOT be opened for the sleeve while any of them is absent.
 - **WHEN** the declaration is validated
 - **THEN** validation SHALL fail
 
+### Requirement: The sleeve MUST be declared as an allocation strategy
+
+The stable sleeve SHALL declare the allocation strategy family. Its book semantics SHALL
+be expressed as a fixed asset set, target weights, rebalance bands and a rebalance cadence
+that is genuinely consumed, and it MUST NOT be required to declare rank-based exit
+conditions that have no meaning for it. The rebalance cadence SHALL be consumed, and a
+declared cadence that the implementation ignores MUST fail validation.
+
+#### Scenario: No rank exit is required
+
+- **GIVEN** an allocation-family sleeve declaration with a fixed asset set, target weights
+  and bands
+- **WHEN** the declaration is validated
+- **THEN** it SHALL pass without any rank-based exit field
+
+#### Scenario: Unconsumed cadence is rejected
+
+- **GIVEN** an allocation declaration whose rebalance cadence no consumer reads
+- **WHEN** the declaration is validated
+- **THEN** validation SHALL fail
+
+#### Scenario: Bands drive rebalancing
+
+- **GIVEN** a declaration with rebalance bands and a holding inside its band
+- **WHEN** a rebalance session is planned
+- **THEN** the holding SHALL NOT be traded back to its exact target weight
+
 ### Requirement: The asset set MUST be committed before evaluation
 
 The sleeve's asset set SHALL be fixed in the declaration before any evaluation, and the

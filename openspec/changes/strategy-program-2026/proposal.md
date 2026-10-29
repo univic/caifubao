@@ -15,28 +15,31 @@
    现有 `StrategySpec` 还用等值断言固定 `universe == {"market":"CN_A","as_of":"PIT"}`，
    连 ETF 与多资产都装不进去。
 3. **研究没有统一验证流程。** 同一个 idea 可从任一处发起，用不同标签口径、不同基准、
-   不同窗口跑出不同数字。`docs/autoresearch/runs/small-book/` 记录过一次方向搞反
-   （`−27.9%` vs `+1.9%`，差 30pp）与至少两次结果整体作废，根源是流程缺失。
+   不同窗口跑出不同数字。`docs/autoresearch/runs/small-book/` 记录过一次方向搞反与至少
+   两次结果整体作废。**这些报告已自行声明失效，其数值（包括持有期扫描里 h60 那一行与
+   各宽度的回撤）必须视为待重算，不得作为设计依据。**
 
 同时有两项资金结构判断已经确定（见 `docs/architecture/strategy-program.md` §2）：稳健
 半仓改为 ETF 多资产；`flip` 簿维持现有窗口继续观察。前者要求新的能力契约，后者要求明确
-「v1 窗口不得因本次改动而改变」。
+「v1 窗口不得因本次改动而改变——不只是 hash 不变，而是**执行语义不变**」。
 
 ## What Changes
 
 按依赖顺序交付五个能力，每个阶段独立 PR、独立验收：
 
 - **P0 `strategy-spec-completeness`** — 策略声明必须「声明即行为」：新增 `spec_version: "2"`
-  的分层字段（身份假设、数据快照绑定、模型配置哈希、显式出场语义、会计口径、基准、
+  的分层字段（身份假设、数据*要求*、模型引用、策略族、出场/再平衡语义、会计口径、基准、
   失效判据）；用 **consumption manifest** + CI 校验消灭未消费字段；加结构门禁拒绝注定
-  失败的配置（最小持仓数、年换手预算、集中簿必须有止损、回撤预算）；`spec_version: "1"`
-  保持可读可重放但不得开新窗口。
+  失败的配置（最小持仓数、年换手预算、集中簿必须有止损、回撤预算）；把数据、模型与决策
+  状态拆成三层身份；`spec_version: "1"` **保留旧执行语义**（`cadence_days` 仍不消费），
+  并用连续多日回归而非 hash 相等来验证。
 - **P1 `strategy-signal-providers`** — 统一的 `SignalProvider` 契约与三个实现
   （规则 / 机器学习 / 大模型），全部输出同一 schema；新增「记录-重放」一致性不变量，
   使不可复现的模型也能产出可审计证据；确立「AI 只出分不出单」与「推理成本进会计」。
 - **P2 `strategy-research-pipeline`** — 六阶段研究流水线（预注册 → 可行性 → 探索 →
-  确认 → 结构与容量 → 前瞻 → 判定），配试验计数器（多重检验校正）、结构/容量门禁与
-  不可变 `verdict.json`。
+  确认 → 结构与容量 → 前瞻 → 判定），配**确认集数据隔离**（purge/embargo 按标签期限）、
+  **按假设族累计的试验计数**（换 registration 不能重置预算）、确认次数上限、结构/容量
+  门禁与不可变 `verdict.json`。
 - **P3 `stable-multi-asset-sleeve`** — ETF 多资产稳健半仓：预先固定的资产集、波动目标、
   回撤预算、低换手再平衡、组合级降险与失效判据。
 - **P4 `aggressive-sleeve-research`** — 激进袖研究：60 日持有期框架、新信息集数据落地、
@@ -69,15 +72,18 @@
 
 ## Impact
 
-- 契约：`shared/caifubao_contracts/strategy_spec.py`（v2 字段与版本分支）、新增
-  `strategy_provider.py`、`strategy_verdict.py`；`shared/caifubao_contracts/strategy_risk.py`
-  由「已定义」变为「被每日链路消费」。
-- 研究实现：`datahub/app/lib/strategy_engine/`（selection 出场语义、runner 字段消费）、
-  `datahub/app/jobs/strategy_runner.py`（RiskGate 接线、快照绑定）。
+- 契约：`shared/caifubao_contracts/strategy_spec.py`（v2 字段、策略族与**按版本分派的执行
+  语义**）、新增 `strategy_provider.py`、`strategy_decision_state.py`、`strategy_verdict.py`；
+  `shared/caifubao_contracts/strategy_risk.py` 由「已定义」变为「被每日链路消费」——
+  但**只对 v2 声明生效**。
+- 研究实现：`datahub/app/lib/strategy_engine/`（出场语义、配置族的权重与带宽）、
+  `datahub/app/jobs/strategy_runner.py`（RiskGate 接线、v1/v2 语义分派）。
+- 运行记录：每次运行新增 `decision_state_hash` 与 `resolved_inputs`（当日快照 id +
+  解析后的模型工件 digest），使跨模式分叉可归因、前瞻每日新数据不改策略身份。
 - 门禁与工具：`openspec/specs/strategy-declaration/consumers.yaml`（新建）、CI 校验脚本、
-  研究流水线 harness。
+  连续多日回归基线、研究流水线 harness。
 - 数据：P4 需要新增事件类数据源，按 datahub `fetch → normalize → validate → persist →
-  publish` 流程落地；不在本 change 内写入。
-- 不受影响：评分语义、`flip_wide_shadow_v1` 注册表内容、现有前瞻窗口计数、OpenClaw 契约、
-  backend API 形状。
+  publish` 流程落地；不在本 change 内写入。研究 `dataset_id` 由数据快照独立寻址。
+- 不受影响：评分语义、`flip_wide_shadow_v1` 注册表内容、现有前瞻窗口计数与 v1 执行语义、
+  OpenClaw 契约、backend API 形状。
 - 运行环境：本 change 不改变任何 `k8s/` 清单，不启用任何 CronJob。

@@ -5,11 +5,11 @@
 ### Requirement: Evaluation MUST be pre-registered before it runs
 
 Every research idea SHALL be registered before any evaluation, recording the hypothesis,
-the data scope, the snapshot, the evaluation procedure, the success criteria, the
-declared failure criteria the verdict will use, and a maximum number of trials. An
-evaluation run that is not bound to a registration MUST NOT produce a research
-conclusion, and the success criteria MUST NOT be modified after the first evaluation of
-that registration.
+the hypothesis family it belongs to, the data scope, the evaluation procedure, the success
+criteria, the failure criteria the verdict will use, the confirmation slice, and a maximum
+number of trials and confirmation runs. An evaluation run that is not bound to a
+registration MUST NOT produce a research conclusion, and the success criteria and the
+confirmation slice MUST NOT be modified after the first evaluation of that registration.
 
 #### Scenario: Unregistered evaluation produces no conclusion
 
@@ -24,25 +24,70 @@ that registration.
 - **WHEN** a later evaluation attempts to change them
 - **THEN** the change SHALL be refused and recorded as an attempt
 
-### Requirement: Every evaluated configuration MUST increment a trial counter
+#### Scenario: Confirmation slice is frozen at registration
 
-Each configuration evaluated against a registration SHALL increment that registration's
-trial counter, and the confirmation-stage threshold SHALL be adjusted for the number of
-trials recorded at the time of confirmation. A confirmation that reports a result without
-applying the multiplicity adjustment MUST NOT be accepted as a research conclusion.
+- **GIVEN** a registration that recorded its confirmation dates and indices
+- **WHEN** a later run attempts to widen or shift that slice
+- **THEN** the change SHALL be refused
 
-#### Scenario: Exploratory scan raises the bar for confirmation
+### Requirement: The confirmation slice MUST be isolated from exploration
 
-- **GIVEN** a registration that has evaluated many configurations during exploration
-- **WHEN** the confirmation stage evaluates the pre-registered configuration
-- **THEN** the acceptance threshold SHALL be adjusted by the recorded trial count
-- **AND** the adjusted threshold SHALL appear in the verdict
+The exploration stage SHALL NOT read the prices, labels or results of the confirmation
+slice beyond what is needed to prove the data exists. The causal cutoff used to fit or
+select anything for the confirmation run MUST be at most the confirmation start minus the
+label horizon minus one session minus the declared embargo, and a negative embargo MUST be
+rejected. A confirmation whose cutoff overlaps the confirmation window MUST be refused,
+and the cutoff, the label horizon and the embargo MUST be recorded in the verdict.
+
+#### Scenario: Overlapping labels are refused
+
+- **GIVEN** a confirmation that fits or selects using data whose label horizon reaches into
+  the confirmation window
+- **WHEN** the confirmation runs
+- **THEN** it SHALL fail closed rather than report a result
+
+#### Scenario: Negative embargo is refused
+
+- **GIVEN** a registration declaring a negative embargo
+- **WHEN** the registration is validated
+- **THEN** it SHALL be rejected
+
+#### Scenario: Exploration cannot leak the confirmation outcome
+
+- **GIVEN** a registration whose confirmation slice is recorded
+- **WHEN** an exploratory evaluation is executed
+- **THEN** it SHALL NOT read confirmation-period outcomes
+- **AND** a run that does SHALL be marked contaminated and unable to conclude
+
+### Requirement: Trials MUST be attributed to the hypothesis family
+
+Each configuration evaluated SHALL increment the trial counter of its **hypothesis family**,
+and a new registration belonging to an existing family MUST inherit that family's
+cumulative trial count. The confirmation-stage threshold SHALL be adjusted for the
+family-level count, the number of confirmation runs SHALL be limited by the declared
+maximum for the family, and a registration that would exceed that maximum MUST be refused.
+Re-registering the same hypothesis under a new identifier SHALL NOT create a fresh trial
+budget.
+
+#### Scenario: Re-registration does not reset the count
+
+- **GIVEN** a hypothesis family with many recorded trials
+- **WHEN** a new registration is created for the same family
+- **THEN** its effective trial count SHALL include the family's earlier trials
+- **AND** the adjusted threshold SHALL reflect that count
+
+#### Scenario: Confirmation budget is exhausted
+
+- **GIVEN** a family whose confirmation runs reached its declared maximum
+- **WHEN** another confirmation is attempted
+- **THEN** it SHALL be refused
+- **AND** the refusal SHALL be recorded
 
 #### Scenario: Trial count is visible in the verdict
 
 - **GIVEN** any verdict
 - **WHEN** it is read
-- **THEN** it SHALL report the number of trials consumed
+- **THEN** it SHALL report both the family-level and the registration-level trial count
 
 ### Requirement: Stages MUST terminate with a machine-readable verdict
 
@@ -90,10 +135,12 @@ reported as a finding and MUST NOT be silently absorbed.
 ### Requirement: Verdicts MUST be immutable and traceable
 
 Each verdict SHALL be an immutable artifact that records the registration identifier, the
-declaration hash, the data snapshot, the code version, the trial count, the stage reached
-and the outcome, and MUST be content-addressed so that a later edit is detected rather than
-overwritten. A verdict SHALL be reproducible from the recorded inputs by anyone holding the
-same snapshot and code version.
+hypothesis family, the declaration hash, the dataset identity, the code version, the
+family-level and registration-level trial counts, the confirmation counts, the causal
+cutoff with its label horizon and embargo, the stage reached and the outcome, and MUST be
+content-addressed so that a later edit is detected rather than overwritten. A verdict
+SHALL be reproducible from the recorded inputs by anyone holding the same dataset and code
+version.
 
 #### Scenario: Edited verdict is detected
 
@@ -103,6 +150,6 @@ same snapshot and code version.
 
 #### Scenario: Verdict is reproducible
 
-- **GIVEN** a verdict and its recorded snapshot and code version
+- **GIVEN** a verdict and its recorded dataset and code version
 - **WHEN** the pipeline is re-run with the same registration
 - **THEN** the outcome SHALL reproduce, or the divergence SHALL be reported explicitly
