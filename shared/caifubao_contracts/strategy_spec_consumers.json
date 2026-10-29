@@ -1,0 +1,226 @@
+{
+  "schema": "strategy-spec-consumers-v1",
+  "spec_module": "shared/caifubao_contracts/strategy_spec.py",
+  "note": "Every allowed declaration field is listed. 'unconsumed' is a defect with an owner, not a limitation.",
+  "fields": {
+    "constraints.exclude_bse": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/runner.py"
+      ]
+    },
+    "constraints.exclude_infeasible_buys": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/runner.py"
+      ]
+    },
+    "constraints.exclude_st": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/runner.py"
+      ]
+    },
+    "constraints.exclude_suspended": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/runner.py"
+      ]
+    },
+    "constraints.max_industry_pct": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/selection.py"
+      ]
+    },
+    "constraints.max_single_stock_pct": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/selection.py"
+      ]
+    },
+    "constraints.min_trade_amount_cny": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/runner.py"
+      ]
+    },
+    "evidence.policy": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_spec.py"
+      ]
+    },
+    "evidence.timing_version": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/config.py"
+      ]
+    },
+    "execution.board_lot": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/config.py"
+      ]
+    },
+    "execution.commission_rate": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/config.py"
+      ]
+    },
+    "execution.minimum_commission_cny": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/config.py"
+      ]
+    },
+    "execution.sell_stamp_duty_rate": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/config.py"
+      ]
+    },
+    "execution.slippage_per_side": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/config.py"
+      ]
+    },
+    "execution.transfer_fee_rate": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/config.py"
+      ]
+    },
+    "execution.unknown_limit_policy": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/tradability.py"
+      ]
+    },
+    "initial_nav": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/config.py"
+      ]
+    },
+    "rebalance.cadence_days": {
+      "status": "unconsumed",
+      "tracked_by": "strategy-program-2026 P0.5/P0.8",
+      "note": "validated and hashed, but every session re-plans: the declared cadence is never read"
+    },
+    "rebalance.exit_buffer": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/selection.py"
+      ]
+    },
+    "rebalance.min_hold_sessions": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/selection.py"
+      ]
+    },
+    "risk.cash_floor_pct": {
+      "status": "unconsumed",
+      "tracked_by": "strategy-program-2026 P0.10",
+      "note": "risk block is validated, never evaluated on the daily path"
+    },
+    "risk.max_drawdown_pct": {
+      "status": "unconsumed",
+      "tracked_by": "strategy-program-2026 P0.10",
+      "note": "risk block is validated, never evaluated on the daily path"
+    },
+    "risk.max_gross_exposure_pct": {
+      "status": "unconsumed",
+      "tracked_by": "strategy-program-2026 P0.10",
+      "note": "risk block is validated, never evaluated on the daily path"
+    },
+    "risk.max_positions": {
+      "status": "unconsumed",
+      "tracked_by": "strategy-program-2026 P0.10",
+      "note": "risk block is validated, never evaluated on the daily path"
+    },
+    "risk.max_single_stock_pct": {
+      "status": "unconsumed",
+      "tracked_by": "strategy-program-2026 P0.10",
+      "note": "risk block is validated, never evaluated on the daily path"
+    },
+    "risk.max_turnover_pct": {
+      "status": "unconsumed",
+      "tracked_by": "strategy-program-2026 P0.10",
+      "note": "risk block is validated, never evaluated on the daily path"
+    },
+    "risk.regime_policy": {
+      "status": "unconsumed",
+      "tracked_by": "strategy-program-2026 P0.10",
+      "note": "risk block is validated, never evaluated on the daily path"
+    },
+    "selection.lower": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/selection.py"
+      ]
+    },
+    "selection.mode": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/selection.py"
+      ]
+    },
+    "selection.portfolio_size": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/selection.py"
+      ]
+    },
+    "selection.upper": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/selection.py"
+      ]
+    },
+    "signal.horizon": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/jobs/strategy_runner.py"
+      ]
+    },
+    "signal.score_model_version": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/jobs/strategy_runner.py"
+      ]
+    },
+    "sizing.cash_reserve_pct": {
+      "status": "consumed",
+      "consumers": [
+        "datahub/app/lib/strategy_engine/selection.py"
+      ]
+    },
+    "sizing.weighting": {
+      "status": "unconsumed",
+      "tracked_by": "strategy-program-2026 P0.8",
+      "note": "only validated to equal 'equal'; selection.py hard-codes an equal-weight book and reads no weighting field"
+    },
+    "spec_version": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_spec.py"
+      ]
+    },
+    "universe.as_of": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_spec.py"
+      ]
+    },
+    "universe.market": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_spec.py"
+      ]
+    }
+  }
+}

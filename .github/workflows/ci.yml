@@ -28,6 +28,7 @@ jobs:
       docker: ${{ steps.filter.outputs.docker }}
       k8s: ${{ steps.filter.outputs.k8s }}
       openspec: ${{ steps.filter.outputs.openspec }}
+      strategy_contract: ${{ steps.filter.outputs.strategy_contract }}
       ci: ${{ steps.filter.outputs.ci }}
       deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
 
@@ -80,6 +81,9 @@ jobs:
           set_output docker '^(shared/|backend/Dockerfile|datahub/Dockerfile|frontend/Dockerfile|compute-worker/Dockerfile|compute-worker/worker_app/|tools/mongodb-tools/Dockerfile|\.dockerignore$|\.github/workflows/ci\.yml$)'
           set_output k8s '^(k8s/|\.github/workflows/ci\.yml$)'
           set_output openspec '^(openspec/|\.github/workflows/ci\.yml$)'
+          # The declaration/consumer gate spans the shared contract, the
+          # strategy engine that consumes it, and its own checker.
+          set_output strategy_contract '^(shared/|datahub/app/lib/strategy_engine/|datahub/app/jobs/strategy_runner\.py|datahub/app/test/test_strategy_spec_consumers\.py|scripts/check_strategy_consumers\.py|openspec/|\.github/workflows/ci\.yml$)'
           set_output ci '^\.github/workflows/.*\.yml$'
           # Deploy-sensitive changes only; ordinary app code still runs tests/lint.
           set_output deploy_contract '^(k8s/|backend/Dockerfile$|datahub/Dockerfile$|frontend/Dockerfile$|compute-worker/Dockerfile$|tools/mongodb-tools/Dockerfile$|\.github/workflows/ci\.yml$|\.github/workflows/.*deploy.*\.yml$)'
@@ -460,6 +464,28 @@ jobs:
           echo "Watching matched private dry-run ${run_id}"
           gh run watch "${run_id}" --repo "${PRIVATE_REPOSITORY}" --exit-status
 
+  strategy-contract-check:
+    name: Strategy Contract Check
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.strategy_contract == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Pure stdlib: the checker reads the contract's allowed-field table, the
+      # manifest and the files the manifest names. No dependency install needed.
+      # It fails when a declared field has no consumer and no owner, so a field
+      # can no longer be validated, hashed and documented while doing nothing.
+      - name: Check declaration consumer manifest
+        run: python scripts/check_strategy_consumers.py
+
   openspec-check:
     name: OpenSpec Validate
     runs-on: ubuntu-latest
@@ -488,7 +514,7 @@ jobs:
   required-checks:
     name: Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, backend-test, backend-lint, frontend-check, datahub-test, datahub-lint, compute-worker-check, dockerfile-check, kustomize-check, private-deploy-dry-run, openspec-check]
+    needs: [changes, backend-test, backend-lint, frontend-check, datahub-test, datahub-lint, compute-worker-check, dockerfile-check, kustomize-check, private-deploy-dry-run, openspec-check, strategy-contract-check]
     if: always()
 
     steps:
@@ -514,6 +540,7 @@ jobs:
           check_result "Dockerfile check" "${{ needs.dockerfile-check.result }}"
           check_result "Kustomize check" "${{ needs.kustomize-check.result }}"
           check_result "Private deploy dry-run" "${{ needs.private-deploy-dry-run.result }}"
+          check_result "Strategy contract check" "${{ needs.strategy-contract-check.result }}"
           check_result "OpenSpec check" "${{ needs.openspec-check.result }}"
 
           echo "All required checks passed or were skipped because their paths did not change."
