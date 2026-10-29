@@ -45,27 +45,45 @@ class InMemoryResearchStore:
     """Test double for the durable store; append-only by construction."""
 
     registrations: dict[str, dict] = field(default_factory=dict)
-    family_trials: dict[str, int] = field(default_factory=dict)
-    registration_trials: dict[str, int] = field(default_factory=dict)
+    family_trials_by_family: dict[str, int] = field(default_factory=dict)
+    registration_trials_by_registration: dict[str, int] = field(default_factory=dict)
     confirmations: dict[str, int] = field(default_factory=dict)
     verdicts: dict[str, dict] = field(default_factory=dict)
 
     def add_registration(self, registration: dict) -> None:
         self.registrations[registration["registration_id"]] = registration
-        self.registration_trials.setdefault(registration["registration_id"], 0)
-        self.family_trials.setdefault(registration["family"], 0)
+        self.registration_trials_by_registration.setdefault(
+            registration["registration_id"], 0
+        )
+        self.family_trials_by_family.setdefault(registration["family"], 0)
+
+    def get_registration(self, registration_id: str) -> dict | None:
+        return self.registrations.get(registration_id)
 
     def add_trial(self, registration: dict) -> int:
         family = registration["family"]
-        self.family_trials[family] = self.family_trials.get(family, 0) + 1
+        self.family_trials_by_family[family] = (
+            self.family_trials_by_family.get(family, 0) + 1
+        )
         key = registration["registration_id"]
-        self.registration_trials[key] = self.registration_trials.get(key, 0) + 1
-        return self.family_trials[family]
+        self.registration_trials_by_registration[key] = (
+            self.registration_trials_by_registration.get(key, 0) + 1
+        )
+        return self.family_trials_by_family[family]
 
     def add_confirmation(self, registration: dict) -> int:
         family = registration["family"]
         self.confirmations[family] = self.confirmations.get(family, 0) + 1
         return self.confirmations[family]
+
+    def family_trials(self, family: str) -> int:
+        return self.family_trials_by_family.get(family, 0)
+
+    def registration_trials(self, registration_id: str) -> int:
+        return self.registration_trials_by_registration.get(registration_id, 0)
+
+    def family_confirmations(self, family: str) -> int:
+        return self.confirmations.get(family, 0)
 
     def add_verdict(self, verdict: dict) -> str:
         digest = verdict_hash(verdict)
@@ -85,7 +103,7 @@ class ResearchPipeline:
 
     def register(self, registration: dict) -> str:
         validated = validate_registration(registration)
-        existing = self.store.registrations.get(validated["registration_id"])
+        existing = self.store.get_registration(validated["registration_id"])
         if existing is not None:
             if registration_hash(existing) != registration_hash(validated):
                 raise ResearchError(
@@ -96,7 +114,7 @@ class ResearchPipeline:
         return registration_hash(validated)
 
     def _registration(self, registration_id: str) -> dict:
-        registration = self.store.registrations.get(registration_id)
+        registration = self.store.get_registration(registration_id)
         if registration is None:
             raise ResearchError(f"unknown registration {registration_id!r}")
         return registration
@@ -127,13 +145,13 @@ class ResearchPipeline:
         """Return the adjusted threshold, or refuse when the budget is spent."""
         registration = self._registration(registration_id)
         family = registration["family"]
-        used = self.store.confirmations.get(family, 0)
+        used = self.store.family_confirmations(family)
         if used >= registration["max_confirmations"]:
             raise ResearchError(
                 f"confirmation budget exhausted for family {family!r}: {used} "
                 f">= max_confirmations={registration['max_confirmations']}"
             )
-        family_trials = max(1, self.store.family_trials.get(family, 0))
+        family_trials = max(1, self.store.family_trials(family))
         return {
             "family": family,
             "confirmations_used": used,
@@ -241,11 +259,9 @@ class ResearchPipeline:
             "spec_hash": spec_hash,
             "dataset_id": dataset_id,
             "code_version": code_version,
-            "family_trials": max(1, self.store.family_trials.get(family, 0)),
-            "registration_trials": self.store.registration_trials.get(
-                registration_id, 0
-            ),
-            "confirmations": self.store.confirmations.get(family, 0),
+            "family_trials": max(1, self.store.family_trials(family)),
+            "registration_trials": self.store.registration_trials(registration_id),
+            "confirmations": self.store.family_confirmations(family),
             "cutoff": {
                 "train_cutoff": registration["train_cutoff"],
                 "label_horizon": registration["label_horizon"],

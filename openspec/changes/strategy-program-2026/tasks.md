@@ -94,7 +94,9 @@ W5 的数据侧（需数据授权）与运维侧（需写库/开窗授权）。�
 
 - [x] P2.1 预注册 schema（假设/假设族/数据/程序/成功判据/失效判据/试验上限/确认集切片）与账本存储
       —— `shared/caifubao_contracts/strategy_research.py` + `strategy_engine/research_pipeline.py`（注入式 store，内存实现用于测试；
-      Mongo 适配器待授权后接）
+      `research_store.MongoResearchStore` 已落地并单测（append-only、内容寻址、族级计数）；
+      已在 research 库实测写权限：insert / read-back / delete / drop 均通过且零残留
+      （该凭据**不能建临时库**，故冒烟在授权库内自清理完成）
 - [x] P2.2 试验计数按**假设族**累计，新 registration 继承族内累计数；registration 级计数单独保留
       —— 换 registration 重置预算已被测试拦下（`test_trials_accumulate_per_family_across_registrations`）
 - [ ] P2.3 接入既有 Bonferroni/多重检验工具，输出按族计数调整后的阈值
