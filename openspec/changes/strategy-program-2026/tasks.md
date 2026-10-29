@@ -124,6 +124,11 @@ W5 的数据侧（需数据授权）与运维侧（需写库/开窗授权）。�
       波动目标与回撤预算仍待（需要一个真实消费它们的风险预算执行器）
 - [ ] P3.2 数据准备：宽基 ETF + 国债 + 商品类 ETF 的行情与复权完整性与 PIT 校验
 - [ ] P3.3 回测：波动目标 + 带区间再平衡，费用按 ETF 口径（免印花税）
+      —— **带宽 × cadence 已实测**（`datahub/scripts/etf_sleeve_band_scan.py`，3,220 个共同交易日）：
+      年化摩擦全部在 0.009%–0.033%（ETF 往返 0.252%，免印花税），因此带宽应按跟踪精度选而非省成本；
+      证据建议 band 0.02 / cadence 5（摩擦 0.033%、平均偏离 1.27%）。记录见
+      `docs/autoresearch/runs/etf-sleeve/w3-etf-band-cadence-scan-2026-10-29.md`。
+      收益与波动目标执行器仍待做
 - [ ] P3.4 组合级降险规则实现（触发/削减步长/最大削减/恢复条件）
 - [x] P3.5 失效判据评估器：滚动超额 vs 基准 + 最大回撤，按复核节奏评估
       —— `strategy_benchmark.evaluate_kill_criteria`：历史不足即 `insufficient_evidence`，越界即 `breach` + 退役建议
