@@ -8,7 +8,7 @@ confirmed stage may conclude while only a forward window may promote.
 """
 
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -56,6 +56,21 @@ def _registration(**overrides):
     return base
 
 
+SHA = "a" * 64
+DATASET = "snapshot-2026-10"
+
+
+def _sessions(*, end="2026-09-01", count=60, skip=()):
+    """Business days before ``end``; enough to place the 21-session cutoff."""
+    day = date.fromisoformat(end)
+    out = []
+    while len(out) < count:
+        day -= timedelta(days=1)
+        if day.weekday() < 5 and day.isoformat() not in skip:
+            out.append(day.isoformat())
+    return sorted(out)
+
+
 def _pipeline(**kwargs):
     return ResearchPipeline(store=new_store(), **kwargs)
 
@@ -65,8 +80,8 @@ def _verdict(pipeline, **overrides):
         "registration_id": "reg-flip-width-2026q4",
         "stage": "confirmation",
         "outcome": OUTCOME_CONCLUSION,
-        "spec_hash": "a" * 64,
-        "dataset_id": "snapshot-2026-10",
+        "spec_hash": SHA,
+        "dataset_id": DATASET,
         "code_version": "b" * 40,
     }
     args.update(overrides)
@@ -139,16 +154,17 @@ def test_unknown_registration_field_is_rejected():
 
 def test_registration_is_frozen_after_the_first_evaluation():
     pipeline = _pipeline()
-    pipeline.register(_registration())
+    pipeline.register(_registration(), trading_days=_sessions())
     pipeline.record_exploration_trial("reg-flip-width-2026q4", "cfg-1")
     with pytest.raises(ResearchError, match="criteria are frozen"):
         pipeline.register(
-            _registration(success_criteria={"min_excess_per_period": 0.01})
+            _registration(success_criteria={"min_excess_per_period": 0.01}),
+            trading_days=_sessions(),
         )
     # Re-registering the identical content is idempotent.
-    assert pipeline.register(_registration()) == registration_hash(
-        validate_registration(_registration())
-    )
+    assert pipeline.register(
+        _registration(), trading_days=_sessions()
+    ) == registration_hash(validate_registration(_registration()))
 
 
 # --------------------------------------------------------------------------
@@ -158,12 +174,15 @@ def test_registration_is_frozen_after_the_first_evaluation():
 
 def test_trials_accumulate_per_family_across_registrations():
     pipeline = _pipeline()
-    pipeline.register(_registration())
+    pipeline.register(_registration(), trading_days=_sessions())
     pipeline.record_exploration_trial("reg-flip-width-2026q4", "cfg-1")
     pipeline.record_exploration_trial("reg-flip-width-2026q4", "cfg-2")
 
     # A new identifier for the same hypothesis must inherit the family count.
-    pipeline.register(_registration(registration_id="reg-flip-width-2026q4-b"))
+    pipeline.register(
+        _registration(registration_id="reg-flip-width-2026q4-b"),
+        trading_days=_sessions(),
+    )
     pipeline.record_exploration_trial("reg-flip-width-2026q4-b", "cfg-3")
     gate = pipeline.confirmation_gate("reg-flip-width-2026q4-b")
     assert gate["family_trials"] == 3
@@ -172,7 +191,7 @@ def test_trials_accumulate_per_family_across_registrations():
 
 def test_trial_budget_is_enforced():
     pipeline = _pipeline()
-    pipeline.register(_registration(max_trials=2))
+    pipeline.register(_registration(max_trials=2), trading_days=_sessions())
     pipeline.record_exploration_trial("reg-flip-width-2026q4", "cfg-1")
     pipeline.record_exploration_trial("reg-flip-width-2026q4", "cfg-2")
     with pytest.raises(ResearchError, match="trial budget exhausted"):
@@ -193,7 +212,7 @@ def test_bonferroni_adjustment():
 
 def test_exploration_cannot_touch_the_confirmation_slice():
     pipeline = _pipeline()
-    pipeline.register(_registration())
+    pipeline.register(_registration(), trading_days=_sessions())
     pipeline.assert_exploration_range(
         "reg-flip-width-2026q4", "2026-01-01", "2026-08-31"
     )
@@ -205,11 +224,17 @@ def test_exploration_cannot_touch_the_confirmation_slice():
 
 def test_confirmation_budget_is_per_family():
     pipeline = _pipeline()
-    pipeline.register(_registration(max_confirmations=2))
-    pipeline.record_confirmation("reg-flip-width-2026q4")
-    pipeline.record_confirmation("reg-flip-width-2026q4")
+    pipeline.register(_registration(max_confirmations=2), trading_days=_sessions())
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
     with pytest.raises(ResearchError, match="confirmation budget exhausted"):
-        pipeline.record_confirmation("reg-flip-width-2026q4")
+        pipeline.record_confirmation(
+            "reg-flip-width-2026q4", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+        )
 
 
 # --------------------------------------------------------------------------
@@ -219,15 +244,17 @@ def test_confirmation_budget_is_per_family():
 
 def test_exploration_cannot_conclude():
     pipeline = _pipeline()
-    pipeline.register(_registration())
+    pipeline.register(_registration(), trading_days=_sessions())
     with pytest.raises(ResearchError, match="cannot report"):
         _verdict(pipeline, stage="exploration")
 
 
 def test_confirmation_can_conclude_but_not_promote():
     pipeline = _pipeline()
-    pipeline.register(_registration())
-    pipeline.record_confirmation("reg-flip-width-2026q4")
+    pipeline.register(_registration(), trading_days=_sessions())
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
     concluded = _verdict(pipeline, stage="confirmation")
     assert concluded["outcome"] == OUTCOME_CONCLUSION
     # With both operational gates satisfied the contract still refuses: only a
@@ -243,8 +270,10 @@ def test_confirmation_can_conclude_but_not_promote():
 
 def test_forward_stage_can_promote_only_with_passed_gates():
     pipeline = _pipeline()
-    pipeline.register(_registration())
-    pipeline.record_confirmation("reg-flip-width-2026q4")
+    pipeline.register(_registration(), trading_days=_sessions())
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
     with pytest.raises(ResearchError, match="structural gate"):
         _verdict(pipeline, stage="forward", outcome=OUTCOME_PROMOTION_CANDIDATE)
     promoted = _verdict(
@@ -258,9 +287,11 @@ def test_forward_stage_can_promote_only_with_passed_gates():
 
 def test_verdict_records_counts_and_cutoff():
     pipeline = _pipeline()
-    pipeline.register(_registration())
+    pipeline.register(_registration(), trading_days=_sessions())
     pipeline.record_exploration_trial("reg-flip-width-2026q4", "cfg-1")
-    pipeline.record_confirmation("reg-flip-width-2026q4")
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
     verdict = _verdict(pipeline, stage="confirmation")
     assert verdict["family_trials"] == 1
     assert verdict["confirmations"] == 1
@@ -273,8 +304,10 @@ def test_verdict_records_counts_and_cutoff():
 
 def test_verdict_is_content_addressed_and_immutable():
     pipeline = _pipeline()
-    pipeline.register(_registration())
-    pipeline.record_confirmation("reg-flip-width-2026q4")
+    pipeline.register(_registration(), trading_days=_sessions())
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
     first = _verdict(pipeline, stage="confirmation")
     digest = verdict_hash(first)
     assert pipeline.store.verdicts[digest] == first
@@ -289,16 +322,20 @@ def test_verdict_is_content_addressed_and_immutable():
 
 def test_verdict_requires_provenance():
     pipeline = _pipeline()
-    pipeline.register(_registration())
-    pipeline.record_confirmation("reg-flip-width-2026q4")
+    pipeline.register(_registration(), trading_days=_sessions())
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
     with pytest.raises(ValueError, match="dataset_id"):
         _verdict(pipeline, stage="confirmation", dataset_id="")
 
 
 def test_verdict_schema_is_pinned():
     pipeline = _pipeline()
-    pipeline.register(_registration())
-    pipeline.record_confirmation("reg-flip-width-2026q4")
+    pipeline.register(_registration(), trading_days=_sessions())
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
     verdict = _verdict(pipeline, stage="confirmation")
     assert verdict["schema"] == SCHEMA_VERDICT
     assert verdict["registration_id"] == "reg-flip-width-2026q4"
@@ -306,14 +343,14 @@ def test_verdict_schema_is_pinned():
 
 def test_infeasible_verdict_is_terminal_and_allowed_early():
     pipeline = _pipeline()
-    pipeline.register(_registration())
+    pipeline.register(_registration(), trading_days=_sessions())
     verdict = _verdict(pipeline, stage="feasibility", outcome=OUTCOME_INFEASIBLE)
     assert verdict["outcome"] == OUTCOME_INFEASIBLE
 
 
 def test_exploratory_outcome_may_not_claim_a_later_stage():
     pipeline = _pipeline()
-    pipeline.register(_registration())
+    pipeline.register(_registration(), trading_days=_sessions())
     with pytest.raises(ResearchError, match="may not claim a later stage"):
         _verdict(pipeline, stage="confirmation", outcome=OUTCOME_EXPLORATORY)
 
@@ -340,4 +377,146 @@ def test_unknown_stage_is_rejected_by_the_contract():
                 },
                 "created_at": date(2026, 10, 29).isoformat(),
             }
+        )
+
+
+# --------------------------------------------------------------------------
+# the two bypasses a review found: a missing calendar, and a bare counter
+# --------------------------------------------------------------------------
+
+
+def test_registration_requires_the_exchange_calendar():
+    """Business days treat a holiday block as sessions; registering must not."""
+    pipeline = _pipeline()
+    with pytest.raises(ResearchError, match="needs the exchange calendar"):
+        pipeline.register(_registration())
+    # An empty calendar is the same omission.
+    with pytest.raises(ResearchError, match="needs the exchange calendar"):
+        pipeline.register(_registration(), trading_days=[])
+
+
+def test_a_holiday_block_cannot_be_papered_over():
+    """The concrete bypass: the cutoff passes on business days, fails on sessions.
+
+    2026-08-03 is 21 business days before 2026-09-01, so the calendar-less check
+    accepts it. With a week-long holiday inside that stretch the real calendar has
+    only 16 sessions, so the label horizon would have overlapped the confirmation
+    slice.
+    """
+    holiday_week = {
+        "2026-08-10",
+        "2026-08-11",
+        "2026-08-12",
+        "2026-08-13",
+        "2026-08-14",
+    }
+    sessions = _sessions(skip=holiday_week)
+    # Without the calendar the embargo looks satisfied.
+    validate_registration(_registration(train_cutoff="2026-08-03"))
+    with pytest.raises(ValueError, match="overlapping labels"):
+        validate_registration(
+            _registration(train_cutoff="2026-08-03"), trading_days=sessions
+        )
+    pipeline = _pipeline()
+    with pytest.raises(ValueError, match="overlapping labels"):
+        pipeline.register(
+            _registration(train_cutoff="2026-08-03"), trading_days=sessions
+        )
+    # The session-exact cutoff is a week earlier, and it is recorded as proof.
+    cutoff = _sessions(skip=holiday_week)[-21]
+    pipeline.register(_registration(train_cutoff=cutoff), trading_days=sessions)
+    proof = pipeline.store.registration_calendar_proof("reg-flip-width-2026q4")
+    assert proof["latest_allowed_cutoff"] == cutoff
+    assert proof["required_sessions"] == 21
+    assert proof["sessions_before_confirmation_start"] == len(sessions)
+
+
+def test_a_verdict_needs_the_calendar_attestation():
+    """A registration planted without the calendar cannot support a verdict."""
+    pipeline = _pipeline()
+    pipeline.store.add_registration(validate_registration(_registration()))
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4",
+        spec_hash=SHA,
+        dataset_id=DATASET,
+        p_value=0.01,
+    )
+    with pytest.raises(ResearchError, match="no session-exact embargo check"):
+        _verdict(pipeline, stage="confirmation")
+
+
+def test_a_confirmation_counter_is_not_evidence():
+    """Incrementing the counter is not a confirmation of this candidate."""
+    pipeline = _pipeline()
+    pipeline.register(_registration(max_confirmations=3), trading_days=_sessions())
+    with pytest.raises(ResearchError, match="needs a confirmation recorded"):
+        _verdict(pipeline, stage="confirmation")
+
+    # A confirmation for a different candidate does not lend this one its result.
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4",
+        spec_hash="b" * 64,
+        dataset_id=DATASET,
+        p_value=0.01,
+    )
+    with pytest.raises(ResearchError, match="needs a confirmation recorded"):
+        _verdict(pipeline, stage="confirmation")
+
+    # The same candidate, but failing its threshold: enough to conclude, not to
+    # promote. A conclusion may rest on a failed confirmation; a promotion may not.
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4",
+        spec_hash=SHA,
+        dataset_id=DATASET,
+        p_value=0.9,
+    )
+    concluded = _verdict(pipeline, stage="confirmation")
+    assert concluded["outcome"] == OUTCOME_CONCLUSION
+    with pytest.raises(ResearchError, match="failed"):
+        _verdict(
+            pipeline,
+            stage="forward",
+            outcome=OUTCOME_PROMOTION_CANDIDATE,
+            detail={"structure": {"passed": True}, "capacity": {"passed": True}},
+        )
+
+
+def test_a_promotion_needs_a_passed_confirmation_for_that_candidate():
+    pipeline = _pipeline()
+    pipeline.register(_registration(), trading_days=_sessions())
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4",
+        spec_hash=SHA,
+        dataset_id=DATASET,
+        # At one trial the adjusted threshold is 0.05, so 0.02 passes.
+        p_value=0.02,
+    )
+    promoted = _verdict(
+        pipeline,
+        stage="forward",
+        outcome=OUTCOME_PROMOTION_CANDIDATE,
+        detail={"structure": {"passed": True}, "capacity": {"passed": True}},
+    )
+    assert promoted["outcome"] == OUTCOME_PROMOTION_CANDIDATE
+    assert promoted["confirmations"] == 1
+
+
+def test_a_confirmation_measured_against_a_looser_threshold_is_refused():
+    """More trials after the confirmation tighten the bar; the pass goes stale."""
+    pipeline = _pipeline()
+    pipeline.register(_registration(), trading_days=_sessions())
+    pipeline.record_confirmation(
+        "reg-flip-width-2026q4",
+        spec_hash=SHA,
+        dataset_id=DATASET,
+        p_value=0.04,  # passes against 0.05 / 1 trial
+    )
+    for digest in ("cfg-1", "cfg-2", "cfg-3"):
+        pipeline.record_exploration_trial("reg-flip-width-2026q4", digest)
+    with pytest.raises(ResearchError, match="predates later trials"):
+        _verdict(
+            pipeline,
+            stage="forward",
+            outcome=OUTCOME_PROMOTION_CANDIDATE,
+            detail={"structure": {"passed": True}, "capacity": {"passed": True}},
         )

@@ -131,6 +131,40 @@ def _criteria(value, field: str) -> dict:
     return dict(value)
 
 
+def session_cutoff(registration: dict, trading_days) -> dict:
+    """Session-exact causal cutoff for a normalized registration, with its proof.
+
+    Counting business days treats a holiday block as if it traded, which makes
+    the cutoff optimistic exactly where it matters: around a week-long holiday a
+    caller can satisfy the embargo on paper while a session-exact check rejects
+    it. This returns the arithmetic *and* the numbers it was derived from, so a
+    store can record that the embargo was checked against a real calendar instead
+    of against an approximation nobody can audit later.
+
+    Returns ``sessions_before_confirmation_start``, ``required_sessions`` and
+    ``latest_allowed_cutoff``; raises when the calendar does not reach far enough
+    back to place the cutoff at all.
+    """
+    if not trading_days:
+        raise ValueError("session_cutoff needs the exchange calendar")
+    need = registration["label_horizon"] + 1 + registration["embargo_sessions"]
+    confirmation_start = _as_date(
+        registration["confirmation_start"], "confirmation_start"
+    )
+    sessions = sorted(_as_date(day, "trading_days") for day in trading_days)
+    before = [day for day in sessions if day < confirmation_start]
+    if len(before) < need:
+        raise ValueError(
+            f"trading_days must hold at least {need} sessions before the "
+            "confirmation start to place the causal cutoff"
+        )
+    return {
+        "sessions_before_confirmation_start": len(before),
+        "required_sessions": need,
+        "latest_allowed_cutoff": before[-need].isoformat(),
+    }
+
+
 def validate_registration(registration: dict, *, trading_days=None) -> dict:
     """Validate and normalise a registration; fail closed on anything vague."""
     if not isinstance(registration, dict):
@@ -187,19 +221,19 @@ def validate_registration(registration: dict, *, trading_days=None) -> dict:
 
     # The cutoff must clear the label horizon, one session and the embargo so no
     # label used to fit or select reaches into the confirmation window. Sessions
-    # are not calendar days: with the real calendar supplied this is exact,
-    # otherwise it counts business days and treats exchange holidays as if they
-    # were sessions (slightly optimistic, never wildly wrong).
+    # are not calendar days: with the real calendar supplied this is exact.
+    #
+    # The business-day fallback below is deliberately still allowed here, because
+    # this function also canonicalizes a declaration for hashing and for comparing
+    # a stored registration with a re-declaration, and neither has a calendar. It
+    # is NOT a permission to register: `ResearchPipeline.register` requires the
+    # calendar, and the pipeline refuses to certify a verdict for a registration
+    # whose embargo was never checked session-exactly.
     need = result["label_horizon"] + 1 + result["embargo_sessions"]
     if trading_days:
-        sessions = sorted(_as_date(day, "trading_days") for day in trading_days)
-        before = [day for day in sessions if day < confirmation_start]
-        if len(before) < need:
-            raise ValueError(
-                f"trading_days must hold at least {need} sessions before the "
-                "confirmation start to place the causal cutoff"
-            )
-        latest_allowed = before[-need]
+        latest_allowed = date.fromisoformat(
+            session_cutoff(result, trading_days)["latest_allowed_cutoff"]
+        )
     else:
         latest_allowed = business_days_before(confirmation_start, need)
     if train_cutoff > latest_allowed:
@@ -230,6 +264,66 @@ def adjusted_threshold(
     if type(trials) is not int or trials < 1:
         raise ValueError("trials must be a positive integer")
     return float(alpha) / trials
+
+
+#: Fields a confirmation record carries besides store bookkeeping. A confirmation
+#: is evidence, so it names the candidate it was run against and the threshold it
+#: was compared with; a bare counter cannot support a promotion.
+CONFIRMATION_FIELDS = frozenset(
+    {
+        "registration_id",
+        "family",
+        "spec_hash",
+        "dataset_id",
+        "p_value",
+        "threshold",
+        "passed",
+        "recorded_at",
+    }
+)
+
+
+def validate_confirmation(record: dict) -> dict:
+    """Validate one confirmation record and its internal consistency.
+
+    ``passed`` must follow from the record's own numbers: a record cannot claim a
+    pass that its p-value and threshold contradict, which is what makes the field
+    evidence rather than another assertion.
+    """
+    if not isinstance(record, dict):
+        raise ValueError("confirmation must be an object")
+    unknown = set(record) - CONFIRMATION_FIELDS
+    if unknown:
+        raise ValueError(f"unknown confirmation fields: {sorted(unknown)}")
+    result = dict(record)
+    for field in ("registration_id", "family", "spec_hash", "dataset_id"):
+        value = result.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"confirmation.{field} must be a non-empty string")
+    for field in ("p_value", "threshold"):
+        value = result.get(field)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 0.0 <= float(value) <= 1.0
+        ):
+            raise ValueError(f"confirmation.{field} must be a finite value in [0, 1]")
+        result[field] = float(value)
+    threshold = result["threshold"]
+    if threshold <= 0.0:
+        raise ValueError("confirmation.threshold must be a positive significance level")
+    passed = result.get("passed")
+    if not isinstance(passed, bool):
+        raise ValueError("confirmation.passed must be a boolean")
+    if passed != (result["p_value"] <= threshold):
+        raise ValueError(
+            "confirmation.passed contradicts its own numbers: "
+            f"p={result['p_value']} threshold={threshold} passed={passed}"
+        )
+    if result.get("recorded_at") is not None:
+        _as_date(result["recorded_at"], "confirmation.recorded_at")
+    return result
 
 
 def validate_verdict(verdict: dict) -> dict:

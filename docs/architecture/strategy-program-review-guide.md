@@ -65,6 +65,9 @@
 
 **最容易错的地方**：
 - 止损用**记录成本价**，不是当日价；没有 mark 时**不臆造**止损（当日无收盘→该期延后，不拒绝整轮）。
+- 「确认」是**证据**不是计数：记录必须带 `spec_hash`/`dataset_id`/`p_value`/当时阈值/`passed`，
+  `passed` 还要与自身数字自洽；晋级要求该确认**通过**且阈值没被后续试验放松。
+- 注册必须带**交易日历**：数工作日会把节假日当 session，cutoff 在纸面上合规、实际标签重叠。
 - 成本价只能来自**上一轮落库的价格**；缺失时拒绝构建状态，因为"用当日价兜底"会让止损永远不触发。
 - 更隐蔽的一半（评审才发现）：**已有持仓必须沿用开仓价，只有新开仓才记当日收盘**。
   早期实现给每个持仓每天刷新成本价 → 止损退化成"单日跌幅"，而主板 ±10% 限制下
@@ -82,7 +85,7 @@
 | 文件 | 作用 |
 |:---|:---|
 | `shared/caifubao_contracts/strategy_research.py` | 预注册契约；`cutoff` 按**会话**而非自然日；有日历则精确 |
-| `datahub/app/lib/strategy_engine/research_pipeline.py` | 阶段机、族级试验计数、确认上限、**结论需本注册自己的确认** |
+| `datahub/app/lib/strategy_engine/research_pipeline.py` | 阶段机、族级试验计数、确认上限、**结论/晋级需本注册对同一候选的确认证据**（不是计数）；注册必须带交易日历 |
 | `datahub/app/lib/strategy_engine/research_store.py` | Mongo 账本（append-only、内容寻址） |
 | `shared/caifubao_contracts/strategy_structure.py` | 结构与容量门禁；**晋级 verdict 必须携带两项 passed** |
 

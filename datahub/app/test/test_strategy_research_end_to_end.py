@@ -13,9 +13,25 @@ here may be promoted. That is the pipeline behaving correctly, not failing.
 """
 
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+
+SHA = "a" * 64
+DATASET = "snapshot-2026-10"
+
+
+def _sessions(*, end="2026-09-01", count=60):
+    """Business days before ``end``; enough to place the 21-session cutoff."""
+    day = date.fromisoformat(end)
+    out = []
+    while len(out) < count:
+        day -= timedelta(days=1)
+        if day.weekday() < 5:
+            out.append(day.isoformat())
+    return sorted(out)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT / "shared") not in sys.path:
@@ -187,7 +203,7 @@ def test_capacity_requires_a_larger_capital():
 
 def test_w0a_runs_through_the_pipeline_as_an_exploratory_verdict():
     pipeline = ResearchPipeline(store=new_store())
-    pipeline.register(_registration())
+    pipeline.register(_registration(), trading_days=_sessions())
 
     # Twelve widths were swept before the conclusion was read; count them.
     for width in (5, 10, 20, 30, 50, 100, 200, 400, 800):
@@ -228,14 +244,14 @@ def test_w0a_runs_through_the_pipeline_as_an_exploratory_verdict():
 
 def test_an_exploratory_verdict_cannot_be_turned_into_a_promotion():
     pipeline = ResearchPipeline(store=new_store())
-    pipeline.register(_registration())
+    pipeline.register(_registration(), trading_days=_sessions())
     with pytest.raises(ResearchError, match="cannot report"):
         pipeline.verdict(
             "w0a-churn-flip-width",
             stage="exploration",
             outcome=OUTCOME_PROMOTION_CANDIDATE,
-            spec_hash="0" * 64,
-            dataset_id="d",
+            spec_hash=SHA,
+            dataset_id=DATASET,
             code_version="1" * 40,
         )
 
@@ -243,8 +259,10 @@ def test_an_exploratory_verdict_cannot_be_turned_into_a_promotion():
 def test_promotion_is_refused_when_capacity_collapsed():
     """The capacity gate is enforced, not advisory."""
     pipeline = ResearchPipeline(store=new_store())
-    pipeline.register(_registration())
-    pipeline.record_confirmation("w0a-churn-flip-width")
+    pipeline.register(_registration(), trading_days=_sessions())
+    pipeline.record_confirmation(
+        "w0a-churn-flip-width", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
     structural = pipeline.structural_gate(
         "w0a-churn-flip-width",
         holdings=20,
@@ -269,8 +287,8 @@ def test_promotion_is_refused_when_capacity_collapsed():
             "w0a-churn-flip-width",
             stage="forward",
             outcome=OUTCOME_PROMOTION_CANDIDATE,
-            spec_hash="0" * 64,
-            dataset_id="d",
+            spec_hash=SHA,
+            dataset_id=DATASET,
             code_version="1" * 40,
             detail={"structure": structural, "capacity": capacity},
         )
@@ -278,8 +296,10 @@ def test_promotion_is_refused_when_capacity_collapsed():
 
 def test_promotion_passes_when_both_gates_pass():
     pipeline = ResearchPipeline(store=new_store())
-    pipeline.register(_registration())
-    pipeline.record_confirmation("w0a-churn-flip-width")
+    pipeline.register(_registration(), trading_days=_sessions())
+    pipeline.record_confirmation(
+        "w0a-churn-flip-width", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
     structural = pipeline.structural_gate(
         "w0a-churn-flip-width",
         holdings=20,
@@ -302,8 +322,8 @@ def test_promotion_passes_when_both_gates_pass():
         "w0a-churn-flip-width",
         stage="forward",
         outcome=OUTCOME_PROMOTION_CANDIDATE,
-        spec_hash="0" * 64,
-        dataset_id="d",
+        spec_hash=SHA,
+        dataset_id=DATASET,
         code_version="1" * 40,
         detail={"structure": structural, "capacity": capacity},
     )

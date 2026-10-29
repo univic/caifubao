@@ -29,7 +29,9 @@ from caifubao_contracts.strategy_research import (
     SCHEMA_VERDICT,
     adjusted_threshold,
     registration_hash,
+    session_cutoff,
     stage_index,
+    validate_confirmation,
     validate_registration,
     validate_verdict,
     verdict_hash,
@@ -49,14 +51,24 @@ class InMemoryResearchStore:
     registration_trials_by_registration: dict[str, int] = field(default_factory=dict)
     confirmations: dict[str, int] = field(default_factory=dict)
     confirmations_by_registration: dict[str, int] = field(default_factory=dict)
+    confirmation_records: dict[str, list[dict]] = field(default_factory=dict)
+    calendar_proofs: dict[str, dict] = field(default_factory=dict)
     verdicts: dict[str, dict] = field(default_factory=dict)
 
-    def add_registration(self, registration: dict) -> None:
+    def add_registration(
+        self, registration: dict, *, proof: dict | None = None
+    ) -> None:
         self.registrations[registration["registration_id"]] = registration
         self.registration_trials_by_registration.setdefault(
             registration["registration_id"], 0
         )
         self.family_trials_by_family.setdefault(registration["family"], 0)
+        if proof is not None:
+            self.calendar_proofs[registration["registration_id"]] = dict(proof)
+
+    def registration_calendar_proof(self, registration_id: str) -> dict | None:
+        """The session-exact embargo check recorded when this was registered."""
+        return self.calendar_proofs.get(registration_id)
 
     def get_registration(self, registration_id: str) -> dict | None:
         return self.registrations.get(registration_id)
@@ -72,14 +84,23 @@ class InMemoryResearchStore:
         )
         return self.family_trials_by_family[family]
 
-    def add_confirmation(self, registration: dict) -> int:
+    def add_confirmation(self, registration: dict, record: dict) -> int:
         family = registration["family"]
         self.confirmations[family] = self.confirmations.get(family, 0) + 1
         key = registration["registration_id"]
         self.confirmations_by_registration[key] = (
             self.confirmations_by_registration.get(key, 0) + 1
         )
+        self.confirmation_records.setdefault(key, []).append(
+            validate_confirmation(record)
+        )
         return self.confirmations[family]
+
+    def confirmations_for(self, registration_id: str) -> list[dict]:
+        return [
+            dict(record)
+            for record in self.confirmation_records.get(registration_id, [])
+        ]
 
     def family_trials(self, family: str) -> int:
         return self.family_trials_by_family.get(family, 0)
@@ -110,18 +131,36 @@ class ResearchPipeline:
     alpha: float = 0.05
 
     def register(self, registration: dict, *, trading_days=None) -> str:
+        """Freeze a registration; the exchange calendar is required.
+
+        Without it the embargo is checked against business days, which counts a
+        holiday block as if it traded - the one place the causal cutoff can be
+        satisfied on paper while the labels actually overlap. The pipeline refuses
+        to register on the approximation, and records the session-exact check so a
+        later verdict can prove which arithmetic it rests on.
+        """
+        if not trading_days:
+            raise ResearchError(
+                "a registration needs the exchange calendar: counting business "
+                "days treats a holiday block as sessions, so the label embargo "
+                "can be satisfied on paper while the labels overlap"
+            )
         validated = validate_registration(registration, trading_days=trading_days)
+        proof = session_cutoff(validated, trading_days)
         existing = self.store.get_registration(validated["registration_id"])
         if existing is not None:
             # Compare only the declared fields: a persistent store also keeps
-            # bookkeeping (created_at), which validate_registration rejects.
+            # bookkeeping (created_at, the calendar proof), which
+            # validate_registration rejects.
             stored = {key: existing.get(key) for key in validated}
             if registration_hash(stored) != registration_hash(validated):
                 raise ResearchError(
                     "registration criteria are frozen; create a new registration id"
                 )
+            # Idempotent re-registration still fills in a missing attestation.
+            self.store.add_registration(validated, proof=proof)
             return registration_hash(validated)
-        self.store.add_registration(validated)
+        self.store.add_registration(validated, proof=proof)
         return registration_hash(validated)
 
     def _registration(self, registration_id: str) -> dict:
@@ -171,12 +210,99 @@ class ResearchPipeline:
             "adjusted_alpha": adjusted_threshold(self.alpha, family_trials),
         }
 
-    def record_confirmation(self, registration_id: str) -> int:
+    def record_confirmation(
+        self,
+        registration_id: str,
+        *,
+        spec_hash: str,
+        dataset_id: str,
+        p_value: float,
+    ) -> int:
+        """Record one confirmation as evidence, not as a counter increment.
+
+        The record names the candidate it was run against and the adjusted
+        threshold in force at that moment, so a later promotion can show *what*
+        passed instead of how many times someone said it did.
+        """
         gate = self.confirmation_gate(registration_id)
-        used = self.store.add_confirmation(self._registration(registration_id))
+        for name, value in (("spec_hash", spec_hash), ("dataset_id", dataset_id)):
+            if not isinstance(value, str) or not value.strip():
+                raise ResearchError(f"a confirmation needs a non-empty {name}")
+        if (
+            isinstance(p_value, bool)
+            or not isinstance(p_value, (int, float))
+            or not 0.0 <= float(p_value) <= 1.0
+        ):
+            raise ResearchError(
+                f"a confirmation needs a p-value in [0, 1], got {p_value!r}"
+            )
+        registration = self._registration(registration_id)
+        threshold = float(gate["adjusted_alpha"])
+        record = {
+            "registration_id": registration_id,
+            "family": registration["family"],
+            "spec_hash": spec_hash,
+            "dataset_id": dataset_id,
+            "p_value": float(p_value),
+            "threshold": threshold,
+            "passed": float(p_value) <= threshold,
+        }
+        used = self.store.add_confirmation(registration, record)
         if used > gate["confirmations_used"] + 1:
             raise ResearchError("confirmation counter diverged")
         return used
+
+    def _require_confirmation_evidence(
+        self,
+        registration: dict,
+        *,
+        outcome: str,
+        spec_hash: str,
+        dataset_id: str,
+    ) -> None:
+        registration_id = registration["registration_id"]
+        if self.store.registration_calendar_proof(registration_id) is None:
+            raise ResearchError(
+                f"registration {registration_id!r} carries no session-exact embargo "
+                "check; re-register it with the exchange calendar before certifying "
+                "a verdict on it"
+            )
+        records = self.store.confirmations_for(registration_id)
+        matching = [
+            record
+            for record in records
+            if record.get("spec_hash") == spec_hash
+            and record.get("dataset_id") == dataset_id
+        ]
+        if not matching:
+            raise ResearchError(
+                f"{outcome!r} needs a confirmation recorded for {registration_id!r} "
+                "against this candidate (same spec_hash and dataset_id); a count of "
+                "confirmations for the registration or its family is not evidence "
+                "that this candidate passed anything"
+            )
+        if outcome == OUTCOME_PROMOTION_CANDIDATE and not any(
+            record.get("passed") for record in matching
+        ):
+            raise ResearchError(
+                "a promotion candidate needs a confirmation that passed its "
+                "adjusted threshold; every confirmation recorded for this "
+                "candidate failed"
+            )
+        current = adjusted_threshold(
+            self.alpha, max(1, self.store.family_trials(registration["family"]))
+        )
+        # A confirmation obtained before further trials were spent compared
+        # against a looser threshold; promoting on it would launder the extra
+        # multiplicity away.
+        if all(
+            float(record.get("threshold", 1.0)) > current + 1e-12 for record in matching
+        ):
+            raise ResearchError(
+                "the confirmation for this candidate predates later trials: it was "
+                f"measured against {matching[0].get('threshold')} while the current "
+                f"adjusted threshold is {current}; re-confirm before promoting"
+            )
 
     def structural_gate(
         self,
@@ -238,15 +364,17 @@ class ResearchPipeline:
         if outcome in (OUTCOME_CONCLUSION, OUTCOME_PROMOTION_CANDIDATE):
             if stage_index(stage) < stage_index("confirmation"):
                 raise ResearchError(f"stage {stage!r} cannot report {outcome!r}")
-            # The stage label alone is not evidence: a caller could claim
-            # 'forward' without ever confirming. Require a recorded confirmation.
-            # A sibling registration's confirmation must not lend this one its
-            # evidence: the count has to come from this registration.
-            if self.store.registration_confirmations(registration_id) < 1:
-                raise ResearchError(
-                    f"{outcome!r} needs a confirmation recorded for "
-                    f"{registration_id!r}, not one borrowed from its family"
-                )
+            # The stage label alone is not evidence, and neither is a counter: a
+            # caller could increment it without evaluating anything, and a sibling
+            # registration's confirmation must not lend this one its evidence. The
+            # confirmation has to be recorded for this registration, against this
+            # candidate, and (to promote) have passed its adjusted threshold.
+            self._require_confirmation_evidence(
+                registration,
+                outcome=outcome,
+                spec_hash=spec_hash,
+                dataset_id=dataset_id,
+            )
         if outcome in (OUTCOME_EXPLORATORY,) and stage_index(stage) > stage_index(
             "exploration"
         ):

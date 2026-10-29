@@ -62,6 +62,33 @@ def _registration(**overrides):
     return base
 
 
+SHA = "a" * 64
+DATASET = "snapshot-1"
+
+
+def _sessions(*, end="2026-09-01", count=60):
+    """Business days before ``end``; enough to place the 21-session cutoff."""
+    day = dt.date.fromisoformat(end)
+    out = []
+    while len(out) < count:
+        day -= dt.timedelta(days=1)
+        if day.weekday() < 5:
+            out.append(day.isoformat())
+    return sorted(out)
+
+
+def _confirmation():
+    return {
+        "registration_id": "reg-adapter",
+        "family": "adapter-family",
+        "spec_hash": SHA,
+        "dataset_id": DATASET,
+        "p_value": 0.01,
+        "threshold": 0.05,
+        "passed": True,
+    }
+
+
 def _verdict():
     return {
         "schema": "research-verdict-v1",
@@ -99,8 +126,9 @@ def test_research_store_round_trips_a_registration(connection):
     assert stored["hypothesis"].startswith("the adapter round-trips")
     assert store.add_trial(_registration()) == 1
     assert store.family_trials("adapter-family") == 1
-    assert store.add_confirmation(_registration()) == 1
+    assert store.add_confirmation(_registration(), _confirmation()) == 1
     assert store.registration_confirmations("reg-adapter") == 1
+    assert store.confirmations_for("reg-adapter")[0]["spec_hash"] == SHA
 
 
 def test_research_store_refuses_changed_criteria(connection):
@@ -132,9 +160,16 @@ def test_the_pipeline_survives_a_new_process(connection):
     from app.lib.strategy_engine.research_store import MongoResearchStore
 
     first = ResearchPipeline(store=MongoResearchStore(_db()))
-    first.register(_registration())
+    first.register(_registration(), trading_days=_sessions())
     first.record_exploration_trial("reg-adapter", "cfg-1")
-    first.record_confirmation("reg-adapter")
+    first.record_confirmation(
+        "reg-adapter", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
+    # The calendar attestation is durable too, so a later reader can still prove
+    # the embargo was checked session-exactly.
+    assert (
+        MongoResearchStore(_db()).registration_calendar_proof("reg-adapter") is not None
+    )
 
     second = ResearchPipeline(store=MongoResearchStore(_db()))
     assert second.confirmation_gate("reg-adapter")["family_trials"] == 1
@@ -142,8 +177,8 @@ def test_the_pipeline_survives_a_new_process(connection):
         "reg-adapter",
         stage="confirmation",
         outcome="conclusion",
-        spec_hash="a" * 64,
-        dataset_id="snapshot-1",
+        spec_hash=SHA,
+        dataset_id=DATASET,
         code_version="b" * 40,
     )
     assert verdict["family_trials"] == 1
@@ -155,8 +190,8 @@ def test_duplicate_registration_is_idempotent_against_the_durable_store(connecti
     from app.lib.strategy_engine.research_store import MongoResearchStore
 
     pipeline = ResearchPipeline(store=MongoResearchStore(_db()))
-    first = pipeline.register(_registration())
-    second = pipeline.register(_registration())
+    first = pipeline.register(_registration(), trading_days=_sessions())
+    second = pipeline.register(_registration(), trading_days=_sessions())
     assert first == second
 
 

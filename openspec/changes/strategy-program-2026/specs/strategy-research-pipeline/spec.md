@@ -52,6 +52,15 @@ and the cutoff, the label horizon and the embargo MUST be recorded in the verdic
 - **WHEN** the registration is validated
 - **THEN** it SHALL be rejected
 
+#### Scenario: Registration without the exchange calendar is refused
+
+- **GIVEN** a registration submitted without the exchange trading calendar
+- **WHEN** it is registered
+- **THEN** it SHALL be refused, because counting business days treats a holiday block as
+  if it traded and can satisfy the embargo on paper while the labels overlap
+- **AND** a registration whose embargo was never checked session-exactly SHALL NOT support
+  a research conclusion or a promotion candidate
+
 #### Scenario: Exploration cannot leak the confirmation outcome
 
 - **GIVEN** a registration whose confirmation slice is recorded
@@ -110,6 +119,36 @@ candidate. Exploration MUST NOT be able to emit either.
 - **WHEN** the feasibility stage runs
 - **THEN** it SHALL terminate the idea with an explicit infeasibility verdict
 - **AND** later stages SHALL NOT run
+
+### Requirement: Verdicts MUST rest on confirmation evidence, not on a count
+
+A research conclusion SHALL cite at least one confirmation recorded for that registration
+against the same declaration hash and dataset identity, and a promotion candidate SHALL
+additionally require that the cited confirmation passed the multiplicity-adjusted
+threshold in force when it was recorded. A confirmation measured against a threshold that
+later trials have tightened MUST be re-run before it can support a promotion. Incrementing
+a confirmation counter SHALL NOT be accepted as evidence that a candidate passed.
+
+#### Scenario: A confirmation counter is not evidence
+
+- **GIVEN** a registration with a non-zero confirmation count but no confirmation recorded
+  against the candidate being concluded
+- **WHEN** a conclusion or promotion verdict is requested
+- **THEN** it SHALL be refused
+
+#### Scenario: A failed confirmation cannot promote
+
+- **GIVEN** a candidate whose recorded confirmation did not meet its adjusted threshold
+- **WHEN** a promotion-candidate verdict is requested
+- **THEN** it SHALL be refused, while a conclusion recording the negative result SHALL
+  remain allowed
+
+#### Scenario: A stale confirmation cannot promote
+
+- **GIVEN** a confirmation recorded before further trials were spent, so the adjusted
+  threshold is now stricter than the one it was measured against
+- **WHEN** a promotion-candidate verdict is requested
+- **THEN** it SHALL be refused until the candidate is confirmed again
 
 ### Requirement: Structural and capacity gates MUST precede promotion candidacy
 

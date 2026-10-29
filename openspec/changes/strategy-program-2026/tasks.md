@@ -117,7 +117,17 @@ W5 的数据侧（需数据授权）与运维侧（需写库/开窗授权）。�
 - [x] P2.4 确认集数据隔离：探索期不可读确认区间的价格与结果，读取即标记污染
       —— `assert_exploration_range` 越界即 `ResearchError`
 - [x] P2.5 cutoff = 确认起点 − 标签期限 − 1 − embargo；重叠即拒绝，负 embargo 直接拒绝
+      —— **评审修正（P2）**：`register` 此前允许省略交易日历，退回"数工作日"的近似，
+      而节假日会把不交易的日子当成 session → 2026-08-03 这类 cutoff 在业务日口径下合规、
+      在真实日历下只有 16 个 session（标签重叠）。现在 `register` **强制要求日历**，
+      并把 session 精确校验的证明（`required_sessions`/`latest_allowed_cutoff`）落库；
+      没有该证明的 registration 不得支撑结论或晋级 verdict
 - [x] P2.6 确认次数上限按族强制，超限拒绝并留痕
+      —— **评审修正（P2）**：此前 `verdict` 只要求"本 registration 至少有一次确认计数"，
+      而 `record_confirmation()` 不携带任何证据，等于"有人说过确认过"就能晋级。
+      现在确认记录必须写明 `spec_hash`/`dataset_id`/`p_value`/当时的调整阈值/`passed`，
+      且 `passed` 必须与自身数字自洽；结论要求同候选的确认记录存在，
+      晋级要求该记录**通过**且阈值未因后续试验变松（否则要求重跑确认）
 - [ ] P2.7 六阶段 runner：registration → feasibility → exploration → confirmation → structural → forward → verdict
 - [x] P2.8 不可变 `verdict.json`：引用 registration、假设族、spec hash、`dataset_id`、代码 SHA、族级/registration 级试验数、确认次数、cutoff 与标签期限
       —— 内容寻址（`verdict_hash`），篡改即换地址

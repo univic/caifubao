@@ -7,9 +7,25 @@ a scratch namespace by ``scripts/smoke_research_store.py``.
 """
 
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+
+SHA = "a" * 64
+DATASET = "snapshot-2026-10"
+
+
+def _sessions(*, end="2026-09-01", count=60):
+    """Business days before ``end``; enough to place the 21-session cutoff."""
+    day = date.fromisoformat(end)
+    out = []
+    while len(out) < count:
+        day -= timedelta(days=1)
+        if day.weekday() < 5:
+            out.append(day.isoformat())
+    return sorted(out)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT / "shared") not in sys.path:
@@ -42,11 +58,26 @@ class _Collection:
             raise KeyError("duplicate key")
         self.docs.append(dict(document))
 
-    def find_one(self, query):
+    def update_one(self, query, update):
         for document in self.docs:
             if all(document.get(key) == value for key, value in query.items()):
-                return dict(document)
+                document.update(update.get("$set") or {})
+
+    def find_one(self, query, projection=None):
+        for document in self.docs:
+            if all(document.get(key) == value for key, value in query.items()):
+                found = dict(document)
+                if projection:
+                    found = {key: found.get(key) for key in projection if key in found}
+                return found
         return None
+
+    def find(self, query):
+        return [
+            dict(document)
+            for document in self.docs
+            if all(document.get(key) == value for key, value in query.items())
+        ]
 
     def count_documents(self, query):
         return sum(
@@ -144,8 +175,25 @@ def test_trials_count_per_family_across_registrations(store):
 def test_confirmations_count_per_family(store):
     registration = _registration()
     store.add_registration(registration)
-    assert store.add_confirmation(registration) == 1
+    record = {
+        "registration_id": "reg-store-1",
+        "family": "store-family",
+        "spec_hash": SHA,
+        "dataset_id": DATASET,
+        "p_value": 0.01,
+        "threshold": 0.05,
+        "passed": True,
+    }
+    assert store.add_confirmation(registration, record) == 1
     assert store.family_confirmations("store-family") == 1
+    # The evidence is durable, not just the counter.
+    stored = store.confirmations_for("reg-store-1")
+    assert len(stored) == 1
+    assert stored[0]["spec_hash"] == SHA
+    assert stored[0]["passed"] is True
+    assert "_id" not in stored[0]
+    with pytest.raises(ValueError, match="contradicts"):
+        store.add_confirmation(registration, dict(record, p_value=0.9, passed=True))
 
 
 # --------------------------------------------------------------------------
@@ -208,20 +256,22 @@ def test_colliding_address_with_different_content_is_refused(store):
 
 def test_the_pipeline_works_against_the_durable_store(db):
     pipeline = ResearchPipeline(store=MongoResearchStore(db))
-    pipeline.register(_registration())
+    pipeline.register(_registration(), trading_days=_sessions())
     pipeline.record_exploration_trial("reg-store-1", "cfg-1")
     pipeline.record_exploration_trial("reg-store-1", "cfg-2")
     gate = pipeline.confirmation_gate("reg-store-1")
     assert gate["family_trials"] == 2
     assert gate["adjusted_alpha"] == pytest.approx(0.05 / 2)
 
-    pipeline.record_confirmation("reg-store-1")
+    pipeline.record_confirmation(
+        "reg-store-1", spec_hash=SHA, dataset_id=DATASET, p_value=0.01
+    )
     verdict = pipeline.verdict(
         "reg-store-1",
         stage="confirmation",
         outcome=OUTCOME_CONCLUSION,
-        spec_hash="a" * 64,
-        dataset_id="snapshot-1",
+        spec_hash=SHA,
+        dataset_id=DATASET,
         code_version="b" * 40,
     )
     assert verdict["family_trials"] == 2
@@ -234,7 +284,7 @@ def test_the_pipeline_works_against_the_durable_store(db):
 def test_the_durable_store_survives_a_new_pipeline_instance(db):
     """Evidence is only durable if a fresh reader sees the same counts."""
     first = ResearchPipeline(store=MongoResearchStore(db))
-    first.register(_registration())
+    first.register(_registration(), trading_days=_sessions())
     first.record_exploration_trial("reg-store-1", "cfg-1")
 
     second = ResearchPipeline(store=MongoResearchStore(db))

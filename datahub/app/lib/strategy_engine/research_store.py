@@ -23,6 +23,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from caifubao_contracts.strategy_research import (
+    validate_confirmation,
     validate_registration,
     validate_verdict,
     verdict_hash,
@@ -56,25 +57,44 @@ class MongoResearchStore:
         document.pop("_id", None)
         return document
 
-    def add_registration(self, registration: dict) -> None:
+    def add_registration(
+        self, registration: dict, *, proof: dict | None = None
+    ) -> None:
         validated = validate_registration(registration)
         registration_id = validated["registration_id"]
         existing = self.get_registration(registration_id)
         if existing is not None:
             # Compare only the declared fields: the stored record also carries
-            # bookkeeping (created_at), which must not look like a criteria change.
+            # bookkeeping (created_at, the calendar proof), which must not look
+            # like a criteria change.
             if {key: existing.get(key) for key in validated} != validated:
                 raise ResearchStoreError(
                     "registration criteria are frozen; create a new registration id"
                 )
+            if proof is not None and not existing.get("calendar_proof"):
+                # Filling a missing attestation is not a criteria change.
+                self.db[REGISTRATIONS].update_one(
+                    {"_id": registration_id},
+                    {"$set": {"calendar_proof": dict(proof)}},
+                )
             return
         document = dict(validated, _id=registration_id, created_at=_now())
+        if proof is not None:
+            document["calendar_proof"] = dict(proof)
         try:
             self.db[REGISTRATIONS].insert_one(document)
         except Exception as exc:  # duplicate key from a concurrent writer
             raise ResearchStoreError(
                 f"registration {registration_id!r} already exists"
             ) from exc
+
+    def registration_calendar_proof(self, registration_id: str) -> dict | None:
+        document = self.db[REGISTRATIONS].find_one(
+            {"_id": registration_id}, {"calendar_proof": 1}
+        )
+        if document is None:
+            return None
+        return document.get("calendar_proof")
 
     # -- trials ----------------------------------------------------------
     def add_trial(self, registration: dict) -> int:
@@ -95,16 +115,26 @@ class MongoResearchStore:
         return self.db[TRIALS].count_documents({"registration_id": registration_id})
 
     # -- confirmations ---------------------------------------------------
-    def add_confirmation(self, registration: dict) -> int:
+    def add_confirmation(self, registration: dict, record: dict) -> int:
         family = registration["family"]
+        validated = validate_confirmation(record)
         self.db[CONFIRMATIONS].insert_one(
-            {
-                "registration_id": registration["registration_id"],
-                "family": family,
-                "recorded_at": _now(),
-            }
+            dict(
+                validated,
+                registration_id=registration["registration_id"],
+                family=family,
+                recorded_at=_now(),
+            )
         )
         return self.db[CONFIRMATIONS].count_documents({"family": family})
+
+    def confirmations_for(self, registration_id: str) -> list[dict]:
+        documents = self.db[CONFIRMATIONS].find({"registration_id": registration_id})
+        records = []
+        for document in documents:
+            record = {key: value for key, value in document.items() if key != "_id"}
+            records.append(record)
+        return records
 
     def family_confirmations(self, family: str) -> int:
         return self.db[CONFIRMATIONS].count_documents({"family": family})
