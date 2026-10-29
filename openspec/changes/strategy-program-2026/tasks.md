@@ -101,10 +101,14 @@
 - [ ] P2.7 六阶段 runner：registration → feasibility → exploration → confirmation → structural → forward → verdict
 - [x] P2.8 不可变 `verdict.json`：引用 registration、假设族、spec hash、`dataset_id`、代码 SHA、族级/registration 级试验数、确认次数、cutoff 与标签期限
       —— 内容寻址（`verdict_hash`），篡改即换地址
-- [ ] P2.9 结构与容量门禁：分散度/换手/回撤/止损存在性/资金×10 容量测试
+- [x] P2.9 结构与容量门禁：分散度/换手/回撤/止损存在性/资金×10 容量测试
+      —— `strategy_structure.py`：`check_structure`（四项全查，逐项 finding）与 `evaluate_capacity`（保留比例下限）；
+      **晋级 verdict 必须携带两项 passed**，否则 `ResearchError`——门禁不是建议
 - [x] P2.10 探索阶段禁止产出结论与晋级候选的强制校验
       —— 契约层（stage/outcome 矩阵）与 runner 层双重拒绝
-- [ ] P2.11 用一个小样本 idea 端到端跑通并留下 verdict 样例
+- [x] P2.11 用一个小样本 idea 端到端跑通并留下 verdict 样例
+      —— `test_strategy_research_end_to_end.py`：W0-A 的换手重算登记为 idea、累计 12 次试验、
+      过结构门禁、产出 **exploratory** verdict（33 个会话不足以定收益，拒绝晋级）
 
 ## 4. P3 — 稳健半仓（`stable-multi-asset-sleeve`）
 

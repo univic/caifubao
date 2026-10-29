@@ -205,18 +205,28 @@ def test_confirmation_can_conclude_but_not_promote():
     pipeline.register(_registration())
     concluded = _verdict(pipeline, stage="confirmation")
     assert concluded["outcome"] == OUTCOME_CONCLUSION
+    # With both operational gates satisfied the contract still refuses: only a
+    # forward window may promote.
     with pytest.raises(ValueError, match="cannot promote"):
         _verdict(
             pipeline,
             stage="confirmation",
             outcome=OUTCOME_PROMOTION_CANDIDATE,
+            detail={"structure": {"passed": True}, "capacity": {"passed": True}},
         )
 
 
-def test_forward_stage_can_promote():
+def test_forward_stage_can_promote_only_with_passed_gates():
     pipeline = _pipeline()
     pipeline.register(_registration())
-    promoted = _verdict(pipeline, stage="forward", outcome=OUTCOME_PROMOTION_CANDIDATE)
+    with pytest.raises(ResearchError, match="structural gate"):
+        _verdict(pipeline, stage="forward", outcome=OUTCOME_PROMOTION_CANDIDATE)
+    promoted = _verdict(
+        pipeline,
+        stage="forward",
+        outcome=OUTCOME_PROMOTION_CANDIDATE,
+        detail={"structure": {"passed": True}, "capacity": {"passed": True}},
+    )
     assert promoted["outcome"] == OUTCOME_PROMOTION_CANDIDATE
 
 

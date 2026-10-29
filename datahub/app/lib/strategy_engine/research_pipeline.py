@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 
+from caifubao_contracts.strategy_structure import check_structure, evaluate_capacity
 from caifubao_contracts.strategy_research import (
     OUTCOME_CONCLUSION,
     OUTCOME_EXPLORATORY,
@@ -148,6 +149,50 @@ class ResearchPipeline:
             raise ResearchError("confirmation counter diverged")
         return used
 
+    def structural_gate(
+        self,
+        registration_id: str,
+        *,
+        holdings: int,
+        min_holdings: int,
+        annual_turnover: float,
+        max_annual_turnover: float,
+        max_drawdown: float,
+        drawdown_budget: float,
+        has_stop_loss: bool,
+    ) -> dict:
+        """Run the structural gate; a failure blocks any promotion verdict."""
+        self._registration(registration_id)
+        return check_structure(
+            holdings=holdings,
+            min_holdings=min_holdings,
+            annual_turnover=annual_turnover,
+            max_annual_turnover=max_annual_turnover,
+            max_drawdown=max_drawdown,
+            drawdown_budget=drawdown_budget,
+            has_stop_loss=has_stop_loss,
+        )
+
+    def capacity_gate(
+        self,
+        registration_id: str,
+        *,
+        base_capital: float,
+        scaled_capital: float,
+        base_metric: float,
+        scaled_metric: float,
+        min_retained_ratio: float,
+    ) -> dict:
+        """Run the capacity gate at a larger capital."""
+        self._registration(registration_id)
+        return evaluate_capacity(
+            base_capital=base_capital,
+            scaled_capital=scaled_capital,
+            base_metric=base_metric,
+            scaled_metric=scaled_metric,
+            min_retained_ratio=min_retained_ratio,
+        )
+
     def verdict(
         self,
         registration_id: str,
@@ -168,6 +213,21 @@ class ResearchPipeline:
             "exploration"
         ):
             raise ResearchError("an exploratory verdict may not claim a later stage")
+        if outcome == OUTCOME_PROMOTION_CANDIDATE:
+            # Advisory gates are not gates. A promotion verdict must carry a
+            # passed structural check and a passed capacity check, otherwise the
+            # word "promotable" means nothing.
+            detail_block = detail or {}
+            structure = detail_block.get("structure") or {}
+            capacity = detail_block.get("capacity") or {}
+            if not structure.get("passed"):
+                raise ResearchError(
+                    "a promotion candidate needs a passed structural gate"
+                )
+            if not capacity.get("passed"):
+                raise ResearchError(
+                    "a promotion candidate needs a passed capacity gate"
+                )
         if outcome in (OUTCOME_INFEASIBLE, OUTCOME_REJECTED_STRUCTURE):
             pass  # terminal refusals are allowed from any stage they occur at
 
