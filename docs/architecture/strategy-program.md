@@ -320,3 +320,67 @@ P1 延后的复核触发点：出现第一个非规则 provider 的真实需求�
 
 
 M3 之前，**任何「半数资金、稳健中等风险」的对外表述都不成立**。
+
+## 8. 实施状态（2026-10-29，PR #349）
+
+本节记录**实际落地的东西**与原计划的偏差。契约在 `openspec/changes/strategy-program-2026/`，
+任务勾选状态在 `tasks.md`；本节只解释差异。
+
+### 8.1 里程碑
+
+| 里程碑 | 状态 | 依据 |
+|:---|:---|:---|
+| M0 W0 重算基线 | **部分完成** | 换手与摩擦已用生产分数实测（W0-A）；持有期 × 收益、各宽度收益/回撤仍待 |
+| M1 P0 spec + manifest 100% | **完成** | 63 个声明字段，**63 已消费，0 未消费** |
+| M2 研究流水线可用 | **完成** | W0-A 的重算已作为第一个 idea 走完全流程并产出 verdict |
+| M3 稳健袖跑满窗口 | **未开始** | 需运维授权开窗；且稳健袖画像的波动目标尚无消费者 |
+| M4 provider 契约 | **完成** | 三类 provider 统一 schema；记录-重放测试通过 |
+| M5 激进袖首轮回测 | **未开始** | 卡在事件数据源（需授权） |
+
+### 8.2 与原计划的偏差
+
+| 原计划 | 实际 | 原因 |
+|:---|:---|:---|
+| P1 延后到 P3 之后 | **按计划执行**，W4 才做 | 先有第二个家族（W3）检验家族抽象，再有第二个 provider 检验 provider 抽象 |
+| v2 一次性定义全套字段 | **只收有消费者的字段** | v2 的规则是「禁止无消费者字段」。`data`/`identity`/`accounting` 当初没消费者就不进，等 W3 有了 accounting/benchmark 的消费者才加 |
+| `cadence_days` 在 P0 就接线 | **W3 才接线**，且只对 v2 | 给 v1 接线会改变已认证窗口的行为——这正是 P0 要防的事 |
+| 结构门禁阈值等 W0 结果 | 阈值仍由调用方传入 | W0-A 只测出换手与摩擦，没测收益，因此不能推导「最优持仓数」之类阈值 |
+| 计划里 `risk.*` 归 P0.10 | **挪到独立切片**（第 9 轮） | 七个字段 + `sizing.weighting` 需要一整套预算语义，塞进 P0 会让那一片无法评审 |
+| `sample_id` 固定在声明的数据里 | **拆成三层身份** | 声明只声明数据*要求*；快照由 `dataset_id` 钉住，每日运行由 `resolved_inputs` 记录 |
+
+### 8.3 落地清单
+
+| 契约 | 文件 | 消费方 |
+|:---|:---|:---|
+| 声明完备性与消费者门禁 | `strategy_spec.py`、`strategy_spec_consumers.{py,json}` | `scripts/check_strategy_consumers.py` + CI job |
+| 版本分派 | `strategy_spec_semantics.py` | 测试 + v2 校验 |
+| 账户状态 | `strategy_decision_state.py` | `stateful_planner.py` |
+| 出场契约 | `strategy_exit_policy.py` | `selection.py`（`mandatory_exits`） |
+| 配置族语义 | `strategy_allocation.py` | `plan_allocation`；**`cadence_days` 的唯一读点** |
+| 会计与基准 | `strategy_accounting.py`、`strategy_benchmark.py` | v2 校验 + `evaluate_kill_criteria` |
+| 风险预算 | `strategy_risk_budget.py` | v2 链路（`risk.*` 七个字段） |
+| 信号源 | `strategy_provider.py` + `providers.py` | `RuleScoreProvider` / `RecordedProvider` |
+| 研究流水线 | `strategy_research.py` + `research_pipeline.py` | 预注册、族级试验预算、阶段机 |
+| 结构与容量门禁 | `strategy_structure.py` | 晋级 verdict 的强制前置 |
+| 袖与期限 | `strategy_sleeve.py` | v2 可选块 |
+
+### 8.4 仍未完成及其阻塞
+
+| 未完成 | 阻塞类型 | 解除条件 |
+|:---|:---|:---|
+| 事件数据源（业绩预告/龙虎榜/公告） | **数据授权** | 操作者确认可查询的 tushare 接口范围 |
+| 持有期 × 收益重算 | **数据可得性** | 需要更长的生产分数历史（当前 33 个会话） |
+| LLM 真实候选池 | 依赖上一项 | 有一个真实的候选池才有二次筛选的意义 |
+| Mongo 研究账本适配器 | **写库授权** | 操作者授权写入 research 库 |
+| 稳健袖窗口认证 | **开窗授权** | `paper readiness` 无 FAIL + 显式人工授权 |
+| 波动目标执行器 | 设计未定 | 需要一个真正按波动定仓的执行器，不能只声明 |
+
+### 8.5 一个可引用的中间结论
+
+W0-A 用**生产分数**（非重建）测得：`flip_wide_shadow_v1` 在 N=20 的日频重排下年化摩擦为
+**11.4%–16.9%**（出口带 2.0 / 1.0），而不是此前报告声称的 42%。同时换手**不随账本变窄单调
+上升**——N=5（21.3%）低于 N=50（32.9%）与 N=100（36.6%）。这两个结论来自 31 个相邻交易会话，
+不涉及任何收益判断，因此不受「收益未测」的限制；但它们**不是**前瞻证据。
+
+详细方法与限制见
+[`docs/autoresearch/runs/small-book/w0a-book-churn-recompute-2026-10-29.md`](../autoresearch/runs/small-book/w0a-book-churn-recompute-2026-10-29.md)。
