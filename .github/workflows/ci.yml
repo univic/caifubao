@@ -502,7 +502,11 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install OpenSpec
-        run: npm install -g @fission-ai/openspec@1.1.1
+        # --omit=optional: the CLI's optional telemetry dependency
+        # (posthog-node@5.60.0) is currently a 404 in the public registry,
+        # which fails the whole install before validation runs. Validation
+        # does not use it; drop the flag once the tarball is published again.
+        run: npm install -g --omit=optional @fission-ai/openspec@1.1.1
 
       # Validates all active changes under openspec/changes/. The MVP change is
       # archived (openspec/archive/), so this gate is dormant until the next
