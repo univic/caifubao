@@ -60,6 +60,10 @@ W5 的数据侧（需数据授权）与运维侧（需写库/开窗授权）。�
       —— `shared/caifubao_contracts/strategy_risk_budget.py`：`check_budget` 消费全部 7 个 `risk.*` 字段
       （现金下限/回撤/regime 是 stop，持仓数/总暴露/单票上限是 scale，换手超限直接拒绝）；
       `sizing.weighting` 由 `selection` 消费（equal / score），**manifest 未消费字段归零**
+      - **评审修正**：此前 `check_budget` 无生产调用方（manifest 声称已消费，实为 false positive）。
+      现已接入 `jobs/allocation_runner.build_plan`：换手/持仓数/总暴露/单票上限→缩小或拒绝，
+      现金下限→停止；**无法度量的限制（回撤/regime）显式拒绝**而非忽略。同时修两个 bug：
+      `regime` 默认值不可用、NaN 回撤绕过止损（fail-open）
 - [x] P0.11 定义 `DecisionState`（持仓/成本价/hold_count/峰值/现金/未完成订单）并记录 `decision_state_hash`
       —— `shared/caifubao_contracts/strategy_decision_state.py`（校验 + 内容哈希 + `blocked_slots`）；
       在 run 文档中落字段随 v2 runner 接线（P0.16 剩余）

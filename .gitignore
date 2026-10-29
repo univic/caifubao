@@ -53,3 +53,8 @@ tmp-timing-test/
 
 # Research snapshot archives (large, reproducible; keep them out of git)
 datahub/research/**/*.tar.gz
+
+# Local research data dumps (parquet/scratch) are reproducible and large;
+# datahub/research/ itself stays tracked for strategy declarations.
+datahub/research/**/data/
+datahub/research/**/*.parquet

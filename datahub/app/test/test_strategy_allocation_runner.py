@@ -26,10 +26,32 @@ from app.jobs.allocation_runner import (  # noqa: E402
 CODES = ["sh510300", "sh518880", "sh513100", "sh511010"]
 SPEC = {
     "_spec_hash": "a" * 64,
+    "spec_version": "2",
+    "universe": {"market": "CN_A", "as_of": "PIT"},
+    "selection": {
+        "mode": "top_n",
+        "portfolio_size": 4,
+        "exit": {"stop_loss_pct": 0.20},
+    },
+    "sizing": {"weighting": "equal", "cash_reserve_pct": 0},
+    "constraints": {},
+    "rebalance": {"cadence_days": 5},
+    "risk": {},
+    "execution": {},
+    "evidence": {
+        "timing_version": "paper_causal_v1",
+        "policy": "research",
+        "kill_criteria": {
+            "min_excess_per_period": 0.0,
+            "max_drawdown": 0.20,
+            "review_after_sessions": 60,
+        },
+    },
+    "initial_nav": 50000,
     "family": "asset_allocation",
     "allocation": {"assets": {code: 0.25 for code in CODES}, "band_pct": 0.02},
-    "rebalance": {"cadence_days": 5},
-    "selection": {"exit": {"stop_loss_pct": 0.20}},
+    "accounting": {"corporate_actions": "price_only", "mark_price": "close_hfq"},
+    "benchmark": {"kind": "equal_weight_universe"},
 }
 DAYS = ["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"]
 QUOTES = {code: 10.0 for code in CODES}
@@ -191,3 +213,97 @@ def test_plan_carries_the_strategy_and_spec_identity():
     assert plan["spec_hash"] == "a" * 64
     assert plan["status"] == "PLANNED"
     assert dt.date.fromisoformat(plan["date"]) == dt.date(2026, 10, 29)
+
+
+# --------------------------------------------------------------------------
+# risk budget and the job entry point
+# --------------------------------------------------------------------------
+
+
+def test_a_configured_drawdown_stop_is_refused_not_ignored():
+    """This runner has no high-water mark, so it must refuse the declaration."""
+    spec = dict(SPEC, risk={"max_drawdown_pct": 0.2})
+    with pytest.raises(AllocationRunError, match="high-water mark"):
+        build_plan(
+            spec=spec,
+            strategy_id="sleeve-stable",
+            session_date="2026-10-29",
+            quotes=dict(QUOTES),
+            trading_days=DAYS,
+            previous=None,
+        )
+
+
+def test_a_regime_policy_is_refused_without_a_classifier():
+    spec = dict(SPEC, risk={"regime_policy": "bear_reduce_only"})
+    with pytest.raises(AllocationRunError, match="regime classifier"):
+        build_plan(
+            spec=spec,
+            strategy_id="sleeve-stable",
+            session_date="2026-10-29",
+            quotes=dict(QUOTES),
+            trading_days=DAYS,
+            previous=None,
+        )
+
+
+def test_a_turnover_breach_refuses_the_plan():
+    spec = dict(SPEC, risk={"max_turnover_pct": 0.01})
+    # A single-asset book being spread across four names trades 75% of the
+    # sleeve, far above a 1% budget.
+    previous = {
+        "date": "2026-10-20",
+        "targets": {"sh510300": 1.0},
+        "reference_prices": dict(QUOTES),
+    }
+    with pytest.raises(AllocationRunError, match="refused the plan"):
+        build_plan(
+            spec=spec,
+            strategy_id="sleeve-stable",
+            session_date="2026-10-29",
+            quotes=dict(QUOTES),
+            trading_days=DAYS,
+            previous=previous,
+        )
+
+
+def test_the_risk_verdict_is_recorded_on_the_plan():
+    spec = dict(SPEC, risk={"max_positions": 2})
+    plan = build_plan(
+        spec=spec,
+        strategy_id="sleeve-stable",
+        session_date="2026-10-29",
+        quotes=dict(QUOTES),
+        trading_days=DAYS,
+        previous=None,
+    )
+    assert plan["risk_verdict"]["admissible"] is True
+    # Four assets against a two-position cap scales the book down, not up.
+    assert plan["risk_verdict"]["scale"] == pytest.approx(0.5)
+    assert sum(plan["targets"].values()) == pytest.approx(0.5)
+    assert plan["cash_weight"] == pytest.approx(0.5)
+
+
+def test_the_job_has_a_real_entry_point():
+    from app.jobs import allocation_runner
+
+    assert callable(allocation_runner.main)
+    # Without a subcommand argparse exits non-zero instead of returning silently.
+    with pytest.raises(SystemExit):
+        allocation_runner.main([])
+
+
+def test_a_refused_run_exits_non_zero(tmp_path):
+    from app.jobs import allocation_runner
+
+    spec = dict(SPEC)
+    spec.pop("_spec_hash")
+    spec["risk"] = {"max_drawdown_pct": 0.2}
+    path = tmp_path / "declaration.json"
+    import json as _json
+
+    path.write_text(_json.dumps(spec), encoding="utf-8")
+    code = allocation_runner.main(
+        ["run", "--spec", str(path), "--strategy-id", "sleeve-stable", "--dry-run"]
+    )
+    assert code == 2

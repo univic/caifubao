@@ -90,7 +90,7 @@ def check_budget(
     turnover_pct: float,
     drawdown_pct: float,
     largest_weight_pct: float,
-    regime: str = REGIME_NONE,
+    regime: str = SIDEWAYS,
 ) -> dict:
     """Return whether the book is admissible, and how much to scale it down.
 
@@ -105,6 +105,7 @@ def check_budget(
         (cash_pct, "cash_pct"),
         (turnover_pct, "turnover_pct"),
         (largest_weight_pct, "largest_weight_pct"),
+        (abs(float(drawdown_pct)), "drawdown_pct"),
     ):
         if (
             isinstance(value, bool)

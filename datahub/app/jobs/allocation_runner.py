@@ -32,6 +32,8 @@ from caifubao_contracts.strategy_allocation import (
     validate_allocation,
 )
 from caifubao_contracts.strategy_exit_policy import validate_exit_policy
+from caifubao_contracts.strategy_risk_budget import REGIME_NONE, SIDEWAYS, check_budget
+from caifubao_contracts.strategy_spec import spec_hash, validate_strategy_spec
 
 BEIJING = ZoneInfo("Asia/Shanghai")
 
@@ -115,6 +117,7 @@ def build_plan(
         )
         for code in targets
     }
+    plan = apply_risk_budget(spec, plan, previous_targets)
     return {
         "strategy_id": strategy_id,
         "spec_hash": spec.get("_spec_hash"),
@@ -124,8 +127,72 @@ def build_plan(
         "cash_weight": plan["cash_weight"],
         "reference_prices": reference,
         "rebalance_session": plan["rebalance_session"],
+        "risk_verdict": plan.get("risk_verdict"),
         "status": "PLANNED",
     }
+
+
+def assert_risk_evaluable(risk: dict) -> None:
+    """Refuse limits this runner cannot measure, before any I/O happens.
+
+    Two ``risk`` fields need inputs the sleeve does not have yet: a drawdown stop
+    needs a high-water mark, and a regime policy needs a classifier. Declaring one
+    and then ignoring it is the defect this program exists to remove, so the job
+    stops here instead.
+    """
+    if risk.get("max_drawdown_pct") is not None:
+        raise AllocationRunError(
+            "risk.max_drawdown_pct is declared but this runner has no high-water "
+            "mark to measure drawdown against; refusing rather than ignoring it"
+        )
+    if risk.get("regime_policy", REGIME_NONE) != REGIME_NONE:
+        raise AllocationRunError(
+            f"risk.regime_policy={risk['regime_policy']!r} needs a regime classifier "
+            "this runner does not have; refusing rather than assuming a regime"
+        )
+
+
+def apply_risk_budget(spec: dict, plan: dict, previous_weights: dict) -> dict:
+    """Refuse or scale the plan against the declared ``risk`` budget.
+
+    Two limits cannot be evaluated by this runner yet — a drawdown stop needs a
+    high-water mark, and a regime policy needs a classifier. Both are *refused*
+    when configured rather than silently ignored: a limit that is declared but
+    not measured is the defect this program exists to remove.
+    """
+    risk = spec.get("risk") or {}
+    assert_risk_evaluable(risk)
+    weights = plan["targets"]
+
+    codes = set(weights) | set(previous_weights)
+    turnover = 0.5 * sum(
+        abs(float(weights.get(code, 0.0)) - float(previous_weights.get(code, 0.0)))
+        for code in codes
+    )
+    verdict = check_budget(
+        risk=risk,
+        position_count=sum(1 for weight in weights.values() if weight > 0),
+        gross_exposure_pct=sum(weights.values()),
+        cash_pct=plan["cash_weight"],
+        turnover_pct=turnover,
+        drawdown_pct=0.0,  # no drawdown stop is configured; guarded above
+        largest_weight_pct=max(weights.values()) if weights else 0.0,
+        regime=SIDEWAYS,
+    )
+    if not verdict["admissible"]:
+        raise AllocationRunError(
+            "risk budget refused the plan: "
+            f"stops={verdict['stops']} violations={verdict['violations']}"
+        )
+    if verdict["scale"] < 1.0:
+        scaled = {code: weight * verdict["scale"] for code, weight in weights.items()}
+        plan = dict(
+            plan,
+            targets=scaled,
+            cash_weight=max(0.0, 1.0 - sum(scaled.values())),
+        )
+    plan["risk_verdict"] = verdict
+    return plan
 
 
 def load_quotes(codes, session) -> dict[str, float]:
@@ -150,6 +217,18 @@ def trading_days_for(code: str) -> list[str]:
     return sorted(
         str(value)[:10] for value in EtfDailyQuote.objects(code=code).distinct("date")
     )
+
+
+def session_calendar(codes) -> list[str]:
+    """Sessions where *every* declared asset has a quote.
+
+    Deriving the calendar from one asset would let a gap in that one asset shift
+    the execution date for the whole plan.
+    """
+    per_code = [set(trading_days_for(code)) for code in codes]
+    if not per_code:
+        return []
+    return sorted(set.intersection(*per_code))
 
 
 def previous_plan(strategy_id: str, spec_hash: str, before) -> dict | None:
@@ -186,9 +265,16 @@ def run(
     from app.model.strategy import AllocationPlan
 
     day = _session_date(session_date)
+    spec = dict(spec)
+    spec["_spec_hash"] = spec_hash(
+        validate_strategy_spec(
+            {key: value for key, value in spec.items() if key != "_spec_hash"}
+        )
+    )
+    assert_risk_evaluable(spec.get("risk") or {})
     codes = list(validate_allocation(spec["allocation"])["assets"])
     quotes = load_quotes(codes, day)
-    days = trading_days_for(codes[0])
+    days = session_calendar(codes)
     previous = previous_plan(strategy_id, spec["_spec_hash"], day)
     plan = build_plan(
         spec=spec,
@@ -227,3 +313,110 @@ def run(
     record.save()
     plan["saved"] = True
     return plan
+
+
+def load_declaration(path) -> dict:
+    """Read and validate a v2 declaration from JSON, computing its identity."""
+    import json
+    from pathlib import Path
+
+    declaration = json.loads(Path(path).read_text(encoding="utf-8"))
+    declaration.pop("_spec_hash", None)
+    try:
+        validated = validate_strategy_spec(declaration)
+    except (ValueError, TypeError) as exc:
+        raise AllocationRunError(
+            f"declaration {path} is not admissible: {exc}"
+        ) from exc
+    validated["_spec_hash"] = spec_hash(validated)
+    return validated
+
+
+def main(argv=None) -> int:
+    """Entry point: one plan, or a loud refusal.
+
+    Exits non-zero on every failure. A job that exits 0 without writing a plan
+    would let a scheduler report success while the evidence clock accrues gaps.
+    """
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(
+        description="Daily allocation plan (research only)"
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    run_parser = sub.add_parser("run", help="Build and persist one plan")
+    run_parser.add_argument("--spec", required=True, help="v2 declaration JSON path")
+    run_parser.add_argument("--strategy-id", required=True)
+    run_parser.add_argument("--date", default=None, help="decision session (ISO date)")
+    run_parser.add_argument("--dry-run", action="store_true")
+    progress_parser = sub.add_parser("progress", help="Report the forward window")
+    progress_parser.add_argument(
+        "--spec", required=True, help="v2 declaration JSON path"
+    )
+    progress_parser.add_argument("--strategy-id", required=True)
+    args = parser.parse_args(argv)
+
+    if args.command == "progress":
+        from app.lib.strategy_engine.allocation_window import (
+            AllocationForwardWindow,
+            allocation_forward_progress,
+        )
+
+        window = AllocationForwardWindow.objects(
+            strategy_id=args.strategy_id, status="ACTIVE"
+        ).first()
+        if window is None:
+            print(
+                json.dumps({"error": "no ACTIVE allocation window"}, ensure_ascii=False)
+            )
+            return 1
+        from app.model.strategy import AllocationPlan
+
+        try:
+            declaration = load_declaration(args.spec)
+        except AllocationRunError as exc:
+            print(
+                json.dumps(
+                    {"status": "REFUSED", "reason": str(exc)}, ensure_ascii=False
+                )
+            )
+            return 2
+        decided = [
+            str(value)[:10]
+            for value in AllocationPlan.objects(
+                strategy_id=args.strategy_id,
+                spec_hash=window.spec_hash,
+                status="PLANNED",
+            ).distinct("date")
+        ]
+        report = allocation_forward_progress(
+            window={
+                "strategy_id": window.strategy_id,
+                "start_date": str(window.start_date)[:10],
+                "status": window.status,
+                "closed_at": str(window.closed_at)[:10] if window.closed_at else None,
+            },
+            decided_dates=decided,
+            trading_days=session_calendar(list(declaration["allocation"]["assets"])),
+        )
+        print(json.dumps(report, ensure_ascii=False))
+        return 0
+
+    try:
+        spec = load_declaration(args.spec)
+        result = run(
+            spec=spec,
+            strategy_id=args.strategy_id,
+            session_date=args.date,
+            dry_run=args.dry_run,
+        )
+    except AllocationRunError as exc:
+        print(json.dumps({"status": "REFUSED", "reason": str(exc)}, ensure_ascii=False))
+        return 2
+    print(json.dumps(result, ensure_ascii=False, default=str))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
