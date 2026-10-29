@@ -25,6 +25,7 @@
 | 文档 | 作用 |
 |:---|:---|
 | [`architecture/environment-model.md`](./architecture/environment-model.md) | **权威环境模型**：domain（development/data/research/trading）× stage（dev/stable/paper/production）两轴、数据所有权、Data → Research → Trading 制品流、dev 快照导入边界、FQ/HFQ 职责、`prod` 未启用声明。其他文档与其冲突时以此为准 |
+| [`architecture/strategy-program.md`](./architecture/strategy-program.md) | **策略方案 P0–P4（提案）**：统一策略声明、跨规则/ML/LLM 信号源、研究流水线、ETF 稳健半仓与激进袖；含一致性契约、成本算术与诚实边界 |
 
 ## 操作 Runbook — `docs/operations/`
 
