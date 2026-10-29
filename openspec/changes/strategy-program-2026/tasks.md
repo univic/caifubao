@@ -35,13 +35,15 @@
 - [x] P0.3 CI 校验脚本 `scripts/check_strategy_consumers.py` + `Strategy Contract Check` job：双向一致、消费者文件必须存在且提及该字段、未消费必须指明 owner（13 个回归测试）
 - [ ] P0.4 定义 `spec_version: "2"` 字段集（identity / data 要求 / signal 引用 / family / accounting / benchmark / evidence.kill_criteria）
 - [ ] P0.5 校验器实现 v2 严格校验，并按 `spec_version` 分派执行语义（**不得按字段存在与否分派**）
+      —— 分派原语已落地 `shared/caifubao_contracts/strategy_spec_semantics.py`
+      （`V1_CONSUMED` 冻结 + `field_is_consumed`）；消费者接线仍待做
 - [ ] P0.6 策略族校验：`rank_selection` 必填排名出场语义，`asset_allocation` 必填目标权重/带宽/被真实消费的再平衡节奏；两族均拒绝不适用的语义
 - [ ] P0.7 `rank_selection` 消费显式出场语义（rank_below / stop_loss_pct / max_hold_sessions / on_ineligible）并记录卖出原因
 - [ ] P0.8 `asset_allocation` 消费目标权重、再平衡带宽、cadence 与**单资产止损**，带宽内不交易回目标权重
 - [ ] P0.9 结构门禁：最小持仓数、年换手预算、集中簿必须有止损、回撤预算，并在开窗前评估
 - [ ] P0.10 把 `evaluate_risk` 接进每日链路，**仅对 v2 声明生效**（v1 保持不消费）
 - [ ] P0.11 定义 `DecisionState`（持仓/成本价/hold_count/峰值/现金/未完成订单）并记录 `decision_state_hash`
-- [ ] P0.12 连续多日回归基线：v1 声明跨 ≥5 个 session 的目标组合、订单清单与账本投影逐字段不变
+- [x] P0.12 连续多日回归基线：`datahub/app/test/fixtures/strategy_v1_golden.json`（2026-08-03..08-07 生产分数，5 个连续交易日）+ `test_strategy_v1_regression.py` 断言目标组合与调仓 diff 逐字段不变；订单/账本投影部分随 P0.16 补
 - [ ] P0.13 跨模式 conformance 向量改为比对 `DecisionState` 链，分叉必须归因到具体成交
 - [ ] P0.14 回归测试钉住已认证窗口 `01c196b8…` 的 `spec_hash` 与 `legacy_config_hash`，并断言 v1 语义未变
 - [ ] P0.15 运行记录新增 `resolved_inputs`（当日快照 id + 解析后的模型工件 digest）与 `run_id`

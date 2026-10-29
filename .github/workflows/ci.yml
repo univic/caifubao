@@ -83,7 +83,7 @@ jobs:
           set_output openspec '^(openspec/|\.github/workflows/ci\.yml$)'
           # The declaration/consumer gate spans the shared contract, the
           # strategy engine that consumes it, and its own checker.
-          set_output strategy_contract '^(shared/|datahub/app/lib/strategy_engine/|datahub/app/jobs/strategy_runner\.py|datahub/app/test/test_strategy_spec_consumers\.py|scripts/check_strategy_consumers\.py|openspec/|\.github/workflows/ci\.yml$)'
+          set_output strategy_contract '^(shared/|datahub/app/lib/strategy_engine/|datahub/app/jobs/strategy_runner\.py|datahub/app/test/test_strategy_[a-z_]*\.py|scripts/check_strategy_consumers\.py|openspec/|\.github/workflows/ci\.yml$)'
           set_output ci '^\.github/workflows/.*\.yml$'
           # Deploy-sensitive changes only; ordinary app code still runs tests/lint.
           set_output deploy_contract '^(k8s/|backend/Dockerfile$|datahub/Dockerfile$|frontend/Dockerfile$|compute-worker/Dockerfile$|tools/mongodb-tools/Dockerfile$|\.github/workflows/ci\.yml$|\.github/workflows/.*deploy.*\.yml$)'
