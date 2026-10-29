@@ -38,8 +38,13 @@
       —— 分派原语已落地 `shared/caifubao_contracts/strategy_spec_semantics.py`
       （`V1_CONSUMED` 冻结 + `field_is_consumed`）；消费者接线仍待做
 - [ ] P0.6 策略族校验：`rank_selection` 必填排名出场语义，`asset_allocation` 必填目标权重/带宽/被真实消费的再平衡节奏；两族均拒绝不适用的语义
-- [ ] P0.7 `rank_selection` 消费显式出场语义（rank_below / stop_loss_pct / max_hold_sessions / on_ineligible）并记录卖出原因
+      —— **出场维度已落地** `shared/caifubao_contracts/strategy_exit_policy.py`（两族均强制 `stop_loss_pct`；排名族必填四项；配置族拒绝排名出场；
+      `min_hold > max_hold` 拒绝）；配置族的权重/带宽/cadence 仍待做
+- [x] P0.7 `rank_selection` 消费显式出场语义（rank_below / stop_loss_pct / max_hold_sessions / on_ineligible）并记录卖出原因
+      —— `plan_target_holdings` 新增 `mandatory_exits` / `exit_rank_override`（默认保持 v1 行为），
+      `plan_from_state` 按策略计算强制退出；原因 `sold_stop_loss` / `sold_max_hold` 优先于带内保留与失资格
 - [ ] P0.8 `asset_allocation` 消费目标权重、再平衡带宽、cadence 与**单资产止损**，带宽内不交易回目标权重
+      —— 单资产止损已消费（与排名族同一 `stop_loss_pct`）；目标权重/带宽/cadence 待做
 - [ ] P0.9 结构门禁：最小持仓数、年换手预算、集中簿必须有止损、回撤预算，并在开窗前评估
 - [ ] P0.10 把 `evaluate_risk` 接进每日链路，**仅对 v2 声明生效**（v1 保持不消费）
 - [x] P0.11 定义 `DecisionState`（持仓/成本价/hold_count/峰值/现金/未完成订单）并记录 `decision_state_hash`

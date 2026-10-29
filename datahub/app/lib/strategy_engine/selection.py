@@ -114,6 +114,8 @@ def plan_target_holdings(
     min_hold_sessions: int = 0,
     reserved_slots: int = 0,
     sizing_basis: str = "actual",
+    mandatory_exits: dict[str, str] | None = None,
+    exit_rank_override: int | None = None,
 ) -> dict:
     """Select a target holdings list for one date under the configured limits.
 
@@ -133,6 +135,12 @@ def plan_target_holdings(
     names actually chosen (v1 behaviour, byte-identical); "cap" divides by the
     declared portfolio_size, so a reserved slot leaves the remaining names at
     1/N and the tied-up value idle instead of inflating their weight.
+    mandatory_exits: code -> reason for positions that must be sold whatever
+    their rank (stop-loss, maximum holding period). They take precedence over
+    every retention rule, including the exit band and the minimum holding
+    period.
+    exit_rank_override: explicit rank beyond which a held name is sold, used
+    when the declaration states it instead of deriving it from exit_buffer.
 
     Returns list of {"stock_code", "weight"} entries; empty list when nothing is
     eligible.
@@ -149,6 +157,10 @@ def plan_target_holdings(
         raise ValueError("sizing_basis must be 'actual' or 'cap'")
     # A reserved slot is held by the account; it can only reduce new entries.
     entry_slots = max(0, size - reserved_slots)
+    forced = dict(mandatory_exits or {})
+    if exit_rank_override is not None:
+        if type(exit_rank_override) is not int or exit_rank_override < 0:
+            raise ValueError("exit_rank_override must be a non-negative integer")
 
     candidates = []
     for item in predictions:
@@ -187,8 +199,21 @@ def plan_target_holdings(
         if isinstance(h, dict) and h.get("stock_code")
     }
     meta = dict(held_meta or {})
-    exit_rank = max(size, int(ceil(size * float(exit_buffer))))
-    reasons: dict[str, str] = {}
+    unknown_forced = sorted(set(forced) - set(held))
+    if unknown_forced:
+        raise ValueError(
+            "mandatory_exits names positions that are not held: "
+            + ", ".join(unknown_forced)
+        )
+    exit_rank = (
+        exit_rank_override
+        if exit_rank_override is not None
+        else max(size, int(ceil(size * float(exit_buffer))))
+    )
+    # Mandatory exits are recorded up front: a forced name may not appear in the
+    # candidate pool at all (suspended names have no score), and it must never be
+    # re-added by the vacancy fill below.
+    reasons: dict[str, str] = dict(forced)
     chosen: list[dict] = []
     chosen_codes: set[str] = set()
     for rank_index, cand in enumerate(candidates):
@@ -199,6 +224,10 @@ def plan_target_holdings(
             continue
         hold_count = int(meta.get(code, {}).get("hold_count") or 0)
         inside_band = rank_index < exit_rank
+        # A mandatory exit outranks every retention rule; the band and the
+        # minimum holding period must not keep a stopped or over-held name.
+        if code in forced:
+            continue
         if inside_band or hold_count < int(min_hold_sessions):
             chosen.append(cand)
             chosen_codes.add(code)
@@ -208,14 +237,17 @@ def plan_target_holdings(
     for cand in candidates:
         if len(chosen) >= entry_slots:
             break
-        if cand["stock_code"] in chosen_codes:
+        if cand["stock_code"] in chosen_codes or cand["stock_code"] in forced:
             continue
         chosen.append(cand)
         chosen_codes.add(cand["stock_code"])
         reasons[cand["stock_code"]] = "added_by_rank"
     for code in held:
         if code not in {c["stock_code"] for c in candidates}:
-            reasons[code] = "sold_ineligible"
+            # A mandatory reason is the more specific one; keep it.
+            reasons.setdefault(code, "sold_ineligible")
+    # The forced set wins over every other reason, including the sweep above.
+    reasons.update(forced)
     chosen.sort(key=lambda c: (-c["score"], c["stock_code"]))
     holdings = chosen[:size]
 
