@@ -24,8 +24,42 @@ from app.lib.strategy_engine.selection import (
     compute_rebalance,
     plan_target_holdings,
 )
+from caifubao_contracts.strategy_spec import (
+    spec_hash,
+    validate_strategy_spec,
+)
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "strategy_v1_golden.json"
+
+#: The window research is currently running, reproduced from the declaration that
+#: produces it. Pinned here as the end-to-end proof that the v2 work did not move
+#: the certified identity: the validator still derives exactly this hash.
+LIVE_WINDOW_SPEC = {
+    "spec_version": "1",
+    "universe": {"market": "CN_A", "as_of": "PIT"},
+    "signal": {"score_model_version": "flip_wide_shadow_v1", "horizon": 20},
+    "selection": {
+        "mode": "top_percentile",
+        "lower": 0.2,
+        "upper": 1,
+        "portfolio_size": 20,
+    },
+    "sizing": {"weighting": "equal", "cash_reserve_pct": 0},
+    "constraints": {
+        "exclude_st": True,
+        "exclude_bse": True,
+        "exclude_suspended": True,
+        "max_single_stock_pct": 0.05,
+        "min_trade_amount_cny": 0,
+        "exclude_infeasible_buys": True,
+    },
+    "rebalance": {"cadence_days": 5, "exit_buffer": 2.0},
+    "risk": {},
+    "execution": {},
+    "evidence": {"timing_version": "paper_causal_v1", "policy": "research"},
+    "initial_nav": 100000,
+}
+LIVE_WINDOW_HASH = "01c196b871ea"
 
 
 @pytest.fixture(scope="module")
@@ -110,3 +144,17 @@ def test_fixture_records_its_provenance(golden):
     assert golden["horizon"] == 20
     assert golden["exit_buffer"] == 2.0
     assert golden["min_hold_sessions"] == 0
+
+
+def test_the_live_window_hash_is_still_reproducible():
+    """The certified window ``01c196b8…`` must still derive to the same identity."""
+    digest = spec_hash(LIVE_WINDOW_SPEC)
+    assert digest.startswith(LIVE_WINDOW_HASH), digest[:12]
+
+
+def test_the_live_window_declaration_is_still_valid_v1():
+    """It must also remain a legal v1 declaration, unchanged in shape."""
+    validated = validate_strategy_spec(LIVE_WINDOW_SPEC)
+    assert validated["spec_version"] == "1"
+    assert validated["rebalance"] == {"cadence_days": 5, "exit_buffer": 2.0}
+    assert "family" not in validated
