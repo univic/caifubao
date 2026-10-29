@@ -129,6 +129,10 @@ W5 的数据侧（需数据授权）与运维侧（需写库/开窗授权）。�
       证据建议 band 0.02 / cadence 5（摩擦 0.033%、平均偏离 1.27%）。记录见
       `docs/autoresearch/runs/etf-sleeve/w3-etf-band-cadence-scan-2026-10-29.md`。
       收益与波动目标执行器仍待做
+      - **单资产止损已实测**（`etf_sleeve_stop_scan.py`）：5%–10% 的止损触发后 20 日均**上涨 1.8%–2.4%**、
+      60 日 +4.2%–7.4%，同期只避开 3.7%–4.8% 回撤 → 紧止损**毁价值**；证据支持 0.20–0.25 作为
+      灾难刹车（13 年触发 0–2 次，n 太小不足以称已验证）。记录见
+      `docs/autoresearch/runs/etf-sleeve/w3-etf-stop-scan-2026-10-29.md`
 - [ ] P3.4 组合级降险规则实现（触发/削减步长/最大削减/恢复条件）
 - [x] P3.5 失效判据评估器：滚动超额 vs 基准 + 最大回撤，按复核节奏评估
       —— `strategy_benchmark.evaluate_kill_criteria`：历史不足即 `insufficient_evidence`，越界即 `breach` + 退役建议
