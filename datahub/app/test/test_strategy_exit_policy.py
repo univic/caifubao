@@ -266,3 +266,38 @@ def test_allocation_policy_plans_without_a_rank_exit():
     )
     assert plan["family"] == FAMILY_ASSET_ALLOCATION
     assert plan["mandatory_exits"] == {}
+
+
+# --------------------------------------------------------------------------
+# the declared unknown-limit policy reaches the fill gate
+# --------------------------------------------------------------------------
+
+
+def test_unknown_limit_policy_is_honoured_not_hard_coded():
+    """`replay_compat` was validated, hashed and then silently dropped."""
+    from app.lib.strategy_engine.tradability import tradeable_open
+
+    class _Quote:
+        trade_status = 1
+        open = 10.0
+        limit_up = None
+        limit_down = None
+        previous_close = None  # no derivable verdict
+        stock_code = "sh600000"
+        is_st = False
+
+    # No explicit flag and an unknown verdict: fail_closed refuses, replay_compat
+    # lets the research replay through.
+    price, reason = tradeable_open(_Quote(), "BUY")
+    assert price is None and reason == "limit_unknown"
+    price, reason = tradeable_open(
+        _Quote(), "BUY", unknown_limit_policy="replay_compat"
+    )
+    assert price == pytest.approx(10.0) and reason == ""
+
+
+def test_invalid_unknown_limit_policy_is_rejected():
+    from app.lib.strategy_engine.tradability import tradeable_open
+
+    with pytest.raises(ValueError, match="unknown_limit_policy"):
+        tradeable_open(None, "BUY", unknown_limit_policy="wishful")

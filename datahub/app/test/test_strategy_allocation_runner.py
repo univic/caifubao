@@ -28,13 +28,7 @@ SPEC = {
     "_spec_hash": "a" * 64,
     "spec_version": "2",
     "universe": {"market": "CN_A", "as_of": "PIT"},
-    "selection": {
-        "mode": "top_n",
-        "portfolio_size": 4,
-        "exit": {"stop_loss_pct": 0.20},
-    },
-    "sizing": {"weighting": "equal", "cash_reserve_pct": 0},
-    "constraints": {},
+    "selection": {"exit": {"stop_loss_pct": 0.20}},
     "rebalance": {"cadence_days": 5},
     "risk": {},
     "execution": {},
@@ -351,3 +345,146 @@ def test_a_refused_run_exits_non_zero(tmp_path):
         ["run", "--spec", str(path), "--strategy-id", "sleeve-stable", "--dry-run"]
     )
     assert code == 2
+
+
+# --------------------------------------------------------------------------
+# the durable write path, exercised through an in-memory seam
+# --------------------------------------------------------------------------
+
+
+class _MemoryStore:
+    """Same contract as MongoPlanStore, without a database."""
+
+    def __init__(self):
+        self.plans = {}
+
+    def latest(self, strategy_id, spec_hash, before):
+        cutoff = str(before)[:10]
+        candidates = [
+            plan
+            for (sid, _), plan in self.plans.items()
+            if sid == strategy_id
+            and plan["spec_hash"] == spec_hash
+            and plan["date"] < cutoff
+        ]
+        return max(candidates, key=lambda plan: plan["date"]) if candidates else None
+
+    def find(self, strategy_id, day):
+        return self.plans.get((strategy_id, str(day)[:10]))
+
+    def save(self, plan, *, decision_at, execution_date):
+        self.plans[(plan["strategy_id"], plan["date"])] = dict(
+            plan, decision_at=decision_at, execution_date=execution_date
+        )
+
+    def list_decided(self, strategy_id, spec_hash):
+        return sorted(
+            plan["date"]
+            for (sid, _), plan in self.plans.items()
+            if sid == strategy_id
+            and plan["spec_hash"] == spec_hash
+            and plan["decision_at"]
+            and plan["execution_date"]
+            and plan["decision_at"].date() < plan["execution_date"].date()
+        )
+
+
+def test_run_writes_through_the_store(tmp_path):
+    from app.jobs import allocation_runner
+
+    spec = dict(SPEC)
+    spec.pop("_spec_hash")
+    path = tmp_path / "declaration.json"
+    import json as _json
+
+    path.write_text(_json.dumps(spec), encoding="utf-8")
+    # The durable adapter is replaced by the in-memory seam for the test.
+    store = _MemoryStore()
+    original_quotes, original_days = (
+        allocation_runner.load_quotes,
+        allocation_runner.session_calendar,
+    )
+    allocation_runner.load_quotes = lambda codes, day: dict(QUOTES)
+    allocation_runner.session_calendar = lambda codes: list(DAYS)
+    try:
+        result = allocation_runner.run(
+            spec=allocation_runner.load_declaration(path),
+            strategy_id="sleeve-stable",
+            session_date="2026-10-29",
+            store=store,
+        )
+    finally:
+        allocation_runner.load_quotes, allocation_runner.session_calendar = (
+            original_quotes,
+            original_days,
+        )
+    assert result["saved"] is True
+    assert ("sleeve-stable", "2026-10-29") in store.plans
+    saved = store.plans[("sleeve-stable", "2026-10-29")]
+    assert saved["marks"] == pytest.approx(QUOTES)
+    assert saved["last_rebalance_date"] == "2026-10-29"
+
+
+def test_a_retry_before_execution_updates_the_same_plan(tmp_path):
+    from app.jobs import allocation_runner
+
+    store = _MemoryStore()
+    allocation_runner.load_quotes = lambda codes, day: dict(QUOTES)
+    allocation_runner.session_calendar = lambda codes: list(DAYS)
+    try:
+        for _ in range(2):
+            allocation_runner.run(
+                spec=dict(SPEC, _spec_hash="a" * 64),
+                strategy_id="sleeve-stable",
+                session_date="2026-10-29",
+                store=store,
+            )
+    finally:
+        allocation_runner.load_quotes = allocation_runner.session_calendar = None
+    assert len(store.plans) == 1
+
+
+def test_a_plan_is_not_rewritten_after_its_execution_session():
+    import datetime as dt
+
+    from app.jobs import allocation_runner
+
+    store = _MemoryStore()
+    store.save(
+        dict(SPEC, strategy_id="sleeve-stable", spec_hash="a" * 64, date="2026-10-29"),
+        decision_at=dt.datetime.now(dt.timezone.utc),
+        execution_date=dt.datetime(2020, 1, 2),
+    )
+    allocation_runner.load_quotes = lambda codes, day: dict(QUOTES)
+    allocation_runner.session_calendar = lambda codes: list(DAYS)
+    try:
+        with pytest.raises(
+            allocation_runner.AllocationRunError, match="refusing to rewrite"
+        ):
+            allocation_runner.run(
+                spec=dict(SPEC, _spec_hash="a" * 64),
+                strategy_id="sleeve-stable",
+                session_date="2026-10-29",
+                store=store,
+            )
+    finally:
+        allocation_runner.load_quotes = allocation_runner.session_calendar = None
+
+
+def test_list_decided_ignores_late_plans():
+    import datetime as dt
+
+    store = _MemoryStore()
+    early = dt.datetime(2026, 10, 29, 9, 0, tzinfo=dt.timezone.utc)
+    late = dt.datetime(2026, 11, 2, 9, 0, tzinfo=dt.timezone.utc)
+    store.save(
+        dict(SPEC, strategy_id="sleeve-stable", spec_hash="a" * 64, date="2026-10-29"),
+        decision_at=early,
+        execution_date=dt.datetime(2026, 10, 30),
+    )
+    store.save(
+        dict(SPEC, strategy_id="sleeve-stable", spec_hash="a" * 64, date="2026-10-30"),
+        decision_at=late,  # decided after its own execution session
+        execution_date=dt.datetime(2026, 11, 2),
+    )
+    assert store.list_decided("sleeve-stable", "a" * 64) == ["2026-10-29"]

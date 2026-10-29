@@ -79,8 +79,18 @@ def limit_verdict(
     )
 
 
+#: Policies the shared gate understands. The declaration's
+#: ``execution.unknown_limit_policy`` is threaded through to here; the default
+#: keeps the historical refusal behaviour when a declaration states nothing.
+UNKNOWN_LIMIT_POLICIES = frozenset({"fail_closed", "replay_compat"})
+
+
 def tradeable_open(
-    quote, side: str, *, stock_code: str = ""
+    quote,
+    side: str,
+    *,
+    stock_code: str = "",
+    unknown_limit_policy: str = "fail_closed",
 ) -> tuple[float | None, str]:
     """Price the side could fill at, plus the reason when it cannot.
 
@@ -90,6 +100,11 @@ def tradeable_open(
     be surfaced in the plan/report: a refused order is reported, never silently
     dropped.
     """
+    if unknown_limit_policy not in UNKNOWN_LIMIT_POLICIES:
+        raise ValueError(
+            f"unknown_limit_policy must be one of {sorted(UNKNOWN_LIMIT_POLICIES)}, "
+            f"got {unknown_limit_policy!r}"
+        )
     normalized = (side or "").strip().upper()
     if normalized not in SIDES:
         raise ValueError(f"side must be one of {SIDES}, got {side!r}")
@@ -122,6 +137,9 @@ def tradeable_open(
             limit_down = derived_down
     # Shared pure fill gate owns refusal policy; the domain-local adapter
     # remains responsible only for the board-aware price-limit classification.
+    # The declared policy is passed through instead of being overridden with a
+    # constant: silently forcing fail_closed made `replay_compat` a validated but
+    # unread field.
     return shared_tradable_open(
         {
             "trade_status": status,
@@ -130,5 +148,5 @@ def tradeable_open(
             "limit_down": limit_down,
         },
         normalized,
-        unknown_limit_policy="fail_closed",
+        unknown_limit_policy=unknown_limit_policy,
     )

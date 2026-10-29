@@ -741,6 +741,11 @@ def run_nav(
         execution=resolve_execution(resolved),
         initial_nav=float(resolved.get("initial_nav", 1_000_000.0)),
         spec_hash=strategy_spec_hash,
+        # The declared policy decides whether an unknown limit verdict refuses the
+        # fill or is replayed; it used to be dropped here and forced to fail_closed.
+        unknown_limit_policy=resolve_execution(resolved).get(
+            "unknown_limit_policy", "fail_closed"
+        ),
     )
     # A spec-backed Research derivation must pass independent event-journal
     # cash/positions/receivables/mark parity BEFORE any immutable artifact or

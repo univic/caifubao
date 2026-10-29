@@ -281,30 +281,121 @@ def session_calendar(codes) -> list[str]:
     return sorted(set.intersection(*per_code))
 
 
-def previous_plan(strategy_id: str, spec_hash: str, before) -> dict | None:
-    from app.model.strategy import AllocationPlan
+class PlanStore:
+    """Persistence seam for allocation plans.
 
-    day = _session_date(before)
-    record = (
-        AllocationPlan.objects(
-            strategy_id=strategy_id,
-            spec_hash=spec_hash,
-            date__lt=dt.datetime.combine(day, dt.time.min),
-            status="PLANNED",
+    The runner talks to this interface instead of a MongoEngine document, so the
+    write path — create, retry, refuse-after-execution — is testable without a
+    database, and the durable behaviour lives in one thin adapter.
+    """
+
+    def latest(self, strategy_id: str, spec_hash: str, before) -> dict | None:
+        raise NotImplementedError
+
+    def find(self, strategy_id: str, day) -> dict | None:
+        raise NotImplementedError
+
+    def save(self, plan: dict, *, decision_at, execution_date) -> None:
+        raise NotImplementedError
+
+    def list_decided(self, strategy_id: str, spec_hash: str) -> list[str]:
+        raise NotImplementedError
+
+
+class MongoPlanStore(PlanStore):
+    """Durable adapter over the ``allocation_plans`` collection."""
+
+    def _model(self):
+        from app.model.strategy import AllocationPlan
+
+        return AllocationPlan
+
+    def latest(self, strategy_id: str, spec_hash: str, before) -> dict | None:
+        day = _session_date(before)
+        record = (
+            self._model()
+            .objects(
+                strategy_id=strategy_id,
+                spec_hash=spec_hash,
+                date__lt=dt.datetime.combine(day, dt.time.min),
+                status="PLANNED",
+            )
+            .order_by("-date")
+            .first()
         )
-        .order_by("-date")
-        .first()
-    )
+        return _record_to_dict(record)
+
+    def find(self, strategy_id: str, day) -> dict | None:
+        record = (
+            self._model()
+            .objects(
+                strategy_id=strategy_id,
+                date=dt.datetime.combine(
+                    _session_date(day), dt.time.min, tzinfo=dt.timezone.utc
+                ),
+            )
+            .first()
+        )
+        return _record_to_dict(record)
+
+    def save(self, plan: dict, *, decision_at, execution_date) -> None:
+        model = self._model()
+        record_date = dt.datetime.combine(
+            _session_date(plan["date"]), dt.time.min, tzinfo=dt.timezone.utc
+        )
+        record = model.objects(
+            strategy_id=plan["strategy_id"], date=record_date
+        ).first()
+        if record is None:
+            record = model(strategy_id=plan["strategy_id"], date=record_date)
+        record.spec_hash = plan["spec_hash"]
+        record.execution_date = execution_date
+        record.decision_at = decision_at
+        record.targets = plan["targets"]
+        record.actions = plan["actions"]
+        record.cash_weight = float(plan["cash_weight"])
+        record.reference_prices = {
+            code: float(price) for code, price in plan["reference_prices"].items()
+        }
+        record.marks = {code: float(price) for code, price in plan["marks"].items()}
+        record.last_rebalance_date = (
+            dt.datetime.fromisoformat(plan["last_rebalance_date"])
+            if plan.get("last_rebalance_date")
+            else None
+        )
+        record.rebalance_session = bool(plan["rebalance_session"])
+        record.status = "PLANNED"
+        record.save()
+
+    def list_decided(self, strategy_id: str, spec_hash: str) -> list[str]:
+        records = self._model().objects(
+            strategy_id=strategy_id, spec_hash=spec_hash, status="PLANNED"
+        )
+        return sorted(
+            {
+                str(record.date)[:10]
+                for record in records
+                if record.decision_at
+                and record.execution_date
+                and record.decision_at.date() < record.execution_date.date()
+            }
+        )
+
+
+def _record_to_dict(record) -> dict | None:
     if record is None:
         return None
     return {
         "date": str(record.date)[:10],
+        "spec_hash": record.spec_hash,
         "targets": dict(record.targets or {}),
         "reference_prices": dict(record.reference_prices or {}),
         "marks": dict(record.marks or {}),
         "last_rebalance_date": (
             str(record.last_rebalance_date)[:10] if record.last_rebalance_date else None
         ),
+        "decision_at": record.decision_at,
+        "execution_date": record.execution_date,
     }
 
 
@@ -314,9 +405,10 @@ def run(
     strategy_id: str,
     session_date=None,
     dry_run: bool = False,
+    store: "PlanStore | None" = None,
 ) -> dict:
     """Build one plan; write it unless ``dry_run``."""
-    from app.model.strategy import AllocationPlan
+    store = store or MongoPlanStore()
 
     day = _session_date(session_date)
     spec = dict(spec)
@@ -329,7 +421,7 @@ def run(
     codes = list(validate_allocation(spec["allocation"])["assets"])
     quotes = load_quotes(codes, day)
     days = session_calendar(codes)
-    previous = previous_plan(strategy_id, spec["_spec_hash"], day)
+    previous = store.latest(strategy_id, spec["_spec_hash"], day)
     plan = build_plan(
         spec=spec,
         strategy_id=strategy_id,
@@ -345,45 +437,23 @@ def run(
         plan["dry_run"] = True
         return plan
 
-    record_date = dt.datetime.combine(day, dt.time.min, tzinfo=dt.timezone.utc)
-    existing = AllocationPlan.objects(
-        strategy_id=plan["strategy_id"], date=record_date
-    ).first()
     now = dt.datetime.now(dt.timezone.utc)
-    if existing is not None and existing.execution_date is not None:
-        # A correction is allowed only before the execution session opens. After
-        # that the plan is history: rewriting it would let a late edit look like a
-        # timely decision and turn a backfill into forward evidence.
-        if now.date() >= existing.execution_date.date():
-            raise AllocationRunError(
-                f"plan for {plan['date']} already executed on "
-                f"{str(existing.execution_date)[:10]}; refusing to rewrite it"
-            )
-    record = existing or AllocationPlan(
-        strategy_id=plan["strategy_id"], date=record_date
-    )
-    record.spec_hash = plan["spec_hash"]
-    record.execution_date = (
+    execution_date = (
         dt.datetime.fromisoformat(plan["execution_date"])
         if plan.get("execution_date")
         else None
     )
-    record.decision_at = now
-    record.targets = plan["targets"]
-    record.actions = plan["actions"]
-    record.cash_weight = float(plan["cash_weight"])
-    record.reference_prices = {
-        code: float(price) for code, price in plan["reference_prices"].items()
-    }
-    record.marks = {code: float(price) for code, price in plan["marks"].items()}
-    record.last_rebalance_date = (
-        dt.datetime.fromisoformat(plan["last_rebalance_date"])
-        if plan.get("last_rebalance_date")
-        else None
-    )
-    record.rebalance_session = bool(plan["rebalance_session"])
-    record.status = "PLANNED"
-    record.save()
+    existing = store.find(strategy_id, day)
+    if existing is not None and existing.get("execution_date") is not None:
+        # A correction is allowed only before the execution session opens. After
+        # that the plan is history: rewriting it would let a late edit look like a
+        # timely decision and turn a backfill into forward evidence.
+        if now.date() >= existing["execution_date"].date():
+            raise AllocationRunError(
+                f"plan for {plan['date']} already executed on "
+                f"{str(existing['execution_date'])[:10]}; refusing to rewrite it"
+            )
+    store.save(plan, decision_at=now, execution_date=execution_date)
     plan["saved"] = True
     return plan
 
@@ -444,8 +514,6 @@ def main(argv=None) -> int:
                 json.dumps({"error": "no ACTIVE allocation window"}, ensure_ascii=False)
             )
             return 1
-        from app.model.strategy import AllocationPlan
-
         try:
             declaration = load_declaration(args.spec)
         except AllocationRunError as exc:
@@ -455,22 +523,7 @@ def main(argv=None) -> int:
                 )
             )
             return 2
-        # A plan counts only when its decision was recorded before the execution
-        # session opens. A plan written or rewritten afterwards is a backfill and
-        # must never enter the evidence count.
-        decided = sorted(
-            {
-                str(plan.date)[:10]
-                for plan in AllocationPlan.objects(
-                    strategy_id=args.strategy_id,
-                    spec_hash=window.spec_hash,
-                    status="PLANNED",
-                )
-                if plan.decision_at
-                and plan.execution_date
-                and plan.decision_at.date() < plan.execution_date.date()
-            }
-        )
+        decided = MongoPlanStore().list_decided(args.strategy_id, window.spec_hash)
         report = allocation_forward_progress(
             window={
                 "strategy_id": window.strategy_id,
