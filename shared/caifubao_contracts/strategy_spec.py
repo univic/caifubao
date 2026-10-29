@@ -13,6 +13,7 @@ import json
 import math
 
 from caifubao_contracts.friction import DEFAULT_COST_PROFILE
+from caifubao_contracts.strategy_allocation import validate_allocation
 from caifubao_contracts.strategy_exit_policy import validate_exit_policy
 
 SPEC_VERSION = "1"
@@ -51,10 +52,12 @@ _ALLOWED = {
         "evidence",
         "initial_nav",
         "family",
+        "allocation",
     },
     "universe": {"market", "as_of"},
     "signal": {"score_model_version", "horizon"},
     "selection": {"mode", "lower", "upper", "portfolio_size", "exit"},
+    "allocation": {"assets", "band_pct"},
     "selection.exit": {
         "rank_below",
         "stop_loss_pct",
@@ -143,7 +146,7 @@ def validate_strategy_spec(spec: dict) -> dict:
     ):
         _object(_required(normalized, part, "spec"), part)
 
-    v2_only = ("family",)
+    v2_only = ("family", "allocation")
     if version == "1":
         # v1 must behave exactly as before: the v2-only fields are still unknown
         # to it, so a v1 declaration carrying one is rejected rather than
@@ -156,7 +159,9 @@ def validate_strategy_spec(spec: dict) -> dict:
                 f"spec_version 1 does not support {sorted(present)}; use version 2"
             )
     else:
-        for key in v2_only:
+        # The family is universal; the allocation block is required only by the
+        # allocation family and rejected by the rank family below.
+        for key in ("family",):
             if key not in normalized:
                 raise ValueError(f"spec_version 2 requires {key}")
         exit_block = _object(
@@ -164,6 +169,18 @@ def validate_strategy_spec(spec: dict) -> dict:
         )
         validate_exit_policy(normalized["family"], exit_block)
         normalized["selection"]["exit"] = exit_block
+        if normalized["family"] == "asset_allocation":
+            if "allocation" not in normalized:
+                raise ValueError(
+                    "spec_version 2 requires allocation for asset_allocation: a "
+                    "fixed asset set and target weights are its book semantics"
+                )
+            normalized["allocation"] = validate_allocation(normalized["allocation"])
+        elif "allocation" in normalized:
+            raise ValueError(
+                "allocation is only meaningful for asset_allocation; rank_selection "
+                "sizes by rank"
+            )
 
     universe = normalized["universe"]
     if universe != {"market": "CN_A", "as_of": "PIT"}:

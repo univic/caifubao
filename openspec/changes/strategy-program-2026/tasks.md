@@ -48,8 +48,9 @@
 - [x] P0.7 `rank_selection` 消费显式出场语义（rank_below / stop_loss_pct / max_hold_sessions / on_ineligible）并记录卖出原因
       —— `plan_target_holdings` 新增 `mandatory_exits` / `exit_rank_override`（默认保持 v1 行为），
       `plan_from_state` 按策略计算强制退出；原因 `sold_stop_loss` / `sold_max_hold` 优先于带内保留与失资格
-- [ ] P0.8 `asset_allocation` 消费目标权重、再平衡带宽、cadence 与**单资产止损**，带宽内不交易回目标权重
-      —— 单资产止损已消费（与排名族同一 `stop_loss_pct`）；目标权重/带宽/cadence 待做
+- [x] P0.8 `asset_allocation` 消费目标权重、再平衡带宽、cadence 与**单资产止损**，带宽内不交易回目标权重
+      —— `shared/caifubao_contracts/strategy_allocation.py`：`validate_allocation`（权重和 ≤ 1、带宽上界）、
+      `should_rebalance`（**cadence 首次真正被读取**）、`plan_allocation`（带内不交易、止损与移出资产集每期评估）
 - [ ] P0.9 结构门禁：最小持仓数、年换手预算、集中簿必须有止损、回撤预算，并在开窗前评估
 - [ ] P0.10 把 `evaluate_risk` 接进每日链路，**仅对 v2 声明生效**（v1 保持不消费）
 - [x] P0.11 定义 `DecisionState`（持仓/成本价/hold_count/峰值/现金/未完成订单）并记录 `decision_state_hash`
@@ -100,6 +101,7 @@
 
 - [ ] P3.0 在真实回放口径重算宽度/换手/回撤与多资产基准数字后，复核决策 D1（结论不变则更新理由，约束消失则重新评估载体）
 - [ ] P3.1 声明 allocation 族：预先固定资产集、目标权重、再平衡带宽、被真实消费的 cadence、**单资产止损**、波动目标 10–12%、回撤预算 15–20%、年换手 ≤ 4、基准
+      —— 资产集/权重/带宽/cadence/单资产止损已可声明并消费；波动目标、回撤预算、基准仍待（需要 accounting/benchmark 字段先有消费者）
 - [ ] P3.2 数据准备：宽基 ETF + 国债 + 商品类 ETF 的行情与复权完整性与 PIT 校验
 - [ ] P3.3 回测：波动目标 + 带区间再平衡，费用按 ETF 口径（免印花税）
 - [ ] P3.4 组合级降险规则实现（触发/削减步长/最大削减/恢复条件）

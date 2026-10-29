@@ -33,7 +33,6 @@ MANIFEST_PATH = (
 #: Fields that are validated and hashed but read by no consumer. Pinned so that a
 #: silent status flip (either direction) fails CI and has to be argued for.
 KNOWN_UNCONSUMED = {
-    "rebalance.cadence_days",
     "sizing.weighting",
     "risk.max_turnover_pct",
     "risk.max_positions",
@@ -75,10 +74,11 @@ def test_unconsumed_fields_name_an_owner(manifest):
         assert entry.get("note"), path
 
 
-def test_cadence_days_is_not_claimed_as_consumed(manifest):
-    """The declared weekly cadence is never read; that must stay visible."""
+def test_cadence_days_is_consumed_by_v2_only(manifest):
+    """v2 reads the cadence; v1 must never start doing so."""
     entry = manifest["fields"]["rebalance.cadence_days"]
-    assert entry["status"] == UNCONSUMED
+    assert entry["status"] == CONSUMED
+    assert entry["consumed_by_versions"] == ["2"]
 
 
 def test_missing_field_is_reported(manifest):

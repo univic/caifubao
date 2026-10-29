@@ -157,9 +157,13 @@
       ]
     },
     "rebalance.cadence_days": {
-      "status": "unconsumed",
-      "tracked_by": "strategy-program-2026 P0.5/P0.8",
-      "note": "validated and hashed, but every session re-plans: the declared cadence is never read"
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_allocation.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
     },
     "rebalance.exit_buffer": {
       "status": "consumed",
@@ -358,6 +362,24 @@
       "status": "consumed",
       "consumers": [
         "shared/caifubao_contracts/strategy_exit_policy.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "allocation.assets": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_allocation.py"
+      ],
+      "consumed_by_versions": [
+        "2"
+      ]
+    },
+    "allocation.band_pct": {
+      "status": "consumed",
+      "consumers": [
+        "shared/caifubao_contracts/strategy_allocation.py"
       ],
       "consumed_by_versions": [
         "2"

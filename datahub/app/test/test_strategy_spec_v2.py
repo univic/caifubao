@@ -46,11 +46,17 @@ def _v1():
     }
 
 
+ALLOCATION = {"assets": {"sh510300": 0.4, "sh510500": 0.3}, "band_pct": 0.05}
+
+
 def _v2(family="rank_selection", exit_policy=None):
     spec = _v1()
     spec["spec_version"] = "2"
     spec["family"] = family
     spec["selection"] = dict(spec["selection"], exit=dict(exit_policy or EXIT))
+    if family == "asset_allocation":
+        # The allocation family's book semantics are its fixed asset set.
+        spec["allocation"] = dict(ALLOCATION)
     return spec
 
 
